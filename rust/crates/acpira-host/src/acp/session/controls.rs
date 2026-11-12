@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use acpira_shared::composer_controls::{is_reasoning_control, thought_correction};
 use acpira_shared::models::parse_fusion_name;
-use acpira_shared::model_shapes::{ModelShapes, is_model_control, shape_for};
+use acpira_shared::model_shapes::{ModelShapes, is_model_control, offered_model, shape_for};
 use acpira_shared::turn_settings::{capture_turn_settings, controls_for_turn};
 use acpira_shared::transcript::*;
 
@@ -516,6 +516,9 @@ impl AcpSession {
         }
         let differs = {
           let mut c = self.core.lock();
+          // A remembered model goes out under the id this native session spells it with
+          let model = c.state.controls.options.iter().find(|o| o.id == id).filter(|o| is_model_control(o));
+          let value = model.and_then(|m| offered_model(m, &value)).map(str::to_owned).unwrap_or(value);
           self.wire_pick(&mut c, &id, &value).filter(|(wire, current)| {
             current.as_ref() != Some(wire) && c.state.controls.options.iter().find(|o| o.id == id).is_some_and(|ctl| ctl.options.iter().any(|o| &o.id == wire))
           })

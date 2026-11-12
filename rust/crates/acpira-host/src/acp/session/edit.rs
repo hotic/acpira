@@ -12,6 +12,7 @@ use acpira_shared::plan_execution::plan_execution_id;
 use acpira_shared::protocol::{EditIntent, EditTurnRequest};
 use acpira_shared::transcript::*;
 use acpira_shared::turn_errors::is_context_length_error;
+use acpira_shared::model_shapes::{is_model_control, offered_model};
 use acpira_shared::turn_settings::capture_turn_settings;
 
 use crate::acp::transport::process::AgentProcess;
@@ -441,6 +442,14 @@ impl AcpSession {
         crate::acp::vendors::claude_ultracode::wire_value(&controls.options, k, v).map(|wire| (k.clone(), wire))
       })
       .collect();
+    // The editor picked the model from the live session's list; the native session that takes the edit (a fresh one
+    // after a rebuild) can spell the same model with another id
+    for (id, value) in &mut selections {
+      let model = controls.options.iter().find(|c| &c.id == id).filter(|c| is_model_control(c));
+      if let Some(offered) = model.and_then(|m| offered_model(m, value)) {
+        *value = offered.to_owned();
+      }
+    }
     selections.sort_by_key(|(id, _)| !Self::is_model_id(controls, id));
     let mut settled: HashSet<String> = HashSet::new();
     for (config_id, value) in &selections {

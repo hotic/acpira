@@ -232,6 +232,21 @@ async fn stale_edits_or_unavailable_settings_preserve_the_transcript_and_peer() 
   assert!(!s.is_running());
 }
 
+/// The editor picks from the live session's list, while the native session taking the edit can spell that model with
+/// another id (Claude: `fable` on a resumed session, `fable[1m]` on a fresh one)
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_finds_its_model_under_the_id_the_peer_spells_it_with() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_MODELS": "big[1m]" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "original").await;
+  let mut edit = history_edit(&s, 0, "inspect-history");
+  edit.settings.config.insert("model".into(), "big".into());
+  s.edit_turn(edit).await.unwrap();
+  until(|| !s.is_running() && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  assert_eq!(option_value(&view(&s), "model"), "big[1m]");
+}
+
 fn remove_blobs(h: &Harness, sid: &str) {
   for e in std::fs::read_dir(h.dir.path().join("sessions").join(sid)).unwrap() {
     std::fs::remove_file(e.unwrap().path()).unwrap();

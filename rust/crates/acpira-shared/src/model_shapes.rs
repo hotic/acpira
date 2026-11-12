@@ -11,6 +11,23 @@ pub fn is_model_control(c: &ConfigControl) -> bool {
   c.category.as_deref() == Some("model") || (c.category.is_none() && c.id == "model")
 }
 
+// A model id without its trailing `[…]` hint (`fable[1m]` → `fable`)
+fn bare(id: &str) -> &str {
+  id.strip_suffix(']').and_then(|s| s.rsplit_once('[')).map(|(b, _)| b).filter(|b| !b.is_empty()).unwrap_or(id)
+}
+
+/// The offered option a model id picked on another native session stands for on this one. An agent can spell one model
+/// differently per session (Claude lists Fable 5.2 as `fable` on a resumed session and `fable[1m]` on a fresh one), so
+/// an id the select lacks falls back to the only option that differs by its `[…]` hint; none when that is ambiguous
+pub fn offered_model<'a>(model: &'a ConfigControl, value: &str) -> Option<&'a str> {
+  if let Some(o) = model.options.iter().find(|o| o.id == value) {
+    return Some(&o.id);
+  }
+  let mut same = model.options.iter().filter(|o| bare(&o.id) == bare(value));
+  let first = same.next()?;
+  same.next().is_none().then_some(first.id.as_str())
+}
+
 /// The current model for the session list: its value and its option's name (the value itself when no option matches)
 pub fn session_model(controls: &SessionControls) -> Option<SessionModel> {
   let model = controls.options.iter().find(|c| is_model_control(c))?;

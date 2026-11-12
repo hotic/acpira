@@ -131,6 +131,15 @@ describe('historical turn selections', () => {
       .toEqual({ model: 'official/k3', effort: 'high' });
   });
 
+  it('finds a recorded model under the id the live session spells it with', () => {
+    const model = (ids: string[]): SessionControls => ({ modes: [], options: [{ id: 'model', name: 'Model', category: 'model', value: ids[0], options: ids.map(id => ({ id, name: id })) }] });
+    const picked = (c: SessionControls, value: string) => controlsForTurn(c, { config: { model: value } }).options[0]!.value;
+    expect(picked(model(['opus', 'fable[1m]']), 'fable')).toBe('fable[1m]');
+    expect(picked(model(['opus', 'fable']), 'fable[1m]')).toBe('fable');
+    // Two spellings on offer: neither is a safe stand-in
+    expect(picked(model(['opus', 'fable[1m]', 'fable[2m]']), 'fable')).toBe('opus');
+  });
+
   it('uses live defaults for old records and unavailable historical values', () => {
     expect(controlsForTurn(controls)).toEqual(controls);
     expect(controlsForTurn(controls, { modeId: 'removed', config: { model: 'removed', effort: 'removed' } })).toEqual(controls);

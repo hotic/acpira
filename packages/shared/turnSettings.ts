@@ -1,5 +1,5 @@
 import type { SessionControls, TurnSettings } from './transcript';
-import { isModelControl, shapeFor, type ModelShapes } from './modelShapes';
+import { isModelControl, offeredModel, shapeFor, type ModelShapes } from './modelShapes';
 
 // Persist wire IDs rather than display names, including model effort variants.
 export function captureTurnSettings(controls: SessionControls): TurnSettings {
@@ -16,8 +16,8 @@ export function captureTurnSettings(controls: SessionControls): TurnSettings {
 // then a same-family sibling's shape. An unknown model keeps the snapshot; the host lets the agent settle the rest.
 function reshape(fallback: SessionControls, settings: TurnSettings, live: SessionControls, shapes: ModelShapes | undefined): SessionControls {
   const model = live.options.find(isModelControl);
-  const value = model && settings.config[model.id];
-  if (!model || !value || !model.options.some(o => o.id === value)) return fallback;
+  const value = model && offeredModel(model, settings.config[model.id]);
+  if (!model || !value) return fallback;
   const shape = shapes?.[value] ?? (value === model.value ? undefined : shapeFor(shapes, model, value));
   if (shape) return controlsForTurn({ ...live, options: [...live.options.filter(isModelControl), ...shape] }, settings);
   return value === model.value ? controlsForTurn(live, settings) : fallback;
@@ -51,9 +51,11 @@ export function controlsForTurn(controls: SessionControls, settings?: TurnSettin
   return {
     ...controls,
     modeId: controls.modes.some(m => m.id === settings?.modeId) ? settings!.modeId : controls.modeId,
-    options: controls.options.map(c => ({
-      ...c,
-      value: c.options.some(o => o.id === settings?.config[c.id]) ? settings!.config[c.id] : c.value,
-    })),
+    options: controls.options.map(c => {
+      const wanted = settings?.config[c.id];
+      // A model keeps its pick under the id this session spells it with
+      const offered = isModelControl(c) ? offeredModel(c, wanted) : c.options.some(o => o.id === wanted) ? wanted : undefined;
+      return { ...c, value: offered ?? c.value };
+    }),
   };
 }
