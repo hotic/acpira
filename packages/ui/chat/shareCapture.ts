@@ -262,25 +262,37 @@ function widgetSnapshot(win: Window): Promise<string | undefined> {
   });
 }
 
+// Removes a node and every wrapper it leaves empty (no text, no media): an emptied wrapper still takes a flex gap,
+// which showed as unexplained space above the reply
+function removeWithEmptyWrappers(node: Element, root: HTMLElement) {
+  let parent = node.parentElement;
+  node.remove();
+  while (parent && parent !== root && !parent.textContent?.trim() && !parent.querySelector('img, video, canvas, svg, iframe')) {
+    const next = parent.parentElement;
+    parent.remove();
+    parent = next;
+  }
+}
+
 function cleanShareSubtree(root: HTMLElement, stripRootPad: boolean) {
   root.querySelectorAll('[data-turn-actions], .code-copy, .sr-only').forEach(n => n.remove());
   // A whole reply is the agent's answer: the reader's own steered prompts and the reasoning stay out, folded or not.
   // A process fold's head goes too, unless the reader opened it and tool rows are still left under it
   if (stripRootPad) {
-    root.querySelectorAll('.steered-message, .thought-row').forEach(n => n.remove());
+    root.querySelectorAll('.steered-message, .thought-row').forEach(n => removeWithEmptyWrappers(n, root));
     // Each fold's head is its first trigger, taken before any row is removed
     const folds = [...root.querySelectorAll<HTMLElement>('[data-process-fold]')].map(fold => ({ fold, head: fold.querySelector('button[aria-expanded]') }));
     // Collapsed rows (tool calls the reader never opened) go with their head when the reply has prose to show
     if (root.querySelector('.acp-prose')) {
       root.querySelectorAll<HTMLElement>('button[aria-expanded="false"]').forEach(trigger => {
         const row = trigger.parentElement;
-        if (row && !row.querySelector('.acp-prose')) row.remove();
+        if (row && !row.querySelector('.acp-prose')) removeWithEmptyWrappers(row, root);
       });
     }
     for (const { fold, head } of folds) {
       const rows = fold.querySelector('.process-content');
       if (fold.hasAttribute('data-open') && rows?.textContent?.trim()) continue;
-      head?.parentElement?.remove();
+      if (head?.parentElement) removeWithEmptyWrappers(head.parentElement, root);
     }
   }
   if (stripRootPad) root.classList.remove('px-pad', '-mt-msg-join');

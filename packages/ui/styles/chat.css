@@ -358,19 +358,35 @@
   .cmd-outcome[data-enter] path { animation: cmd-draw 360ms 60ms cubic-bezier(0.3, 0.7, 0.2, 1) backwards; }
   .cmd-time[data-enter] { animation: cmd-time-in 280ms 100ms ease-out backwards; }
 
-  /* Watermarked screenshot card (chat/SharePreview.tsx): single borderless sheet with a subtle vendor-tinted corner glow */
+  /* Watermarked screenshot card (chat/SharePreview.tsx): two layers, so the reply reads apart from the line naming the
+     session and the model. The card is a darker frame carrying the watermark and a subtle vendor-tinted corner glow;
+     the reply is a sheet raised on it. In both themes the sheet is the lightest tone, and a code block sinks into it
+     to nearly the frame's tone (the stock dark code fill is lighter than the sheet and would clash with the frame) */
   .acp-share-card {
-    --share-sheet: var(--bg-0);
+    --share-frame: color-mix(in srgb, var(--bg-0) 96%, black);
+    --share-sheet: color-mix(in srgb, var(--bg-0) 99%, white);
+    --bg-code: rgba(0, 0, 0, 0.1);
     background:
-      radial-gradient(80% 80% at 100% 100%, color-mix(in srgb, var(--share-tint, transparent) 7%, transparent), transparent 60%),
-      var(--share-sheet);
+      radial-gradient(80% 80% at 100% 100%, color-mix(in srgb, var(--share-tint, transparent) 9%, transparent), transparent 60%),
+      var(--share-frame);
+  }
+  .acp-share-body {
+    /* Dark: a tone step and a faint hairline only; a shadow or a lit edge makes the sheet float off the frame */
+    border-color: rgba(255, 255, 255, 0.07);
+    background: var(--share-sheet);
   }
   [data-theme="light"] .acp-share-card {
+    --share-frame: color-mix(in srgb, #ffffff 94%, black);
     --share-sheet: #ffffff;
     --bg-code: rgba(0, 0, 0, 0.03);
     background:
-      radial-gradient(75% 75% at 100% 100%, color-mix(in srgb, var(--share-tint, transparent) 6%, transparent), transparent 58%),
-      var(--share-sheet);
+      radial-gradient(75% 75% at 100% 100%, color-mix(in srgb, var(--share-tint, transparent) 8%, transparent), transparent 58%),
+      var(--share-frame);
+  }
+  [data-theme="light"] .acp-share-body {
+    border-color: var(--conversation-line);
+    background: var(--share-sheet);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 20px rgba(0, 0, 0, 0.07);
   }
 
   /* Frameless screenshot presentation (`Lightbox` family): gentle 220ms settle-in; resting state is clean when motion is disabled */

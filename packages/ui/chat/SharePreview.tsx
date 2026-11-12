@@ -21,8 +21,8 @@ export interface SharePayload {
   node: HTMLElement;
 }
 
-// Single borderless screenshot card with a subtle vendor-tinted corner glow and a minimal one-line watermark footer
-// naming the session on the left and the model on the right.
+// Screenshot card in two layers: the reply is a raised sheet on a darker frame, and the frame carries a minimal one-line
+// watermark footer naming the session on the left and the model on the right (plus a subtle vendor-tinted corner glow).
 export function ShareCard({ ref, meta, node, children }: {
   ref?: Ref<HTMLDivElement>;
   meta: ShareMeta;
@@ -45,17 +45,17 @@ export function ShareCard({ ref, meta, node, children }: {
       ref={ref}
       data-share-card
       style={vendorColor ? ({ '--share-tint': vendorColor } as CSSProperties) : undefined}
-      className="acp-share-card flex w-full min-w-0 flex-col overflow-hidden rounded-lg border border-conversation-line text-fg-1"
+      className="acp-share-card flex w-full min-w-0 flex-col overflow-hidden rounded-lg border border-conversation-line p-gap-half text-fg-1"
     >
       <div
         data-share-body
-        className="flex min-w-0 flex-col px-page pt-pad-y pb-gap"
+        className="acp-share-body flex min-w-0 flex-col rounded-md border p-pad"
       >
         {node ? <div ref={mountRef} className="flex min-w-0 flex-col" /> : children}
       </div>
       <div
         data-share-watermark
-        className="flex min-w-0 items-center justify-between gap-gap px-page pt-gap-half pb-pad text-4 text-fg-2 opacity-85 select-none"
+        className="flex min-w-0 items-center justify-between gap-gap px-pad pt-pad pb-gap text-4 text-fg-2 opacity-85 select-none"
       >
         <div className="flex min-w-0 items-center gap-chip-gap">
           <MarkSvg id="acpira" name="Acpira" className="size-icon shrink-0 translate-y-px text-fg-3" />
