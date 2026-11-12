@@ -1,7 +1,7 @@
 //! Permission and question cards of a session. A request lands a card in the owning transcript (root or a child's), the answer travels back through
 //! a oneshot; the agent withdrawing its request (the connection's cancel signal) closes the card
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
@@ -67,6 +67,9 @@ pub(crate) struct PermissionGate {
 #[derive(Default)]
 pub(crate) struct QuestionGate {
   pub pending: Vec<PendingQuestion>,
+  /// Summoned children's cards only their caller is asked about: the user is not, until that caller cannot answer
+  /// (`relay_escalate`)
+  pub callers: HashSet<String>,
   pub seq: u64,
   pub raw: crate::acp::transcript::questions::RawMemory,
 }
@@ -717,9 +720,11 @@ impl AcpSession {
   ) -> String {
     c.questions.seq += 1;
     let id = format!("q-{}", c.questions.seq);
-    // A summoned child's question goes to the agent that summoned it as well (`relay.rs`): the card says so
+    // A summoned child's question goes to the agent that summoned it, the user only once that one cannot answer
+    // (`relay_escalate`); the card says the caller was asked too
     let summoned = matches!(target, Target::Node(n) if c.tree.relay_thread_of(n).is_some());
     let message = if summoned {
+      c.questions.callers.insert(id.clone());
       c.relays.asked.send_modify(|n| *n += 1);
       Some(match message {
         Some(m) => format!("{m}\n\n{}", t("host.questionToCaller")),
@@ -818,7 +823,7 @@ impl AcpSession {
   }
 
   /// A summoned child's own question (`ask_caller`) as a card on its running round: it routes like any question of that
-  /// child, to its caller and to the user (`open_question`)
+  /// child, to its caller first (`open_question`)
   pub(crate) fn open_caller_question(&self, c: &mut Core, node: &str, questions: Vec<Question>) -> (oneshot::Receiver<Value>, String) {
     let target = Target::Node(node.to_owned());
     let block_id = self.open_question(c, &target, questions.clone(), None, None);
@@ -919,6 +924,7 @@ fn settle_question(
   answers: Option<&QuestionAnswers>,
   images: Option<BTreeMap<String, Vec<ImageRef>>>,
 ) {
+  c.questions.callers.remove(&p.block_id);
   let target = match &p.node_id {
     None => Target::Root,
     Some(id) => Target::Node(id.clone()),

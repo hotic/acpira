@@ -847,6 +847,27 @@ async fn a_root_call_returns_at_once_and_its_turns_replies_arrive_together_in_on
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_early_round_is_delivered_when_it_ends_and_names_the_rounds_of_its_batch_still_running() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  last_text(&run(&s, &roster, 0, AskArgs { early: Some(true), ..send_off("fake-review", "relay: quick look") }).await);
+  let (_, text) = last_text(&run(&s, &roster, 0, send_off("fake-worker", "relay: slow change")).await);
+  let slow = thread_of(&text);
+  // The racer's reply goes out while the batch still runs, and says who is still at it
+  until(|| deliveries(&s).len() == 1, 8000).await;
+  let first = deliveries(&s)[0]["text"].as_str().unwrap().to_owned();
+  assert!(first.contains("reply to relay: quick look") && !first.contains("reply to relay: slow change"), "{first}");
+  assert!(first.contains(&format!("Still running: Fake Worker (fake) (thread: {slow})")), "{first}");
+  // The rest of the batch follows on its own once it ends
+  until(|| deliveries(&s).len() == 2 && !s.is_running(), 8000).await;
+  let second = deliveries(&s)[1]["text"].as_str().unwrap().to_owned();
+  assert!(second.contains("reply to relay: slow change") && !second.contains("Still running"), "{second}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn retrying_a_delivery_that_failed_before_any_output_sends_the_same_replies_again() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
@@ -926,9 +947,11 @@ async fn a_waiting_call_answers_with_the_childs_question_and_the_caller_answers_
   let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", "relay: askme which")).await);
   assert!(ok && text.contains("is waiting for an answer") && text.contains("1. Colour: Which colour?") && text.contains("- Blue: calm"), "{text}");
   let thread = thread_of(&text);
-  // The user's card says the caller was asked as well
-  let card = nodes(&s)[0]["question"].clone();
-  assert!(card["message"].as_str().is_some_and(|m| m.contains("summoned it is asked too")), "{card}");
+  // Only the caller is asked: while it can answer the user is offered no card, the child's transcript holds it
+  assert!(nodes(&s)[0]["question"].is_null(), "{}", nodes(&s)[0]);
+  let id = nodes(&s)[0]["id"].as_str().unwrap().to_owned();
+  let turns = serde_json::to_string(&s.subagent_transcript(&id).unwrap().0).unwrap();
+  assert!(turns.contains("summoned it is asked too"), "{turns}");
   // Waiting again answers with the same question at once
   let (_, again) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "") }).await);
   assert!(again.contains("1. Colour: Which colour?"), "{again}");
@@ -951,10 +974,10 @@ async fn a_single_question_takes_the_prompt_as_its_answer_and_the_users_card_cou
   let thread = thread_of(&text);
   let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), ..ask("", "Blue") }).await);
   assert!(ok && text.contains(r#""q0":"Blue""#), "{text}");
-  // The user answers first: the caller is told the question is gone
+  // The user answers first (on a card that reached them): the caller is told the question is gone
   let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", "relay: askme two")).await);
   let thread = thread_of(&text);
-  let card = nodes(&s)[1]["question"].clone();
+  let card = open_card(&s, 1);
   let qid = card["questions"][0]["id"].as_str().unwrap().to_owned();
   let mut answers = serde_json::Map::new();
   answers.insert(qid, json!("Green"));
@@ -996,7 +1019,7 @@ async fn empty_answers_on_a_running_round_answer_nothing_and_a_prompt_still_answ
   // Empty answers and no prompt answer nothing: the call waits, which repeats the open question
   let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), answers: Some(vec![]), ..ask("", "") }).await);
   assert!(ok && text.contains("1. Colour: Which colour?"), "{text}");
-  assert!(nodes(&s)[0]["question"].is_object());
+  assert!(open_card(&s, 0).is_object());
   // With a prompt, the single question still takes it as its answer
   let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), answers: Some(vec![]), ..ask("", "Blue") }).await);
   assert!(ok && text.contains(r#""q0":"Blue""#), "{text}");
@@ -1022,8 +1045,9 @@ async fn an_idle_root_hears_a_childs_question_once_and_then_its_reply() {
   until(|| deliveries(&s).len() == 1 && !s.is_running(), 8000).await;
   let text = deliveries(&s)[0]["text"].as_str().unwrap().to_owned();
   assert!(text.contains("## Fake Worker (fake) asks") && text.contains("Which colour?"), "{text}");
-  // Answered on the card: the child finishes, and its reply is the next delivery (the question is not repeated)
-  let card = nodes(&s)[0]["question"].clone();
+  // The root ended the turn that told it without answering: the card goes to the user. Answered there, the child
+  // finishes, and its reply is the next delivery (the question is not repeated)
+  let card = question_card(&s, 0).await;
   let mut answers = serde_json::Map::new();
   answers.insert(card["questions"][0]["id"].as_str().unwrap().to_owned(), json!("Blue"));
   s.answer_questions(card["id"].as_str().unwrap(), &answers, false);
@@ -1032,7 +1056,16 @@ async fn an_idle_root_hears_a_childs_question_once_and_then_its_reply() {
   assert!(text.contains("reply to relay: askme later") && !text.contains("asks"), "{text}");
 }
 
-/// The node's open question card once it has one
+/// The node's open question card as its transcript holds it, whether the user is offered it yet or not
+fn open_card(s: &Disposing, i: usize) -> Value {
+  let id = nodes(s)[i]["id"].as_str().unwrap().to_owned();
+  let (turns, ..) = s.subagent_transcript(&id).unwrap();
+  let turns: Value = serde_json::from_str(turns.get()).unwrap();
+  let mut blocks = turns.as_array().unwrap().iter().flat_map(|t| t["blocks"].as_array().cloned().unwrap_or_default());
+  blocks.rfind(|b| b["type"] == "question" && b["outcome"].is_null()).unwrap_or_else(|| panic!("no open card: {turns}"))
+}
+
+/// The node's open question card once the user is offered it
 async fn question_card(s: &Disposing, i: usize) -> Value {
   until(|| nodes(s).get(i).is_some_and(|n| n["question"].is_object()), 8000).await;
   nodes(s)[i]["question"].clone()
@@ -1067,8 +1100,7 @@ async fn a_childs_ask_caller_goes_through_acpira_mcp_and_the_hub_to_the_waiting_
   let call = r#"mcp-call:ask_caller {"question":"Tabs or spaces?","options":["Tabs","Spaces"]}"#;
   let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", call)).await);
   assert!(ok && text.contains("is waiting for an answer") && text.contains("1. Tabs or spaces?") && text.contains("   - Spaces"), "{text}");
-  let card = nodes(&s)[0]["question"].clone();
-  assert!(card["message"].as_str().is_some_and(|m| m.contains("summoned it is asked too")), "{card}");
+  assert!(nodes(&s)[0]["question"].is_null(), "{}", nodes(&s)[0]);
   let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread_of(&text)), answers: Some(vec!["spaces".into()]), ..ask("", "") }).await);
   assert!(ok && text.contains("Answer: Spaces") && text.contains(r#""ask_caller""#), "{text}");
   expect_match(&nodes(&s)[0], json!({ "state": "completed" }));

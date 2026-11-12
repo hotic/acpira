@@ -197,7 +197,7 @@ impl AcpSession {
             }
           }
           c.relays.told.extend(asks.iter().map(|(_, b)| b.clone()));
-          let text = wake_text(&c, &nodes, &asks.into_iter().map(|(n, _)| n).collect::<Vec<_>>());
+          let text = wake_text(&c, Some(&r.thread), &nodes, &asks.into_iter().map(|(n, _)| n).collect::<Vec<_>>());
           sent += 1;
           c.relays.follow_ups.insert(r.thread.clone(), sent as usize);
           c.tree.relay_follow_up(&r.node, &text);

@@ -162,7 +162,13 @@ impl AcpSession {
       // turn
       if c.queue.entries.is_empty() {
         drop(c);
-        return self.relay_wake() || self.goal_wake();
+        if self.relay_wake() || self.goal_wake() {
+          return true;
+        }
+        // The root settled with nothing to start: a child's question it was told of and left, or cannot be told of,
+        // goes to the user
+        self.relay_escalate(true);
+        return false;
       }
       c.queue.sending_id = None;
       c.queue.entries.remove(0)

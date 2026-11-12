@@ -217,8 +217,8 @@ Acpira sends you its reply in a message when it is done. Do not poll, and do not
 }
 
 /// The automatic message delivering finished rounds (each one as a call would have read it, under its persona and
-/// thread) and the questions of rounds still running
-pub(super) fn wake_text(c: &Core, nodes: &[String], asking: &[String]) -> String {
+/// thread) and the questions of rounds still running; `owner` is the caller it goes to (None = the root)
+pub(super) fn wake_text(c: &Core, owner: Option<&str>, nodes: &[String], asking: &[String]) -> String {
   let mut parts = vec![];
   if !nodes.is_empty() {
     parts.push(if nodes.len() == 1 {
@@ -241,6 +241,20 @@ pub(super) fn wake_text(c: &Core, nodes: &[String], asking: &[String]) -> String
       _ => continue,
     };
     parts.push(format!("## {}\n\n{text}", who(&persona)));
+  }
+  // Delivered while other rounds it sent off still run (an `early` batch, or one sent in an earlier turn): the caller
+  // may stop what a reply made moot instead of waiting for it
+  let running: Vec<String> = c
+    .relays
+    .still_running(owner)
+    .iter()
+    .filter_map(|n| c.tree.relay_harness(n).map(|(h, name)| format!("{} (thread: {})", who(&node_persona(&h, name.as_deref())), h.thread)))
+    .collect();
+  if !nodes.is_empty() && !running.is_empty() {
+    parts.push(format!(
+      "Still running: {}. If a reply above settles what they were sent for, stop them (`stop` with the thread); otherwise their replies follow when they end.",
+      running.join(", ")
+    ));
   }
   parts.join("\n\n")
 }
@@ -268,7 +282,8 @@ pub(super) fn question_text(questions: &[acpira_shared::transcript::Question], t
     "pass `answers`, one entry per question in this order"
   };
   out.push(format!(
-    "Answer with ask_agent, thread {thread:?}: {how} (an option's label, or your own words). The user sees the same question and may answer first."
+    "Answer with ask_agent, thread {thread:?}: {how} (an option's label, or your own words). Only you are asked: decide it yourself when you can. When only the user can, \
+tell them and end your turn without answering; the question then goes to them."
   ));
   out.join("\n")
 }

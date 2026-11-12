@@ -38,8 +38,8 @@ takes no effect.";
 
 const CALLER_DESCRIPTION: &str = "Ask the agent that summoned you a question and wait for its answer. Use it only for a \
 decision that blocks you and that you cannot reasonably make yourself; one question at a time, short and self-contained, with \
-`options` when there are clear choices. The user sees the question too and may answer first. When no answer comes in time the \
-result says so: go on with the most reasonable assumption and state it in your final reply.";
+`options` when there are clear choices. The caller answers, and brings the user in when the decision is theirs. When no answer \
+comes in time the result says so: go on with the most reasonable assumption and state it in your final reply.";
 
 const BROWSER_DESCRIPTION: &str = "Open an http(s) page in a browser tab inside the user's editor, next to the chat. \
 Use it when the user asks to see a page or would clearly want to: a local dev server, a tool's web UI, a preview. \
@@ -138,7 +138,8 @@ the reviewer judges the change itself. A reply is advice: check each point again
 the user which points you rejected and why.\n\n\
 A new task answers at once with its thread while the agent works: carry on with other work or end your turn, and Acpira \
 sends you its reply in a message when it is done (several sent together come back together), so do not poll and do not do \
-the task yourself meanwhile. Set `wait` when you need the reply before going on; a call with a thread and an empty prompt \
+the task yourself meanwhile. Tasks that race each other (rival hypotheses of a diagnosis, say) take `early`: each reply \
+comes as soon as it is done, naming the ones still running, so you can stop those it makes moot. Set `wait` when you need the reply before going on; a call with a thread and an empty prompt \
 waits for that thread; `stop` with a thread stops it. To follow up with the same agent, pass the `thread` its answer named. A scout or an executor \
 continues its idle conversation in this session even without `thread` (set `new_thread` to start over); a reviewer starts \
 fresh on every call without `thread`, which keeps it independent.\n\n\
@@ -162,6 +163,7 @@ whose user switched this on get it without asking.\n\nAgents:\n{}{}",
         "mode": { "type": "string", "enum": ["consult", "work", "bypass"], "description": "Only for an agent marked \"follows your mode\": consult = read-only opinion; work = may edit files; bypass = edits without approval. Without it that agent takes your own current access. Every other agent always runs in the access its user set, whatever you pass." },
         "thread": { "type": "string", "description": "Continue the conversation an earlier answer named." },
         "new_thread": { "type": "boolean", "description": "Start a new conversation with a scout or an executor instead of continuing its idle one." },
+        "early": { "type": "boolean", "description": "A task sent off: deliver its reply as soon as it is done instead of with the rest sent in the same message. For tasks that race each other." },
         "wait": { "type": "boolean", "description": "Wait in this call for the reply (up to your tool timeout) instead of getting it in a message later." },
         "answers": { "type": "array", "items": { "type": "string" }, "description": "With `thread`, when that agent asks you something: one answer per question, in order (an option's label or your own words). Leave it out otherwise." },
         "changes": { "type": "boolean", "description": "Hand over your uncommitted changes (diff plus small changed files in full) with a new task." },

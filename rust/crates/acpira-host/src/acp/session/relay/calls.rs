@@ -348,6 +348,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     }
     let mut thread = args.thread.as_deref().map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
     let prompt = args.prompt.trim().to_owned();
+    let early = args.early == Some(true);
     // `answers` holding no answer counts as left out: a client that fills in every parameter (a strict schema) sends
     // `answers: []` with a plain follow-up, which must not read as an answer to a question nobody asked
     let answers = args.answers.as_deref().filter(|a| a.iter().any(|x| !x.trim().is_empty()));
@@ -478,7 +479,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
         None => turn_index,
         Some(th) => c.relays.follow_ups.get(th).copied().unwrap_or(0),
       };
-      c.relays.ledger.push(Owing { node: node.clone(), owner: caller.clone(), cohort, state: Owed::Running });
+      c.relays.ledger.push(Owing { node: node.clone(), owner: caller.clone(), cohort, state: Owed::Running, early });
       // Counted from here until its process is registered or ended, so a close right now still waits for it
       let starting = Starting::enter(&c.relays.starting);
       self.touch(&mut c);
