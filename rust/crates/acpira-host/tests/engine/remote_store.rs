@@ -167,14 +167,14 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
       store.flush(Arc::new(local)).await.unwrap();
     }
     connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
-    until("local identity retired", || !root.join("sessions").join(format!("{id}.json")).exists()).await;
+    until("local identity retired", || !crate::support::listed(&root.join("sessions"), id)).await;
     assert_eq!(host.load(id).await.unwrap().turns, remote.turns);
     assert!(std::fs::read_to_string(&remote_log).unwrap() == native);
     let tombs = read(&root.join("run/remote/gone.json")).unwrap_or(json!({}));
     assert!(!tombs.to_string().contains(id), "{tombs}");
     let list = store.load_index().await.unwrap();
     if diverged {
-      let branch = list.iter().find(|s| s.id != id && store.dir().join(format!("{}.json", s.id)).is_file()).unwrap();
+      let branch = list.iter().find(|s| s.id != id && crate::support::listed(store.dir(), &s.id)).unwrap();
       let saved = store.load(&branch.id).await.unwrap();
       assert!(saved.history_pending && saved.history_context && saved.acp_session_id.is_none());
       assert_eq!(saved.forked_from.unwrap().session_id, id);

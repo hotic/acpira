@@ -59,7 +59,7 @@ async fn a_session_deleted_in_one_manager_closes_its_read_only_copy_in_the_other
   a.new_session(None).await;
   a.handle(json!({ "type": "send", "text": "shared" })).await;
   let id = a.active_id().unwrap();
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   a.m.refresh_index().await;
   b.m.refresh_index().await;
   b.m.select_session_for(&b.v, &id).await;
@@ -71,18 +71,18 @@ async fn a_session_deleted_in_one_manager_closes_its_read_only_copy_in_the_other
   b.handle(json!({ "type": "renameSession", "id": id, "title": "renamed in B" })).await;
   assert!(b.toasts().iter().any(|t| t.contains("Another Acpira engine")), "{:?}", b.toasts());
   a.handle(json!({ "type": "deleteSession", "id": id })).await;
-  assert!(!dir.path().join(format!("{id}.json")).exists(), "A: {:?}", a.toasts());
+  assert!(!listed(dir.path(), &id), "A: {:?}", a.toasts());
   // B's next reconcile: the copy closed, the viewer moved on
   b.m.refresh_index().await;
-  assert!(!dir.path().join(format!("{id}.json")).exists());
-  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(!listed(dir.path(), &id));
+  assert!(trashed(dir.path(), &id));
   assert!(!b.session_ids().contains(&id));
   assert!(b.active_id().is_some_and(|x| x != id));
   assert!(b.toasts().iter().any(|t| t.contains("another window") || t.contains("另一个窗口")), "{:?}", b.toasts());
   // Undo in A: the record is back in both lists as a stored session; B does not reattach to it by itself
   a.handle(json!({ "type": "restoreSession", "id": id })).await;
   b.m.refresh_index().await;
-  assert!(dir.path().join(format!("{id}.json")).exists());
+  assert!(listed(dir.path(), &id));
   assert!(a.session_ids().contains(&id));
   assert!(b.session_ids().contains(&id));
   assert!(b.view_of(&id).is_none());
@@ -103,7 +103,7 @@ async fn deleting_a_session_held_by_another_engine_keeps_undo_in_the_requesting_
   a.new_session(None).await;
   a.handle(json!({ "type": "send", "text": "from the phone" })).await;
   let id = a.active_id().unwrap();
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   b.m.refresh_index().await;
   // Delete straight from the list without opening the session (and without changing the current conversation).
   b.new_session(None).await;
@@ -112,8 +112,8 @@ async fn deleting_a_session_held_by_another_engine_keeps_undo_in_the_requesting_
   b.handle(json!({ "type": "deleteSession", "id": id })).await;
   assert!(b.toasts().is_empty(), "{:?}", b.toasts());
   assert_eq!(b.active_id(), current);
-  assert!(!dir.path().join(format!("{id}.json")).exists());
-  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(!listed(dir.path(), &id));
+  assert!(trashed(dir.path(), &id));
   assert!(!b.session_ids().contains(&id));
   a.m.refresh_index().await;
   assert!(!a.session_ids().contains(&id));
@@ -121,10 +121,10 @@ async fn deleting_a_session_held_by_another_engine_keeps_undo_in_the_requesting_
   until(|| !a.m.leased().contains(&id), 3000).await;
   // The former owner may exit before the user clicks Undo; it must not own that undo timer.
   a.dispose().await;
-  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(trashed(dir.path(), &id));
   b.handle(json!({ "type": "restoreSession", "id": id })).await;
-  assert!(dir.path().join(format!("{id}.json")).exists());
-  assert!(!dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(listed(dir.path(), &id));
+  assert!(!trashed(dir.path(), &id));
   assert!(b.session_ids().contains(&id));
   assert_eq!(b.active_id(), current);
   let record = b.store.load(&id).await.unwrap();
@@ -154,7 +154,7 @@ async fn deleting_a_mirrored_running_session_stops_its_owner_and_restores_its_la
   a.new_session(None).await;
   a.handle(json!({ "type": "send", "text": "first" })).await;
   let id = a.active_id().unwrap();
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   let native_id = a.store.load(&id).await.unwrap().acp_session_id.unwrap();
   b.m.select_session_for(&b.v, &id).await;
   until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] == "ready"), 3000).await;
@@ -233,8 +233,8 @@ async fn a_bus_only_delete_keeps_its_entry_until_the_trash_and_undo_are_ready() 
   undo.await.unwrap();
   assert!(listed_before_commit, "a handover gap must not confirm deletion");
   assert!(undo_waited, "undo must not overtake the delete's commit");
-  assert!(dir.path().join(format!("{id}.json")).exists());
-  assert!(!dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(listed(dir.path(), &id));
+  assert!(!trashed(dir.path(), &id));
   assert!(b.toasts().is_empty(), "{:?}", b.toasts());
   a.dispose().await;
   b.dispose().await;
@@ -246,6 +246,8 @@ async fn a_bus_only_delete_keeps_its_entry_until_the_trash_and_undo_are_ready() 
 async fn deletion_waits_for_the_owners_final_save_to_succeed() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
+  // The record file is where the failure is injected: a store that keeps one
+  crate::support::with_stubs(dir.path());
   let a = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
   let b = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
   a.init().await;
@@ -317,14 +319,14 @@ async fn two_deleting_engines_do_not_steal_each_others_undo() {
   let completions = |m: &Mgr| m.events.lock().unwrap().iter().filter(|e| e["type"] == "deleteSessionResult").cloned().collect::<Vec<_>>();
   assert_eq!(completions(&b), [json!({ "type": "deleteSessionResult", "requestId": "first", "undo": true })]);
   assert_eq!(completions(&c), [json!({ "type": "deleteSessionResult", "requestId": "second", "undo": false })]);
-  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(trashed(dir.path(), &id));
   // B did the move. C must not own a timer whose shutdown would erase B's undo.
   c.dispose().await;
-  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(trashed(dir.path(), &id));
   b.m.restore_session(&id).await.unwrap();
   assert_eq!(b.store.load(&id).await.unwrap().turns.len(), 2);
   b.dispose().await;
-  assert!(dir.path().join(format!("{id}.json")).exists());
+  assert!(listed(dir.path(), &id));
   a.dispose().await;
 }
 
@@ -365,8 +367,8 @@ async fn a_delete_waits_for_an_inflight_open_and_never_recreates_the_record() {
   b.m.refresh_index().await;
   assert!(!b.session_ids().contains(&id));
   assert!(b.m.live_session(&id).is_none());
-  assert!(!dir.path().join(format!("{id}.json")).exists());
-  assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
+  assert!(!listed(dir.path(), &id));
+  assert!(trashed(dir.path(), &id));
   b.handle(json!({ "type": "restoreSession", "id": id })).await;
   assert_eq!(b.store.load(&id).await.unwrap().turns.len(), 2);
   b.dispose().await;
@@ -378,6 +380,8 @@ async fn a_delete_waits_for_an_inflight_open_and_never_recreates_the_record() {
 async fn a_failed_trash_or_restore_keeps_the_session_and_allows_retry() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
+  // The record file is where the failure is injected: a store that keeps one
+  crate::support::with_stubs(dir.path());
   let m = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
   m.init().await;
   m.new_session(None).await;
@@ -424,7 +428,7 @@ async fn a_session_open_in_one_manager_is_read_only_in_the_other_until_taken_ove
   a.new_session(None).await;
   a.handle(json!({ "type": "send", "text": "first" })).await;
   let id = a.active_id().unwrap();
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   a.m.refresh_index().await;
   b.m.refresh_index().await;
   // File links resolve against the session's folder before B opens it (the index) and on B's read-only copy
@@ -486,7 +490,7 @@ async fn a_session_another_engine_owns_streams_here_and_takes_actions_without_a_
   a.new_session(None).await;
   a.handle(json!({ "type": "send", "text": "first" })).await;
   let id = a.active_id().unwrap();
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   a.m.refresh_index().await;
   b.m.refresh_index().await;
 
@@ -553,7 +557,7 @@ async fn a_resent_client_id_runs_once_here_and_over_the_bus() {
   a.handle(send(&id, "c1")).await;
   until(|| a.active().is_some_and(|s| turns_in(&s) == 4 && s["running"] == false), 5000).await;
 
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   a.m.refresh_index().await;
   b.m.refresh_index().await;
   b.m.select_session_for(&b.v, &id).await;
@@ -585,7 +589,7 @@ async fn an_edit_from_an_engine_showing_another_engines_session_runs_in_the_owne
   a.handle(json!({ "type": "send", "text": "first" })).await;
   let id = a.active_id().unwrap();
   until(|| a.active().is_some_and(|s| turns_in(&s) == 2 && s["running"] == false), 5000).await;
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   a.m.refresh_index().await;
   b.m.refresh_index().await;
   b.m.select_session_for(&b.v, &id).await;
@@ -707,7 +711,7 @@ async fn an_unread_mark_is_shared_by_every_engine_and_outlives_them() {
   until(|| state(&b2) == "unread", 5000).await;
   // Looked at in that engine: read in A as well, and in the store
   until(|| b2.m.bus_connected(), 3000).await;
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   b2.m.select_session_for(&b2.v, &id).await;
   assert_eq!(state(&b2), Value::Null);
   until(|| state(&a) == Value::Null, 5000).await;
@@ -734,7 +738,7 @@ async fn a_subagent_of_a_session_another_engine_runs_streams_to_its_observer() {
   let c1 = |m: &Mgr| m.view_of(&sid).and_then(|x| x["subagents"].as_array().and_then(|n| n.iter().find(|n| n["peer"]["sessionId"] == "c1").cloned()));
   until(|| c1(&a).is_some_and(|n| n["permissions"].as_array().is_some_and(|p| !p.is_empty())), 8000).await;
   let c1id = c1(&a).unwrap()["id"].as_str().unwrap().to_owned();
-  until(|| dir.path().join(format!("{sid}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &sid), 3000).await;
   b.m.select_session_for(&b.v, &sid).await;
   until(|| b.active().is_some_and(|s| s["id"] == sid.as_str() && s["status"] != "readonly"), 3000).await;
   let subs = |m: &Mgr| m.events.lock().unwrap().iter().filter(|x| x["type"] == "subagent" && x["subagentId"] == c1id.as_str()).cloned().collect::<Vec<_>>();
@@ -772,7 +776,7 @@ async fn an_idle_session_no_window_shows_moves_to_the_engine_that_opens_it() {
   a.new_session(None).await;
   a.handle(json!({ "type": "send", "text": "first" })).await;
   let id = a.active_id().unwrap();
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   // A's window moves on; the session stays live (and leased) in A
   a.new_session(None).await;
   assert!(a.m.leased().contains(&id));
@@ -800,7 +804,7 @@ async fn a_lease_that_cannot_be_taken_refuses_turns_and_opens_stored_sessions_re
   m.new_session(None).await;
   m.handle(json!({ "type": "send", "text": "first" })).await;
   let id = m.active_id().unwrap();
-  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &id), 3000).await;
   m.dispose().await;
 
   // The lease directory's place is taken by a file
@@ -941,7 +945,7 @@ async fn storage_batch_delete_skips_a_session_another_engine_holds_and_says_why(
   b.new_session(None).await;
   b.handle(json!({ "type": "send", "text": "in B" })).await;
   let mine = b.active_id().unwrap();
-  until(|| dir.path().join(format!("{held}.json")).exists() && dir.path().join(format!("{mine}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &held) && listed(dir.path(), &mine), 3000).await;
   b.m.refresh_index().await;
 
   let view = b.m.storage_view(&[StorageDetail::Sessions]).await;
@@ -955,14 +959,14 @@ async fn storage_batch_delete_skips_a_session_another_engine_holds_and_says_why(
   assert_eq!(out.skipped.len(), 1);
   assert_eq!(out.skipped[0].id, held);
   assert!(out.skipped[0].reason.contains("Another Acpira engine"), "{:?}", out.skipped);
-  assert!(dir.path().join("trash").join(format!("{mine}.json")).exists());
-  assert!(dir.path().join(format!("{held}.json")).exists());
+  assert!(trashed(dir.path(), &mine));
+  assert!(listed(dir.path(), &held));
   let after = reply.view.sessions.unwrap();
   assert!(after.iter().all(|r| r.id != mine));
 
   let back = b.m.storage_action(StorageAction::RestoreSessions { ids: vec![mine.clone()] }, &[]).await;
   assert_eq!(back.outcome.unwrap().done, vec![mine.clone()]);
-  assert!(dir.path().join(format!("{mine}.json")).exists());
+  assert!(listed(dir.path(), &mine));
   a.dispose().await;
   b.dispose().await;
 }
@@ -986,7 +990,7 @@ async fn storage_slim_drops_diff_texts_and_leaves_open_sessions_alone() {
   a.new_session(None).await;
   a.handle(json!({ "type": "send", "text": "open here" })).await;
   let open = a.active_id().unwrap();
-  until(|| dir.path().join(format!("{open}.json")).exists(), 3000).await;
+  until(|| listed(dir.path(), &open), 3000).await;
   a.m.refresh_index().await;
 
   let view = a.m.storage_view(&[StorageDetail::Sessions, StorageDetail::Slim]).await;

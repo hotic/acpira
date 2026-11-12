@@ -18,7 +18,7 @@ use acpira_shared::protocol::WebviewMsg;
 use acpira_shared::settings::HiddenMap;
 
 use crate::fake_or_skip;
-use crate::support::{FakeAgent, expect_match, turns_in, until, v};
+use crate::support::{FakeAgent, expect_match, listed, trashed, turns_in, until, v};
 
 mod persistence;
 mod continuity;

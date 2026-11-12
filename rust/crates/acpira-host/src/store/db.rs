@@ -16,6 +16,10 @@ pub use body::{SaveCache, SaveStats, Saved};
 
 pub const DB_FILE: &str = "sessions.db";
 const SCHEMA_VERSION: u32 = 5;
+/// Set in `user_version` beside the schema on a store created with no record files: its sessions live in the database
+/// alone, with no compatibility file. An engine that predates the flag reads a newer schema and keeps away, so it never
+/// takes a body without a file for a deleted session
+const STUBLESS: u32 = 1 << 16;
 /// Free pages handed back per upkeep run, so the write lock is held for a moment only
 const VACUUM_PAGES: u32 = 4096;
 
@@ -58,6 +62,8 @@ pub struct SessionDb {
   path: PathBuf,
   writer: parking_lot::Mutex<Connection>,
   reader: parking_lot::Mutex<Connection>,
+  /// No compatibility files: the catalogue alone says which sessions exist and which wait in the trash
+  stubless: bool,
 }
 
 fn connect(path: &Path) -> Result<Connection> {
@@ -93,6 +99,16 @@ impl SessionDb {
   /// Open and migrate the store database. WAL is required: a filesystem that cannot provide it returns an error and the
   /// caller keeps using record files. A newer schema is likewise left untouched for the build that understands it.
   pub fn open(dir: &Path) -> Result<Self> {
+    Self::open_as(dir, false)
+  }
+
+  /// `open` for a store set up as an upgraded machine's: compatibility files whatever the directory holds
+  #[cfg(test)]
+  pub(crate) fn open_stubbed(dir: &Path) -> Result<Self> {
+    Self::open_as(dir, true)
+  }
+
+  fn open_as(dir: &Path, stubs: bool) -> Result<Self> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join(DB_FILE);
     let mut writer = connect(&path)?;
@@ -102,10 +118,15 @@ impl SessionDb {
     if !journal_mode.eq_ignore_ascii_case("wal") {
       return Err(anyhow!("{}: WAL unavailable (journal mode {journal_mode})", path.display()));
     }
-    migrate(&mut writer)?;
+    let stubless = migrate(&mut writer, dir, stubs)?;
     let reader = connect(&path)?;
     reader.execute_batch("PRAGMA query_only = ON;")?;
-    Ok(Self { path, writer: parking_lot::Mutex::new(writer), reader: parking_lot::Mutex::new(reader) })
+    Ok(Self { path, writer: parking_lot::Mutex::new(writer), reader: parking_lot::Mutex::new(reader), stubless })
+  }
+
+  /// Whether this store keeps no compatibility files (`STUBLESS`)
+  pub fn stubless(&self) -> bool {
+    self.stubless
   }
 
   /// Save a body from its pieces and mark it database-backed. `cache` is the caller's memory of this session's rows
@@ -218,11 +239,49 @@ impl SessionDb {
     Ok(statement.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?.max(0) as u64)))?.collect::<rusqlite::Result<Vec<_>>>()?)
   }
 
-  /// (id, revision) of every listed database body; the revision moves with every save that changed something
-  pub fn body_revisions(&self) -> Result<Vec<(String, u64)>> {
+  /// (id, revision, updatedAt) of every listed database body; the revision moves with every save that changed something
+  pub fn body_revisions(&self) -> Result<Vec<(String, u64, String)>> {
     let connection = self.reader.lock();
-    let mut statement = connection.prepare("SELECT id, revision FROM session WHERE body = 'db' AND trashed_at IS NULL")?;
-    Ok(statement.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?.max(0) as u64)))?.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut statement =
+      connection.prepare("SELECT id, revision, coalesce(json_extract(summary, '$.updatedAt'), '') FROM session WHERE body = 'db' AND trashed_at IS NULL")?;
+    Ok(statement.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?.max(0) as u64, row.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?)
+  }
+
+  /// A database body's revision; None for a session whose body is not here
+  pub fn body_revision(&self, id: &str) -> Result<Option<u64>> {
+    let connection = self.reader.lock();
+    let revision = connection.prepare("SELECT revision FROM session WHERE id = ?1 AND body = 'db'")?.query_row(params![id], |row| row.get::<_, i64>(0)).optional()?;
+    Ok(revision.map(|revision| revision.max(0) as u64))
+  }
+
+  /// Take a session out of the trash. False when it is not there (any more): a sweep removed it, or another engine
+  /// restored it first
+  pub fn untrash(&self, id: &str) -> Result<bool> {
+    Ok(self.writer.lock().execute("UPDATE session SET trashed_at = NULL WHERE id = ?1 AND trashed_at IS NOT NULL", params![id])? > 0)
+  }
+
+  /// Listed database bodies' summaries, from a reconcile. A row trashed or removed since that reconcile's snapshot is
+  /// left as it is: the snapshot never undoes a delete
+  pub fn set_listed_summaries(&self, summaries: &[SessionSummary]) -> Result<()> {
+    if summaries.is_empty() {
+      return Ok(());
+    }
+    let mut connection = self.writer.lock();
+    let tx = connection.transaction()?;
+    {
+      let mut update = tx.prepare("UPDATE session SET summary = ?2 WHERE id = ?1 AND body = 'db' AND trashed_at IS NULL")?;
+      for summary in summaries {
+        update.execute(params![summary.id, serde_json::to_string(summary)?])?;
+      }
+    }
+    tx.commit()?;
+    Ok(())
+  }
+
+  /// Remove a session that has waited in the trash since `cutoff` or earlier. False when it is not (any more): an undo
+  /// in another engine between the listing and this call keeps it
+  pub fn delete_trashed(&self, id: &str, cutoff: i64) -> Result<bool> {
+    Ok(self.writer.lock().execute("DELETE FROM session WHERE id = ?1 AND trashed_at IS NOT NULL AND trashed_at <= ?2", params![id, cutoff])? > 0)
   }
 
   pub fn entry(&self, id: &str) -> Result<Option<CatalogEntry>> {
@@ -266,24 +325,40 @@ impl SessionDb {
   }
 }
 
-fn migrate(connection: &mut Connection) -> Result<()> {
-  let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+/// Whether `dir` (or its trash) holds a record file: sessions written before this database, which keep their stubs
+fn has_records(dir: &Path) -> bool {
+  [dir.to_path_buf(), dir.join("trash")].iter().any(|dir| {
+    std::fs::read_dir(dir).into_iter().flatten().flatten().any(|entry| {
+      let name = entry.file_name();
+      name.to_str().and_then(|name| name.strip_suffix(".json")).is_some_and(acpira_shared::session_links::is_session_id)
+    })
+  })
+}
+
+/// Bring the schema up to date; returns whether the store is `STUBLESS`. Decided once, under the migration lock when the
+/// schema is first written (two engines opening a new store at once agree): a directory that already holds records keeps
+/// their stubs for good. `stubs` keeps them regardless
+fn migrate(connection: &mut Connection, dir: &Path, stubs: bool) -> Result<bool> {
+  let raw: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+  let version = raw & !STUBLESS;
   if version > SCHEMA_VERSION {
     return Err(anyhow!("database schema {version} is newer than supported schema {SCHEMA_VERSION}"));
   }
   if version == SCHEMA_VERSION {
-    return Ok(());
+    return Ok(raw & STUBLESS != 0);
   }
   // Serialize migrations, then re-read the version: another engine may have just applied the same additive steps.
   let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-  let version: u32 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+  let raw: u32 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+  let version = raw & !STUBLESS;
   if version > SCHEMA_VERSION {
     return Err(anyhow!("database schema {version} became newer than supported schema {SCHEMA_VERSION}"));
   }
   if version == SCHEMA_VERSION {
     tx.commit()?;
-    return Ok(());
+    return Ok(raw & STUBLESS != 0);
   }
+  let stubless = raw & STUBLESS != 0 || (version == 0 && !stubs && !has_records(dir));
   if version < 2 {
     // Concurrent first runs may both have read the old version; IF NOT EXISTS makes the additive migration idempotent.
     tx.execute_batch(
@@ -319,9 +394,9 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     // Counts the saves that changed a body: what a reader keeping its own copy (the search) compares against
     tx.execute_batch("ALTER TABLE session ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;")?;
   }
-  tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+  tx.pragma_update(None, "user_version", SCHEMA_VERSION | if stubless { STUBLESS } else { 0 })?;
   tx.commit()?;
-  Ok(())
+  Ok(stubless)
 }
 
 #[cfg(test)]
@@ -339,7 +414,50 @@ mod tests {
     let mode: String = connection.query_row("PRAGMA journal_mode", [], |row| row.get(0)).unwrap();
     let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
     assert_eq!(mode.to_ascii_lowercase(), "wal");
-    assert_eq!(version, SCHEMA_VERSION);
+    assert_eq!(version, SCHEMA_VERSION | STUBLESS);
+    assert!(db.stubless(), "an empty directory starts without compatibility files");
+  }
+
+  #[test]
+  fn a_directory_with_records_keeps_its_stubs_and_an_older_engine_refuses_a_stubless_one() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("trash")).unwrap();
+    std::fs::write(root.path().join("trash").join("old.json"), b"{}").unwrap();
+    assert!(!SessionDb::open(root.path()).unwrap().stubless(), "a trashed record counts");
+    std::fs::remove_file(root.path().join("trash").join("old.json")).unwrap();
+    assert!(!SessionDb::open(root.path()).unwrap().stubless(), "decided when the database is created, for good");
+
+    let fresh = tempfile::tempdir().unwrap();
+    drop(SessionDb::open(fresh.path()).unwrap());
+    assert!(SessionDb::open(fresh.path()).unwrap().stubless(), "the flag survives a reopen");
+    let raw: u32 = Connection::open(fresh.path().join(DB_FILE)).unwrap().query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+    assert!(raw > SCHEMA_VERSION, "an engine before the flag reads a newer schema and keeps away");
+
+    // Another engine created the file a moment ago and has not written the schema yet: still a new store
+    let racing = tempfile::tempdir().unwrap();
+    drop(Connection::open(racing.path().join(DB_FILE)).unwrap());
+    assert!(SessionDb::open(racing.path()).unwrap().stubless());
+  }
+
+  #[test]
+  fn a_trashed_row_outlives_a_stale_reconcile_and_a_restore_beats_the_sweep() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SessionDb::open(root.path()).unwrap();
+    let record: SessionRecord = serde_json::from_value(json!({ "id": "s", "agent": "claude", "cwd": "/w", "title": "old", "updatedAt": "1", "turns": [] })).unwrap();
+    db.save_record(&record).unwrap();
+    let mut summary = record.summary();
+    db.set_trashed("s", Some(10)).unwrap();
+    summary.title = "from a snapshot".into();
+    db.set_listed_summaries(&[summary]).unwrap();
+    let entry = db.entry("s").unwrap().unwrap();
+    assert_eq!((entry.summary.title.as_str(), entry.trashed_at), ("old", Some(10)), "a snapshot never undoes a delete");
+    assert!(db.untrash("s").unwrap());
+    assert!(!db.untrash("s").unwrap(), "already out");
+    assert!(!db.delete_trashed("s", i64::MAX).unwrap(), "a restored row is not swept");
+    db.set_trashed("s", Some(10)).unwrap();
+    assert!(!db.delete_trashed("s", 9).unwrap(), "still in its window");
+    assert!(db.delete_trashed("s", 10).unwrap());
+    assert!(db.entry("s").unwrap().is_none());
   }
 
   #[test]

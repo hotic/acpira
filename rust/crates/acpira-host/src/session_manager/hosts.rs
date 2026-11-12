@@ -623,7 +623,7 @@ impl SessionManager {
       return None;
     }
     // A record here that the index has not caught up with yet (another window's) is this machine's too
-    if tokio::fs::try_exists(self.deps.store.dir().join(format!("{id}.json"))).await.unwrap_or(false) {
+    if self.deps.store.has_record(id).await {
       return None;
     }
     let run = match self.host_of(id) {

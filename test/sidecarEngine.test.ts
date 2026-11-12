@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { HostMsg } from '@acpira/shared/protocol';
 import type { AgentTurn, SessionView } from '@acpira/shared/transcript';
@@ -42,6 +43,18 @@ function command(home: string): SidecarCommand {
     env: { ACPIRA_HOME: '', ACPIRA_CATALOG_REFRESH: '0', ACPIRA_LOGIN_PATH: '0' },
     label: 'rust',
   };
+}
+
+// A session record is on disk as its file, or (a store created with no record files) as its row in sessions.db
+function stored(home: string, id: string): boolean {
+  const dir = join(home, 'sessions');
+  if (existsSync(join(dir, `${id}.json`))) return true;
+  if (!existsSync(join(dir, 'sessions.db'))) return false;
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(join(dir, 'sessions.db'), { readOnly: true });
+    return !!db.prepare("SELECT 1 FROM session WHERE id = ? AND body = 'db'").get(id);
+  } catch { return false; } finally { db?.close(); }
 }
 
 class View implements ShellView {
@@ -168,7 +181,7 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     a.send('A', { type: 'send', sessionId: id, text: 'slow' });
     await va.session(s => s.running && textOf(s).includes(' 2 '));
     // The record is on disk once A's debounced save ran: what a second engine opens
-    await expect.poll(() => existsSync(join(home, 'sessions', `${id}.json`)), { timeout: 5000 }).toBe(true);
+    await expect.poll(() => stored(home, id), { timeout: 5000 }).toBe(true);
 
     const b = client(engineEndpoint({ binary: SIDECAR, home, cwd: cwdB }), cwdB, home, [], agentEnv);
     const vb = new View('B', id);
@@ -207,7 +220,7 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     a.send('A', { type: 'send', sessionId: id, text: 'hi' });
     await expect.poll(() => pa.held && !pa.held.running && lastAgent(pa.held)?.stop, { timeout: 20_000 }).toBe('end_turn');
     expect(pa.held!.rev).toBeGreaterThan(0);
-    await expect.poll(() => existsSync(join(home, 'sessions', `${id}.json`)), { timeout: 5000 }).toBe(true);
+    await expect.poll(() => stored(home, id), { timeout: 5000 }).toBe(true);
 
     // A shows the session, so B follows A's pushed view and takes it over
     const b = client(engineEndpoint({ binary: SIDECAR, home, cwd: cwdB }), cwdB, home, [], agentEnv);
@@ -242,7 +255,7 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     const id = (await v.session(s => s.status === 'ready')).id;
     old.send('V', { type: 'send', sessionId: id, text: 'hi' });
     await v.session(s => !s.running && lastAgent(s)?.stop === 'end_turn');
-    await expect.poll(() => existsSync(join(home, 'sessions', `${id}.json`)), { timeout: 5000 }).toBe(true);
+    await expect.poll(() => stored(home, id), { timeout: 5000 }).toBe(true);
     const oldPid = pidOf(oldLogs);
     await old.dispose();
 

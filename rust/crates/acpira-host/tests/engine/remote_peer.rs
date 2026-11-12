@@ -594,7 +594,7 @@ async fn switching_agents_replaces_an_empty_host_session() {
   let m = crate::session_manager::Mgr::new(dir.path(), opts);
   m.init().await;
 
-  let mut previous = None;
+  let mut previous: Option<String> = None;
   for agent in ["fake", "fake2", "fake", "fake2"] {
     m.handle(json!({ "type": "newSession", "agent": agent, "cwd": folder })).await;
     wait(&m, "the selected agent on the host", 30_000, || m.active().is_some_and(|v| v["agent"] == agent && v["status"] == "ready")).await;
@@ -602,7 +602,7 @@ async fn switching_agents_replaces_an_empty_host_session() {
     wait(&m, "the new host entry", 15_000, || m.session_ids().contains(&id)).await;
     assert_eq!(m.session_ids(), [id.clone()], "switching agents must not accumulate empty sessions");
     if let Some(old) = previous {
-      assert!(!home.join("sessions").join(format!("{old}.json")).exists(), "the empty record is removed on the host");
+      assert!(!crate::support::listed(&home.join("sessions"), old.as_str()), "the empty record is removed on the host");
     }
     previous = Some(id);
   }
@@ -626,7 +626,7 @@ async fn switching_agents_replaces_an_empty_host_session() {
   m.handle(json!({ "type": "newSession", "agent": "fake2", "cwd": folder })).await;
   wait(&m, "the next agent", 30_000, || m.active().is_some_and(|v| v["agent"] == "fake2" && v["status"] == "ready")).await;
   assert!(m.session_ids().contains(&used));
-  assert!(home.join("sessions").join(format!("{used}.json")).exists());
+  assert!(crate::support::listed(&home.join("sessions"), &used));
   assert!(!m.logs().iter().any(|l| l.contains("out of step")), "{:?}", m.logs());
   m.dispose().await;
   connections.dispose();

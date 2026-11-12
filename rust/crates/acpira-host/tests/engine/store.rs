@@ -23,7 +23,11 @@ fn summary(id: &str, title: &str) -> SessionSummary {
 
 type Logs = Arc<Mutex<Vec<String>>>;
 
+/// These cases pin the record-file layout of a store that keeps compatibility files (`with_stubs`)
 fn store_at(dir: &Path, logs: &Logs) -> Arc<TranscriptStore> {
+  if !dir.join(acpira_host::store::db::DB_FILE).exists() {
+    crate::support::with_stubs(dir);
+  }
   let l = logs.clone();
   TranscriptStore::new(dir.to_path_buf(), Arc::new(move |x: &str| l.lock().unwrap().push(x.to_owned())), None)
 }
@@ -436,6 +440,7 @@ async fn a_session_directory_symlinked_out_of_the_store_is_never_followed() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_of_saves_still_flushes_within_the_max_wait() {
   let dir = tempfile::tempdir().unwrap();
+  crate::support::with_stubs(dir.path());
   let store = TranscriptStore::with_timing(dir.path().to_path_buf(), Arc::new(|_: &str| {}), None, Duration::from_secs(10), Duration::from_millis(80));
   store.save(record("a", "v1"));
   sleep(25).await;

@@ -311,10 +311,6 @@ impl SessionManager {
     }
   }
 
-  fn record_path(&self, id: &str) -> std::path::PathBuf {
-    self.deps.store.dir().join(format!("{id}.json"))
-  }
-
   /// Show `record` read-only to the viewers on `id` and poll: the copy follows the record the other engine keeps saving,
   /// and once its lease comes free the session opens here like any other (the viewers re-select it)
   pub(super) fn start_mirror(self: &Arc<Self>, id: &str, record: SessionRecord, note: String, elsewhere: bool) {
@@ -446,7 +442,7 @@ impl SessionManager {
         }
         // Re-read only when the other engine saved since the last look (or its pushed view just ended)
         let forced = m.state.lock().refresh.remove(&id);
-        let stamp = tokio::fs::metadata(m.record_path(&id)).await.and_then(|md| md.modified()).ok();
+        let stamp = m.deps.store.record_stamp(&id).await;
         if stamp.is_none() || (stamp == seen && !forced) {
           continue;
         }

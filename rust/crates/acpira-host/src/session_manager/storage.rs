@@ -48,7 +48,8 @@ fn stamp(path: &Path) -> Option<Stamp> {
 /// texts would free: the record as it is minus the record written the way a page gets it. Blocking
 fn facts(store: &TranscriptStore, id: &str, slim: bool) -> Facts {
   let path = store.dir().join(format!("{id}.json"));
-  let Some(stamp) = stamp(&path) else { return Facts::default() };
+  // A stubless body has no file: its revision stands in for the stamp
+  let Some(stamp) = stamp(&path).or_else(|| store.body_revision(id).map(|revision| (revision, None))) else { return Facts::default() };
   if let Some((s, f)) = FACTS.lock().get(&path).copied()
     && s == stamp
     && (!slim || f.slim.is_some())
@@ -101,11 +102,12 @@ impl SessionManager {
     let store = self.deps.store.clone();
     let body: crate::store::storage::BodyText = Arc::new(move |id| store.body_text(id, false));
     let body_sizes = self.deps.store.body_sizes().await;
-    let input = ScanInput { root: self.data_root(), sessions_dir: self.deps.store.dir().to_path_buf(), sessions, body: Some(body), body_sizes, now: SystemTime::now() };
+    let trashed = self.deps.store.trashed_summaries().await;
+    let input = ScanInput { root: self.data_root(), sessions_dir: self.deps.store.dir().to_path_buf(), sessions, body: Some(body), body_sizes, trashed, now: SystemTime::now() };
     let fallback = (input.root.clone(), input.sessions_dir.clone());
     tokio::task::spawn_blocking(move || scan(&input))
       .await
-      .unwrap_or_else(|_| scan(&ScanInput { root: fallback.0, sessions_dir: fallback.1, sessions: vec![], body: None, body_sizes: HashMap::new(), now: SystemTime::now() }))
+      .unwrap_or_else(|_| scan(&ScanInput { root: fallback.0, sessions_dir: fallback.1, sessions: vec![], body: None, body_sizes: HashMap::new(), trashed: vec![], now: SystemTime::now() }))
   }
 
   /// Why this session cannot be picked right now
