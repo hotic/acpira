@@ -1,5 +1,5 @@
 import { createContext, Fragment, useContext, useState, type ReactNode } from 'react';
-import { ChartNoAxesColumn, Check, Copy, GitBranch, Share } from 'lucide-react';
+import { ChartNoAxesColumn, Check, Copy, GitBranch, ImageIcon } from 'lucide-react';
 import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
@@ -85,7 +85,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
             if (msg) ctx?.share?.(turnIndex, msg);
           }}
         >
-          <Share strokeWidth={1.5} />
+          <ImageIcon strokeWidth={1.5} />
         </IconButton>
       )}
       {stats && <Popover.Root open={statsOpen} onOpenChange={setStatsOpen}>

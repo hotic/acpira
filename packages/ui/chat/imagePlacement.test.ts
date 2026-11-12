@@ -70,8 +70,8 @@ describe('image results in the shared process fold', () => {
     expect(markup).toContain('preload="metadata"');
     expect(markup).not.toContain('autoPlay');
     expect(markup).not.toContain('<img ');
-    // No video source before IntersectionObserver admits the card to the viewport.
-    expect(markup).not.toContain('src="/test-images/recording.mp4"');
+    // No video source before IntersectionObserver admits the card to the viewport (`data-share-src` is not one).
+    expect(markup).not.toContain(' src="/test-images/recording.mp4"');
   });
 
   it('retains chronological images in cursor mode', () => {

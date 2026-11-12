@@ -76,7 +76,7 @@ export function ShareCard({ ref, meta, node, children }: {
   );
 }
 
-// Frameless screenshot overlay: only the rendered PNG itself floats over the scrim with a brief shutter flash;
+// Frameless screenshot overlay: only the rendered PNG itself floats over the scrim, scaled to fit whole;
 // right-clicking opens the shell's context menu with Copy image and Save image.
 export function SharePreviewDialog({ payload, onClose }: {
   payload: SharePayload;
@@ -100,19 +100,25 @@ export function SharePreviewDialog({ payload, onClose }: {
     return job;
   }, []);
 
+  // The card lays out off-stage; only the finished PNG is shown, decoded before it mounts so it lands in one frame
+  // instead of swapping a live card for a blank-then-painted image
   useEffect(() => {
     let cancelled = false;
     pngCache.current = undefined;
     setRenderedImg(undefined);
     const raf = requestAnimationFrame(() => {
-      const el = cardRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const width = Math.max(1, el.offsetWidth || Math.ceil(rect.width));
-      const height = Math.max(1, el.offsetHeight || Math.ceil(rect.height));
       void ensurePng()
         .then(blobToDataUrl)
-        .then(src => { if (!cancelled) setRenderedImg({ src, width, height }); })
+        .then(async src => {
+          const probe = new Image();
+          probe.src = src;
+          await probe.decode().catch(() => {});
+          // Measured once the capture is done: video frames and widget snapshots land in the card while it runs
+          const el = cardRef.current;
+          if (cancelled || !el) return;
+          const rect = el.getBoundingClientRect();
+          setRenderedImg({ src, width: Math.max(1, el.offsetWidth || Math.ceil(rect.width)), height: Math.max(1, el.offsetHeight || Math.ceil(rect.height)) });
+        })
         .catch(() => {});
     });
     return () => {
@@ -153,29 +159,32 @@ export function SharePreviewDialog({ payload, onClose }: {
           onClick={onClose}
           className="absolute inset-0 z-40 flex items-center justify-center overflow-hidden bg-scrim p-page backdrop-blur-xs"
         >
+          {/* Capture source: laid out at the chat column width but never painted */}
+          <div aria-hidden className="pointer-events-none invisible absolute inset-0 flex items-center justify-center p-page">
+            <div className="w-chat-column max-w-full">
+              <ShareCard ref={cardRef} meta={payload.meta} node={payload.node} />
+            </div>
+          </div>
           <ContextMenu.Root>
-            <ContextMenu.Trigger
-              render={
-                <div
-                  data-share-dialog
-                  onClick={e => e.stopPropagation()}
-                  className="acp-share-stage scroll-thin relative max-h-(--lightbox-max-h) w-chat-column max-w-full overflow-y-auto rounded-lg shadow-pop"
-                />
-              }
-            >
-              {renderedImg ? (
-                <img
-                  data-share-image
-                  src={renderedImg.src}
-                  width={renderedImg.width}
-                  height={renderedImg.height}
-                  alt={payload.meta.sessionTitle}
-                  className="block h-auto w-full rounded-lg"
-                />
-              ) : (
-                <ShareCard ref={cardRef} meta={payload.meta} node={payload.node} />
-              )}
-            </ContextMenu.Trigger>
+            {renderedImg && (
+              <ContextMenu.Trigger
+                render={
+                  <img
+                    data-share-dialog
+                    data-share-image
+                    src={renderedImg.src}
+                    width={renderedImg.width}
+                    height={renderedImg.height}
+                    alt={payload.meta.sessionTitle}
+                    draggable={false}
+                    onClick={e => e.stopPropagation()}
+                    // Shown whole: at most the card's own width, scaled down (ratio kept) when taller than the stage
+                    style={{ maxWidth: `min(100%, ${renderedImg.width}px)` }}
+                    className="acp-share-stage block h-auto max-h-full w-auto shrink-0 rounded-lg shadow-pop select-none"
+                  />
+                }
+              />
+            )}
             <ContextMenu.Portal container={layer?.current ?? undefined}>
               <ContextMenu.Positioner className={positionerClass} collisionAvoidance={contextMenuCollision} collisionBoundary={layer?.current ?? undefined}>
                 <ContextMenu.Popup finalFocus={false} className={popupClass} onClick={e => e.stopPropagation()}>

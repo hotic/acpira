@@ -42,6 +42,14 @@ describe('buildWidgetDoc', () => {
     expect(doc).toMatch(/^<!doctype html><html class="dark">/);
   });
 
+  // The bootstrap lives in a template literal, where a single-backslash escape turns into a raw newline inside a JS string:
+  // a frame whose bootstrap fails to parse never reports its height and stays invisible
+  it('ships a bootstrap that parses', () => {
+    const bootstrap = /<script nonce="N0nce">([\s\S]*?)<\/script>/.exec(build('<p>x</p>'))?.[1];
+    expect(bootstrap).toBeDefined();
+    expect(() => new Function(bootstrap!)).not.toThrow();
+  });
+
   it('keeps an inlined script from ending its own tag', () => {
     const doc = build('<p>x</p>', 'const s = "</script><img src=x>";');
     expect(doc).toContain('const s = "<\\/script><img src=x>";');

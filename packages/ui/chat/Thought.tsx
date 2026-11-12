@@ -23,7 +23,8 @@ export const Thought = memo(function Thought({ block }: { block: ThoughtBlock })
   const fold = useAutoFold();
   return (
     <EntranceOnce id={`thought:${block.startedAt ?? ''}`}>
-      <Disclosure className="action-details" tone="action" lead={lead} open={fold?.open} onToggle={fold?.onToggle} body={<ThoughtBody block={block} />}>
+      {/* `thought-row`: reply screenshots leave reasoning out (shareCapture.ts) */}
+      <Disclosure className="action-details thought-row" tone="action" lead={lead} open={fold?.open} onToggle={fold?.onToggle} body={<ThoughtBody block={block} />}>
         <Shimmer active={live}>
           {live ? t('host.thinking') : t('thought.label')}
         </Shimmer>

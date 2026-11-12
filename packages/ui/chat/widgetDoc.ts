@@ -60,8 +60,11 @@ export const WIDGET_MESSAGE = 'acpiraWidget';
 // The longest text `acpira.sendPrompt` takes from a widget; longer is refused in the frame and dropped by the page
 export const WIDGET_PROMPT_MAX = 20_000;
 // `prompt`: the widget's `acpira.sendPrompt(text)`, sent as the user's next message (AgentWidget.tsx checks it came from a click)
-export type WidgetFrameMsg = { [WIDGET_MESSAGE]: 'height'; height: number } | { [WIDGET_MESSAGE]: 'prompt'; text: string };
-export type WidgetPageMsg = { [WIDGET_MESSAGE]: 'theme' } & WidgetTheme;
+// `snapshot`: a screenshot of the reply asks the page to draw itself (the sandbox keeps the frame unreadable from outside);
+// it answers with a PNG data URL, or null when it could not draw
+export type WidgetFrameMsg = { [WIDGET_MESSAGE]: 'height'; height: number } | { [WIDGET_MESSAGE]: 'prompt'; text: string }
+  | { [WIDGET_MESSAGE]: 'snapshot'; id: string; png: string | null };
+export type WidgetPageMsg = ({ [WIDGET_MESSAGE]: 'theme' } & WidgetTheme) | { [WIDGET_MESSAGE]: 'snapshot'; id: string; dpr: number };
 
 // Runs first in the frame. It reports the content height (the page sizes the frame to it), applies theme updates, and
 // turns inline event handlers into nonce'd scripts: `onclick="…"` attributes are blocked by the CSP, so each one is
@@ -123,8 +126,76 @@ const BOOTSTRAP = `(function () {
     root.classList.toggle('dark', !!t.dark);
     root.style.colorScheme = t.dark ? 'dark' : 'light';
   }
+  // The page drawn the way the reply screenshot draws the transcript: a clone with its live state (form values, canvas
+  // pixels) and every stylesheet, as an SVG foreignObject on a canvas. Nested images are decoded first and the canvas is
+  // drawn twice, since WebKit paints images it has not decoded yet blank on the first draw
+  var lastSnapshot;
+  function snapshot(id, dpr) {
+    function send(png) { parent.postMessage({ [KEY]: 'snapshot', id: id, png: png }, '*'); }
+    try {
+      var de = document.documentElement, w = Math.max(1, de.clientWidth), h = Math.max(1, Math.ceil(de.getBoundingClientRect().height));
+      var clone = de.cloneNode(true), sel = 'input, textarea, select, canvas';
+      var from = de.querySelectorAll(sel), to = clone.querySelectorAll(sel), i, j;
+      for (i = 0; i < from.length; i++) {
+        var a = from[i], b = to[i];
+        if (!b) continue;
+        if (a.tagName === 'CANVAS') {
+          try {
+            var im = document.createElement('img');
+            im.src = a.toDataURL('image/png');
+            im.className = a.className;
+            im.style.cssText = a.style.cssText + ';width:' + a.clientWidth + 'px;height:' + a.clientHeight + 'px';
+            b.parentNode.replaceChild(im, b);
+          } catch (err) {}
+        } else if (a.tagName === 'TEXTAREA') b.textContent = a.value;
+        else if (a.tagName === 'SELECT') { for (j = 0; j < a.options.length; j++) b.options[j].toggleAttribute('selected', a.options[j].selected); }
+        else if (a.type === 'checkbox' || a.type === 'radio') b.toggleAttribute('checked', a.checked);
+        else b.setAttribute('value', a.value);
+      }
+      var css = '';
+      for (i = 0; i < document.styleSheets.length; i++) {
+        try { var rules = document.styleSheets[i].cssRules; for (j = 0; j < rules.length; j++) css += rules[j].cssText + '\\n'; } catch (err) {}
+      }
+      var drop = clone.querySelectorAll('script, style, link, meta');
+      for (i = 0; i < drop.length; i++) drop[i].remove();
+      var style = document.createElement('style');
+      style.textContent = css;
+      clone.insertBefore(style, clone.firstChild);
+      clone.style.width = w + 'px';
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><foreignObject width="100%" height="100%">' +
+        new XMLSerializer().serializeToString(clone) + '</foreignObject></svg>';
+      var nested = [], imgs = clone.querySelectorAll('img');
+      for (i = 0; i < imgs.length; i++) {
+        var src = imgs[i].getAttribute('src') || '';
+        if (src.indexOf('data:') === 0) { var p = new Image(); p.src = src; nested.push(p.decode().catch(function () {})); }
+      }
+      Promise.all(nested).then(function () {
+        var img = new Image();
+        img.onerror = function () { send(null); };
+        img.onload = function () {
+          var c = document.createElement('canvas'), g = c.getContext('2d');
+          c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+          g.scale(dpr, dpr);
+          g.drawImage(img, 0, 0, w, h);
+          setTimeout(function () {
+            try { g.clearRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h); send(c.toDataURL('image/png')); } catch (err) { send(null); }
+          }, 32);
+        };
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      });
+    } catch (err) { send(null); }
+  }
   addEventListener('message', function (e) {
-    if (e.source === parent && e.data && e.data[KEY] === 'theme') theme(e.data);
+    if (e.source !== parent || !e.data) return;
+    if (e.data[KEY] === 'theme') theme(e.data);
+    else if (e.data[KEY] === 'snapshot') {
+      // The page repeats the ask until it hears back: one drawing per ask, made once the page has loaded and styled
+      var id = String(e.data.id), dpr = Math.min(Math.max(Number(e.data.dpr) || 1, 1), 3);
+      if (id === lastSnapshot) return;
+      lastSnapshot = id;
+      if (document.readyState === 'complete') snapshot(id, dpr);
+      else addEventListener('load', function () { snapshot(id, dpr); }, { once: true });
+    }
   });
   addEventListener('click', function (e) {
     var a = e.target && e.target.closest && e.target.closest('a[href]');

@@ -1,8 +1,16 @@
 // DOM cloning and SVG foreignObject rasterization for message and selection screenshots.
 // Keeps zero runtime dependencies and respects the webview CSP (`img-src data:` allowed, `blob:` disallowed).
 
+import { WIDGET_MESSAGE } from './widgetDoc';
+
 const MAX_CANVAS_PIXELS = 16_000_000;
 const TARGET_DPR = 2;
+// How long one video frame or widget snapshot may take before the capture goes ahead without it
+const MEDIA_TIMEOUT_MS = 5_000;
+const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+// Stand-in <img>s whose pixels are still being read (a video's first frame, a widget's snapshot); the capture waits on them
+const pendingMedia = new WeakMap<HTMLImageElement, Promise<void>>();
 
 // Cache inlined @font-face data URLs across captures so repeated shares do not re-fetch font files
 const fontDataCache = new Map<string, Promise<string>>();
@@ -108,7 +116,9 @@ export function cloneSelectionContent(range: Range): HTMLElement {
   return root;
 }
 
-// Deep-clones an element while snapshotting live <canvas> and <video> frames into static <img> elements
+// Deep-clones an element and turns live media into static <img>s: canvases and playing videos at their current frame,
+// a video without a decoded frame (never scrolled into view, metadata only) at its first frame read in the background,
+// and a widget frame at the snapshot its page draws of itself (a sandboxed frame cannot be read from here)
 function cloneWithPaintedMedia(source: HTMLElement): HTMLElement {
   const clone = source.cloneNode(true) as HTMLElement;
   const srcCanvases = source.querySelectorAll('canvas');
@@ -127,42 +137,153 @@ function cloneWithPaintedMedia(source: HTMLElement): HTMLElement {
     } catch { /* Tainted or zero-sized canvas stays as-is */ }
   });
 
-  const srcVideos = source.querySelectorAll('video');
+  // An animated GIF plays as a video over an empty stand-in: the still keeps the GIF itself, which an SVG paints at its first frame
+  clone.querySelectorAll<HTMLImageElement>('img[data-share-src]').forEach(img => { img.src = img.dataset.shareSrc ?? img.src; });
+  clone.querySelectorAll('[data-share-skip]').forEach(el => el.remove());
+  const srcVideos = source.querySelectorAll<HTMLVideoElement>('video:not([data-share-skip])');
   const dstVideos = clone.querySelectorAll('video');
   srcVideos.forEach((video, i) => {
     const dst = dstVideos[i];
-    if (!dst || !video.videoWidth || !video.videoHeight) return;
-    try {
-      const c = document.createElement('canvas');
-      c.width = video.videoWidth;
-      c.height = video.videoHeight;
-      c.getContext('2d')?.drawImage(video, 0, 0);
-      const img = document.createElement('img');
-      img.src = c.toDataURL('image/png');
-      img.className = dst.className;
-      img.style.cssText = dst.style.cssText;
-      dst.replaceWith(img);
-    } catch { /* Cross-origin or unloaded video frame */ }
+    if (!dst) return;
+    const img = standIn(dst.className, dst.style.cssText);
+    dst.replaceWith(img);
+    const now = video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA ? frameOf(video) : undefined;
+    const url = video.currentSrc || video.dataset.shareSrc;
+    if (now) img.src = now;
+    else if (url) fillLater(img, firstFrame(url));
+  });
+
+  // A widget that has not loaded (never scrolled near) or never answers is left out rather than kept as an empty box
+  const srcWidgets = source.querySelectorAll<HTMLElement>('[data-share-widget]');
+  const dstWidgets = clone.querySelectorAll<HTMLElement>('[data-share-widget]');
+  srcWidgets.forEach((widget, i) => {
+    const dst = dstWidgets[i];
+    if (!dst) return;
+    const frame = widget.querySelector('iframe');
+    const win = frame?.contentWindow;
+    const dstFrame = dst.querySelector('iframe');
+    if (!frame || !win || !dstFrame) { dst.remove(); return; }
+    // Sized like the frame until the snapshot lands, then by the snapshot itself (the card may be wider than the transcript)
+    const img = standIn('block w-full max-w-full', `height:${frame.offsetHeight}px`);
+    dstFrame.replaceWith(img);
+    // Handled: the capture clones the card again and must not take the swapped widget for one that never loaded
+    dst.removeAttribute('data-share-widget');
+    fillLater(img, widgetSnapshot(win), { ownHeight: true, onMiss: () => dst.remove() });
   });
   return clone;
 }
 
+function standIn(className: string, style: string): HTMLImageElement {
+  const img = document.createElement('img');
+  img.src = BLANK_PIXEL;
+  img.className = className;
+  img.style.cssText = style;
+  return img;
+}
+
+function fillLater(img: HTMLImageElement, pixels: Promise<string | undefined>, { ownHeight = false, onMiss }: { ownHeight?: boolean; onMiss?: () => void } = {}) {
+  const timeout = new Promise<undefined>(resolve => setTimeout(resolve, MEDIA_TIMEOUT_MS));
+  pendingMedia.set(img, Promise.race([pixels, timeout]).catch(() => undefined).then(async src => {
+    if (!src) { onMiss?.(); return; }
+    img.src = src;
+    // Until the new pixels decode, WebKit lays the image out at the old 1x1 stand-in's square ratio
+    await img.decode().catch(() => {});
+    if (ownHeight) img.style.height = 'auto';
+  }));
+}
+
+// The frame on screen; undefined when the canvas comes out tainted (a cross-origin source) or empty
+function frameOf(video: HTMLVideoElement): string | undefined {
+  if (!video.videoWidth || !video.videoHeight) return undefined;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d')?.drawImage(video, 0, 0);
+    return canvas.toDataURL('image/png');
+  } catch { return undefined; }
+}
+
+// A recording's first frame from a detached player: straight from its URL first, then from fetched bytes where the
+// resource origin taints the canvas (VS Code serves webview resources from another origin)
+async function firstFrame(url: string): Promise<string | undefined> {
+  const direct = await frameFrom(url).catch(() => undefined);
+  if (direct) return direct;
+  const res = await fetch(url);
+  if (!res.ok) return undefined;
+  const local = URL.createObjectURL(await res.blob());
+  try { return await frameFrom(local); } finally { URL.revokeObjectURL(local); }
+}
+
+async function frameFrom(url: string): Promise<string | undefined> {
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  const settled = (event: string) => new Promise<void>((resolve, reject) => {
+    video.addEventListener(event, () => resolve(), { once: true });
+    video.addEventListener('error', () => reject(new Error('video load failed')), { once: true });
+  });
+  try {
+    const loaded = settled('loadeddata');
+    video.src = url;
+    await loaded;
+    // WebKit paints a paused frame only after a seek
+    const seeked = settled('seeked');
+    video.currentTime = 0.001;
+    await seeked;
+    return frameOf(video);
+  } finally {
+    video.removeAttribute('src');
+    video.load();
+  }
+}
+
+// The widget page draws itself (widgetDoc.ts BOOTSTRAP) and posts the PNG back; a page that never answers times out
+function widgetSnapshot(win: Window): Promise<string | undefined> {
+  return new Promise(resolve => {
+    const id = Math.random().toString(36).slice(2);
+    // Asked again until it answers: a frame still loading has no listener yet and drops the message
+    const ask = () => win.postMessage({ [WIDGET_MESSAGE]: 'snapshot', id, dpr: TARGET_DPR }, '*');
+    const retry = setInterval(ask, 250);
+    const done = (png: string | undefined) => {
+      clearInterval(retry);
+      window.removeEventListener('message', onMessage);
+      resolve(png);
+    };
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data as { [WIDGET_MESSAGE]?: string; id?: unknown; png?: unknown } | null;
+      if (e.source !== win || data?.[WIDGET_MESSAGE] !== 'snapshot' || data.id !== id) return;
+      done(typeof data.png === 'string' && data.png.startsWith('data:image/png') ? data.png : undefined);
+    };
+    window.addEventListener('message', onMessage);
+    setTimeout(() => done(undefined), MEDIA_TIMEOUT_MS);
+    ask();
+  });
+}
+
 function cleanShareSubtree(root: HTMLElement, stripRootPad: boolean) {
   root.querySelectorAll('[data-turn-actions], .code-copy, .sr-only').forEach(n => n.remove());
-  // When capturing a full message that has prose content, drop collapsed process fold headers ("Completed 3s >") unless
-  // the user explicitly expanded them or a steered message sits inside
-  if (stripRootPad && root.querySelector('.acp-prose')) {
-    root.querySelectorAll<HTMLElement>('button[aria-expanded="false"]').forEach(trigger => {
-      const foldRoot = trigger.parentElement;
-      if (foldRoot && !foldRoot.querySelector('.steered-message, .acp-prose')) {
-        foldRoot.remove();
-      }
-    });
-  }
+  // A whole reply is the agent's answer: the reader's own steered prompts and the reasoning stay out, folded or not.
+  // A process fold's head goes too, unless the reader opened it and tool rows are still left under it
   if (stripRootPad) {
-    root.classList.remove('px-pad', '-mt-msg-join');
-    root.querySelectorAll('.steered-message').forEach(el => el.classList.remove('-mx-pad'));
+    root.querySelectorAll('.steered-message, .thought-row').forEach(n => n.remove());
+    // Each fold's head is its first trigger, taken before any row is removed
+    const folds = [...root.querySelectorAll<HTMLElement>('[data-process-fold]')].map(fold => ({ fold, head: fold.querySelector('button[aria-expanded]') }));
+    // Collapsed rows (tool calls the reader never opened) go with their head when the reply has prose to show
+    if (root.querySelector('.acp-prose')) {
+      root.querySelectorAll<HTMLElement>('button[aria-expanded="false"]').forEach(trigger => {
+        const row = trigger.parentElement;
+        if (row && !row.querySelector('.acp-prose')) row.remove();
+      });
+    }
+    for (const { fold, head } of folds) {
+      const rows = fold.querySelector('.process-content');
+      if (fold.hasAttribute('data-open') && rows?.textContent?.trim()) continue;
+      head?.parentElement?.remove();
+    }
   }
+  if (stripRootPad) root.classList.remove('px-pad', '-mt-msg-join');
   root.classList.remove('fade-in', 'sticky');
   root.classList.add('pointer-events-none', 'select-none');
 
@@ -198,6 +319,7 @@ function pruneEmptyEdges(root: HTMLElement) {
 
 // Rasterizes a live ShareCard element into a high-DPI PNG Blob
 export async function renderShareCardToPng(cardEl: HTMLElement): Promise<Blob> {
+  await Promise.all([...cardEl.querySelectorAll('img')].map(img => pendingMedia.get(img)));
   const rect = cardEl.getBoundingClientRect();
   const width = Math.max(1, cardEl.offsetWidth || Math.ceil(rect.width));
   const height = Math.max(1, cardEl.offsetHeight || Math.ceil(rect.height));
@@ -205,6 +327,9 @@ export async function renderShareCardToPng(cardEl: HTMLElement): Promise<Blob> {
 
   const clonedCard = cloneWithPaintedMedia(cardEl);
   await inlineImages(clonedCard);
+  // Kept alive until the draw below: WebKit only starts decoding an SVG's nested images on its first draw and paints
+  // them blank there, unless the same data URLs are already decoded
+  const decoded = await predecode(clonedCard);
 
   const cssText = await collectStylesheets();
   const shellEl = cardEl.closest<HTMLElement>('.acp-shell');
@@ -246,10 +371,27 @@ export async function renderShareCardToPng(cardEl: HTMLElement): Promise<Blob> {
   if (!ctx) throw new Error('Canvas 2D context is unavailable');
   ctx.scale(dpr, dpr);
   ctx.drawImage(img, 0, 0, width, height);
+  // A second draw after a task picks up any nested image WebKit was still decoding during the first
+  if (decoded.length) {
+    await new Promise(resolve => setTimeout(resolve, 32));
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+  }
+  decoded.length = 0;
 
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('PNG encoding failed'))), 'image/png');
   });
+}
+
+async function predecode(root: HTMLElement): Promise<HTMLImageElement[]> {
+  const urls = new Set([...root.querySelectorAll('img')].map(img => img.getAttribute('src') ?? '').filter(src => src.startsWith('data:')));
+  return Promise.all([...urls].map(async src => {
+    const img = new Image();
+    img.src = src;
+    await img.decode().catch(() => {});
+    return img;
+  }));
 }
 
 async function inlineImages(root: HTMLElement): Promise<void> {

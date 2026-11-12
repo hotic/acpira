@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { MessageSquarePlus, Share } from 'lucide-react';
+import { ImageIcon, MessageSquarePlus } from 'lucide-react';
 import type { Draft } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
@@ -216,7 +216,7 @@ export function QuoteToolbar({ root, onShare }: { root: RefObject<HTMLElement | 
                             onMouseDown={e => e.preventDefault()}
                             onClick={share}
                             className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3">
-                            <Share strokeWidth={1.5} />
+                            <ImageIcon strokeWidth={1.5} />
                             {t('turn.share')}
                           </button>
                         </>
