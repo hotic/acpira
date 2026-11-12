@@ -384,7 +384,8 @@ mod windows_tests {
   #[tokio::test]
   async fn chinese_output_is_decoded_from_powershell_and_native_commands() {
     let dir = tempfile::tempdir().unwrap();
-    let out = run("Write-Output '中文输出'; cmd /c echo 原生命令", dir.path(), 15_000, &ctx(dir.path())).await;
+    // A CI runner's first PowerShell start alone has outlasted 15 s; the call returns as soon as the command ends
+    let out = run("Write-Output '中文输出'; cmd /c echo 原生命令", dir.path(), 60_000, &ctx(dir.path())).await;
     assert!(out.model.contains("中文输出") && out.model.contains("原生命令"), "{:?}", out.model);
   }
 
