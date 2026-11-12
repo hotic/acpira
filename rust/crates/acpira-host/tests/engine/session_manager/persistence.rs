@@ -199,11 +199,9 @@ async fn a_stale_index_summary_gains_its_acp_session_id_and_the_index_file_is_up
   m.dispose().await;
 }
 
-// A host folder's session keeps one writer across machines (`remote/host_store.rs`): the copy another machine left in
-// this store opens read-only, saying where it runs, and nothing done here reaches its record; a copy this machine
-// made itself (its record here was lost) opens as its own
+// Foreign copies stay process-free until execution; list actions are ordinary local operations.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_copy_another_machine_left_here_is_read_only() {
+async fn a_copy_another_machine_left_here_stands_by_and_allows_local_list_edits() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
   let at = "2026-10-01T00:00:00.000Z";
@@ -218,20 +216,17 @@ async fn a_copy_another_machine_left_here_is_read_only() {
   let m = Mgr::new(dir.path(), Opts::fake(&fake));
   m.init().await;
 
-  // A list deletion must inspect copyOf before the record has ever been opened (and entered the mirrors/copies maps).
-  m.handle(json!({ "type": "deleteSession", "id": "s-far" })).await;
-  assert_eq!(std::fs::read(dir.path().join("s-far.json")).unwrap(), record("s-far", "machine-elsewhere"));
-  assert!(m.session_ids().contains(&"s-far".to_owned()));
-  assert!(!dir.path().join("trash/s-far.json").exists());
   m.handle(json!({ "type": "selectSession", "id": "s-far" })).await;
-  until(|| m.active().is_some_and(|a| a["id"] == "s-far" && a["status"] == "readonly"), 5000).await;
-  let shown = m.active().unwrap();
-  assert!(shown["error"].as_str().unwrap_or_default().contains("Studio"), "{shown}");
-  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| m.active().is_some_and(|a| a["id"] == "s-far" && a["status"] == "ready"), 5000).await;
+  assert!(m.active().unwrap()["error"].is_null());
+  assert!(m.m.live_session("s-far").is_none());
   m.handle(json!({ "type": "renameSession", "id": "s-far", "title": "Renamed here" })).await;
+  let renamed = m.store.load("s-far").await.unwrap();
+  assert_eq!(renamed.title, "Renamed here");
+  assert!(renamed.copy_of.is_none());
   m.handle(json!({ "type": "deleteSession", "id": "s-far" })).await;
-  tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-  assert_eq!(std::fs::read(dir.path().join("s-far.json")).unwrap(), record("s-far", "machine-elsewhere"), "the record is the other machine's");
+  assert!(!m.session_ids().contains(&"s-far".to_owned()));
+  assert!(dir.path().join("trash/s-far.json").exists());
 
   m.handle(json!({ "type": "selectSession", "id": "s-own" })).await;
   until(|| m.active().is_some_and(|a| a["id"] == "s-own" && a["status"] != "readonly"), 5000).await;

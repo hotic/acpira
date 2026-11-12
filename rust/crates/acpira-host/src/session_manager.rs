@@ -278,6 +278,10 @@ struct State {
   mirrors: HashMap<String, Arc<AcpSession>>,
   // Mirrored records that are copies of another machine's session (`remote::host_store`): never opened here
   copies: HashSet<String>,
+  // Promotions that have not reached Ready yet must not overwrite the foreign record.
+  pending_copies: HashSet<String>,
+  // Only selections made here override later streamed copy updates.
+  copy_picks: HashMap<String, acpira_shared::transcript::TurnSettings>,
   // Mirrored sessions whose owner pushes their view over the bus (`bus.rs`): shown instead of the record copy, and the
   // pages' actions on them go to the owner
   remote: HashMap<String, Remote>,
@@ -422,6 +426,8 @@ impl SessionManager {
           dirty: HashMap::new(),
           mirrors: HashMap::new(),
           copies: HashSet::new(),
+          pending_copies: HashSet::new(),
+          copy_picks: HashMap::new(),
           remote: HashMap::new(),
           first_push: HashMap::new(),
           refresh: HashSet::new(),
@@ -458,7 +464,7 @@ impl SessionManager {
     });
     // A record another engine is driving is never overwritten from here (a stale copy of a session open in two engines)
     let guard_me = mgr.me.clone();
-    mgr.deps.store.set_write_guard(Arc::new(move |id: &str| guard_me.upgrade().is_none_or(|m| !m.leases.held_elsewhere(id))));
+    mgr.deps.store.set_write_guard(Arc::new(move |id: &str| guard_me.upgrade().is_none_or(|m| !m.leases.held_elsewhere(id) && !m.state.lock().pending_copies.contains(id))));
     mgr.watch_takeovers();
     if mgr.deps.bus {
       let peer: Weak<dyn BusPeer> = mgr.me.clone();

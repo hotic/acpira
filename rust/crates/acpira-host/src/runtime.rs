@@ -339,6 +339,7 @@ impl HostRuntime {
         m.host_copy_gone(alias, id);
       }
     }));
+    runtime.host_mirror.set_manager(Arc::downgrade(&runtime.manager));
     runtime.host_mirror.start();
     runtime.model_mirror.start();
     let ra = runtime.remote_access.clone();

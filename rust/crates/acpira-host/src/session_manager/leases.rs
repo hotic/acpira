@@ -54,7 +54,7 @@ impl SessionManager {
   /// engine drives the session (or this one only mirrors it), since they would race that engine's saves. A short hold
   /// (another engine opening the session or saving an edit of its own) is waited out rather than refused
   pub(super) async fn hold_record<'a>(&'a self, id: &'a str) -> Result<LeaseHold<'a>> {
-    if self.mirror_of(id).is_some() {
+    if self.mirror_of(id).is_some() && !self.state.lock().copies.contains(id) {
       return Err(anyhow!(t("host.sessionBusyElsewhere")));
     }
     let deadline = tokio::time::Instant::now() + RECORD_HOLD_WAIT;
@@ -71,7 +71,7 @@ impl SessionManager {
   /// Deletion ends the session wherever it runs. Keep its undo in the requesting engine rather than forwarding the
   /// delete to an owner whose lease (and action route) goes away with it. Other machines' copies stay read-only
   pub(super) async fn hold_deletion<'a>(&'a self, id: &'a str) -> Result<LeaseHold<'a>> {
-    if self.mirror_of(id).is_some_and(|s| !s.can_take_over_elsewhere()) {
+    if !self.state.lock().copies.contains(id) && self.mirror_of(id).is_some_and(|s| !s.can_take_over_elsewhere()) {
       return Err(anyhow!(t("host.sessionBusyElsewhere")));
     }
     match self.leases.claim(id) {
@@ -283,7 +283,7 @@ impl SessionManager {
   }
 
   /// Inert deps for a mirror: it never saves (the record belongs to the engine holding the lease), warms or switches
-  fn mirror_deps(&self) -> SessionDeps {
+  pub(super) fn mirror_deps(&self) -> SessionDeps {
     let live = self.session_deps();
     SessionDeps {
       on_change: Arc::new(|_: &str, _: bool| {}),
@@ -296,6 +296,21 @@ impl SessionManager {
     }
   }
 
+  /// The mode and options picked on a standby copy laid over the record it shows: the picks are this engine's, the
+  /// record whatever was last written
+  pub(super) fn apply_copy_picks(&self, record: &mut SessionRecord) {
+    let st = self.state.lock();
+    let Some(picks) = st.copy_picks.get(&record.id) else { return };
+    if let Some(mode) = &picks.mode_id {
+      record.controls.mode_id = Some(mode.clone());
+    }
+    for ctl in &mut record.controls.options {
+      if let Some(value) = picks.config.get(&ctl.id) {
+        ctl.value = Some(value.clone());
+      }
+    }
+  }
+
   fn record_path(&self, id: &str) -> std::path::PathBuf {
     self.deps.store.dir().join(format!("{id}.json"))
   }
@@ -305,7 +320,12 @@ impl SessionManager {
   pub(super) fn start_mirror(self: &Arc<Self>, id: &str, record: SessionRecord, note: String, elsewhere: bool) {
     // One epoch for this copy and every copy the poll below makes: their revs grow, so a viewer is patched between them
     let epoch = crate::acp::session::next_view_epoch();
-    let mirror = AcpSession::mirror(record, self.mirror_deps(), note.clone(), self.next_mirror_rev(), elsewhere, epoch);
+    let standby = self.state.lock().copies.contains(id);
+    let mirror = if standby {
+      AcpSession::standby(record, self.mirror_deps(), self.next_mirror_rev(), epoch)
+    } else {
+      AcpSession::mirror(record, self.mirror_deps(), note.clone(), self.next_mirror_rev(), elsewhere, epoch)
+    };
     let fresh = self.state.lock().mirrors.insert(id.to_owned(), mirror.clone()).is_none();
     self.log(&format!("session {id}: lease not taken, mirroring its record ({note})"));
     // Held by an engine that may push its view: the record copy waits for that view a moment (`FIRST_PUSH_GRACE`)
@@ -375,7 +395,12 @@ impl SessionManager {
         let watchers = m.viewers_on(&id, None);
         if watchers.is_empty() {
           // Nobody looks at it any more; a later select starts over
-          m.state.lock().mirrors.remove(&id);
+          {
+            let mut st = m.state.lock();
+            st.mirrors.remove(&id);
+            st.copies.remove(&id);
+            st.copy_picks.remove(&id);
+          }
           m.leases.clear_handover(&id);
           m.end_remote(&id);
           return;
@@ -426,8 +451,28 @@ impl SessionManager {
           continue;
         }
         seen = stamp;
-        if let Ok(record) = m.deps.store.load_detailed(&id).await {
-          let copy = AcpSession::mirror(record, m.mirror_deps(), note.clone(), m.next_mirror_rev(), elsewhere, epoch);
+        if let Ok(mut record) = m.deps.store.load_detailed(&id).await {
+          let standby = m.state.lock().copies.contains(&id);
+          // Promoted by another engine here, which runs it now: shown as any session held elsewhere. One only claimed
+          // (a list edit, here or there) has no process anywhere and stays as it is, picks included
+          if standby && record.copy_of.is_none() && m.leases.held_elsewhere(&id) {
+            let mut st = m.state.lock();
+            st.copies.remove(&id);
+            st.copy_picks.remove(&id);
+            st.mirrors.remove(&id);
+            drop(st);
+            for v in watchers {
+              let (m2, id2) = (m.clone(), id.clone());
+              tokio::spawn(async move { m2.select_session_for(&v, &id2).await });
+            }
+            return;
+          }
+          m.apply_copy_picks(&mut record);
+          let copy = if standby {
+            AcpSession::standby(record, m.mirror_deps(), m.next_mirror_rev(), epoch)
+          } else {
+            AcpSession::mirror(record, m.mirror_deps(), note.clone(), m.next_mirror_rev(), elsewhere, epoch)
+          };
           let current = {
             let mut st = m.state.lock();
             match st.mirrors.get_mut(&id) {

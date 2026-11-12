@@ -765,3 +765,60 @@ async fn a_host_sessions_view_shows_at_once_and_its_blobs_follow() {
   m.dispose().await;
   connections.dispose();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn source_reconciliation_reselects_the_host_peer_without_tombstoning_its_session() {
+  use acpira_host::remote::host_store::HostMirror;
+  use acpira_host::store::record::SessionRecord;
+  use std::sync::Arc;
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let host_home = lab.host_home().join(".acpira");
+  let work = lab.path().join("work");
+  std::fs::create_dir_all(&host_home).unwrap();
+  std::fs::create_dir_all(&work).unwrap();
+  std::fs::write(host_home.join("agents.json"), fake.setting(json!({})).to_string()).unwrap();
+  let connections = lab.engine("source");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let dir = lab.path().join("source/sessions");
+  std::fs::create_dir_all(&dir).unwrap();
+  let mut opts = crate::session_manager::Opts::fake(&fake);
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(&dir, opts);
+  m.init().await;
+  let source = acpira_host::acp::session::AcpSession::fresh("fake", work.to_str().unwrap(), {
+    let h = crate::support::Harness::new(&fake, json!({}));
+    h.deps.clone()
+  }, None);
+  let mut record = source.to_record();
+  record.id = "reconciled-peer".into();
+  record.cwd = format!("ssh://gen1{}", work.display());
+  record.turns = serde_json::from_value(json!([{ "role": "user", "text": "shared question" }])).unwrap();
+  m.store.flush(Arc::new(record.clone())).await.unwrap();
+  let mirror = HostMirror::with_batch(connections.clone(), m.store.clone(), &lab.path().join("source"), Arc::new(|_: &str| {}), Duration::from_millis(50));
+  mirror.set_manager(Arc::downgrade(&m.m));
+  let weak = Arc::downgrade(&m.m);
+  mirror.set_gone_hook(Arc::new(move |a, id| { if let Some(m) = weak.upgrade() { m.host_copy_gone(a, id); } }));
+  mirror.start();
+  let host_file = host_home.join("sessions/reconciled-peer.json");
+  wait(&m, "the source copy to reach host", 30_000, || host_file.exists()).await;
+  m.handle(json!({ "type": "selectSession", "id": record.id })).await;
+  assert_eq!(m.active_id().as_deref(), Some("reconciled-peer"));
+  // Closing the connection makes both histories stable while the host takes ownership.
+  connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+  let host_store = acpira_host::store::transcript_store::TranscriptStore::new(host_home.join("sessions"), Arc::new(|_: &str| {}), None);
+  let mut host: SessionRecord = host_store.load(&record.id).await.unwrap();
+  host.copy_of = None;
+  host.title = "Host now owns this".into();
+  host.turns.push(serde_json::from_value(json!({ "role": "agent", "stop": "end_turn", "blocks": [{ "type": "text", "markdown": "host answer" }] })).unwrap());
+  host_store.flush(Arc::new(host)).await.unwrap();
+  connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
+  wait(&m, "the source record retired", 30_000, || !dir.join("reconciled-peer.json").exists()).await;
+  wait(&m, "the viewer reattached to the host peer", 30_000, || m.active().is_some_and(|s| s["title"] == "Host now owns this")).await;
+  assert!(host_store.load("reconciled-peer").await.is_some());
+  assert!(m.m.live_session("reconciled-peer").is_none());
+  mirror.stop();
+  m.dispose().await;
+  connections.dispose();
+}
