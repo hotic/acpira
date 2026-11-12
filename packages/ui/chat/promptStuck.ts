@@ -23,3 +23,48 @@ export function followsBottom(el: { scrollHeight: number; scrollTop: number; cli
 // How long after the reader's last wheel, touch, key or pointer release a scroll still counts as theirs (trackpad
 // momentum keeps sending wheel events, so this only has to bridge the gap to the scroll event)
 export const SCROLL_INTENT_MS = 800;
+
+function isElementNode(value: unknown): value is Element {
+  return typeof Element !== 'undefined'
+    ? value instanceof Element
+    : !!value && typeof value === 'object' && (value as { nodeType?: number }).nodeType === 1;
+}
+
+// Pick a stable box for press anchoring instead of the raw event target:
+// - sticky prompt cards stay pinned to the scroller's top edge on their own and must not drive scrollTop
+// - hits inside a nested scrollport (thought body, command output, diff) anchor on the outer scrollport box so scrolling
+//   inside it never looks like the conversation above shrank
+// - hits inside an inline command toggle, interactive row/button (rotating carets, unmounting shimmers) or inline text
+//   span climb to the owning header/row/block whose top edge stays still while a panel opens below it
+export function pressAnchorNode(
+  target: unknown,
+  content: Element | null,
+  overflowYOf: (el: Element) => string = el => getComputedStyle(el).overflowY,
+): Element | undefined {
+  if (!content || !isElementNode(target) || !content.contains(target)) return undefined;
+  if (target.closest('[data-sticky-prompt]')) return undefined;
+  let node: Element = target;
+  for (let cur: Element | null = target; cur && cur !== content; cur = cur.parentElement) {
+    const overflowY = overflowYOf(cur);
+    if (overflowY === 'auto' || overflowY === 'scroll') node = cur;
+  }
+  const command = node.closest('.command-prompt');
+  if (command && content.contains(command)) return command;
+  let row: Element | undefined;
+  for (let cur: Element | null = node; cur && cur !== content; cur = cur.parentElement) {
+    if (cur.matches('button, a, [role="button"], .action-row')) row = cur;
+  }
+  if (row) return row;
+  const block = node.closest('p, li, pre, blockquote');
+  return block && content.contains(block) ? block : node;
+}
+
+// Offset of an anchor node from the scroller's top edge. Returns undefined once detached or hidden (`display: none` or
+// `contents` keeps `isConnected` true while `getBoundingClientRect().top` collapses to 0, which would yank scrollTop up).
+export function anchorOffset(
+  node: { isConnected: boolean; getClientRects(): { length: number }; getBoundingClientRect(): { top: number } },
+  scroller: { getBoundingClientRect(): { top: number } },
+): number | undefined {
+  if (!node.isConnected || node.getClientRects().length === 0) return undefined;
+  return node.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+}
