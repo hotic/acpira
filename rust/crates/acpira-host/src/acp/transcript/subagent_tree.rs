@@ -14,7 +14,7 @@ use acpira_shared::subagents::{
   SubagentUsage, SubagentVisibility,
 };
 use acpira_shared::transcript::{
-  AgentBlock, AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolStatus, Turn, TurnStop, UserTurn,
+  AgentBlock, AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolKind, ToolStatus, Turn, TurnStop, UserTurn,
 };
 
 use crate::acp::session::restore_turns::restore_interrupted_turns;
@@ -38,6 +38,21 @@ const ORPHAN_MAX_UPDATES: usize = 64;
 const RESUMED_LOG_SLACK_MS: i64 = 2000;
 /// Root `SendMessage` calls remembered until the run they resume is announced or their result arrives
 const SEND_CALLS_MAX: usize = 16;
+
+/// A transcript's newest still-running command row of `tool_call_id` and its verbatim command text
+pub(crate) fn find_running_command<'a>(turns: impl DoubleEndedIterator<Item = &'a Turn>, tool_call_id: &str) -> Option<String> {
+  turns.rev().filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter().rev()).find_map(|b| match b {
+    AgentBlock::ToolCall(tool)
+      if tool.id == tool_call_id
+        && tool.kind == ToolKind::Execute
+        && matches!(tool.status, ToolStatus::Pending | ToolStatus::InProgress)
+        && tool.target_mono == Some(true) =>
+    {
+      tool.target.clone()
+    }
+    _ => None,
+  })
+}
 
 /// What routing may touch on the root side: the anchor turn index and the root transcript itself
 pub struct RouteCtx<'a> {
@@ -632,6 +647,16 @@ impl SubagentTree {
   /// Every subagent's turns, one transcript after another
   pub fn all_turns(&self) -> impl Iterator<Item = &Turn> {
     self.nodes.iter().flat_map(|n| n.state.turns.iter())
+  }
+
+  /// Node `id`'s still-running command row of `tool_call_id` (only a node's own turns can still be running)
+  pub fn running_command(&self, id: &str, tool_call_id: &str) -> Option<String> {
+    find_running_command(self.nodes.iter().find(|n| n.id == id)?.state.turns.iter(), tool_call_id)
+  }
+
+  /// The newest node holding a still-running command row of `tool_call_id`, for callers omitting `subagentId`
+  pub fn running_command_node(&self, tool_call_id: &str) -> Option<(&str, String)> {
+    self.nodes.iter().rev().find_map(|n| Some((n.id.as_str(), find_running_command(n.state.turns.iter(), tool_call_id)?)))
   }
 
   /// What a viewer of node `id` reads. A summoned round shows its whole thread up to itself: every earlier round of the

@@ -13,7 +13,7 @@ import { Prose } from '../Prose';
 import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
 import { FollowContext, useBottomFollow } from '../useBottomFollow';
-import { DiffSourceContext } from '../fileLinks';
+import { CommandStopContext, DiffSourceContext } from '../fileLinks';
 import { receiptOnly, resumedAgent, subagentTitle } from './subagentState';
 import { useDesktop } from '../../desktop';
 
@@ -34,10 +34,13 @@ interface InspectorProps {
   // Full diff texts from this child's transcript. Replaces the session's lookup for everything inside the inspector
   // (undefined included), so a tool call id the child shares with its parent never resolves to the parent's diff
   diffSource?: (toolCallId: string, nth: number) => Promise<FullDiffSource | undefined>;
+  // A running command row here stops that child's own process. Replaces the session's CommandStopContext (undefined
+  // included), so a child's row never targets the parent's process or collides with its tool call ids
+  stopCommand?: (toolCallId: string) => void;
 }
 
 // Read-only drill-down for one delegated child: the parent's delegation row opens this, and nothing
-// inside it controls the session except the declared cancel affordance.
+// inside it steers the session except cancelling the child or stopping one of its running commands.
 export function SubagentInspector(p: InspectorProps) {
   const { node, mode } = p;
   const desktop = useDesktop();
@@ -85,7 +88,9 @@ export function SubagentInspector(p: InspectorProps) {
         )}
       </div>
       <DiffSourceContext.Provider value={p.diffSource}>
-        <SessionTab key={node.id} {...p} />
+        <CommandStopContext.Provider value={p.stopCommand}>
+          <SessionTab key={node.id} {...p} />
+        </CommandStopContext.Provider>
       </DiffSourceContext.Provider>
     </div>
   );

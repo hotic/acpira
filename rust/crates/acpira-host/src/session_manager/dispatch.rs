@@ -410,11 +410,11 @@ impl SessionManager {
           s.stop_async_task(&task_id).await?;
         }
       }
-      W::StopCommand { session_id, tool_call_id } => {
+      W::StopCommand { session_id, tool_call_id, subagent_id } => {
         if valid(&session_id)
           && let Some(s) = self.live(&session_id)
         {
-          s.stop_command(&tool_call_id).await?;
+          s.stop_command(&tool_call_id, subagent_id.as_deref()).await?;
         }
       }
       W::Goal { session_id, action, objective } => {

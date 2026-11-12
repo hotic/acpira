@@ -586,8 +586,9 @@ export type WebviewMsg =
   // Ask the adapter to stop one AIR async task (sent as _session/async_task/stop under the session id that owns it)
   | { type: 'stopAsyncTask'; sessionId: string; taskId: string }
   // End one running command (a live execute row, SessionView.canStopCommands) and leave the turn running: the agent
-  // reads it as the command failing
-  | { type: 'stopCommand'; sessionId: string; toolCallId: string }
+  // reads it as the command failing. `subagentId` names the subagent transcript the row was shown in (the engine ends
+  // that child's process), absent for the session's own turns
+  | { type: 'stopCommand'; sessionId: string; toolCallId: string; subagentId?: string }
   // A goal control (SessionView.goalActions): the engine sends turn-starting ones (set / resume, Claude's clear) as a
   // `/goal …` prompt, which queues behind a running turn like any prompt, and the rest as `_session/goal`
   | { type: 'goal'; sessionId: string; action: GoalAction; objective?: string }

@@ -184,8 +184,9 @@ export interface ShellHandlers {
   cancelSubagent?: (sessionId: string, subagentId: string) => void;
   // Ask the adapter to stop one AIR async task on this session (host resolves the owning peer session)
   stopAsyncTask?: (sessionId: string, taskId: string) => void;
-  // End one running command and leave the turn running (SessionView.canStopCommands)
-  stopCommand?: (sessionId: string, toolCallId: string) => void;
+  // End one running command and leave the turn running (SessionView.canStopCommands); `subagentId` names the child
+  // transcript the row was shown in, absent for the session's own turns
+  stopCommand?: (sessionId: string, toolCallId: string, subagentId?: string) => void;
   // Goal extension controls (SessionView.goalActions); `set` carries the objective
   goal?: (sessionId: string, action: GoalAction, objective?: string) => void;
   // The desktop app: the system folder dialog (the folder picked, undefined when dismissed), a folder shown in the OS file
@@ -1053,6 +1054,12 @@ export function Shell(p: ShellProps) {
   const fetchSubagentDiffSource = useMemo(() => p.activeSessionId && on.diffSource && inspectId !== undefined
     ? (toolCallId: string, nth: number) => on.diffSource!(p.activeSessionId!, toolCallId, nth, inspectId) : undefined,
   [p.activeSessionId, on.diffSource, inspectId]);
+  // On a local-run ssh:// folder, canStopCommands only covers Claude's remote MCP calls; a summoned built-in agent runs
+  // bash on the remote helper, outside the local process tree
+  const localSshSummoned = Boolean(!p.remoteAuth && p.cwd && parseRemoteFolder(p.cwd) && inspectNode?.harness);
+  const stopSubagentCommand = useMemo(() => p.activeSessionId && p.canStopCommands && on.stopCommand && inspectId !== undefined && !localSshSummoned
+    ? (toolCallId: string) => on.stopCommand!(p.activeSessionId!, toolCallId, inspectId) : undefined,
+  [p.activeSessionId, p.canStopCommands, on.stopCommand, inspectId, localSshSummoned]);
   // An AIR failure notice's actions map onto existing session actions: a real turn retries the prompt,
   // a session-scoped row (no live start) reconnects instead; the other two are the Notice's own verbs
   const lastTurnStarted = lastTurn?.role === 'agent' && lastTurn.startedAt !== undefined;
@@ -1365,6 +1372,7 @@ export function Shell(p: ShellProps) {
                   wide={wide}
                   blobUrl={blobUrl}
                   diffSource={fetchSubagentDiffSource}
+                  stopCommand={stopSubagentCommand}
                 />
                 </OpenToolFileContext.Provider>
               </div>
@@ -1391,6 +1399,7 @@ export function Shell(p: ShellProps) {
                 wide={wide}
                 blobUrl={blobUrl}
                 diffSource={fetchSubagentDiffSource}
+                stopCommand={stopSubagentCommand}
               />
               </OpenToolFileContext.Provider>
             </aside>

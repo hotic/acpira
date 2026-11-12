@@ -10,6 +10,7 @@ use acpira_shared::transcript::*;
 use crate::acp::session::view::visible_turns;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::set_stop_requested;
+use crate::acp::transcript::subagent_tree::find_running_command;
 use crate::i18n::t;
 
 impl AcpSession {
@@ -61,29 +62,27 @@ impl AcpSession {
 
   /// The user's stop of one running command row; the turn goes on, the agent reads the command as failed. Claude Code's
   /// project tools on an SSH host are the engine's own calls, any other command is found by its text among the
-  /// processes under the agent's (`platform::process_tree`). An error when nothing running that command was found
-  pub async fn stop_command(self: &Arc<Self>, tool_call_id: &str) -> Result<()> {
-    if self.stop_remote_call(tool_call_id) {
+  /// processes under the agent's (`platform::process_tree`): under the session's own agent, or under a summoned
+  /// child's own process when `subagent` names its node. An error when nothing running that command was found
+  pub async fn stop_command(self: &Arc<Self>, tool_call_id: &str, subagent: Option<&str>) -> Result<()> {
+    // Only SSH local-run Claude holds engine-side remote calls, and never for a summoned child's own process
+    if self.claude_stand().is_some()
+      && !subagent.is_some_and(|id| self.core.lock().tree.relay_thread_of(id).is_some())
+      && self.stop_remote_call(tool_call_id)
+    {
       self.log(&format!("stopCommand {tool_call_id}: remote call cancelled"));
       return Ok(());
     }
-    let (command, pid) = {
+    let target = {
       let c = self.core.lock();
-      let command = visible_turns(&c).chain(c.tree.all_turns()).filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter()).find_map(|b| match b {
-        AgentBlock::ToolCall(tool)
-          if tool.id == tool_call_id
-            && tool.kind == ToolKind::Execute
-            && matches!(tool.status, ToolStatus::Pending | ToolStatus::InProgress)
-            && tool.target_mono == Some(true) =>
-        {
-          tool.target.clone()
-        }
-        _ => None,
-      });
-      let pid = c.proc.as_ref().filter(|p| p.alive()).and_then(|p| p.pid);
-      (command, pid)
+      match subagent {
+        Some(id) => c.tree.running_command(id, tool_call_id).zip(self.node_pid(&c, id)),
+        None => find_running_command(visible_turns(&c), tool_call_id)
+          .zip(Self::root_pid(&c))
+          .or_else(|| c.tree.running_command_node(tool_call_id).and_then(|(node, cmd)| Some((cmd, self.node_pid(&c, node)?)))),
+      }
     };
-    let (Some(command), Some(pid)) = (command, pid) else {
+    let Some((command, pid)) = target else {
       self.log(&format!("stopCommand {tool_call_id}: no running command row"));
       return Ok(());
     };
@@ -96,6 +95,21 @@ impl AcpSession {
     };
     self.log(&format!("stopCommand {tool_call_id}: {}", if found { "signalled" } else { "no process found" }));
     if found { Ok(()) } else { Err(anyhow!(t("command.stopNotFound"))) }
+  }
+
+  fn root_pid(c: &Core) -> Option<u32> {
+    c.proc.as_ref().filter(|p| p.alive()).and_then(|p| p.pid)
+  }
+
+  /// The process a command row of subagent `node` runs under: a summoned round has its own child process
+  /// (`relay/`, never the parent's), a native child's commands run under the session's own agent
+  fn node_pid(&self, c: &Core, node: &str) -> Option<u32> {
+    match c.tree.relay_thread_of(node) {
+      // Summoned commands on an SSH workspace run on the remote helper, outside the local process tree
+      Some(_) if self.remote_folder().is_some() => None,
+      Some(thread) => c.relays.procs.get(&thread).map(|rp| &rp.proc).filter(|p| p.alive()).and_then(|p| p.pid),
+      None => Self::root_pid(c),
+    }
   }
 
   fn mark_stop(&self, c: &mut Core, peer: &str, task_id: &str, on: bool) {
