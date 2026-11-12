@@ -1,7 +1,9 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { zstdDecompressSync } from 'node:zlib';
 import type { AccountAction, AddAccountVia, HostMsg, InitState, WebviewMsg } from '@acpira/shared/protocol';
 import type { SidecarMsg } from '@acpira/shared/sidecar';
 import type { AgentId, NativeSessionInfo, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
@@ -70,13 +72,34 @@ export class Host {
 
   blobPath(sessionId: string, name: string): string { return join(this.sessionsDir, sessionId, name); }
 
-  // The persisted record of a session, as the store wrote it
+  // The persisted record of a session, as the store wrote it: its file, or (a store created with no record files, as every
+  // probe's temp home is) its heads in sessions.db
   async record(sessionId: string): Promise<Record<string, unknown> | null> {
-    return readFile(join(this.sessionsDir, `${sessionId}.json`), 'utf8').then(t => JSON.parse(t) as Record<string, unknown>, () => null);
+    const file = await readFile(join(this.sessionsDir, `${sessionId}.json`), 'utf8').then(t => JSON.parse(t) as Record<string, unknown>, () => null);
+    return file ?? storedHeads(join(this.sessionsDir, 'sessions.db'), sessionId);
   }
 
   // Graceful shutdown: the sidecar ends its agent processes before it exits
   async dispose() { await this.shell.kill(); }
+}
+
+type HeadRow = { subagent: number; codec: number; payload: Uint8Array };
+
+// A record from its rows (rust/crates/acpira-host/src/store/db/body.rs) without the transcript: the record head (turn and
+// block -1 under subagent -1) with each subagent's head (the same under its index) as `subagents`. Codec 1 is zstd
+function storedHeads(db: string, id: string): Record<string, unknown> | null {
+  if (!existsSync(db)) return null;
+  const connection = new DatabaseSync(db, { readOnly: true });
+  try {
+    const rows = connection.prepare('SELECT subagent, codec, payload FROM item WHERE session_id = ? AND turn = -1 AND block = -1 ORDER BY subagent').all(id) as HeadRow[];
+    const parse = (row: HeadRow) => JSON.parse(Buffer.from(row.codec === 1 ? zstdDecompressSync(row.payload) : row.payload).toString('utf8')) as Record<string, unknown>;
+    const root = rows.find(row => row.subagent === -1);
+    if (!root) return null;
+    const subagents = rows.filter(row => row.subagent >= 0).map(parse);
+    return subagents.length ? { ...parse(root), subagents } : parse(root);
+  } finally {
+    connection.close();
+  }
 }
 
 export class View {
