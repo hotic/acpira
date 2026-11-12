@@ -107,7 +107,7 @@ struct Composer: View {
           // Fewer lines where the keyboard leaves little room (landscape), so the card stays under the top bar
           FieldHeight(cap: rest ? TypeScale.field.lineHeight
                         : CGFloat(room.lines(Self.maxLines, lineHeight: TypeScale.field.lineHeight)) * TypeScale.field.lineHeight) {
-            TextField(text: fieldText, selection: $selection, axis: .vertical) {
+            TextField(text: fieldText, selection: fieldSelection, axis: .vertical) {
               // The hint is drawn over the field instead, in both forms (below)
               hintText("")
             }
@@ -425,6 +425,18 @@ struct Composer: View {
   /// The prompt as the field edits it, noting what it wrote
   private var fieldText: Binding<String> {
     Binding(get: { text }, set: { typed = $0; text = $0 })
+  }
+
+  /// The selection as the field reads it, never past the end of the text. An outside change (a send clearing the
+  /// field, a restored draft) reaches the field one update before `onChange(of: text)` moves the caret, and iOS 18's
+  /// vertical text field traps converting a range past the end to an NSRange
+  private var fieldSelection: Binding<TextSelection?> {
+    Binding(get: {
+      guard let selection, case .selection(let range) = selection.indices, range.upperBound > text.endIndex else {
+        return selection
+      }
+      return TextSelection(insertionPoint: text.endIndex)
+    }, set: { selection = $0 })
   }
 
   /// The paste bean's action while the pasteboard holds an image
