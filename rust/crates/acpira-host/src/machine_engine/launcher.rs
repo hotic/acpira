@@ -34,7 +34,7 @@ pub const NAME: &str = "Acpira Engine";
 pub const COMMAND: &str = "launch";
 /// The desktop app's bundle id; a launchd job started from its bundle is listed under it in Login Items
 pub const APP_ID: &str = "cc.hotic.acpira.desktop";
-/// The Developer ID team releases are signed by (Developer ID Application: YE SHAO)
+/// The Developer ID team releases are signed by
 pub const TEAM_ID: &str = "2DUQS6323W";
 /// The engine inside the desktop app's bundle (`apps/desktop/scripts/package.mjs`)
 const APP_ENGINE: &str = "Contents/MacOS/acpira-engine";
@@ -378,7 +378,8 @@ fn image_path(pid: libc::pid_t) -> Option<PathBuf> {
 /// macOS can no longer place the launcher (`Failed to create Attribution Chain`), so protected folders and removable
 /// volumes answer EPERM to everything the engine runs, while the engine itself, being the same version, is never taken
 /// over. This watches the parent's executable and, once it no longer sits at the path it started from and nothing is
-/// running, retires the engine (`Engine::retire`): the next shell starts a fresh one under the new bundle
+/// running, retires the engine (`Engine::retire`): the next shell starts a fresh one under the new bundle (one that ran
+/// the gateway: `serve`, on its way out)
 #[cfg(target_os = "macos")]
 pub fn watch(engine: &std::sync::Arc<crate::sidecar::server::Engine>) {
   // SAFETY: getppid has no preconditions

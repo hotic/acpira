@@ -93,6 +93,8 @@ pub struct Engine {
   wires_released: tokio::sync::watch::Sender<bool>,
   /// The paired devices' gateway runs in this engine (`devices::host`): it stays up for them with no window connected
   hosting: AtomicBool,
+  /// Retired while it ran the gateway (`retire`): paired devices are left with nobody until a successor starts
+  left_devices: AtomicBool,
 }
 
 // The watchdog's pace, and how long it waits to take one of the engine's locks before counting the engine as wedged. These
@@ -140,6 +142,7 @@ impl Engine {
       draining: AtomicBool::new(false),
       wires_released: tokio::sync::watch::Sender::new(false),
       hosting: AtomicBool::new(false),
+      left_devices: AtomicBool::new(false),
     })
   }
 
@@ -423,9 +426,16 @@ impl Engine {
       return;
     }
     self.log(&format!("draining: {reason}"));
+    self.left_devices.store(self.hosting(), Ordering::Release);
     self.release_endpoint();
     self.wires_released.send_replace(true);
     self.changed.notify_waiters();
+  }
+
+  /// Whether `retire` took the gateway down with it: `serve` then sees to a successor, since no shell may be left to
+  /// start one
+  pub fn left_devices(&self) -> bool {
+    self.left_devices.load(Ordering::Acquire)
   }
 
   /// Tear everything down once: pending platform RPCs fail, sessions flush and their agents end, `ack` gets shutdownOk
