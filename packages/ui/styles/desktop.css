@@ -40,9 +40,9 @@
 .acp-shell[data-desktop][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(max(var(--gap), var(--lights-w)) + var(--ctl) + var(--gap)); }
 /* The lights span x 17-77 (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath of about 15 px
    to its icon */
-/* macOS: the header line is 32 px so the lights' centre sits as far off the window's top (the sheet's inset and half the
-   line, 24) as off its left edge, and about as far as the column foot's icons off its bottom (--foot-bottom) */
-.acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; --hdr: 32px; }
+/* macOS: the header line is 40 px, so its controls get a breath above and below inside the sheet; the lights' centre
+   sits on the line's centre (the sheet's inset and half the line, 28 off the window's top, apps/desktop windows.rs) */
+.acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; --hdr: 40px; }
 /* Windows and Linux (data-caption: the page draws the window's caption and menu): no lights; the title row also holds
    the menu button (chat/DesktopFrame.tsx AppMenus). The header line is the window's title bar (as Codex draws it on Windows): it sits at the window's top on the canvas, the raised
    card begins under it (below), and the caption's three buttons (WindowCaption, 46 px each as Windows 11 draws them) take
