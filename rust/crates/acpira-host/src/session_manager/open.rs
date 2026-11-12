@@ -320,6 +320,19 @@ impl SessionManager {
       Ok(record) => record,
       Err(error) => {
         let missing = error.is_missing();
+        let listed = self.state.lock().index.iter().any(|s| s.id == id);
+        // A session this engine does not list was never stored here as far as it knows (a link copied from another
+        // machine or remote host, which a shell hands over when it cannot read the catalogue itself): said so plainly,
+        // and the viewer goes back to what it showed, as when a shell answers the link itself
+        if missing && !listed {
+          self.log(&format!("session {id}: not stored here"));
+          (self.deps.toast)("error", &t("sessionLink.notHere"));
+          match previous.filter(|old| old != id) {
+            Some(old) if v.active_id().as_deref() == Some(id) => self.set_active(v, Some(old)),
+            _ => self.rehome(id).await,
+          }
+          return;
+        }
         self.notify_record_load_failure(id, &error);
         if missing {
           self.state.lock().index.retain(|s| s.id != id);

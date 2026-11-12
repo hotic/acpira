@@ -22,6 +22,27 @@ async fn a_stopped_turn_is_persisted_before_shutdown_releases_the_session() {
   assert!(last["blocks"].as_array().unwrap().iter().any(|b| b["streaming"] == false));
 }
 
+/// A link to a session this engine never listed (copied from another machine) says it is not stored here, not that a
+/// record went missing; the shells hand such links over when they cannot read the catalogue themselves
+#[tokio::test(flavor = "multi_thread")]
+async fn selecting_a_session_never_stored_here_says_so_and_keeps_the_current_one() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  m.new_session(None).await;
+  let a = m.active_id().unwrap();
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  m.handle(json!({ "type": "selectSession", "id": a })).await;
+  m.handle(json!({ "type": "selectSession", "id": "00000000-0000-4000-8000-000000000000" })).await;
+  until(|| !m.toasts().is_empty(), 2000).await;
+  assert!(m.toasts().iter().any(|t| t.contains("isn't stored here")), "{:?}", m.toasts());
+  assert_eq!(m.active_id().as_deref(), Some(a.as_str()), "not the most recent session instead");
+  m.dispose().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn delete_is_soft_restore_brings_it_back_and_rename_and_pin_land_in_the_index() {
   let fake = fake_or_skip!();
