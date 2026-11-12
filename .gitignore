@@ -5,6 +5,8 @@ node_modules/
 dist/
 rust/.build/
 *.vsix
+# Left by a `tsc -b` run; `pnpm typecheck` writes none
+*.tsbuildinfo
 # Sidecar binary staged into a platform VSIX by scripts/release/package-vsix.mjs
 /bin/
 
