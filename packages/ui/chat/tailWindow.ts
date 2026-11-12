@@ -1,6 +1,7 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { QuietEntranceContext } from '../ui/Row';
+import { cssTimeVar } from '../ui/cssTime';
 import { captureSliceScroll, restoreSliceScroll, type SliceScroll } from './sliceScroll';
 
 // A live turn opened with a long history renders its tail first and mounts the earlier items in idle slices after
@@ -62,6 +63,65 @@ export function useTailWindow(count: number, live: boolean, anchor: RefObject<HT
   }, [start]);
 
   return { start, quiet };
+}
+
+// A settled turn's long process opened by hand renders its head first: the fold opens downward from its head row, so
+// only the first rows can be in view while the panel grows. Mounting a 420-item process in the click took ~40 ms of
+// React and ~50 ms of layout in the desktop app's WKWebView before the first frame of the open (hundreds of ms on a long
+// turn); the head alone is a fraction of that. The rest mounts in slices once the panel has opened, below what is in view
+export const HEAD_THRESHOLD = 120;
+export const HEAD_SIZE = 60;
+// The shortest a process row gets, to size the head for a tall window
+const MIN_ROW_PX = 20;
+const HEAD_SLICE = 60;
+// Fallback for --dur-open, plus a frame or two for the transition to finish
+const DEFAULT_OPEN_MS = 320;
+const OPEN_SLACK_MS = 60;
+
+const headSize = () => Math.max(HEAD_SIZE, typeof window === 'undefined' ? 0 : Math.ceil(window.innerHeight / MIN_ROW_PX));
+
+// `count` items of a fold that is `open`: how many of them, from the first, are mounted. A fold that mounts open, a
+// live turn's (`live`, the tail window's case) and a short one render whole. `anchor` is the fold's root, whose end is
+// where the later slices land: only a reader who has already scrolled past it is moved by what was added
+export function useHeadWindow(count: number, open: boolean, live: boolean, anchor: RefObject<HTMLElement | null>): number {
+  const [win, setWin] = useState({ open, end: Infinity });
+  const openedAt = useRef(0);
+  const hold = useRef<number | undefined>(undefined);
+  const before = useRef<SliceScroll | undefined>(undefined);
+  if (win.open !== open) {
+    if (open) { openedAt.current = performance.now(); hold.current = undefined; }
+    // A closing fold keeps what it has until its body is released
+    setWin({ open, end: open ? (!live && count > HEAD_THRESHOLD ? headSize() : Infinity) : win.end });
+  }
+  const end = live ? Infinity : win.end;
+  const pending = open && end < count;
+
+  useEffect(() => {
+    if (!pending) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const grow = () => {
+      const root = anchor.current;
+      const scroller = root ? scrollerOf(root) : undefined;
+      before.current = root && scroller && root.getBoundingClientRect().bottom < scroller.getBoundingClientRect().top ? captureSliceScroll(scroller) : undefined;
+      // Committed right here, so nothing lands between the measure above and the correction below
+      flushSync(() => setWin(current => ({ ...current, end: current.end + HEAD_SLICE })));
+    };
+    // The duration is read in a frame, not in this effect: a style read right after the commit would resolve the
+    // new rows' style inside the click instead of with the frame that paints them
+    const frame = requestAnimationFrame(() => {
+      hold.current ??= (anchor.current ? cssTimeVar(anchor.current, '--dur-open', DEFAULT_OPEN_MS) : DEFAULT_OPEN_MS) + OPEN_SLACK_MS;
+      timer = setTimeout(grow, Math.max(0, openedAt.current + hold.current - performance.now()));
+    });
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
+  }, [pending, end, anchor]);
+
+  useLayoutEffect(() => {
+    const kept = before.current;
+    before.current = undefined;
+    if (kept) restoreSliceScroll(kept);
+  }, [end]);
+
+  return end;
 }
 
 // The nearest scrolling ancestor: the thread, or the subagent inspector's transcript
