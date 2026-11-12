@@ -6,6 +6,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 
+use acpira_shared::subagents::SubagentState;
 use acpira_shared::transcript::SessionStatus;
 
 use super::personas::call_fits;
@@ -44,8 +45,38 @@ impl AcpSession {
     c.questions.pending.iter().find(|p| p.node_id.as_deref() == Some(node)).map(|p| (p.block_id.clone(), p.questions.clone()))
   }
 
+  /// Child cards only their caller was asked about go to the user as well once that caller cannot answer. A summoned
+  /// caller cannot once its round is over; the root (`root_settled`: it is free and nothing starts on it) when it was
+  /// told and ended its turn without answering (which is how it hands a decision to the user), or cannot be told at all.
+  /// A call waiting on the child's thread hears the question, so its caller still can
+  pub(crate) fn relay_escalate(&self, root_settled: bool) {
+    let mut c = self.core.lock();
+    let core = &mut *c;
+    let mut moved = false;
+    for p in &core.questions.pending {
+      let Some(node) = p.node_id.as_deref().filter(|_| core.questions.callers.contains(&p.block_id)) else { continue };
+      let Some(thread) = core.tree.relay_thread_of(node) else { continue };
+      if core.relays.waiters.contains_key(&thread) {
+        continue;
+      }
+      let gone = match core.relays.ledger.iter().find(|o| o.node == node).and_then(|o| o.owner.as_deref()) {
+        Some(owner) => core.tree.relay_latest(owner).is_none_or(|r| r.state != SubagentState::Running),
+        None => root_settled || core.relays.closed,
+      };
+      if gone {
+        core.questions.callers.remove(&p.block_id);
+        moved = true;
+      }
+    }
+    if moved {
+      self.log("relay: a child's question goes to the user, its caller did not answer");
+      self.touch(&mut c);
+    }
+  }
+
   /// A question card opened somewhere: with the session idle, an automatic message may carry a child's question now
   pub(crate) fn relay_nudge(self: &Arc<Self>) {
+    self.relay_escalate(false);
     let idle = {
       let c = self.core.lock();
       c.status == SessionStatus::Ready && !c.phase.running && !c.relays.closed
@@ -70,6 +101,8 @@ impl AcpSession {
   /// A round ended. With the session idle, what the background held back goes now: the workspace gate over the span
   /// the children extended once the last one is done, then (through the queue's turn) the results owed to the root
   pub(super) fn relay_settled(self: &Arc<Self>) {
+    // The round may have been a summoned caller's: its children's questions have nobody left to answer them
+    self.relay_escalate(false);
     let (idle, deferred) = {
       let c = self.core.lock();
       let idle = c.status == SessionStatus::Ready && !c.phase.running;
@@ -113,7 +146,7 @@ impl AcpSession {
       }
       c.relays.telling = asks.iter().map(|(_, b)| b.clone()).collect();
       c.relays.wakes += 1;
-      wake_text(&c, &nodes, &asks.into_iter().map(|(n, _)| n).collect::<Vec<_>>())
+      wake_text(&c, None, &nodes, &asks.into_iter().map(|(n, _)| n).collect::<Vec<_>>())
     };
     self.log("relay: delivering finished rounds to the root");
     let me = self.clone();

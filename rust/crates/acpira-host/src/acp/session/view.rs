@@ -62,10 +62,12 @@ impl AcpSession {
   /// `list_state`, and beside `Waiting` whether only questions wait (`SessionSummary::question`)
   pub fn list_marks(&self) -> (Option<SummaryState>, bool) {
     let c = self.core.lock();
-    // A child's card (a summoned one may ask long after the root turn ended) waits on the user just the same
+    // A child's card (a summoned one may ask long after the root turn ended) waits on the user just the same, unless only
+    // its caller is asked yet
     let blocks = || visible_turns(&c).filter_map(Turn::as_agent).flat_map(|a| a.blocks.iter());
     let permission = blocks().any(|b| matches!(b, AgentBlock::Permission(_))) || c.perms.pending.iter().any(|p| p.node_id.is_some());
-    let question = blocks().any(|b| matches!(b, AgentBlock::Question(q) if q.outcome.is_none())) || c.questions.pending.iter().any(|q| q.node_id.is_some());
+    let question = blocks().any(|b| matches!(b, AgentBlock::Question(q) if q.outcome.is_none()))
+      || c.questions.pending.iter().any(|q| q.node_id.is_some() && !c.questions.callers.contains(&q.block_id));
     if permission || question {
       return (Some(SummaryState::Waiting), !permission);
     }
@@ -177,7 +179,18 @@ impl AcpSession {
         },
       }
     });
-    let subagents = if c.tree.is_empty() { None } else { Some(c.tree.summaries()) };
+    // A card only the child's caller is asked about is not offered to the user (`relay_escalate`)
+    let subagents = if c.tree.is_empty() {
+      None
+    } else {
+      let mut list = c.tree.summaries();
+      for s in &mut list {
+        if s.question.as_ref().is_some_and(|q| c.questions.callers.contains(&q.id)) {
+          s.question = None;
+        }
+      }
+      Some(list)
+    };
     let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c, shapes.as_ref()));
     let queued = queue_snapshot(&c);
     // The plugins' slash commands join the agent's own in the menu

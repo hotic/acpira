@@ -88,6 +88,8 @@ struct Owing {
   owner: Option<String>,
   cohort: usize,
   state: Owed,
+  /// Sent with `early`: once it ended, its batch goes out without waiting for the rest
+  early: bool,
 }
 
 /// One thread's process and native session
@@ -164,11 +166,25 @@ impl Relays {
     }
   }
 
-  /// Finished results owed to one caller whose whole turn's batch has ended
+  /// Finished results owed to one caller whose turn's batch is ready: all of it ended, or one of its ended rounds was
+  /// sent `early` (the batch's other finished results ride along, saving the caller a wake)
   fn deliverable(&self, owner: Option<&str>) -> Vec<String> {
     let mine = |o: &&Owing| o.owner.as_deref() == owner;
     let running: HashSet<usize> = self.ledger.iter().filter(mine).filter(|o| o.state == Owed::Running).map(|o| o.cohort).collect();
-    self.ledger.iter().filter(mine).filter(|o| o.state == Owed::Unread && !running.contains(&o.cohort)).map(|o| o.node.clone()).collect()
+    let early: HashSet<usize> = self.ledger.iter().filter(mine).filter(|o| o.state == Owed::Unread && o.early).map(|o| o.cohort).collect();
+    self
+      .ledger
+      .iter()
+      .filter(mine)
+      .filter(|o| o.state == Owed::Unread && (!running.contains(&o.cohort) || early.contains(&o.cohort)))
+      .map(|o| o.node.clone())
+      .collect()
+  }
+
+  /// Rounds this caller sent off that are still running: an early delivery names them, so the caller can stop the ones
+  /// the reply makes moot
+  fn still_running(&self, owner: Option<&str>) -> Vec<String> {
+    self.ledger.iter().filter(|o| o.owner.as_deref() == owner && o.state == Owed::Running).map(|o| o.node.clone()).collect()
   }
 
   /// Rounds a summoned caller sent off whose results it has not had yet

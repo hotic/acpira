@@ -321,6 +321,7 @@ impl Relay {
       mode: text("mode"),
       thread: text("thread"),
       new_thread: args.get("new_thread").and_then(Value::as_bool),
+      early: args.get("early").and_then(Value::as_bool),
       wait_secs: Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed)),
       wait: args.get("wait").and_then(Value::as_bool),
       answers: args.get("answers").and_then(Value::as_array).map(|l| l.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect()),

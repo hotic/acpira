@@ -137,6 +137,10 @@ pub struct AskArgs {
   /// true = start a new conversation even where the persona would continue its idle one (a scout, an executor)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub new_thread: Option<bool>,
+  /// A task sent off: true = its reply is delivered as soon as it ends, not held for the rest of the caller's turn's
+  /// batch (a race, such as rival hypotheses: the first conclusive reply lets the caller stop the others)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub early: Option<bool>,
   /// How long the call may wait before it answers "still working" (seconds; the MCP side derives it from the client)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub wait_secs: Option<u64>,
