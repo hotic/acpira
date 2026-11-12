@@ -1,6 +1,7 @@
 import AcpiraDesign
 import SwiftUI
 #if canImport(UIKit)
+import CoreText
 import UIKit
 #endif
 
@@ -172,7 +173,8 @@ final class PromptMarkPainter {
                                           space: font.pointSize * 0.25, clear: Self.clear)
       // One rect per line the token runs over (a long name can wrap), each its own pill
       for line in view.selectionRects(for: run) where line.rect.width > 0 && !line.rect.isNull {
-        shapes.append((pill(line.rect, reach: reach, font: font), mark.summon))
+        shapes.append((pill(line.rect, baseline: baseline(view, near: line.rect.midY), reach: reach, font: font),
+                       mark.summon))
       }
     }
     pills.show(shapes, traits: view.traitCollection)
@@ -187,11 +189,36 @@ final class PromptMarkPainter {
     }
   }
 
-  /// The pill around a line's run of the token: its glyphs' height plus `--mark-pad` above and below (py-0.5), the
-  /// reach on either side
-  private func pill(_ run: CGRect, reach: Double, font: UIFont) -> CGRect {
+  /// The pill around a line's run of the token: its face's ascent and descent around the line's baseline plus
+  /// `--mark-pad` above and below (py-0.5, CSS's inline content area), the reach on either side. The line box's middle
+  /// is not the glyphs' middle: an exact line height leaves its spare room unevenly around them, so without a baseline
+  /// the pill sat low
+  private func pill(_ run: CGRect, baseline: CGFloat?, reach: Double, font: UIFont) -> CGRect {
     let height = min(run.height, font.ascender - font.descender + Self.pad * 2)
-    return CGRect(x: run.minX - reach, y: run.midY - height / 2, width: run.width + reach * 2, height: height)
+    let top = baseline.map { $0 - font.ascender - Self.pad } ?? run.midY - height / 2
+    return CGRect(x: run.minX - reach, y: top, width: run.width + reach * 2, height: height)
+  }
+
+  /// The baseline, in the text view's coordinates, of the glyphs on the line running through `y`. A tinting painter
+  /// sits on text TextKit draws, so it takes TextKit's baseline, which leaves an exact line's spare room above the
+  /// glyphs. Otherwise the view is a transparent copy over SwiftUI `Text`, which leaves that room below them: the
+  /// baseline sits the line's tallest face's ascent (PingFang on a CJK line) below the line's top
+  private func baseline(_ view: UITextView, near y: CGFloat) -> CGFloat? {
+    guard let manager = view.textLayoutManager else { return nil }
+    let inset = view.textContainerInset
+    let point = CGPoint(x: inset.left + 1, y: y - inset.top)
+    guard let fragment = manager.textLayoutFragment(for: point) else { return nil }
+    let frame = fragment.layoutFragmentFrame
+    for line in fragment.textLineFragments {
+      let bounds = line.typographicBounds.offsetBy(dx: frame.minX, dy: frame.minY)
+      guard bounds.minY <= point.y, point.y < bounds.maxY else { continue }
+      if tints { return inset.top + bounds.minY + line.glyphOrigin.y }
+      let run = line.attributedString.attributedSubstring(from: line.characterRange)
+      var ascent: CGFloat = 0
+      CTLineGetTypographicBounds(CTLineCreateWithAttributedString(run), &ascent, nil, nil)
+      return inset.top + bounds.minY + ascent
+    }
+    return nil
   }
 
   private func tint(_ view: UITextView, _ ranges: [(range: NSRange, summon: Bool)]) {
