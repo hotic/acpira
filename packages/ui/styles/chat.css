@@ -90,6 +90,16 @@
   }
 }
 
+/* The wide transcript column, centred with its left edge on a whole pixel. Plain auto margins put it on a half pixel
+   whenever the free width is odd, and WebKit then snaps bitmaps inside (the turn Orb's canvas, images) to a whole pixel
+   one way or the other depending on the layers above them: a fold toggled by hand rebuilt those layers and the Orb
+   twitched sideways against its row. An engine without CSS round() drops the declaration and keeps plain centring. */
+@utility thread-column {
+  max-width: var(--spacing-chat-column);
+  margin-inline: auto;
+  margin-left: max(0px, round(down, (100% - var(--spacing-chat-column)) / 2, 1px));
+}
+
 /* The subagent inspector's transcript: no sticky prompt covers its top, so rows scrolling under the header fade out there
    too. data-more-above follows the scroll position, data-more-below the follow state (as the thread's, so a streamed chunk
    never flashes it); the scrollbar gutter stays whole like thread-fade's */
