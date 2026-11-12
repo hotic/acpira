@@ -473,11 +473,7 @@ export async function activate(context: vscode.ExtensionContext) {
       handleUri(uri) {
         const id = sessionIdOfLink(`${uri.scheme}://${uri.authority}${uri.path}`);
         if (!id) { log.warn(`unhandled URI: ${uri.path}`); return; }
-        // A store with sessions.db may keep a session in the database alone, with no record file to look for: the engine
-        // answers for it when the session is selected
-        const known = [...bridges].some(b => b.sessionId === id)
-          || existsSync(join(sessionsDir, `${id}.json`))
-          || existsSync(join(sessionsDir, 'sessions.db'));
+        const known = [...bridges].some(b => b.sessionId === id) || storedHere(sessionsDir, id);
         if (known) revealSession(id);
         else void vscode.window.showWarningMessage(t('sessionLink.notHere'));
       },
@@ -534,4 +530,24 @@ export function deactivate(): Promise<void> | undefined {
   const c = client;
   client = undefined;
   return c?.dispose();
+}
+
+// Whether this window's store keeps a session: its record file, or (a store created with no record files) its catalogue
+// row outside the trash. node:sqlite loads lazily, so a host without it (an older Electron) still activates and leaves
+// the answer to the engine when the session is selected, as does a database it cannot read
+function storedHere(sessionsDir: string, id: string): boolean {
+  if (existsSync(join(sessionsDir, `${id}.json`))) return true;
+  const db = join(sessionsDir, 'sessions.db');
+  if (!existsSync(db)) return false;
+  try {
+    const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+    const connection = new DatabaseSync(db, { readOnly: true });
+    try {
+      return !!connection.prepare('SELECT 1 FROM session WHERE id = ? AND trashed_at IS NULL').get(id);
+    } finally {
+      connection.close();
+    }
+  } catch {
+    return true;
+  }
 }
