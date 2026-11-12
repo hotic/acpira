@@ -1119,6 +1119,7 @@ export const ru = {
   'settings.providers.checkOk': 'Подключено',
   'settings.providers.fetching': 'Получаем модели…',
   'settings.providers.addModel': 'Добавить модель',
+  'settings.providers.newModels': 'Новых моделей: {count}',
   'settings.providers.addModel.search': 'Поиск или ID модели',
   'settings.providers.addModel.typeId': 'Введите ID модели, чтобы добавить её',
   'settings.providers.addModel.useId': 'Добавить «{id}»',

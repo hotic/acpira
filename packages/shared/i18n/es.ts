@@ -1093,6 +1093,7 @@ export const es = {
   'settings.providers.checkOk': 'Conectado',
   'settings.providers.fetching': 'Obteniendo modelos…',
   'settings.providers.addModel': 'Añadir modelo',
+  'settings.providers.newModels': 'Modelos nuevos: {count}',
   'settings.providers.addModel.search': 'Busca o escribe un ID de modelo',
   'settings.providers.addModel.typeId': 'Escribe un ID de modelo para añadirlo',
   'settings.providers.addModel.useId': 'Añadir «{id}»',

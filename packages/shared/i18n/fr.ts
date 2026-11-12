@@ -1096,6 +1096,7 @@ export const fr = {
   'settings.providers.checkOk': 'Connecté',
   'settings.providers.fetching': 'Récupération des modèles…',
   'settings.providers.addModel': 'Ajouter un modèle',
+  'settings.providers.newModels': 'Nouveaux modèles : {count}',
   'settings.providers.addModel.search': 'Rechercher ou saisir un identifiant de modèle',
   'settings.providers.addModel.typeId': 'Saisissez un identifiant de modèle pour l’ajouter',
   'settings.providers.addModel.useId': 'Ajouter « {id} »',

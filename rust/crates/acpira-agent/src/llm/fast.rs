@@ -8,7 +8,8 @@
 //!   the call to standard speed (billed at standard rates).
 //!
 //! Which models have it is decided here from the format and the model id; `ProviderModel::fast` overrides that for a
-//! gateway model this list does not know or one whose route drops the parameter.
+//! gateway model this list does not know or one whose route drops the parameter, and `ProviderModel::fast_listed` (set
+//! from the endpoint's `/models` `service_tiers` listing) stands in for the id list while the setting is absent
 
 use acpira_shared::providers::{ApiFormat, Provider, ProviderModel};
 
@@ -34,9 +35,18 @@ const O_SERIES: &[&str] = &["o3", "o4-mini"];
 /// Variants of those families that are not chat models
 const MODALITIES: &[&str] = &["audio", "realtime", "search", "transcribe", "tts", "image"];
 
-/// Whether the model's session offers the Fast switch: the model's own setting, else the known list for its format
+/// Whether the model's session offers the Fast switch: the model's own setting, else the endpoint's own listing, else
+/// the known list for its format
 pub fn offered(provider: &Provider, model: &ProviderModel) -> bool {
-  model.fast.unwrap_or_else(|| known(provider.api_format(), &model.id))
+  model.fast.unwrap_or_else(|| {
+    // `service_tiers` names OpenAI's `service_tier`; when an OpenAI-format endpoint listed tiers, follow its listing
+    if matches!(provider.api_format(), Some(ApiFormat::OpenaiChat | ApiFormat::OpenaiResponses))
+      && let Some(listed) = model.fast_listed
+    {
+      return listed;
+    }
+    known(provider.api_format(), &model.id)
+  })
 }
 
 /// The known list: the id without a gateway prefix (`openai/gpt-5.5`), lowercase
@@ -75,6 +85,15 @@ mod tests {
     offered(&provider, &ProviderModel::new(id))
   }
 
+  // `offered_in` with the model's `fast` and `fastListed` fields set
+  fn listed_offered(format: &str, id: &str, fast: Option<bool>, fast_listed: Option<bool>) -> bool {
+    let provider: Provider = serde_json::from_value(json!({ "id": "p", "format": format, "baseUrl": "https://gw.example.com/v1" })).unwrap();
+    let mut m = ProviderModel::new(id);
+    m.fast = fast;
+    m.fast_listed = fast_listed;
+    offered(&provider, &m)
+  }
+
   #[test]
   fn claude_opus_5_and_4_8_on_anthropic_messages() {
     for id in ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-5.5", "anthropic/claude-opus-5-5", "Claude-Opus-5-5"] {
@@ -109,6 +128,34 @@ mod tests {
     let mut gpt = ProviderModel::new("gpt-6.1-sol");
     gpt.fast = Some(false);
     assert!(!offered(&provider, &gpt));
+  }
+
+  #[test]
+  fn a_listing_flag_opens_and_closes_fast_on_the_openai_formats() {
+    // `service_tiers` on the listing: models not on the known list get Fast, listed fast-excluded ones lose it
+    for format in ["openai-chat", "openai-responses"] {
+      assert!(listed_offered(format, "grok-4.7", None, Some(true)), "{format}");
+      assert!(!listed_offered(format, "gpt-6-astra", None, Some(false)), "{format}");
+      // Without the flag the known list still decides
+      assert!(listed_offered(format, "gpt-6.1-sol", None, None), "{format}");
+      assert!(!listed_offered(format, "grok-4.7", None, None), "{format}");
+    }
+  }
+
+  #[test]
+  fn the_listing_flag_does_not_reach_another_format() {
+    // Anthropic's fast mode is a different switch: the listing's OpenAI tier does not decide it
+    assert!(listed_offered("anthropic", "claude-opus-5.5", None, Some(false)));
+    assert!(!listed_offered("anthropic", "gpt-6.1-sol", None, Some(true)));
+  }
+
+  #[test]
+  fn an_explicit_setting_wins_over_the_listing_flag() {
+    for format in ["openai-chat", "openai-responses", "anthropic"] {
+      assert!(listed_offered(format, "gpt-6-astra", Some(true), Some(false)), "{format}");
+      assert!(!listed_offered(format, "gpt-6.1-sol", Some(false), Some(true)), "{format}");
+      assert!(listed_offered(format, "claude-opus-5.5", Some(true), Some(false)), "{format}");
+    }
   }
 
   #[test]

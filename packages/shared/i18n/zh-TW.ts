@@ -1111,6 +1111,7 @@ export const zhTW = {
   'settings.providers.checkOk': '連線成功',
   'settings.providers.fetching': '正在取得模型…',
   'settings.providers.addModel': '新增模型',
+  'settings.providers.newModels': '{count} 個新模型',
   'settings.providers.addModel.search': '搜尋或輸入模型 ID',
   'settings.providers.addModel.typeId': '可以直接輸入模型 ID 新增',
   'settings.providers.addModel.useId': '新增「{id}」',

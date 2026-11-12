@@ -31,9 +31,11 @@ export interface ProviderModel {
   efforts: string[];
   // The prompt / request family pinned for this model; null matches automatically
   family?: string | null;
-  // Whether sessions offer the Fast switch (the provider's premium speed tier); absent decides from the API format and
-  // the model id (llm/fast.rs), true / false override that
+  // Whether sessions offer the Fast switch (the provider's premium speed tier); absent decides from the endpoint's
+  // model list (`fastListed`) and the API format and model id (llm/fast.rs), true / false override that
   fast?: boolean | null;
+  // Whether the endpoint's model list advertised a fast tier (`service_tiers`); consulted while `fast` is absent
+  fastListed?: boolean | null;
   sampling: Sampling;
   // Tool-call rounds per turn before the agent pauses; null = no cap
   maxSteps?: number | null;
@@ -175,6 +177,24 @@ export type ProviderAction =
 // A model entry with the file's defaults, for a hand-typed id
 export function newModel(id: string): ProviderModel {
   return { id, enabled: true, input: ['text'], thinking: 'auto', efforts: [], sampling: {}, estimated: [] };
+}
+
+// Carry fresh `fastListed` flags from an endpoint listing onto already configured models; undefined when nothing moved
+export function syncListedFast(models: ProviderModel[], listed?: ProviderModel[]): ProviderModel[] | undefined {
+  if (!listed?.length || !models.length) return undefined;
+  const byId = new Map(listed.map(m => [m.id, m.fastListed ?? undefined]));
+  let changed = false;
+  const next = models.map(m => {
+    if (!byId.has(m.id)) return m;
+    const fastListed = byId.get(m.id);
+    if ((m.fastListed ?? undefined) === fastListed) return m;
+    changed = true;
+    const copy = { ...m };
+    if (fastListed === undefined) delete copy.fastListed;
+    else copy.fastListed = fastListed;
+    return copy;
+  });
+  return changed ? next : undefined;
 }
 
 // The built-in agent's id in the registry (`SELF_AGENT_ID` in rust/crates/acpira-host/src/acp/agents/registry.rs)

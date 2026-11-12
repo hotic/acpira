@@ -1092,6 +1092,7 @@ export const ja = {
   'settings.providers.checkOk': '接続できました',
   'settings.providers.fetching': 'モデルを取得しています…',
   'settings.providers.addModel': 'モデルを追加',
+  'settings.providers.newModels': '新しいモデル: {count}',
   'settings.providers.addModel.search': '検索、またはモデル ID を入力',
   'settings.providers.addModel.typeId': 'モデル ID を入力して追加できます',
   'settings.providers.addModel.useId': '「{id}」を追加',

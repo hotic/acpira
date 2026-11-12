@@ -1130,6 +1130,7 @@ export const zhCN = {
   'settings.providers.checkOk': '连接成功',
   'settings.providers.fetching': '正在获取模型…',
   'settings.providers.addModel': '添加模型',
+  'settings.providers.newModels': '{count} 个新模型',
   'settings.providers.addModel.search': '搜索或输入模型 ID',
   'settings.providers.addModel.typeId': '可以直接输入模型 ID 添加',
   'settings.providers.addModel.useId': '添加「{id}」',

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Eye, EyeOff, Globe, LoaderCircle, Plus, Server, Settings2 } from 'lucide-react';
 import {
-  BUILTIN_AGENT_ID, newModel,
+  BUILTIN_AGENT_ID, newModel, syncListedFast,
   type LocalSource, type ProbeOutcome, type Provider, type ProviderAction, type ProviderModel, type ProviderProbe, type ProvidersView, type ProviderView,
 } from '@acpira/shared/providers';
 import { Button, Chip, IconButton } from '../ui/Button';
@@ -48,8 +48,9 @@ const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '').toLowerCa
 // servers found on this machine (added with one click), then one block per source: its head (name with a status dot and
 // the model count, the URL, Edit) over its model rows, each with its switch and a click into its editor. A source's
 // form, its add-model list and a model's editor open as dialogs over this one. Keys go to the host once and never come
-// back; the page only knows whether one is stored
-export function ProvidersSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
+// back; the page only knows whether one is stored. `detect` counts the dialog's refresh clicks: each asks every
+// switched-on source for its model list, and a source listing models the page does not hold says how many on its head
+export function ProvidersSection({ state, on, detect }: { state?: ProvidersState; on: SettingsHandlers; detect?: number }) {
   useEffect(() => { on.providers?.(); }, [on]);
   // The id whose form dialog is open, 'new' for an added source
   const [editing, setEditing] = useState<string>();
@@ -87,7 +88,9 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
   const save = (provider: Provider, key?: string, form = false, listed?: ProviderModel[]) => {
     if (!provider.id) before.current = new Set(state?.view.providers.map(p => p.id));
     listedOnSave.current = listed;
-    act({ kind: 'save', provider: strip(provider), key }, form);
+    // An answered /models keeps the fast-tier listing on the already configured models too
+    const synced = syncListedFast(provider.models, listed);
+    act({ kind: 'save', provider: strip(synced ? { ...provider, models: synced } : provider), key }, form);
   };
   const saveRow = (provider: Provider) => act({ kind: 'save', provider: strip(provider) }, false, true);
   // Opening a form clears its last failure; closing keeps it, so the page does not repeat what the dialog showed
@@ -96,22 +99,61 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
   // source's form with the error instead, so the list itself never waits and never fails
   const [opening, setOpening] = useState<{ id: string; probe: string }>();
   const opened = opening && state?.probes?.[opening.probe];
+  // The probe each source got from the last refresh, by source id
+  const [checks, setChecks] = useState<Record<string, string>>({});
+  const checked = (id: string) => {
+    const outcome = checks[id] ? state?.probes?.[checks[id]] : undefined;
+    return outcome?.kind === 'models' ? outcome.models : undefined;
+  };
+  const sources = useRef(state?.view.providers);
+  sources.current = state?.view.providers;
+  useEffect(() => {
+    if (!detect) return;
+    const next: Record<string, string> = {};
+    for (const p of sources.current ?? []) {
+      if (!p.enabled) continue;
+      next[p.id] = `probe-${++probeSeq}`;
+      on.providerProbe?.(next[p.id]!, { kind: 'models', provider: strip(p) });
+    }
+    setChecks(next);
+  }, [detect, on]);
   const openAdd = (p: ProviderView) => {
+    // A refresh already holds the endpoint's answer
+    const listed = checked(p.id);
+    if (listed) { setAdding({ id: p.id, listed }); return; }
     const probe = `probe-${++probeSeq}`;
     setOpening({ id: p.id, probe });
     on.providerProbe?.(probe, { kind: 'models', provider: strip(p) });
   };
-  useEffect(() => {
-    if (!opening || !opened) return;
-    setOpening(undefined);
-    if (opened.kind === 'models') setAdding({ id: opening.id, listed: opened.models });
-    else if (opened.kind === 'failed') { setFormError(opened.error); setEditing(opening.id); }
-  }, [opening, opened]);
-
   const view = state?.view;
   // The form's own failures show in the dialog; the page shows the view's error and failures of row actions
   const error = (state?.error !== formError ? state?.error : undefined) ?? view?.error;
   const providers = (view?.providers ?? []).map(p => state?.drafts?.[p.id] ? { ...p, ...state.drafts[p.id] } : p);
+
+  useEffect(() => {
+    if (!opening || !opened) return;
+    setOpening(undefined);
+    if (opened.kind === 'models') {
+      const target = providers.find(p => p.id === opening.id);
+      const models = target && syncListedFast(target.models, opened.models);
+      if (target && models) saveRow({ ...strip(target), models });
+      setAdding({ id: opening.id, listed: opened.models });
+    } else if (opened.kind === 'failed') { setFormError(opened.error); setEditing(opening.id); }
+  }, [opening, opened]);
+  // A refresh probe landing updates the fast-tier flags of that source's saved models once, never touching other sources
+  // or a ProviderForm verify probe
+  const syncedProbes = useRef(new Set<string>());
+  useEffect(() => {
+    if (!state?.probes) return;
+    for (const [providerId, probeId] of Object.entries(checks)) {
+      const outcome = state.probes[probeId];
+      if (outcome?.kind !== 'models' || syncedProbes.current.has(probeId)) continue;
+      syncedProbes.current.add(probeId);
+      const target = providers.find(p => p.id === providerId);
+      const models = target && syncListedFast(target.models, outcome.models);
+      if (target && models) saveRow({ ...strip(target), models });
+    }
+  }, [checks, state?.probes]);
   const ctx = useMemo(() => ({ probes: state?.probes, on }), [state?.probes, on]);
   const total = providers.reduce((n, p) => n + p.models.length, 0);
   const edited = editing && editing !== 'new' ? providers.find(p => p.id === editing) : undefined;
@@ -127,6 +169,7 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
       {state && <LocalServers providers={providers} busy={busy} onAdd={s => save(fromLocal(s), undefined, true, s.models)} />}
       {state && !providers.length && <Group><Note>{t('settings.providers.none')}</Note></Group>}
       {providers.map(p => <ProviderGroup key={p.id} provider={p} query={query} busy={busy} opening={opening?.id === p.id}
+        fresh={checked(p.id)?.filter(m => !p.models.some(x => x.id === m.id)).length ?? 0}
         onEdit={() => edit(p.id)} onAdd={() => openAdd(p)} onSave={saveRow} />)}
       {/* Every source filtered away: say so instead of leaving the search field alone */}
       {total > 0 && query.trim() && !providers.some(p => matching(p, query).length) && <Group><Note>{t('settings.models.noResults')}</Note></Group>}
@@ -188,11 +231,12 @@ function SourceStatus({ provider: p }: { provider: ProviderView }) {
 
 // One source as a block: its head (name with its status dot and model count, the URL, Edit, the source's switch), then
 // its model rows. The head switch is on while the source is on and every model is; flipping it sets every model (and
-// turns a source switched off earlier back on), each row keeps its own switch. Removing the source and managing its
-// models live in the edit dialog; a source without models offers Add model in place
-function ProviderGroup({ provider: p, query, busy, opening, onEdit, onAdd, onSave }: {
+// turns a source switched off earlier back on), each row keeps its own switch. Add model sits on the head, and names
+// the count of models the endpoint lists beyond these once a refresh has asked it. Removing the source lives in the
+// edit dialog
+function ProviderGroup({ provider: p, query, busy, opening, fresh, onEdit, onAdd, onSave }: {
   // opening: Add model is asking the endpoint before its list opens
-  provider: ProviderView; query: string; busy: boolean; opening: boolean;
+  provider: ProviderView; query: string; busy: boolean; opening: boolean; fresh: number;
   onEdit: () => void; onAdd: () => void; onSave: (p: Provider) => void;
 }) {
   const [open, setOpen] = useState<string>();
@@ -206,6 +250,9 @@ function ProviderGroup({ provider: p, query, busy, opening, onEdit, onAdd, onSav
     <Section title={name} count={p.models.length} status={<SourceStatus provider={p} />}
       desc={<span className="block truncate" title={p.baseUrl}>{p.baseUrl}</span>}
       action={<div className="flex shrink-0 items-center gap-gap">
+        <SectionAction icon={opening ? <LoaderCircle className="animate-spin live-spin" /> : <Plus />} disabled={busy || opening} onClick={onAdd}>
+          {fresh > 0 ? <span className="text-fg-1">{t('settings.providers.newModels', { count: fresh })}</span> : t('settings.providers.addModel')}
+        </SectionAction>
         <SectionAction icon={<Settings2 />} disabled={busy} title={t('settings.providers.edit', { name })} onClick={onEdit}>{t('settings.providers.editShort')}</SectionAction>
         {p.models.length > 0 && <Switch checked={p.enabled && p.models.every(m => m.enabled)} disabled={busy} label={t('settings.providers.allModels', { name })}
           onChange={on => onSave({ ...strip(p), enabled: on || p.enabled, models: p.models.map(m => ({ ...m, enabled: on })) })} />}
@@ -218,8 +265,7 @@ function ProviderGroup({ provider: p, query, busy, opening, onEdit, onAdd, onSav
           onTest={draft => { setTesting(m.id); test.run({ kind: 'test', provider: strip(p), model: draft }); }}
           test={testing === m.id ? test : undefined} />
       ))}
-      {!p.models.length && <ItemRow title={t('settings.providers.noModels')}
-        trailing={<SectionAction icon={opening ? <LoaderCircle className="animate-spin live-spin" /> : <Plus />} disabled={busy || opening} onClick={onAdd}>{t('settings.providers.addModel')}</SectionAction>} />}
+      {!p.models.length && <ItemRow title={t('settings.providers.noModels')} />}
     </Section>
   );
 }
