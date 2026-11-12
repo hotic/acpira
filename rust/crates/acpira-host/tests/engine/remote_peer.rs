@@ -561,6 +561,14 @@ async fn sessions_driven_here_and_the_hosts_own_list_once() {
     m.active().is_some_and(|v| v["title"] == "The host's own" && v["cwd"] == folder.as_str())
   })
   .await;
+
+  // Its export is asked of the host's engine (no record here) and still lands on this machine's disk
+  let snap = m.m.snapshot("s-host").await.expect("the host's record");
+  assert_eq!((snap.title.as_str(), snap.cwd.as_str()), ("The host's own", folder.as_str()));
+  let path = m.m.export_session("s-host", acpira_shared::protocol::ExportFormat::Markdown).await.expect("exported");
+  assert!(!path.starts_with(lab.host_home()) && path.parent().is_some_and(|d| d.ends_with("exports")), "written here: {}", path.display());
+  assert!(std::fs::read_to_string(&path).unwrap().contains("The host's own"));
+  let _ = std::fs::remove_file(&path);
   m.dispose().await;
   connections.dispose();
 }

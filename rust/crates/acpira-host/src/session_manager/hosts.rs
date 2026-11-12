@@ -200,6 +200,29 @@ impl HostRun {
     reply.and_then(|v| v.pointer("/state/sessions").and_then(Value::as_array).map(|s| s.iter().any(|s| s["id"] == id))).unwrap_or(false)
   }
 
+  /// A host session's record as the host's engine holds it, asked as a JSON export (`sessionMarkdown`, the same request
+  /// a paired device saves from), its folder in this engine's `ssh://` form
+  async fn record(&self, id: &str) -> Result<SessionRecord> {
+    let unreachable = || anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &self.alias)]));
+    if !*self.up.borrow() {
+      return Err(unreachable());
+    }
+    let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+    let reply = self
+      .request(format!("record-{seq}"), || {
+        self.send_to_view(LIST_VIEW, json!({ "type": "sessionMarkdown", "id": id, "seq": seq, "format": "json" }));
+      })
+      .await
+      .ok_or_else(unreachable)?;
+    if let Some(error) = reply.get("error").and_then(Value::as_str) {
+      bail!("{error}");
+    }
+    let text = reply.get("markdown").and_then(Value::as_str).ok_or_else(|| anyhow!("invalid sessionMarkdown reply from {}", self.alias))?;
+    let mut record: SessionRecord = serde_json::from_str(text)?;
+    record.cwd = local_folder(&self.alias, &record.cwd);
+    Ok(record)
+  }
+
   async fn search(&self, query: &str) -> Vec<SessionHit> {
     if !*self.up.borrow() {
       return vec![];
@@ -630,6 +653,12 @@ impl SessionManager {
     Some(run)
   }
 
+  /// A host session's record fetched from its host (export, copy and read_session); None when the session is not a host's
+  pub(super) async fn host_record(&self, id: &str) -> Option<Result<SessionRecord>> {
+    let run = self.find_host(id).await?;
+    Some(run.record(id).await)
+  }
+
   /// Whether a session is a host's own (not this machine's, though the host may hold a copy of it)
   pub(super) fn is_host_session(&self, id: &str) -> bool {
     self.host_of(id).is_some()
@@ -879,6 +908,7 @@ impl SessionManager {
           Some("init") if view_id.starts_with("lookup-") => Some(view_id.clone()),
           Some("sessionHits") => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("search-{seq}")),
           Some("controls") if view_id == LIST_VIEW => msg.get("agent").and_then(Value::as_str).map(|a| format!("controls-{a}")),
+          Some("sessionMarkdown") if view_id == LIST_VIEW => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("record-{seq}")),
           Some("editTurnResult") if view_id == LIST_VIEW => msg.get("requestId").and_then(Value::as_str).map(str::to_owned),
           _ => None,
         };
