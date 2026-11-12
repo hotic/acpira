@@ -16,7 +16,10 @@ use serde_json::{Value, json};
 use acpira_agent::mock::{self, MockModel, Reply};
 use acpira_host::acp::agents::registry::AgentRegistry;
 use acpira_host::acp::session::{AcpSession, SessionDeps};
+// Only the Unix-only relay case names these
+#[cfg(unix)]
 use acpira_host::relay::roster::Roster;
+#[cfg(unix)]
 use acpira_host::relay::wire::{AskArgs, HubReply};
 use acpira_host::store::transcript_store::{LogFn, TranscriptStore};
 use acpira_shared::transcript::GoalAction;
