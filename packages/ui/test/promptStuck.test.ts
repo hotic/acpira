@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { followsBottom, scrollerUsable } from '../chat/promptStuck';
+import { anchorOffset, followsBottom, pressAnchorNode, scrollerUsable } from '../chat/promptStuck';
 
 describe('followsBottom', () => {
   it('keeps following when a late scroll event reads a gap left by a second viewport shrink', () => {
@@ -49,5 +49,111 @@ describe('scrollerUsable', () => {
     expect(scrollerUsable({ clientHeight: 0, clientWidth: 320 })).toBe(false);
     expect(scrollerUsable({ clientHeight: 400, clientWidth: 0 })).toBe(false);
     expect(scrollerUsable({ clientHeight: 400, clientWidth: 320 })).toBe(true);
+  });
+});
+
+interface MockSpec {
+  tag?: string;
+  classes?: string[];
+  attrs?: Record<string, string>;
+  overflowY?: string;
+  children?: MockNode[];
+}
+
+interface MockNode {
+  nodeType: 1;
+  tag: string;
+  classes: Set<string>;
+  attrs: Record<string, string>;
+  overflowY: string;
+  parentElement: MockNode | null;
+  children: MockNode[];
+  contains(other: unknown): boolean;
+  matches(selector: string): boolean;
+  closest(selector: string): MockNode | null;
+}
+
+function el({ tag = 'div', classes = [], attrs = {}, overflowY = 'visible', children = [] }: MockSpec = {}): MockNode {
+  const node: MockNode = {
+    nodeType: 1,
+    tag,
+    classes: new Set(classes),
+    attrs,
+    overflowY,
+    parentElement: null,
+    children,
+    contains(other: unknown) {
+      for (let cur = other as MockNode | null; cur; cur = cur.parentElement) {
+        if (cur === node) return true;
+      }
+      return false;
+    },
+    matches(selector: string) {
+      return selector.split(',').some(part => {
+        const token = part.trim();
+        if (token.startsWith('.')) return node.classes.has(token.slice(1));
+        const attr = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(token);
+        if (attr) return attr[2] === undefined ? attr[1]! in node.attrs : node.attrs[attr[1]!] === attr[2];
+        return node.tag === token;
+      });
+    },
+    closest(selector: string) {
+      for (let cur: MockNode | null = node; cur; cur = cur.parentElement) {
+        if (cur.matches(selector)) return cur;
+      }
+      return null;
+    },
+  };
+  for (const child of children) child.parentElement = node;
+  return node;
+}
+
+const asEl = (node: MockNode) => node as unknown as Element;
+const overflowOf = (node: Element) => (node as unknown as MockNode).overflowY;
+
+describe('pressAnchorNode', () => {
+  it('climbs from inner fold icons and shimmers to the owning trigger row', () => {
+    const path = el({ tag: 'path' });
+    const svg = el({ tag: 'svg', children: [path] });
+    const shimmer = el({ tag: 'span', classes: ['shimmer-clip'] });
+    const trigger = el({ tag: 'button', classes: ['action-row'], children: [svg, shimmer] });
+    const content = el({ children: [trigger] });
+    expect(pressAnchorNode(asEl(path), asEl(content), overflowOf)).toBe(trigger);
+    expect(pressAnchorNode(asEl(shimmer), asEl(content), overflowOf)).toBe(trigger);
+  });
+
+  it('escapes nested scrollports so scrolling a thought body cannot move the outer thread', () => {
+    const inline = el({ tag: 'code' });
+    const paragraph = el({ tag: 'p', children: [inline] });
+    const thoughtBody = el({ overflowY: 'auto', children: [paragraph] });
+    const content = el({ children: [thoughtBody] });
+    expect(pressAnchorNode(asEl(inline), asEl(content), overflowOf)).toBe(thoughtBody);
+  });
+
+  it('anchors command prompt toggles on the prompt header rather than the trailing button', () => {
+    const icon = el({ tag: 'svg' });
+    const toggle = el({ tag: 'button', classes: ['command-prompt-toggle'], children: [icon] });
+    const prompt = el({ classes: ['command-prompt'], children: [toggle] });
+    const content = el({ children: [prompt] });
+    expect(pressAnchorNode(asEl(icon), asEl(content), overflowOf)).toBe(prompt);
+  });
+
+  it('ignores sticky prompt cards and targets outside the transcript content', () => {
+    const promptText = el({ tag: 'span' });
+    const sticky = el({ attrs: { 'data-sticky-prompt': '' }, children: [promptText] });
+    const content = el({ children: [sticky] });
+    const scrollbar = el();
+    expect(pressAnchorNode(asEl(promptText), asEl(content), overflowOf)).toBeUndefined();
+    expect(pressAnchorNode(asEl(scrollbar), asEl(content), overflowOf)).toBeUndefined();
+  });
+});
+
+describe('anchorOffset', () => {
+  const scroller = { getBoundingClientRect: () => ({ top: 48 }) };
+
+  it('measures relative to the scroller top and drops detached or display:none nodes', () => {
+    expect(anchorOffset({ isConnected: true, getClientRects: () => ({ length: 1 }), getBoundingClientRect: () => ({ top: 348 }) }, scroller)).toBe(300);
+    expect(anchorOffset({ isConnected: false, getClientRects: () => ({ length: 1 }), getBoundingClientRect: () => ({ top: 348 }) }, scroller)).toBeUndefined();
+    expect(anchorOffset({ isConnected: true, getClientRects: () => ({ length: 0 }), getBoundingClientRect: () => ({ top: 0 }) }, scroller)).toBeUndefined();
   });
 });

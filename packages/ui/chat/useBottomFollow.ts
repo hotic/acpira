@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DependencyList, type RefObject } from 'react';
-import { followsBottom, SCROLL_INTENT_MS, scrollerUsable } from './promptStuck';
+import { anchorOffset, followsBottom, pressAnchorNode, SCROLL_INTENT_MS, scrollerUsable } from './promptStuck';
 
 // Whether the transcript is following its bottom, for rows that must not move under a reader who scrolled up
 // (the live turn's automatic fold closes wait for them). Subscribed per reader, so a scroll re-renders nothing else
@@ -39,6 +39,7 @@ export function useFollowing(): boolean {
 // Covers the fold open / close transitions (--dur-open 220ms, --dur-close 320ms) after a press inside the scroller,
 // so a stream chunk arriving mid-toggle cannot re-arm content-growth pinning while the fold is still opening
 const FOLD_SETTLE_MS = 400;
+const DRAG_SLOP_PX = 8;
 
 export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, content: RefObject<HTMLDivElement | null>, resetKey: unknown, changes: DependencyList, prompt?: unknown): FollowState {
   const pinned = useRef(true);
@@ -74,12 +75,32 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       if (next === lead) return false;
       lead = next;
       el.style.paddingTop = next ? `${next}px` : '';
+      // Sticky prompts stick at the padding edge: they read the pad to stick at the scroller's own top instead, or the
+      // stuck card sat a fraction of a pixel low and the row behind it showed through as a seam under the header
+      if (next) el.style.setProperty('--follow-lead', `${next}px`);
+      else el.style.removeProperty('--follow-lead');
       return true;
+    };
+    // What a press landed on and where it shows in the scroller: content growing above it (a skin's borders, an image or
+    // closing editor higher up) would move it from under the pointer, so the view moves with it while the press and its
+    // fold transition settle (FOLD_SETTLE_MS). Growth below it (a fold it opened) moves nothing. Every scroll or pin
+    // re-reads where it shows, and dragging, scrolling, typing or settling past FOLD_SETTLE_MS drops it
+    let anchor: { node: Element; at: number } | undefined;
+    let downX = 0;
+    let downY = 0;
+    const syncAnchor = () => {
+      if (!anchor) return;
+      const at = anchorOffset(anchor.node, el);
+      if (at === undefined) anchor = undefined;
+      else anchor.at = at;
     };
     const pin = () => {
       if (!scrollerUsable(el) || !pinned.current) return;
       const maxTop = el.scrollHeight - el.clientHeight;
-      if (maxTop > 0 && Math.abs(el.scrollTop - maxTop) > 0.5) el.scrollTop = el.scrollHeight;
+      if (maxTop > 0 && Math.abs(el.scrollTop - maxTop) > 0.5) {
+        el.scrollTop = el.scrollHeight;
+        syncAnchor();
+      }
     };
     let lastH = -1;
     // Only re-pin when the scroller's height changes; a width-only resize (or WebKit's scrollbar gutter settling)
@@ -109,14 +130,8 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       follow.set(pinned.current);
       if (was && pinned.current && !user && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
       lastTop = el.scrollTop;
-      if (anchor) anchor.at = offset(anchor.node);
+      syncAnchor();
     };
-    // What a press landed on and where it shows: content growing above it (a skin's borders, an image higher up) would
-    // move it from under the pointer, so the view moves with it, as Chrome's scroll anchoring does (WebKit has none).
-    // Growth below it (a fold it opened) moves nothing. Every scroll (a clamp, a pin) re-reads where it shows, so only
-    // a layout change counts. A wheel, touch or key drops it
-    let anchor: { node: Element; at: number } | undefined;
-    const offset = (node: Element) => node.getBoundingClientRect().top;
     // Whether the browser has clamped the offset since the reader's last input: content above a held tail shrank (a
     // fold closing over it), so the tail is what stays put and the pad follows every frame. A fold closing back to
     // where it opened from never clamps: there the top stays put, and re-padding in its last frames twitched it
@@ -128,12 +143,20 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       clamping = false;
       seenTop = el.scrollTop;
     };
-    follow.release = () => { touched(); pinned.current = false; follow.set(false); };
+    follow.release = () => { anchor = undefined; touched(); pinned.current = false; follow.set(false); };
     const pressed = (event: PointerEvent) => {
       pointerDown = holdingDown.current = true;
+      downX = event.clientX;
+      downY = event.clientY;
       touched();
-      const node = event.target instanceof Element && content.current?.contains(event.target) ? event.target : undefined;
-      anchor = node && { node, at: offset(node) };
+      const node = pressAnchorNode(event.target, content.current);
+      const at = node !== undefined ? anchorOffset(node, el) : undefined;
+      anchor = node !== undefined && at !== undefined ? { node, at } : undefined;
+    };
+    const dragged = (event: PointerEvent) => {
+      if (pointerDown && anchor && Math.hypot(event.clientX - downX, event.clientY - downY) > DRAG_SLOP_PX) {
+        anchor = undefined;
+      }
     };
     const typed = () => { anchor = undefined; touched(); };
     const released = () => {
@@ -141,6 +164,10 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
         pointerDown = holdingDown.current = false;
         intentAt = holding.current = performance.now();
       }
+    };
+    const cancelled = () => {
+      anchor = undefined;
+      released();
     };
     // A wheel over a nested scrollport (thought, command output, code) scrolls that box first, not the thread.
     const takesWheel = (event: WheelEvent) => {
@@ -171,10 +198,18 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
         return;
       }
       if (!scrollerUsable(el)) return;
-      if (anchor?.node.isConnected) {
-        const shift = offset(anchor.node) - anchor.at;
-        if (Math.abs(shift) >= 1) el.scrollTop += shift;
-        anchor.at = offset(anchor.node);
+      if (anchor && !pointerDown && performance.now() - holding.current >= FOLD_SETTLE_MS) {
+        anchor = undefined;
+      }
+      if (anchor) {
+        const nowAt = anchorOffset(anchor.node, el);
+        if (nowAt === undefined) {
+          anchor = undefined;
+        } else {
+          const shift = nowAt - anchor.at;
+          if (Math.abs(shift) >= 1) el.scrollTop += shift;
+          syncAnchor();
+        }
       }
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
       if (pinned.current !== atBottom) {
@@ -192,15 +227,17 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     el.addEventListener('keydown', typed);
     el.addEventListener('wheel', moved, { passive: true });
     el.addEventListener('touchmove', moved, { passive: true });
-    // The release can land outside the scroller (a scrollbar drag that left it)
+    // The release or a selection drag leaving the scroller can land outside it
+    window.addEventListener('pointermove', dragged, { passive: true });
     window.addEventListener('pointerup', released, { passive: true });
-    window.addEventListener('pointercancel', released, { passive: true });
+    window.addEventListener('pointercancel', cancelled, { passive: true });
     const box = new ResizeObserver(syncBox);
     box.observe(el);
     const body = new ResizeObserver(grew);
     if (content.current) body.observe(content.current, { box: 'border-box' });
     return () => {
       el.style.paddingTop = '';
+      el.style.removeProperty('--follow-lead');
       box.disconnect();
       body.disconnect();
       el.removeEventListener('scroll', onScroll);
@@ -208,8 +245,9 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       el.removeEventListener('keydown', typed);
       el.removeEventListener('wheel', moved);
       el.removeEventListener('touchmove', moved);
+      window.removeEventListener('pointermove', dragged);
       window.removeEventListener('pointerup', released);
-      window.removeEventListener('pointercancel', released);
+      window.removeEventListener('pointercancel', cancelled);
     };
   // The refs are stable; `resetKey` names the transcript whose content element is mounted
   }, [resetKey]);
