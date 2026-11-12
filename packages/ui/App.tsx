@@ -392,7 +392,7 @@ export function App() {
         case 'sessionHits': sessionRequests.settle(m.seq, m.hits); break;
         case 'diffSource': diffRequests.settle(m.seq, m.source); break;
         case 'imageBlob': imageBlobRequests.settle(m.seq, m.blob); break;
-        case 'projectDir': case 'projectStatus': case 'projectFile': case 'sessionChanges': settleProject(m); break;
+        case 'projectDir': case 'projectStatus': case 'projectFile': case 'projectEdit': case 'sessionChanges': settleProject(m); break;
         case 'sessionContext': case 'sessionContextItem': case 'sessionContextRaw': settleContext(m); break;
         case 'terminalOutput': case 'terminalState': deliverTerminal(m); break;
         // SSH hosts: the pushed list, the ~/.ssh/config hosts and the remote folder picker's listings (remote/api.ts)

@@ -137,7 +137,7 @@ describe('sidecar session contract', () => {
     const s = shell(at);
     const id = await started(s);
     let seq = 0;
-    const ask = async <T extends 'projectDir' | 'projectStatus' | 'projectFile' | 'sessionChanges' | 'sessionContext' | 'sessionContextItem' | 'sessionContextRaw'>(type: T, extra: Record<string, unknown> = {}) => {
+    const ask = async <T extends 'projectDir' | 'projectStatus' | 'projectFile' | 'projectEdit' | 'sessionChanges' | 'sessionContext' | 'sessionContextItem' | 'sessionContextRaw'>(type: T, extra: Record<string, unknown> = {}) => {
       const mine = ++seq;
       s.view('V', { type, sessionId: id, seq: mine, ...extra } as never);
       return s.hostMsg('V', type, m => (m as { seq?: number }).seq === mine);
@@ -153,6 +153,13 @@ describe('sidecar session contract', () => {
     expect(file.hunks).toEqual([{ at: 2, add: 1, del: ['two'] }, { at: 4, add: 1 }]);
     expect((await ask('projectFile', { path: '../outside.txt' })).error).toBe('outside');
     expect((await ask('projectFile', { path: 'gone.ts' })).error).toBe('missing');
+    // The tree's menu: a new file, never over an existing one, renamed in place
+    expect((await ask('projectEdit', { edit: { op: 'create', path: 'src/b.ts' } })).error).toBeUndefined();
+    expect((await ask('projectEdit', { edit: { op: 'create', path: 'src/b.ts' } })).error).toBe('exists');
+    expect((await ask('projectEdit', { edit: { op: 'rename', path: 'src/b.ts', to: '../b.ts' } })).error).toBe('outside');
+    expect((await ask('projectEdit', { edit: { op: 'rename', path: 'src/b.ts', to: 'src/c.ts' } })).error).toBeUndefined();
+    expect((await ask('projectEdit', { edit: { op: 'create', path: 'src/lib', dir: true } })).error).toBeUndefined();
+    expect((await ask('projectDir', { dir: 'src' })).entries).toEqual([{ name: 'lib', dir: true }, { name: 'a.ts' }, { name: 'c.ts' }]);
     const externalPlan = join(at.home, 'plan.plan.md');
     writeFileSync(externalPlan, '# Plan\n');
     expect((await ask('projectFile', { path: externalPlan })).text).toBe('# Plan\n');

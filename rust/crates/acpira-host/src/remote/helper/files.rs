@@ -210,6 +210,10 @@ pub(super) async fn project(a: &Value) -> Result<Value, WireError> {
       Err(e) => failed(e),
     },
     "headText" => json!({ "text": pf::head_text(&root, &rel).await }),
+    "edit" => match serde_json::from_value::<acpira_shared::protocol::ProjectEditOp>(a.get("edit").cloned().unwrap_or(Value::Null)) {
+      Ok(edit) => pf::edit(&root, &edit, false).await.map_or_else(failed, |()| json!({})),
+      Err(e) => return Err(WireError::new("invalid", e.to_string())),
+    },
     "sessionChanges" => {
       let bases: Vec<(String, Option<String>)> = serde_json::from_value(mapped(a.get("bases").cloned().unwrap_or(Value::Null))).unwrap_or_default();
       json!({ "files": pf::session_changes(&root, bases).await })

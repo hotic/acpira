@@ -1,4 +1,4 @@
-import type { GitMark, HostMsg, ProjectBase, ProjectChange, ProjectEntry, ProjectHunk, WebviewMsg } from '@acpira/shared/protocol';
+import type { GitMark, HostMsg, ProjectBase, ProjectChange, ProjectEdit, ProjectEntry, ProjectHunk, WebviewMsg } from '@acpira/shared/protocol';
 import { vscodeApi } from '../vscodeApi';
 import { requestTable } from '../requestTable';
 
@@ -6,7 +6,7 @@ import { requestTable } from '../requestTable';
 // request's seq. A read nobody answers (an engine from before these messages) settles empty after the timeout, with
 // `timeout` as its error
 
-type ProjectReply = Extract<HostMsg, { type: 'projectDir' | 'projectStatus' | 'projectFile' | 'sessionChanges' }>;
+type ProjectReply = Extract<HostMsg, { type: 'projectDir' | 'projectStatus' | 'projectFile' | 'projectEdit' | 'sessionChanges' }>;
 type ProjectAsk = Extract<WebviewMsg, { type: ProjectReply['type'] }>;
 
 // A git status of a large tree or a file near the size cap can take a while; nothing waits on it but the panel
@@ -55,6 +55,11 @@ export const project = {
     const m = await ask('projectFile', { sessionId, path, ...(base ? { base } : {}) });
     if (!m) return { hunks: [], error: 'timeout' };
     return { ...(m.text !== undefined ? { text: m.text } : {}), hunks: m.hunks ?? [], ...(m.error ? { error: m.error } : {}) };
+  },
+  // A change from the tree's menu; what went wrong when nothing changed
+  async edit(sessionId: string, edit: ProjectEdit): Promise<string | undefined> {
+    const m = await ask('projectEdit', { sessionId, edit });
+    return m ? m.error : 'timeout';
   },
   async changes(sessionId: string): Promise<ProjectChange[]> {
     return (await ask('sessionChanges', { sessionId }))?.files ?? [];

@@ -126,7 +126,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
               a session in another project kept the last project's tree). A switch paints the project's cached tree */}
           <FileTree key={root} sessionId={p.sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={shown && shown !== 'review' && shown.text === undefined ? shown.path : undefined}
             review={shown === 'review'} expanded={f.expanded} setExpanded={f.setExpanded} onOpen={f.open} onReview={() => panel.showView(r, 'review')}
-            onMention={f.mention} search={p.searchFiles} />
+            onMention={f.mention} search={p.searchFiles} onChanged={f.reload} openEditor={p.openEditor} terminal={s.terminal} />
           {p.foot}
         </div>
       </aside>

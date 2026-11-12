@@ -1,16 +1,26 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { FileHit, ProjectChange } from '@acpira/shared/protocol';
-import { AtSign, ChevronRight, ChevronsDownUp, Crosshair, Folder, FolderOpen, Layers, Search, X } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { ContextMenu } from '@base-ui/react/context-menu';
+import type { FileHit, ProjectChange, ProjectEdit } from '@acpira/shared/protocol';
+import { parseRemoteFolder } from '@acpira/shared/remote';
+import { AtSign, ChevronRight, ChevronsDownUp, Copy, CopySlash, Crosshair, FilePlus, Folder, FolderOpen, FolderPlus, FolderSearch, Layers, Pencil, Search, SquareArrowOutUpRight, SquareTerminal, Trash2, X } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
+import { DropdownMenu } from '../ui/DropdownMenu';
+import { OptionContent } from '../ui/Panel';
+import { StableText } from '../ui/StableText';
+import { imeKey } from '../ui/ime';
 import { Row } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { useScrollFade } from '../ui/useScrollFade';
 import { DiffStat } from '../chat/ToolCall';
 import { nameOf as uriName } from '../chat/drafts';
+import { contextMenuCollision } from '../chat/SessionMenu';
+import { macOS, pushShellToast, windowsOS } from '../desktop';
+import { vscodeApi } from '../vscodeApi';
 import { lastRead, project, sameRead, shellResizeIdleIn, type DirListing } from './api';
-import { FileGlyph, MARK_DOT, MARK_TEXT, buildTree, dirOf, nameOf, type MarkLookup, type TreeNode } from './files';
+import { FileGlyph, MARK_DOT, MARK_TEXT, absPath, buildTree, dirOf, nameOf, type MarkLookup, type TreeNode } from './files';
+import { panel } from './store';
 import { useNearBlocks } from './nearBlocks';
 import { isChatRoot } from './chat';
 
@@ -41,6 +51,39 @@ function Fold({ open, children }: { open: boolean; children: ReactNode }) {
   );
 }
 
+// What the tree's menu was opened on: a row, or the project folder itself (an empty path) for the space around the rows
+interface MenuTarget { path: string; dir: boolean }
+// The name being typed in the tree: a row's new one, or that of a new entry in the folder `parent`
+type Editing = { kind: 'rename'; path: string } | { kind: 'create'; parent: string; dir: boolean };
+
+// A name typed in place of a row's: ⏎ or leaving it commits, Esc gives up (undefined). A file's extension starts unselected
+function NameInput({ initial, file, onDone }: { initial: string; file: boolean; onDone: (name: string | undefined) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  const [value, setValue] = useState(initial);
+  useEffect(() => {
+    const dot = file ? initial.lastIndexOf('.') : -1;
+    ref.current?.focus();
+    ref.current?.setSelectionRange(0, dot > 0 ? dot : initial.length);
+  }, []);
+  const finish = (v: string | undefined) => { if (done.current) return; done.current = true; onDone(v); };
+  return (
+    <input ref={ref} value={value} spellCheck={false} aria-label={t('panel.edit.name')}
+      onChange={e => setValue(e.target.value)}
+      onClick={e => e.stopPropagation()}
+      // The field keeps the system's own menu
+      onContextMenu={e => e.stopPropagation()}
+      onKeyDown={e => {
+        e.stopPropagation();
+        if (imeKey(e.nativeEvent)) return;
+        if (e.key === 'Enter') finish(value);
+        if (e.key === 'Escape') finish(undefined);
+      }}
+      onBlur={() => finish(value)}
+      className="min-w-0 flex-1 bg-transparent px-0 text-2 text-fg-1 outline-none" />
+  );
+}
+
 interface BranchCtx {
   dirs: Record<string, DirListing | undefined>;
   expanded: Set<string>;
@@ -54,6 +97,10 @@ interface BranchCtx {
   mention: (path: string) => void;
   // The root is a chat's own hidden folder (panel/chat.ts): an empty root says so in the chat's terms
   chat: boolean;
+  // The row whose menu is open keeps its hover fill, as does one whose name is being typed
+  menu?: string;
+  editing?: Editing;
+  commit: (name: string | undefined) => void;
 }
 
 // Stuck folders stack with the outer ones on top: a deeper folder whose rows have scrolled by is pushed up out of its
@@ -68,8 +115,10 @@ function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: strin
   const mark = ctx.mark(node.path, node.dir);
   const ignored = mark === 'I';
   const selected = !node.dir && ctx.active === node.path;
+  const renaming = ctx.editing?.kind === 'rename' && ctx.editing.path === node.path;
   return (
-    <Row role="treeitem" aria-expanded={node.dir ? open : undefined} aria-selected={selected} data-path={node.path} data-sticky={(node.dir && open) || undefined}
+    <Row role="treeitem" aria-expanded={node.dir ? open : undefined} aria-selected={selected} data-path={node.path} data-dir={node.dir || undefined} data-sticky={(node.dir && open) || undefined}
+      data-menu-open={ctx.menu === node.path || renaming || undefined}
       style={{ ...indent(depth), ...(node.dir && open ? { top: `calc(${depth} * var(--row))`, zIndex: STUCK_Z - depth } : {}) }}
       onClick={() => (node.dir ? ctx.toggle(node.path) : ctx.open(node.path))}
       // `sticky` as a class: the rows' `relative` utility outranks a position set in panel.css's components layer, which
@@ -100,7 +149,9 @@ function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: strin
         </span>
       )}
       {node.dir && open && <span aria-hidden data-stuck-edge className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-line opacity-0" />}
-      <span className={cn('min-w-0 truncate', mark && !node.dir && !ignored && MARK_TEXT[mark], mark === 'D' && 'line-through')}><Highlighted text={node.name} query={ctx.query} /></span>
+      {renaming
+        ? <NameInput initial={node.name} file={!node.dir} onDone={ctx.commit} />
+        : <span className={cn('min-w-0 truncate', mark && !node.dir && !ignored && MARK_TEXT[mark], mark === 'D' && 'line-through')}><Highlighted text={node.name} query={ctx.query} /></span>}
     </Row>
   );
 }
@@ -120,14 +171,22 @@ function Branch({ dir, depth, ctx }: { dir: string; depth: number; ctx: BranchCt
   const activeAt = ctx.active && dirOf(ctx.active) === dir ? files.findIndex(e => e.name === nameOf(ctx.active!)) : -1;
   const activeBlock = activeAt < 0 ? -1 : Math.floor(activeAt / TREE_BLOCK);
   useEffect(() => { if (activeBlock >= 0) add([activeBlock]); }, [activeBlock, add]);
-  if (!listing) return null;
+  // A new entry's name is typed in a row of its own, over the folder's rows
+  const creating = ctx.editing?.kind === 'create' && ctx.editing.parent === dir
+    ? <Row role="treeitem" data-menu-open="" className={cn(TREE_ROW, 'text-fg-1')} style={indent(depth)} lead={ctx.editing.dir ? FOLDER_CLOSED : <FileGlyph name="" />}>
+        <NameInput initial="" file={!ctx.editing.dir} onDone={ctx.commit} />
+      </Row>
+    : null;
+  if (!listing) return creating;
   if (listing.error || !listing.entries.length) {
+    if (creating) return creating;
     return <div className="flex min-h-row items-center text-3 text-fg-3" style={indent(depth)}>{listing.error ? t('panel.error.other', { error: listing.error }) : t(ctx.chat && !dir ? 'panel.chatEmpty' : 'panel.emptyFolder')}</div>;
   }
   const folders = listing.entries.filter(e => e.dir);
   const fileBlocks: (typeof files)[] = [];
   for (let i = 0; i < files.length; i += TREE_BLOCK) fileBlocks.push(files.slice(i, i + TREE_BLOCK));
   return <>
+    {creating}
     {folders.map(e => {
       const path = dir ? `${dir}/${e.name}` : e.name;
       const open = ctx.expanded.has(path);
@@ -185,7 +244,19 @@ export interface FileTreeProps {
   onReview: () => void;
   onMention: (path: string) => void;
   search?: (query: string) => Promise<FileHit[]>;
+  // The tree changed the project (a new entry, a rename, a delete): what is shown is read again
+  onChanged: () => void;
+  // Opens an absolute path in the editor of choice
+  openEditor?: (path: string) => void;
+  // The panel has terminals: a folder can open one
+  terminal?: boolean;
 }
+
+// The OS file manager's own name for showing an entry, and for where a deleted one goes
+const revealLabel = () => t(macOS ? 'session.project.revealFinder' : windowsOS ? 'session.project.revealExplorer' : 'session.project.revealFolder');
+const trashLabel = () => t(windowsOS ? 'panel.menu.recycle' : 'panel.menu.trash');
+const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
+const under = (path: string, dir: string) => path === dir || path.startsWith(`${dir}/`);
 
 export function FileTree(p: FileTreeProps) {
   // Seeded with what this project's tree showed last; every folder is still read again below
@@ -299,17 +370,107 @@ export function FileTree(p: FileTreeProps) {
     p.setExpanded(open => (open.includes(path) ? open.filter(x => x !== path) : [...open, path]));
   };
   const chat = isChatRoot(p.root);
-  const ctx: BranchCtx = { dirs, expanded, seen, mark: p.mark, active: p.active, query: q, toggle, open: p.onOpen, mention: p.onMention, chat };
+
+  // The menu (Explorer's essentials): one root for the whole tree rather than one per row, told on the way down which
+  // row the right-click landed on
+  const [menu, setMenu] = useState<MenuTarget>();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState<Editing>();
+  // A delete on an SSH host is final (no trash there): its row asks for a second click
+  const [sure, setSure] = useState(false);
+  const host = parseRemoteFolder(p.root);
+  const abs = (path: string) => (path ? absPath(host?.path ?? p.root, path) : host?.path ?? p.root);
+  const target = (e: ReactMouseEvent<HTMLElement>) => {
+    const row = (e.target as Element).closest<HTMLElement>('[data-path]');
+    setMenu(row ? { path: row.dataset.path!, dir: row.dataset.dir !== undefined } : { path: '', dir: true });
+    setSure(false);
+  };
+  const edit = async (change: ProjectEdit, then?: () => void) => {
+    const error = await project.edit(p.sessionId, change);
+    if (error) {
+      const name = nameOf(change.op === 'rename' ? change.to : change.path);
+      const text = error === 'exists' ? t('panel.edit.exists', { name })
+        : t('panel.edit.failed', { name, error: error === 'missing' || error === 'outside' ? t(`panel.error.${error}`) : error });
+      pushShellToast({ type: 'toast', level: 'error', text });
+      return;
+    }
+    then?.();
+    p.onChanged();
+  };
+  const create = (at: MenuTarget, dir: boolean) => {
+    const parent = at.dir ? at.path : dirOf(at.path);
+    setQuery('');
+    if (parent) {
+      if (!asked.current.has(parent)) load(parent);
+      setSeen(s => new Set(s).add(parent));
+      p.setExpanded(open => [...new Set([...open, ...ancestors(parent), parent])]);
+    }
+    setEditing({ kind: 'create', parent, dir });
+  };
+  const commit = (typed: string | undefined) => {
+    const e = editing;
+    const name = typed?.trim();
+    setEditing(undefined);
+    if (!e || !name) return;
+    if (e.kind === 'create') {
+      const path = joinPath(e.parent, name);
+      void edit({ op: 'create', path, ...(e.dir ? { dir: true } : {}) }, () => { if (!e.dir) p.onOpen(path); });
+      return;
+    }
+    const from = e.path, to = joinPath(dirOf(from), name);
+    if (to === from) return;
+    void edit({ op: 'rename', path: from, to }, () => {
+      // Folders open under the old name stay open under the new one, and the open file is followed
+      p.setExpanded(open => open.map(x => (under(x, from) ? to + x.slice(from.length) : x)));
+      if (p.active && under(p.active, from)) p.onOpen(to + p.active.slice(from.length));
+    });
+  };
+  const remove = (path: string) => void edit({ op: 'delete', path }, () => p.setExpanded(open => open.filter(x => !under(x, path))));
+  const menuItems = (at: MenuTarget) => {
+    const folder = at.dir ? at.path : dirOf(at.path);
+    const item = (key: string, Icon: typeof Copy, label: string, run: () => void, disabled?: boolean) => (
+      <DropdownMenu.Item key={key} disabled={disabled} onClick={run}><OptionContent icon={<Icon strokeWidth={1.5} />}>{label}</OptionContent></DropdownMenu.Item>
+    );
+    const rule = (key: string) => <DropdownMenu.Separator key={key} className="my-1 h-px bg-line" />;
+    return [
+      ...!at.dir && p.openEditor ? [item('editor', SquareArrowOutUpRight, t('panel.openFile'), () => p.openEditor!(abs(at.path)))] : [],
+      // A host's files are not on this computer's disk
+      item('reveal', FolderSearch, revealLabel(), () => vscodeApi().postMessage({ type: 'openPath', path: abs(at.path), reveal: true }), !!host),
+      ...p.terminal ? [item('terminal', SquareTerminal, t('panel.menu.terminal'), () => panel.openTerminal(folder ? absPath(p.root, folder) : p.root))] : [],
+      rule('sep-copy'),
+      ...!at.dir ? [item('mention', AtSign, t('panel.mention'), () => p.onMention(at.path))] : [],
+      item('path', Copy, t('panel.menu.copyPath'), () => void navigator.clipboard.writeText(abs(at.path))),
+      ...at.path ? [item('rel', CopySlash, t('panel.menu.copyRelPath'), () => void navigator.clipboard.writeText(at.path))] : [],
+      rule('sep-new'),
+      item('file', FilePlus, t('panel.menu.newFile'), () => create(at, false)),
+      item('folder', FolderPlus, t('panel.menu.newFolder'), () => create(at, true)),
+      ...at.path ? [
+        rule('sep-change'),
+        item('rename', Pencil, t('common.rename'), () => { setQuery(''); setEditing({ kind: 'rename', path: at.path }); }),
+        host
+          ? <DropdownMenu.Item key="delete" className="text-danger" closeOnClick={false} onClick={() => { if (!sure) { setSure(true); return; } setMenuOpen(false); remove(at.path); }}>
+              <OptionContent icon={<Trash2 strokeWidth={1.5} />}>
+                <StableText current={sure ? 'sure' : 'ask'} items={[{ key: 'ask', text: t('session.deleteForever') }, { key: 'sure', text: t('panel.menu.deleteConfirm') }]} />
+              </OptionContent>
+            </DropdownMenu.Item>
+          : <DropdownMenu.Item key="delete" className="text-danger" onClick={() => remove(at.path)}><OptionContent icon={<Trash2 strokeWidth={1.5} />}>{trashLabel()}</OptionContent></DropdownMenu.Item>,
+      ] : [],
+    ];
+  };
+
+  const ctx: BranchCtx = { dirs, expanded, seen, mark: p.mark, active: p.active, query: q, toggle, open: p.onOpen, mention: p.onMention, chat, menu: menuOpen ? menu?.path || undefined : undefined, editing, commit };
   const add = p.changes.reduce((n, c) => n + c.add, 0), del = p.changes.reduce((n, c) => n + c.del, 0);
   const shown = p.changes.filter(c => !q || c.path.toLowerCase().includes(q));
   const matches = useMemo(() => (hits ? buildTree(hits) : undefined), [hits]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-tree>
+    <ContextMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
+    <ContextMenu.Trigger render={<div className="flex min-h-0 flex-1 flex-col" data-tree onContextMenuCapture={target} />}>
       {/* The side insets are the tool panel's when the tree sits in it (panel.css --tree-lead / --tree-trail): the filter, the
           sections and the rows share its edge lines. The filter is as tall as the panel's tabs, so the two read as one block; no rule under it, a stuck folder
           draws its own edge once the tree scrolls */}
-      <div className="flex h-[calc(var(--ctl)+var(--spacing-gap))] shrink-0 items-center pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
+      {/* The filter keeps the system's menu, and the session's changes have none: only the project's own rows are entries */}
+      <div onContextMenu={e => e.stopPropagation()} className="flex h-[calc(var(--ctl)+var(--spacing-gap))] shrink-0 items-center pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
         <label className="flex h-ctl min-w-0 flex-1 items-center gap-1.5 rounded-md border border-line bg-chip px-2 text-2 focus-within:border-line-strong">
           <Search strokeWidth={1.5} className="size-3.5 shrink-0 text-fg-3" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('panel.filter')} spellCheck={false}
@@ -319,7 +480,7 @@ export function FileTree(p: FileTreeProps) {
         </label>
       </div>
       {p.changes.length > 0 && (
-        <div className="shrink-0 pt-gap-half pr-[var(--tree-trail,var(--spacing-gap-half))] pb-gap pl-[var(--tree-lead,var(--spacing-gap-half))]" data-changes>
+        <div className="shrink-0 pt-gap-half pr-[var(--tree-trail,var(--spacing-gap-half))] pb-gap pl-[var(--tree-lead,var(--spacing-gap-half))]" data-changes onContextMenu={e => e.stopPropagation()}>
           <div className={SECTION}>
             <button type="button" onClick={() => setChangesOpen(o => !o)} aria-expanded={changesOpen} className="flex items-center gap-1 hover:text-fg-1">
               {t('panel.changes')}<ChevronRight strokeWidth={1.5} className={cn('size-3 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover/section:opacity-100', changesOpen && 'rotate-90')} />
@@ -364,7 +525,12 @@ export function FileTree(p: FileTreeProps) {
           ? matches.length ? <Matches nodes={matches} depth={0} ctx={ctx} /> : <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('panel.noMatch', { query: query.trim() })}</div>
           : <Branch dir="" depth={0} ctx={ctx} />}
       </div>
-    </div>
+    </ContextMenu.Trigger>
+    {/* Portaled, but React events still bubble up the component tree: a menu click is not one on the tree */}
+    <DropdownMenu.Portal><DropdownMenu.Positioner className="w-max min-w-pop-sm" collisionAvoidance={contextMenuCollision}><DropdownMenu.Popup finalFocus={false} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onContextMenu={e => e.stopPropagation()}>
+      {menuOpen && menu && menuItems(menu)}
+    </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 

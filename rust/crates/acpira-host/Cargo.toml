@@ -12,6 +12,7 @@ path = "src/bin/acpira.rs"
 
 [dependencies]
 blake3.workspace = true
+trash.workspace = true
 acpira-shared = { workspace = true, features = ["local-ipc"] }
 acpira-rpc.workspace = true
 acpira-agent.workspace = true

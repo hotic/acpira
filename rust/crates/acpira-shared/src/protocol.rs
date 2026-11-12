@@ -127,6 +127,22 @@ pub enum ProjectBase {
   Head,
 }
 
+/// A change to a session's project from the tool panel's tree (`projectEdit`); paths are relative to the project folder
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum ProjectEditOp {
+  /// An empty file, or a folder with `dir`, in a folder that exists
+  Create {
+    path: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    dir: bool,
+  },
+  /// Renames or moves an entry; never over an existing one
+  Rename { path: String, to: String },
+  /// To the system's trash on this computer, for good on an SSH host
+  Delete { path: String },
+}
+
 /// A session whose conversation contains every term of a history search, with the text around the first match
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionHit {
@@ -476,6 +492,12 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// Reply to projectEdit: `error` (`noProject`, `outside`, `missing`, `exists`, or the system's message) when nothing changed
+  ProjectEdit {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   /// Reply to sessionChanges: the files the session's edits left changed, in the order it first edited them
   SessionChanges {
     seq: i64,
@@ -620,6 +642,7 @@ impl HostMsg {
       HostMsg::ProjectDir { .. } => "projectDir",
       HostMsg::ProjectStatus { .. } => "projectStatus",
       HostMsg::ProjectFile { .. } => "projectFile",
+      HostMsg::ProjectEdit { .. } => "projectEdit",
       HostMsg::SessionChanges { .. } => "sessionChanges",
       HostMsg::SessionContext { .. } => "sessionContext",
       HostMsg::SessionContextItem { .. } => "sessionContextItem",
@@ -785,6 +808,13 @@ pub enum WebviewMsg {
     path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     base: Option<ProjectBase>,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// The tool panel's tree changes the project (a new file or folder, a rename, a delete), answered with `projectEdit`
+  ProjectEdit {
+    session_id: String,
+    edit: ProjectEditOp,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
   },
