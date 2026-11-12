@@ -54,7 +54,8 @@ function AgentVideo({ video }: { video: ImageRef }) {
     {video.blob && openBlob && <Button onClick={() => openBlob(video.blob!)}>{name}</Button>}
   </div>;
 
-  return <video ref={player} src={ready ? src : undefined} controls playsInline preload="metadata" aria-label={name}
+  // `data-share-src`: a screenshot reads the first frame of a player that never came into view (shareCapture.ts)
+  return <video ref={player} src={ready ? src : undefined} data-share-src={src} controls playsInline preload="metadata" aria-label={name}
     className="block aspect-video max-h-agent-image w-full rounded-md border border-line bg-code object-contain"
     onError={() => setFailed(true)}
     onLoadedMetadata={e => {

@@ -47,7 +47,7 @@ export const ShownWidget = memo(function ShownWidget({ block }: { block: ToolCal
   const widget = toolWidget(block);
   const blob = useShownBlob(widget?.blob, widget?.uri);
   if (!widget) return null;
-  if (blob === undefined) return <div aria-busy className="h-widget-placeholder w-full animate-pulse rounded-md bg-chip" />;
+  if (blob === undefined) return <div aria-busy data-share-widget className="h-widget-placeholder w-full animate-pulse rounded-md bg-chip" />;
   // The host could not read the file (gone, or the host is unreachable): said in place of the frame
   if (blob === null) return <div role="status" className="text-3 text-fg-3">{t('panel.error.media')}</div>;
   return <AgentWidget blob={blob} uri={widget.uri} title={block.target} />;
@@ -137,8 +137,10 @@ function AgentWidget({ blob, uri, title }: { blob: string; uri?: string; title?:
     </button>
   );
   return (
-    <div ref={root} className="relative w-full min-w-0">
-      {!ready && <div aria-hidden className={cn('absolute inset-0 rounded-md bg-chip', appearance.motion !== 'none' && 'animate-pulse')} />}
+    // `data-share-widget`: a reply screenshot swaps the frame for the snapshot the page draws of itself, or leaves the
+    // widget out when none comes back (shareCapture.ts)
+    <div ref={root} data-share-widget className="relative w-full min-w-0">
+      {!ready && <div aria-hidden data-share-skip className={cn('absolute inset-0 rounded-md bg-chip', appearance.motion !== 'none' && 'animate-pulse')} />}
       {doc ? (
         <iframe
           ref={attach}

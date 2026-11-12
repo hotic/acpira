@@ -90,7 +90,8 @@ export function AnimatedImage({ src, mimeType, alt, className, fit = 'contain' }
     : undefined;
   return (
     <>
-      <img ref={image} src={placeholder ?? src} alt={alt} className={className} />
+      {/* A screenshot shows the GIF itself in place of the empty stand-in and leaves the player out (shareCapture.ts) */}
+      <img ref={image} src={placeholder ?? src} data-share-src={placeholder ? src : undefined} alt={alt} className={className} />
       {clip && (
         <video
           ref={video}
@@ -100,6 +101,7 @@ export function AnimatedImage({ src, mimeType, alt, className, fit = 'contain' }
           loop={clip.plays === 0}
           disablePictureInPicture
           aria-hidden
+          data-share-skip
           // Shown over the GIF only once a frame plays, so the swap never flashes an empty box
           onPlaying={() => setPlaying(true)}
           className={cn('pointer-events-none absolute inset-0 size-full', fit === 'cover' ? 'object-cover' : 'object-contain', !playing && 'opacity-0')}
