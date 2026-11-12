@@ -1644,7 +1644,7 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
     <div ref={ref} data-thread tabIndex={-1} className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter outline-none [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it,
           plus the floating connecting row's room when the tail holds no action row (`--thread-tail-room`, chat.css) */}
-      <div key={replayKey} ref={bodyRef} data-thread-body className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
+      <div key={replayKey} ref={bodyRef} data-thread-body className={cn('flex flex-col gap-msg pt-pad-y pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide ? 'thread-column' : 'mx-auto')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
         {exchangeSlots.slice(window.start).map((slot, offset) => {
           const k = window.start + offset;
           const messages: ReactNode[] = [];
