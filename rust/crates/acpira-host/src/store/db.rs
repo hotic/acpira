@@ -130,7 +130,7 @@ impl SessionDb {
     let (size, modified) = stamp.map_or((None, None), |(size, modified)| (i64::try_from(size).ok(), modified));
     tx.execute(
       "INSERT INTO session (id, summary, body, file_size, file_modified_ns) VALUES (?1, ?2, 'file', ?3, ?4)
-       ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, body = 'file', file_size = excluded.file_size, file_modified_ns = excluded.file_modified_ns",
+       ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, body = 'file', file_size = excluded.file_size, file_modified_ns = excluded.file_modified_ns, trashed_at = NULL",
       params![summary.id, serde_json::to_string(summary)?, size, modified],
     )?;
     tx.commit()?;

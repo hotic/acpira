@@ -366,6 +366,23 @@ mod tests {
     assert_eq!(hits[0].snippet, "needle in the database");
   }
 
+  #[tokio::test]
+  async fn hits_are_ordered_by_time_whichever_backend_holds_the_session() {
+    let root = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(root.path().to_path_buf(), Arc::new(|_| {}), None);
+    // A record from before the database, last written long ago
+    let old = root.path().join("legacy.json");
+    std::fs::write(&old, r#"{"id":"legacy","agent":"claude","cwd":"/w","updatedAt":"1","turns":[{"role":"user","text":"needle in a file"}]}"#).unwrap();
+    std::fs::File::options().write(true).open(&old).unwrap().set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(86_400)).unwrap();
+    let record: crate::store::record::SessionRecord = serde_json::from_value(serde_json::json!({
+      "id": "recent", "agent": "claude", "cwd": "/w", "updatedAt": "2", "turns": [{ "role": "user", "text": "needle in the database" }]
+    }))
+    .unwrap();
+    store.flush(Arc::new(record)).await.unwrap();
+    let hits = SessionSearch::default().search(store, "needle").await;
+    assert_eq!(hits.iter().map(|hit| hit.id.as_str()).collect::<Vec<_>>(), ["recent", "legacy"]);
+  }
+
   #[test]
   fn unreadable_records_are_skipped() {
     let e = entry_of((None, 0), b"{not json");

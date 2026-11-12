@@ -299,6 +299,20 @@ async fn store_cli(args: &[String], home: PathBuf) -> i32 {
     stderr("usage: acpira store revert ID [--home DIR]");
     return 2;
   };
+  // Held for the whole revert: an engine driving the session could commit rows between the read and the hand-back here,
+  // and they would go with the rows this removes
+  let leases = crate::store::session_lease::SessionLeases::new(&home, Arc::new(stderr));
+  match leases.claim(id) {
+    crate::store::session_lease::Claim::Held(_) => {}
+    crate::store::session_lease::Claim::Elsewhere => {
+      stderr(&format!("session {id}: a running engine has it open; close it there (or quit the engine) and try again"));
+      return 1;
+    }
+    crate::store::session_lease::Claim::Failed(error) => {
+      stderr(&format!("session {id}: lease not taken ({error})"));
+      return 1;
+    }
+  }
   let store = crate::store::transcript_store::TranscriptStore::new(home.join("sessions"), Arc::new(stderr), None);
   match store.revert_to_file(id).await {
     Ok(true) => {

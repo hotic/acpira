@@ -187,7 +187,8 @@ struct StubState {
 /// What the search needs to know of a record to tell whether its cached text is current
 pub struct SearchSource {
   pub id: String,
-  /// The record file's stamp, or for a database body its revision
+  /// The record file's time and size; a database body's revision in place of the size, beside its stub's time (the
+  /// hits are ordered by the time, whichever backend holds the session)
   pub stamp: (Option<SystemTime>, u64),
   pub in_database: bool,
 }
@@ -400,6 +401,8 @@ impl TranscriptStore {
   async fn write_whole(&self, id: &str, bytes: &[u8], summary: SessionSummary) -> Result<()> {
     let path = confined(&self.dir, &format!("{id}.json")).await.ok_or_else(|| anyhow!("session {id}: outside the store"))?;
     write_atomic(&path, bytes, None).await?;
+    // The archive of an earlier migration is older than this file: nothing may fall back to it from here on
+    rm_confined(&self.dir.join(id), migration::MIGRATED_FILE, false).await;
     self.forget_saved(id);
     self.state.lock().plain.insert(id.to_owned());
     let stamp = file_stamp(&path).await.map(|(size, modified)| (size, file_modified_ns(modified)));
@@ -542,7 +545,7 @@ impl TranscriptStore {
     files
       .into_iter()
       .map(|(id, (len, modified))| match bodies.get(&id) {
-        Some(revision) => SearchSource { id, stamp: (None, *revision), in_database: true },
+        Some(revision) => SearchSource { id, stamp: (modified, *revision), in_database: true },
         None => SearchSource { id, stamp: (modified, len), in_database: false },
       })
       .collect()
@@ -961,7 +964,7 @@ impl TranscriptStore {
       {
         if migration::is_stub(&raw) {
           if let Ok(stub) = serde_json::from_slice::<SessionRecord>(&raw) {
-            record = migration::merge(record, stub).map_err(|error| RecordLoadError::Corrupt { reason: error.to_string() })?;
+            record = migration::merge(record, stub, migration::rewritten(&raw)).map_err(|error| RecordLoadError::Corrupt { reason: error.to_string() })?;
           }
         } else {
           file_wins = serde_json::from_slice::<Stamped>(&raw).is_ok_and(|file| file.updated_at > record.updated_at);
@@ -1294,12 +1297,12 @@ impl TranscriptStore {
     Ok(())
   }
 
-  /// The small record an older engine reads in place of a database body (`migration::stub`). The first one this store
-  /// writes over a whole legacy record archives that record beside the blobs, once: it is what a store without the
-  /// database falls back to
+  /// The small record an older engine reads in place of a database body (`migration::stub`). One written over a whole
+  /// record archives that record beside the blobs first: it is what a store without the database falls back to. An
+  /// archive already there is from an earlier migration (the session went back to its file since) and is replaced
   async fn write_stub(&self, db: &Arc<SessionDb>, id: &str, path: &Path, exists: bool, parts: &RecordParts, head: Option<[u8; 16]>) -> Result<()> {
     let folder = self.dir.join(id);
-    if exists && !self.stubs.lock().contains_key(id) && fs::metadata(folder.join(migration::MIGRATED_FILE)).await.is_err() {
+    if exists && !self.stubs.lock().contains_key(id) {
       let raw = fs::read(path).await?;
       if !migration::is_stub(&raw) {
         fs::create_dir_all(&folder).await?;
@@ -1495,6 +1498,11 @@ impl TranscriptStore {
       let log = builtin_session_of(&e.path()).await;
       rm_confined(&trash, &f, false).await;
       rm_confined(&trash, id, true).await;
+      // Still in the trash (not removable now), or back in the list (another engine's undo since the listing above): the
+      // body stays with its record
+      if entry_exists(&e.path()).await.unwrap_or(true) || entry_exists(&self.dir.join(&f)).await.unwrap_or(true) {
+        continue;
+      }
       let db_id = id.to_owned();
       if let Err(error) = self.db_call(move |db| db.delete_session(&db_id)).await {
         (self.log)(&format!("session {id}: SQLite row not removed ({error:#})"));
@@ -2327,5 +2335,84 @@ mod tests {
     s.flush_pending().await;
     let text = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
     assert!(text.contains(&blob) && text.contains("renamed"));
+  }
+
+  #[tokio::test]
+  async fn a_session_that_went_back_to_its_file_archives_anew_when_it_migrates_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("again", "2026-01-01T00:00:00.000Z");
+    stored.turns = turns(&["first"]);
+    std::fs::write(dir.path().join("again.json"), serde_json::to_vec(&stored).unwrap()).unwrap();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    let archive = dir.path().join("again").join(migration::MIGRATED_FILE);
+    let first = std::fs::read(&archive).unwrap();
+    stored.turns = turns(&["first", "second"]);
+    stored.updated_at = "2026-01-02T00:00:00.000Z".into();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    assert!(s.revert_to_file("again").await.unwrap());
+    assert!(!archive.exists(), "a whole record has nothing older to fall back to");
+    // One left behind all the same (a crash right after the file was written) is not taken for this migration's
+    std::fs::write(&archive, &first).unwrap();
+    stored.turns = turns(&["first", "second", "third"]);
+    stored.updated_at = "2026-01-03T00:00:00.000Z".into();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    let archived: SessionRecord = serde_json::from_slice(&zstd::stream::decode_all(std::fs::File::open(&archive).unwrap()).unwrap()).unwrap();
+    assert_eq!(archived.turns, turns(&["first", "second"]), "the fallback is the record as it went in this time");
+  }
+
+  #[tokio::test]
+  async fn a_trash_sweep_leaves_the_body_of_a_session_that_is_listed_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("back", "2026-01-01T00:00:00.000Z");
+    stored.turns = turns(&["kept"]);
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    let rows = item_rows(&s, "back");
+    s.trash("back").await.unwrap();
+    // Another engine's undo between the sweep's look at the trash and its removal: the record is listed again
+    std::fs::copy(dir.path().join(TRASH_DIR).join("back.json"), dir.path().join("back.json")).unwrap();
+    s.sweep_trash(Duration::ZERO).await;
+    assert!(!dir.path().join(TRASH_DIR).join("back.json").exists());
+    assert_eq!(item_rows(&s, "back"), rows);
+    assert_eq!(store(dir.path()).load("back").await.unwrap(), stored);
+  }
+
+  #[tokio::test]
+  async fn a_save_lists_a_body_a_reconcile_had_hidden() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("hidden", "2026-01-01T00:00:00.000Z");
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    s.database().unwrap().set_trashed("hidden", Some(1)).unwrap();
+    assert!(s.search_sources().await.iter().all(|source| !source.in_database));
+    stored.updated_at = "2026-01-02T00:00:00.000Z".into();
+    s.flush(Arc::new(stored)).await.unwrap();
+    assert_eq!(s.database().unwrap().entry("hidden").unwrap().unwrap().trashed_at, None);
+    assert!(s.search_sources().await.iter().any(|source| source.id == "hidden" && source.in_database));
+  }
+
+  #[tokio::test]
+  async fn a_list_edit_an_older_engine_made_on_the_stub_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("renamed", "2026-01-01T00:00:00.000Z");
+    stored.turns = turns(&["kept"]);
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    let path = dir.path().join("renamed.json");
+    // The older engine reads the stub as a record, edits it and writes it back: `updatedAt` stays as it was
+    let mut stub: SessionRecord = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stub.title = "renamed by an old engine".into();
+    stub.renamed = true;
+    stub.pinned = Some(true);
+    std::fs::write(&path, serde_json::to_vec(&stub).unwrap()).unwrap();
+    let loaded = s.load("renamed").await.unwrap();
+    assert_eq!((loaded.title.as_str(), loaded.renamed, loaded.pinned), ("renamed by an old engine", true, Some(true)));
+    assert_eq!(loaded.turns, stored.turns);
+    assert_eq!(s.load_index().await.unwrap()[0].title, "renamed by an old engine");
+    // Saved from there, the body has the edit and the stub is this store's again
+    s.flush(Arc::new(loaded)).await.unwrap();
+    assert_eq!(s.database().unwrap().load_record("renamed").unwrap().unwrap().title, "renamed by an old engine");
+    assert!(!migration::rewritten(&std::fs::read(&path).unwrap()));
   }
 }
