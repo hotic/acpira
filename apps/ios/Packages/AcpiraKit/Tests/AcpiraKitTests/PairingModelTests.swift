@@ -69,8 +69,10 @@ final class ScriptedService: PairingService, @unchecked Sendable {
 
 @MainActor
 struct PairingModelTests {
+  /// Waits on a deadline rather than a count of naps: on a loaded CI simulator the main actor wakes the test late
   func until(_ done: () -> Bool) async throws {
-    for _ in 0..<400 where !done() { try await Task.sleep(for: .milliseconds(5)) }
+    let deadline = ContinuousClock.now + .seconds(10)
+    while !done(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
   }
 
   @Test func aConnectionRefreshesTheComputerVersionAndKeepsItOffline() async throws {
@@ -113,11 +115,13 @@ struct PairingModelTests {
     service.wires.withLock { $0[0] }.end(.suspended)
     try await until { pairing.link == .idle }
     pairing.connectSelected(resuming: true)
-    try await until { service.dials == 2 }
-    // The failure has landed, the quick redial (300 ms) not yet
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(pairing.link == .connecting)
-    try await until { pairing.link == .online(.relay) }
+    // Every state the link passes through until the redial is up, so a late wake-up cannot skip past the failed dial
+    var seen: [PairLink] = []
+    try await until {
+      if seen.last != pairing.link { seen.append(pairing.link) }
+      return pairing.link == .online(.relay)
+    }
+    #expect(seen == [.connecting, .online(.relay)])
     #expect(service.dials == 3)
   }
 

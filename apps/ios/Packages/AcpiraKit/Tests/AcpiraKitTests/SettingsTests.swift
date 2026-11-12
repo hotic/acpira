@@ -231,7 +231,8 @@ import WebKit
     web.navigationDelegate = coordinator
     coordinator.onPrompt = { prompts.append($0) }
     web.loadHTMLString(html, baseURL: nil)
-    for _ in 0..<40 where reported == 0 {
+    // A cold simulator can take seconds to start the first web content process
+    for _ in 0..<300 where reported == 0 {
       try? await Task.sleep(for: .milliseconds(50))
     }
     WidgetWebView.dismantleUIView(web, coordinator: coordinator)
