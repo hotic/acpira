@@ -591,7 +591,9 @@ export function useProjectFiles({ sessionId, root, running, shareSelection, show
     const uri = uriOf(path);
     updateMainComposer(d => (d.some(x => x.kind === 'file' && x.uri === uri) ? d : [...d, { kind: 'file', uri, name: path || nameOf(root) }]), true);
   };
-  return { sessionId, root, key, tab, refresh, changes, mark, changed, view, file, expanded, setExpanded, reveal, open, base, select, liveSelection, addRange, mention };
+  // The tree changed the project itself: everything shown is read again
+  const reload = () => setRefresh(r => r + 1);
+  return { sessionId, root, key, tab, refresh, reload, changes, mark, changed, view, file, expanded, setExpanded, reveal, open, base, select, liveSelection, addRange, mention };
 }
 
 // What the viewer side shows: the session's review, or a file of the project with its changes against a base. `onClose`
@@ -671,7 +673,8 @@ function FilesTab({ sessionId, root, running, searchFiles, openEditor, openPlan,
             onCommit={w => { setDragW(undefined); panel.setTreeW(w); }} onReset={() => { setDragW(undefined); panel.setTreeW(undefined); }} />
         )}
         <FileTree key={root} sessionId={sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={f.file?.text === undefined ? f.file?.path : undefined} review={f.view === 'review'}
-          expanded={f.expanded} setExpanded={f.setExpanded} onOpen={f.open} onReview={() => panel.setView(f.key, 'review')} onMention={f.mention} search={searchFiles} />
+          expanded={f.expanded} setExpanded={f.setExpanded} onOpen={f.open} onReview={() => panel.setView(f.key, 'review')} onMention={f.mention} search={searchFiles}
+          onChanged={f.reload} openEditor={openEditor} terminal={s.terminal} />
       </div>
     </div>
   );

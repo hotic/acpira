@@ -531,6 +531,16 @@ impl BridgeCore {
           core.post_now(HostMsg::ProjectDir { seq, entries, error });
         });
       }
+      W::ProjectEdit { session_id, edit, seq } => {
+        let (core, root) = (self.clone(), manager.session_cwd(&session_id));
+        spawn_on(self.wire, async move {
+          let done = match core.workspace(root).await {
+            Ok(ws) => ws.edit(&edit).await,
+            Err(e) => Err(e),
+          };
+          core.post_now(HostMsg::ProjectEdit { seq, error: done.err().map(|e| e.code()) });
+        });
+      }
       W::ProjectStatus { session_id, seq } => {
         let (core, root) = (self.clone(), manager.session_cwd(&session_id));
         spawn_on(self.wire, async move {

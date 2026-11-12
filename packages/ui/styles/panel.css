@@ -128,7 +128,7 @@
      folders composite the tint over the opaque canvas base so rows scrolling under them stay hidden, while only --tint
      eases so opening or closing a folder under the pointer never blinks its hover (the LAB, 2026-10-23) */
   [data-tree] .tree-row { background-color: var(--tint); transition: --tint 120ms ease-out, color 120ms ease-out; }
-  [data-tree] .tree-row:hover { --tint: var(--hover); }
+  [data-tree] .tree-row:hover, [data-tree] .tree-row[data-menu-open] { --tint: var(--hover); }
   [data-tree] .tree-row[aria-selected="true"] { --tint: var(--active); }
   /* Open folders stick under their ancestors while their own rows scroll by; the rule under one shows once it is stuck */
   /* (position: sticky is the row's class in FileTree.tsx; set here it lost to the row's `relative` utility) */

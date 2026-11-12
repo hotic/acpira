@@ -184,7 +184,7 @@ export function SessionMenu({ trigger, align = 'start', onOpenChange, lead, ...i
 // so the row element is not remounted. Closing never returns focus: a context menu has no trigger button to return to, and returning
 // focus to the row (or to a row right-clicked earlier) either stole focus from the fresh rename input or left the row's
 // focus-within action cluster showing without a hover fill
-const contextMenuCollision = { side: 'flip', align: 'flip', fallbackAxisSide: 'none' } as const;
+export const contextMenuCollision = { side: 'flip', align: 'flip', fallbackAxisSide: 'none' } as const;
 export function SessionContextMenu({ children, onOpenChange, editing, ...items }: SessionMenuItemsProps & { children: ReactElement<Record<string, unknown>>; onOpenChange?: (open: boolean) => void; editing?: boolean }) {
   const desktop = useDesktop();
   return <RowContextMenu items={() => sessionMenuItems(items, desktop)} disabled={editing} onOpenChange={onOpenChange}>{children}</RowContextMenu>;

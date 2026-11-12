@@ -145,7 +145,13 @@ export type ProjectBase = 'session' | 'head';
 // M modified, A added, D deleted, U untracked, I ignored; a folder as a whole ends in `/`
 export type GitMark = 'M' | 'A' | 'D' | 'U' | 'I';
 // Why a listing or a read failed; anything else is the system's own message
-export type ProjectError = 'noProject' | 'outside' | 'missing' | 'binary' | 'tooLarge';
+export type ProjectError = 'noProject' | 'outside' | 'missing' | 'exists' | 'binary' | 'tooLarge';
+// A change from the tool panel's tree: an empty file or a folder, a rename or move (never over an existing entry), a
+// delete (to the system's trash on this computer, for good on an SSH host)
+export type ProjectEdit =
+  | { op: 'create'; path: string; dir?: boolean }
+  | { op: 'rename'; path: string; to: string }
+  | { op: 'delete'; path: string };
 
 // A session whose saved conversation contains every term of a history search, with the text around the first match
 export interface SessionHit {
@@ -353,6 +359,7 @@ export type HostMsg =
   | { type: 'projectDir'; seq: number; entries: ProjectEntry[]; error?: ProjectError | string }
   | { type: 'projectStatus'; seq: number; root?: string; marks: Record<string, GitMark> }
   | { type: 'projectFile'; seq: number; text?: string; hunks?: ProjectHunk[]; error?: ProjectError | string }
+  | { type: 'projectEdit'; seq: number; error?: ProjectError | string }
   | { type: 'sessionChanges'; seq: number; files: ProjectChange[] }
   // Replies to the context reads (context.ts), each echoing its request's seq: absent when the session's agent reports no
   // split (or no longer holds the conversation it was asked about)
@@ -493,6 +500,7 @@ export type WebviewMsg =
   | { type: 'projectDir'; sessionId: string; dir: string; seq: number }
   | { type: 'projectStatus'; sessionId: string; seq: number }
   | { type: 'projectFile'; sessionId: string; path: string; base?: ProjectBase; seq: number }
+  | { type: 'projectEdit'; sessionId: string; edit: ProjectEdit; seq: number }
   | { type: 'sessionChanges'; sessionId: string; seq: number }
   // A session's context split (context.ts): the category sums for the composer ring's card, the whole tree (`detail`) for
   // the report tab; one leaf's content in the report `rev` describes; the last request as sent. Each answered with

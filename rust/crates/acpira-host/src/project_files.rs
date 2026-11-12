@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
-use acpira_shared::protocol::{ProjectChange, ProjectEntry, ProjectHunk};
+use acpira_shared::protocol::{ProjectChange, ProjectEditOp, ProjectEntry, ProjectHunk};
 use acpira_shared::remote::RemoteDirEntry;
 use similar::{Algorithm, DiffTag, capture_diff_slices_deadline};
 
@@ -28,6 +28,8 @@ pub enum ProjectError {
   /// The path leaves the project folder (`..`, an absolute path, a symlink out)
   Outside,
   Missing,
+  /// A new or renamed entry would take a name in use
+  Exists,
   Binary,
   TooLarge,
   Other(String),
@@ -39,6 +41,7 @@ impl ProjectError {
     match code {
       "outside" => ProjectError::Outside,
       "missing" => ProjectError::Missing,
+      "exists" => ProjectError::Exists,
       "binary" => ProjectError::Binary,
       "tooLarge" => ProjectError::TooLarge,
       other => ProjectError::Other(other.to_owned()),
@@ -49,6 +52,7 @@ impl ProjectError {
     match self {
       ProjectError::Outside => "outside".into(),
       ProjectError::Missing => "missing".into(),
+      ProjectError::Exists => "exists".into(),
       ProjectError::Binary => "binary".into(),
       ProjectError::TooLarge => "tooLarge".into(),
       ProjectError::Other(m) => m.clone(),
@@ -88,6 +92,65 @@ pub fn resolve_read(root: &Path, rel: &str) -> Result<PathBuf, ProjectError> {
     return Ok(p.to_path_buf());
   }
   resolve(root, rel)
+}
+
+/// The entry `rel` names, for a change: its folder as `resolve` takes it, the entry itself as written, so a symlink is
+/// renamed or deleted itself, never what it points at. The project folder is no entry of its own
+fn resolve_entry(root: &Path, rel: &str) -> Result<PathBuf, ProjectError> {
+  let path = Path::new(rel);
+  let Some(Component::Normal(name)) = path.components().next_back() else { return Err(ProjectError::Outside) };
+  let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+  Ok(resolve(root, &parent)?.join(name))
+}
+
+async fn exists(path: &Path) -> bool {
+  tokio::fs::symlink_metadata(path).await.is_ok()
+}
+
+/// A change from the tool panel's tree. `trash`: a delete goes to the system's trash (this computer); without it the
+/// entry is removed for good (an SSH host, where nobody would look into a trash)
+pub async fn edit(root: &Path, edit: &ProjectEditOp, trash: bool) -> Result<(), ProjectError> {
+  match edit {
+    ProjectEditOp::Create { path, dir } => {
+      let target = resolve_entry(root, path)?;
+      // `create_dir` and `create_new` both refuse a name in use, a dangling symlink included
+      let made = if *dir {
+        tokio::fs::create_dir(&target).await
+      } else {
+        tokio::fs::OpenOptions::new().write(true).create_new(true).open(&target).await.map(drop)
+      };
+      made.map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { ProjectError::Exists } else { io_error(e) })
+    }
+    ProjectEditOp::Rename { path, to } => {
+      let (from, target) = (resolve_entry(root, path)?, resolve_entry(root, to)?);
+      if !exists(&from).await {
+        return Err(ProjectError::Missing);
+      }
+      // A rename replaces what holds the name. A change of case alone finds itself on a case-insensitive disk
+      if exists(&target).await && path.to_lowercase() != to.to_lowercase() {
+        return Err(ProjectError::Exists);
+      }
+      tokio::fs::rename(&from, &target).await.map_err(io_error)
+    }
+    ProjectEditOp::Delete { path } => {
+      let target = resolve_entry(root, path)?;
+      let meta = tokio::fs::symlink_metadata(&target).await.map_err(io_error)?;
+      if trash {
+        return tokio::task::spawn_blocking(move || to_trash(&target)).await.map_err(|e| ProjectError::Other(e.to_string()))?;
+      }
+      let removed = if meta.is_dir() { tokio::fs::remove_dir_all(&target).await } else { tokio::fs::remove_file(&target).await };
+      removed.map_err(io_error)
+    }
+  }
+}
+
+fn to_trash(path: &Path) -> Result<(), ProjectError> {
+  #[cfg_attr(not(target_os = "macos"), expect(unused_mut, reason = "only macOS picks a method"))]
+  let mut ctx = trash::TrashContext::new();
+  // The default asks Finder through AppleScript, which wants the Automation permission
+  #[cfg(target_os = "macos")]
+  trash::macos::TrashContextExtMacos::set_delete_method(&mut ctx, trash::macos::DeleteMethod::NsFileManager);
+  ctx.delete(path).map_err(|e| ProjectError::Other(e.to_string()))
 }
 
 /// One folder: folders first, then files, each by name without case (as an editor's explorer orders them)
@@ -318,6 +381,38 @@ mod tests {
     assert_eq!(names, [("Alpha", false), ("beta", true)]);
     assert!(local_folders(Some("relative/path")).await.is_err());
     assert!(local_folders(Some(&root.join("missing").to_string_lossy())).await.is_err());
+  }
+
+  #[tokio::test]
+  async fn edits_stay_inside_and_never_replace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("src")).unwrap();
+    let create = |path: &str, dir| ProjectEditOp::Create { path: path.into(), dir };
+    let rename = |path: &str, to: &str| ProjectEditOp::Rename { path: path.into(), to: to.into() };
+    edit(root, &create("src/a.ts", false), false).await.unwrap();
+    edit(root, &create("src/lib", true), false).await.unwrap();
+    assert_eq!(edit(root, &create("src/a.ts", false), false).await, Err(ProjectError::Exists));
+    assert_eq!(edit(root, &create("../out.ts", false), false).await, Err(ProjectError::Outside));
+    assert_eq!(edit(root, &create("gone/a.ts", false), false).await, Err(ProjectError::Missing));
+    assert_eq!(edit(root, &rename("src/a.ts", "src/lib"), false).await, Err(ProjectError::Exists));
+    assert_eq!(edit(root, &rename("src/none.ts", "src/b.ts"), false).await, Err(ProjectError::Missing));
+    edit(root, &rename("src/a.ts", "src/lib/b.ts"), false).await.unwrap();
+    assert!(root.join("src/lib/b.ts").is_file() && !root.join("src/a.ts").exists());
+    // The project folder itself is not an entry
+    assert_eq!(edit(root, &ProjectEditOp::Delete { path: String::new() }, false).await, Err(ProjectError::Outside));
+    // A link out of the project goes itself, what it points at stays
+    #[cfg(unix)]
+    {
+      let outside = tempfile::tempdir().unwrap();
+      std::fs::write(outside.path().join("keep.txt"), "x").unwrap();
+      std::os::unix::fs::symlink(outside.path(), root.join("link")).unwrap();
+      assert_eq!(edit(root, &create("link/new.txt", false), false).await, Err(ProjectError::Outside));
+      edit(root, &ProjectEditOp::Delete { path: "link".into() }, false).await.unwrap();
+      assert!(outside.path().join("keep.txt").is_file());
+    }
+    edit(root, &ProjectEditOp::Delete { path: "src".into() }, false).await.unwrap();
+    assert!(!root.join("src").exists());
   }
 
   #[test]

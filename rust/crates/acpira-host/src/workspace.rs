@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use acpira_shared::protocol::{FileHit, ProjectChange, ProjectEntry};
+use acpira_shared::protocol::{FileHit, ProjectChange, ProjectEditOp, ProjectEntry};
 use acpira_shared::remote::parse_remote_folder;
 use serde_json::{Value, json};
 
@@ -74,6 +74,15 @@ impl Workspace {
     match self {
       Workspace::Local(root) => project_files::list_dir(root, rel).await,
       Workspace::Remote { client, path } => Self::call(client, path, "listDir", json!({ "rel": rel })).await.map(|v| Self::field(&v, "entries")),
+    }
+  }
+
+  /// A change from the tool panel's tree (`project_files::edit`): a delete goes to this computer's trash, and is final
+  /// on a host
+  pub async fn edit(&self, edit: &ProjectEditOp) -> Result<(), ProjectError> {
+    match self {
+      Workspace::Local(root) => project_files::edit(root, edit, true).await,
+      Workspace::Remote { client, path } => Self::call(client, path, "edit", json!({ "edit": edit })).await.map(drop),
     }
   }
 

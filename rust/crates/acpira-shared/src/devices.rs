@@ -116,6 +116,8 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::OpenBlob { .. }
     | W::ExportSession { .. }
     | W::InstallInTerminal { .. } => false,
+    // Changes the computer's files with no agent's permission flow in between
+    W::ProjectEdit { .. } => false,
     // Stages a path into the blob store: only one the session shows (the engine checks), never any path of the computer
     W::ImageBlob { shown, .. } => *shown,
     // Stages a file of the session's project for the device to download: no more than `projectFile` already reads (any
