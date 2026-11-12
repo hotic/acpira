@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::tunnel::{self, Tunnel};
-use crate::{LinkFailure, LinkPath, Welcome, ms, on_runtime};
+use crate::{DialStep, LinkFailure, LinkPath, Welcome, ms, on_runtime};
 
 /// Frames read ahead of Swift. Bounded, so a reader that falls behind backs up into QUIC flow control and the gateway's
 /// own limit drops the link (`Behind`), instead of this side buffering without end
@@ -79,11 +79,31 @@ pub struct Link {
   tunnel_slots: Arc<Semaphore>,
 }
 
+/// A dial that opened no link: the failure the screens act on, and how far it got (`DialReport`)
+pub(crate) struct OpenFailure {
+  pub failure: LinkFailure,
+  pub step: DialStep,
+  /// What the connection said, in its own words
+  pub detail: String,
+  /// The computer's Acpira and protocol versions, when its gateway greeted
+  pub greeted: Option<(String, i64)>,
+}
+
+impl OpenFailure {
+  fn at(step: DialStep, failure: LinkFailure, detail: impl Into<String>) -> Self {
+    Self { failure, step, detail: detail.into(), greeted: None }
+  }
+}
+
 /// Dials, opens the envelope stream and waits for the gateway's `Welcome`, all within `within`. Runs on the runtime
-pub(crate) async fn open(ep: Endpoint, addr: EndpointAddr, protocol_version: i64, within: Duration) -> Result<Link, LinkFailure> {
+pub(crate) async fn open(ep: Endpoint, addr: EndpointAddr, protocol_version: i64, within: Duration) -> Result<Link, OpenFailure> {
   let dialed = tokio::time::timeout(within, endpoint::dial(&ep, addr, ALPN_LINK, within)).await;
   // Nothing at the addresses, no route to the relay, or no answer in time: the computer is not there for this device
-  let Ok(Ok(conn)) = dialed else { return Err(LinkFailure::Offline) };
+  let conn = match dialed {
+    Ok(Ok(conn)) => conn,
+    Ok(Err(e)) => return Err(OpenFailure::at(DialStep::Dial, LinkFailure::Offline, format!("{e:#}"))),
+    Err(_) => return Err(OpenFailure::at(DialStep::Dial, LinkFailure::Offline, format!("no answer within {} s", within.as_secs()))),
+  };
   let greeted = tokio::time::timeout(within, async {
     let (tx, mut rx) = link::open_envelopes(&conn).await.ok()?;
     loop {
@@ -102,18 +122,20 @@ pub(crate) async fn open(ep: Endpoint, addr: EndpointAddr, protocol_version: i64
     // The gateway closes a device it does not admit right after the handshake: read why
     Ok(None) => {
       let why = ended(&conn).await;
+      let said = conn.close_reason().map_or_else(|| "the stream ended before the greeting".to_owned(), |e| e.to_string());
       conn.close(0u32.into(), b"no welcome");
-      return Err(why.unwrap_or(LinkFailure::Offline));
+      return Err(OpenFailure::at(DialStep::Greeting, why.unwrap_or(LinkFailure::Offline), said));
     }
     Err(_) => {
       conn.close(0u32.into(), b"no welcome");
-      return Err(LinkFailure::Offline);
+      return Err(OpenFailure::at(DialStep::Greeting, LinkFailure::Offline, format!("connected, no greeting within {} s", within.as_secs())));
     }
   };
   if welcome.protocol_version != protocol_version {
     conn.close(0u32.into(), b"incompatible");
     let side = if welcome.protocol_version > protocol_version { "update this app" } else { "update Acpira on the computer" };
-    return Err(LinkFailure::Incompatible { message: format!("the computer speaks protocol {}, this app {protocol_version}: {side}", welcome.protocol_version) });
+    let message = format!("the computer speaks protocol {}, this app {protocol_version}: {side}", welcome.protocol_version);
+    return Err(OpenFailure { failure: LinkFailure::Incompatible { message: message.clone() }, step: DialStep::Greeting, detail: message, greeted: Some((welcome.version, welcome.protocol_version)) });
   }
   Ok(Link::start(conn, tx, rx, welcome, tunnels))
 }

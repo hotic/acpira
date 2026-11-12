@@ -2,7 +2,7 @@ import { bundleManager, common } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { SIDECAR_PROTOCOL_VERSION } from '../wire/Wire';
-import { Computer, failureDetail, failureKind, Link, net, Node, Relays } from './Net';
+import { Computer, DialReport, failureDetail, failureKind, Link, net, Node, Relays } from './Net';
 import { NearbyBrowser, NetworkState, NetworkWatch } from './Network';
 import { ConnectionError, connectionError, PairedTransport } from './PairedTransport';
 import { ComputerStore, IdentityStore, NearbyComputer, PairedComputer } from './Stores';
@@ -53,6 +53,61 @@ export interface Presence {
   path?: string;
 }
 
+/**
+ * Where the last dial to a paired computer stopped (apps/ios AcpiraSync/Pairing.swift ConnectionDiagnosis): the failure
+ * page's sentence, and the report its owner can copy and send. It sits beside ConnectionError, which alone decides what
+ * is dialed again
+ */
+export interface ConnectionDiagnosis {
+  /**
+   * `network` (this device has none), `relay` (no answer and this device reached no relay), `unanswered` (asleep, off,
+   * Acpira not running, remote access off), `notReady` (the computer answered, its Acpira closed the link or greeted
+   * nobody), `computerOlder` / `appOlder` / `incompatible` (another protocol version: theirs, this app's, not known)
+   */
+  stop: string;
+  /** What the connection said, in its own words (English) */
+  detail: string;
+  /** Whether this device's relay was connected when the dial failed; undefined when nothing was dialed or relays are off */
+  relayConnected?: boolean;
+  /** How long the dial ran */
+  tookMs?: number;
+  /** The computer's Acpira and protocol versions, when its gateway greeted */
+  computerVersion?: string;
+  computerProtocol?: number;
+  /** Epoch milliseconds */
+  at: number;
+}
+
+/**
+ * A failed dial as the failure page tells it: the report says how far it got. A relay that is down only explains an
+ * unanswered dial that waited for it (`viaRelay`): a node's relay comes up a moment after the node, and the short LAN
+ * probe ends before it
+ */
+export function diagnose(error: ConnectionError, report: DialReport | undefined, viaRelay: boolean): ConnectionDiagnosis | undefined {
+  if (error.kind === 'Revoked' || error.kind === 'Suspended') {
+    return undefined;
+  }
+  if (report === undefined) {
+    return { stop: 'unanswered', detail: error.message.length > 0 ? error.message : error.kind.toLowerCase(), at: Date.now() };
+  }
+  // Absent fields may cross N-API as null
+  const theirs: number | undefined = report.protocol ?? undefined;
+  const relay: boolean | undefined = report.relayConnected ?? undefined;
+  const version: string | undefined = report.version ?? undefined;
+  let stop: string;
+  if (error.kind === 'Incompatible') {
+    stop = theirs === undefined ? 'incompatible' : theirs > SIDECAR_PROTOCOL_VERSION ? 'appOlder' : 'computerOlder';
+  } else if (report.step === 'greeting') {
+    stop = 'notReady';
+  } else {
+    stop = viaRelay && relay === false ? 'relay' : 'unanswered';
+  }
+  return {
+    stop: stop, detail: report.detail, relayConnected: relay, tookMs: report.tookMs,
+    computerVersion: version !== undefined && version.length > 0 ? version : undefined, computerProtocol: theirs, at: Date.now()
+  };
+}
+
 /** `acpira://pair/…`, as a scan, a paste or a link opened from outside hands it over */
 export function isPairingLink(text: string): boolean {
   return text.trim().toLowerCase().startsWith('acpira://pair');
@@ -81,6 +136,8 @@ export class PairingService {
   /** When the network last dropped away entirely, while it stays away */
   private offlineSince: number | undefined = undefined;
   private live: Set<PairedTransport> = new Set();
+  /** Where the last failed `connect` to each computer stopped, dropped by the next one that opens a wire */
+  private diagnoses: Map<string, ConnectionDiagnosis> = new Map();
   /** Computers being dialed now: the gateway keeps one connection per device, so a probe must never dial one of them */
   private dialing: Map<string, number> = new Map();
   /** The path each computer was last reached on, for the probe deadline */
@@ -186,12 +243,14 @@ export class PairingService {
   /** Open a wire to the computer's engine; throws ConnectionError */
   async connect(computer: PairedComputer): Promise<PairedTransport> {
     if (this.network?.satisfied === false) {
+      this.diagnoses.set(computer.id, { stop: 'network', detail: NO_NETWORK, at: Date.now() });
       throw new ConnectionError('Other', NO_NETWORK);
     }
     let node: Node;
     try {
       node = await this.liveNode();
     } catch (e) {
+      this.diagnoses.set(computer.id, { stop: 'unanswered', detail: "this device's node did not start", at: Date.now() });
       throw connectionError(e);
     }
     // The stored entry carries the addresses later links reported; the caller's copy may be older
@@ -206,10 +265,18 @@ export class PairingService {
       if (within < RELAY_PROBE_MS) {
         this.lastPath.delete(computer.id);
       }
-      throw connectionError(e);
+      const failed = connectionError(e);
+      const stopped = diagnose(failed, dialReport(node, known.id), within >= RELAY_PROBE_MS);
+      if (stopped === undefined) {
+        this.diagnoses.delete(computer.id);
+      } else {
+        this.diagnoses.set(computer.id, stopped);
+      }
+      throw failed;
     } finally {
       this.dialing.set(computer.id, (this.dialing.get(computer.id) ?? 1) - 1);
     }
+    this.diagnoses.delete(computer.id);
     const id = computer.id;
     const transport: PairedTransport = new PairedTransport(link, id, {
       path: (kind: string) => {
@@ -221,11 +288,19 @@ export class PairingService {
       }
     });
     this.live.add(transport);
-    if (known.name !== transport.computerName) {
-      this.list = this.list.map((c: PairedComputer) => c.id === id ? rename(c, transport.computerName) : c);
+    if (known.name !== transport.computerName || known.version !== transport.computerVersion) {
+      this.list = this.list.map((c: PairedComputer) => c.id === id ? greeted(c, transport.computerName, transport.computerVersion) : c);
       this.saveList();
     }
     return transport;
+  }
+
+  /**
+   * Where the last `connect` to this computer stopped; undefined once one opened a wire, before any failed, or when
+   * the computer removed this phone (that page says it all)
+   */
+  diagnosis(computer: PairedComputer): ConnectionDiagnosis | undefined {
+    return this.diagnoses.get(computer.id);
   }
 
   /**
@@ -421,8 +496,8 @@ export class PairingService {
 
   private moved(id: string, relay: string | undefined, addrs: string[]): void {
     this.list = this.list.map((c: PairedComputer): PairedComputer => c.id !== id ? c : {
-      id: c.id, name: c.name, model: c.model, relay: relay ?? c.relay, addrs: addrs.length > 0 ? addrs : c.addrs,
-      pairedAt: c.pairedAt
+      id: c.id, name: c.name, model: c.model, version: c.version, relay: relay ?? c.relay,
+      addrs: addrs.length > 0 ? addrs : c.addrs, pairedAt: c.pairedAt
     });
     this.saveList();
   }
@@ -496,8 +571,18 @@ function addr(c: PairedComputer): Computer {
   return { id: c.id, relay: c.relay, addrs: c.addrs };
 }
 
-function rename(c: PairedComputer, name: string): PairedComputer {
-  return { id: c.id, name: name, model: c.model, relay: c.relay, addrs: c.addrs, pairedAt: c.pairedAt };
+/** The entry with what the computer's greeting said of itself */
+function greeted(c: PairedComputer, name: string, version: string | undefined): PairedComputer {
+  return { id: c.id, name: name, model: c.model, version: version, relay: c.relay, addrs: c.addrs, pairedAt: c.pairedAt };
+}
+
+/** The library's word on the dial that just failed; undefined when it kept none, or was built before it kept any */
+function dialReport(node: Node, id: string): DialReport | undefined {
+  try {
+    return node.dialReport(id) ?? undefined;
+  } catch (e) {
+    return undefined;
+  }
 }
 
 /** The name the computer's device list shows: the device's market name, else its model */
@@ -515,5 +600,15 @@ function appVersion(): string {
     return bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT).versionName;
   } catch (e) {
     return '0';
+  }
+}
+
+/** This app's version with its build, as the connection report names it: `2.0.12 (23)` */
+export function appVersionAndBuild(): string {
+  try {
+    const info = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+    return `${info.versionName} (${info.versionCode})`;
+  } catch (e) {
+    return '0 (0)';
   }
 }

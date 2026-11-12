@@ -56,6 +56,8 @@ public actor RemotePairingService: PairingService {
   /// When the network last dropped away entirely, while it stays away
   private var offlineSince: ContinuousClock.Instant?
   private var live: [UUID: RemoteConnection] = [:]
+  /// Where the last failed `connect` to each computer stopped, dropped by the next one that opens a wire
+  private var diagnoses: [String: ConnectionDiagnosis] = [:]
   /// Computers being dialed now. The gateway keeps one connection per device and a new one replaces the old, so a
   /// presence probe must never dial a computer this app is connecting to or connected to
   private var dialing: [String: Int] = [:]
@@ -131,11 +133,15 @@ public actor RemotePairingService: PairingService {
   }
 
   public func connect(_ computer: PairedComputer) async throws -> any PairedConnection {
-    if network?.satisfied == false { throw ConnectionError.other(Self.noNetwork) }
+    if network?.satisfied == false {
+      diagnoses[computer.id] = ConnectionDiagnosis(stop: .network, detail: Self.noNetwork)
+      throw ConnectionError.other(Self.noNetwork)
+    }
     let node: Node
     do {
       node = try await liveNode()
     } catch {
+      diagnoses[computer.id] = ConnectionDiagnosis(stop: .unanswered, detail: "this device's node did not start")
       throw ConnectionError(error)
     }
     // The stored entry carries the addresses later links reported; the caller's copy may be older
@@ -150,8 +156,11 @@ public actor RemotePairingService: PairingService {
     } catch {
       // The short LAN deadline was a guess: this Wi-Fi may not be the computer's, so the next dial waits for the relay
       if within < Self.relayProbeMs { lastPath[computer.id] = nil }
-      throw ConnectionError(error)
+      let failed = ConnectionError(error)
+      diagnoses[computer.id] = Self.diagnose(failed, node.dialReport(computerId: at.id), viaRelay: within >= Self.relayProbeMs)
+      throw failed
     }
+    diagnoses[computer.id] = nil
     let id = computer.id
     let key = UUID()
     let hooks = RemoteConnection.Hooks(
@@ -163,6 +172,31 @@ public actor RemotePairingService: PairingService {
     live[key] = connection
     greeted(id, link.welcome())
     return connection
+  }
+
+  public func diagnosis(of computer: PairedComputer) -> ConnectionDiagnosis? { diagnoses[computer.id] }
+
+  /// A failed dial as the failure page tells it: the report says how far it got. A relay that is down only explains
+  /// an unanswered dial that waited for it (`viaRelay`): a node's relay comes up a moment after the node, and the short
+  /// LAN probe ends before it
+  static func diagnose(_ error: ConnectionError, _ report: DialReport?, viaRelay: Bool) -> ConnectionDiagnosis? {
+    if error == .revoked || error == .suspended { return nil }
+    guard let report else { return ConnectionDiagnosis(stop: .unanswered, detail: String(describing: error)) }
+    let stop: ConnectionDiagnosis.Stop
+    if case .incompatible = error {
+      stop = switch report.protocol {
+      case let theirs? where theirs > Int64(SidecarProtocol.version): .appOlder
+      case .some: .computerOlder
+      case nil: .incompatible
+      }
+    } else {
+      switch report.step {
+      case .dial: stop = viaRelay && report.relayConnected == false ? .relay : .unanswered
+      case .greeting: stop = .notReady
+      }
+    }
+    return ConnectionDiagnosis(stop: stop, detail: report.detail, relayConnected: report.relayConnected, tookMs: Int(report.tookMs),
+                               computerVersion: report.version.flatMap { $0.isEmpty ? nil : $0 }, computerProtocol: report.protocol.map(Int.init))
   }
 
   /// A live connection answers for its computer; otherwise a link is dialed and greeted within the probe deadline and

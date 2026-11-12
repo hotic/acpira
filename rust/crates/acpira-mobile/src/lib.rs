@@ -9,10 +9,11 @@
 //! channel, which any executor can await: Swift polls these futures from its own threads. Every wait has a deadline,
 //! since iroh's own waits may have none (`online()` never returns while no relay is reachable).
 
+use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use acpira_net::endpoint::{self, Options, Relays};
 use acpira_net::iroh::TransportAddr;
@@ -199,6 +200,31 @@ pub enum LinkFailure {
   Other { message: String },
 }
 
+/// How far a dial got before it failed
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum DialStep {
+  /// The computer never answered the dial
+  Dial,
+  /// The computer answered; its gateway then closed the link, stayed silent, or greeted with another protocol version
+  Greeting,
+}
+
+/// The last failed dial to a computer, for a failure page that says where it stopped and a report its user can send.
+/// It sits beside `LinkFailure`, whose cases alone decide what the app does next
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DialReport {
+  pub step: DialStep,
+  /// What the connection said, in its own words (English, for the report)
+  pub detail: String,
+  /// Whether this device's home relay was connected when the dial failed; `None` with relays off
+  pub relay_connected: Option<bool>,
+  /// How long the dial ran
+  pub took_ms: u64,
+  /// The computer's Acpira and protocol versions, when its gateway greeted
+  pub version: Option<String>,
+  pub protocol: Option<i64>,
+}
+
 macro_rules! display_as_debug {
   ($($t:ty),*) => {$(
     impl fmt::Display for $t {
@@ -248,6 +274,8 @@ pub struct Node {
   ep: Endpoint,
   /// Relays are on: without them there is no home relay to be down
   relays_on: bool,
+  /// The last failed dial per computer id, dropped by the next one that opens a link
+  dials: parking_lot::Mutex<HashMap<String, DialReport>>,
 }
 
 impl Node {
@@ -267,7 +295,7 @@ impl Node {
     .await
     .map_err(|message| NodeFailure::Other { message })?
     .map_err(|e| NodeFailure::Other { message: format!("{e:#}") })?;
-    Ok(Arc::new(Node { ep, relays_on: watched }))
+    Ok(Arc::new(Node { ep, relays_on: watched, dials: Default::default() }))
   }
 }
 
@@ -320,8 +348,27 @@ impl Node {
   pub async fn connect(&self, computer: ComputerAddr, protocol_version: i64, within_ms: u64) -> Result<Arc<Link>, LinkFailure> {
     let Some(addr) = computer.endpoint_addr() else { return Err(LinkFailure::Other { message: "not a computer id".into() }) };
     let ep = self.ep.clone();
-    let link = on_runtime(link::open(ep, addr, protocol_version, ms(within_ms))).await.map_err(|message| LinkFailure::Other { message })??;
-    Ok(Arc::new(link))
+    let id = computer.id.trim().to_owned();
+    let started = Instant::now();
+    let opened = on_runtime(link::open(ep, addr, protocol_version, ms(within_ms))).await.map_err(|message| LinkFailure::Other { message })?;
+    match opened {
+      Ok(link) => {
+        self.dials.lock().remove(&id);
+        Ok(Arc::new(link))
+      }
+      Err(f) => {
+        let relay_connected = self.relays_on.then(|| self.relay_connected());
+        let (version, protocol) = f.greeted.unzip();
+        let report = DialReport { step: f.step, detail: f.detail, relay_connected, took_ms: started.elapsed().as_millis() as u64, version, protocol };
+        self.dials.lock().insert(id, report);
+        Err(f.failure)
+      }
+    }
+  }
+
+  /// How the last dial to this computer failed; `None` once a dial opened a link, or before any failed
+  pub fn dial_report(&self, computer_id: String) -> Option<DialReport> {
+    self.dials.lock().get(computer_id.trim()).cloned()
   }
 
   /// Closes the endpoint and every link on it (they end as closed from this side)

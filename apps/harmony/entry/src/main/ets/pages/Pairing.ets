@@ -1,11 +1,14 @@
 import { promptAction } from '@kit.ArkUI';
 import { Metrics, PairMetrics, Type } from '../design/Tokens';
+import { copyText } from '../components/Copy';
 import { Lucide } from '../components/Glyphs';
 import { PairHero, PairHeroPlacement } from '../components/PairHero';
 import { AppModel } from '../store/AppModel';
 import { t } from '../store/L10n';
 import { PairingModel } from '../store/PairingModel';
+import { appVersionAndBuild, ConnectionDiagnosis } from '../remote/PairingService';
 import { PairedComputer } from '../remote/Stores';
+import { SIDECAR_PROTOCOL_VERSION } from '../wire/Wire';
 
 // The phone's side of paired remote access on screen (apps/ios Pairing/PairListViews.swift + PairSettings.swift,
 // apps/android ui/Pairing.kt): the connect frame in the list's place while there is nothing to list, and the computers
@@ -70,6 +73,28 @@ export struct PairConnect {
   /** This build carries the remote access library */
   @Param available: boolean = true;
   @Event onComputers: () => void = () => {};
+  /** The report behind the failure page's "Details" */
+  @Local detailsOpen: boolean = false;
+
+  /** The failure it told is gone (a quiet redial got through, another computer followed): so is the report */
+  @Monitor('pairing.diagnosis')
+  diagnosisChanged(): void {
+    if (this.pairing.diagnosis === undefined) {
+      this.detailsOpen = false;
+    }
+  }
+
+  /** A failure that knows where its dial stopped offers the report under the retry */
+  private told(): boolean {
+    return !this.connecting() && this.pairing.diagnosis !== undefined;
+  }
+
+  @Builder
+  details() {
+    if (this.pairing.selected !== undefined && this.pairing.diagnosis !== undefined) {
+      PairDiagnosisSheet({ computer: this.pairing.selected, diagnosis: this.pairing.diagnosis })
+    }
+  }
 
   @Builder
   hero() {
@@ -89,12 +114,16 @@ export struct PairConnect {
         spin: this.connecting(),
         dim: !this.connecting(),
         action: this.action(),
+        secondary: this.told() ? t('mobile.pair.details') : undefined,
         onAction: () => {
           if (this.pairing.link.error?.kind === 'Revoked') {
             this.pairing.addOpen = true;
           } else {
             this.pairing.connectSelected();
           }
+        },
+        onSecondary: () => {
+          this.detailsOpen = true;
         }
       })
     }
@@ -112,13 +141,31 @@ export struct PairConnect {
     }
     switch (this.pairing.link.error?.kind) {
       case 'Offline':
-        return t('mobile.pair.offline', named(c.name));
+        return this.stopped('mobile.pair.offline', c);
       case 'Revoked':
         return t('mobile.pair.revoked', named(c.name));
       case 'Incompatible':
-        return t('mobile.pair.incompatible', named(c.name));
+        return this.stopped('mobile.pair.incompatible', c);
       default:
-        return t('mobile.pair.connectFailed', named(c.name));
+        return this.stopped('mobile.pair.connectFailed', c);
+    }
+  }
+
+  /** A failure's sentence: where the dial stopped when the service knows, else the failure's own */
+  private stopped(fallback: string, c: PairedComputer): string {
+    switch (this.pairing.diagnosis?.stop) {
+      case 'network':
+        return t('mobile.pair.offline.network');
+      case 'relay':
+        return t('mobile.pair.offline.relay', named(c.name));
+      case 'notReady':
+        return t('mobile.pair.offline.notReady', named(c.name));
+      case 'appOlder':
+        return t('mobile.pair.incompatible.app', named(c.name));
+      case 'computerOlder':
+        return t('mobile.pair.incompatible.computer', named(c.name));
+      default:
+        return t(fallback, named(c.name));
     }
   }
 
@@ -152,6 +199,115 @@ export struct PairConnect {
       .width('100%')
     }
     .backgroundColor($r('app.color.bg0'))
+    .width('100%')
+    .height('100%')
+    .bindSheet(this.detailsOpen, this.details(), {
+      detents: [SheetSize.MEDIUM, SheetSize.LARGE], dragBar: true, showClose: false, onDisappear: () => {
+        this.detailsOpen = false;
+      }
+    })
+  }
+}
+
+/** The report as plain English text, the same in every language: it is read by whoever is asked for help */
+export function diagnosisReport(computer: PairedComputer, d: ConnectionDiagnosis, app: string): string {
+  let stopped = `Stopped: ${d.stop}`;
+  if (d.tookMs !== undefined) {
+    stopped += ` after ${(d.tookMs / 1000).toFixed(1)} s`;
+  }
+  if (d.relayConnected !== undefined) {
+    stopped += d.relayConnected ? ', relay connected' : ', relay not connected';
+  }
+  const seen = computer.version !== undefined ? `${computer.version} (last seen)` : 'unknown';
+  let theirs = `Computer: Acpira ${d.computerVersion ?? seen}`;
+  if (d.computerProtocol !== undefined) {
+    theirs += `, protocol ${d.computerProtocol}`;
+  }
+  return [
+    `Acpira app ${app}, protocol ${SIDECAR_PROTOCOL_VERSION}`,
+    theirs,
+    stopped,
+    `Error: ${d.detail}`,
+    // Whole seconds, as the other apps write it
+    `At: ${new Date(d.at).toISOString().replace(/\.\d+Z$/, 'Z')}`
+  ].join('\n');
+}
+
+/**
+ * Where a failed connection stopped, behind the failure page's "Details" (apps/ios Pairing/PairDiagnosis.swift): the
+ * versions on both sides, the relay, the connection's own words, and the whole of it as text to copy and send
+ */
+@ComponentV2
+export struct PairDiagnosisSheet {
+  @Require @Param computer: PairedComputer;
+  @Require @Param diagnosis: ConnectionDiagnosis;
+
+  @Builder
+  row(label: string, value: string) {
+    Row({ space: Metrics.gap }) {
+      Text(label).fontSize(Type.text1).fontColor($r('app.color.fg1')).layoutWeight(1)
+      Text(value).fontSize(Type.text1).fontColor($r('app.color.fg2'))
+    }
+    .padding({ left: Metrics.pad, right: Metrics.pad })
+    .height(PairMetrics.formRow)
+    .width('100%')
+  }
+
+  build() {
+    Column() {
+      Text(t('mobile.pair.details'))
+        .fontSize(Type.text1)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.fg1'))
+        .textAlign(TextAlign.Center)
+        .height(Metrics.barCtl + Metrics.s2)
+        .width('100%')
+      Scroll() {
+        Column({ space: Metrics.s6 }) {
+          Column() {
+            this.row(t('mobile.pair.details.app'), appVersionAndBuild())
+            Divider().color($r('app.color.line')).margin({ left: Metrics.pad })
+            this.row(t('connections.remoteVersion'), this.diagnosis.computerVersion ?? this.computer.version ?? '—')
+            if (this.diagnosis.relayConnected !== undefined) {
+              Divider().color($r('app.color.line')).margin({ left: Metrics.pad })
+              this.row(t('mobile.pair.path.relay'),
+                t(this.diagnosis.relayConnected ? 'mobile.pair.connected' : 'mobile.pair.state.offline'))
+            }
+          }
+          .borderRadius(Metrics.rLg)
+          .backgroundColor($r('app.color.form_row'))
+          // The connection's own words, as they go into the report
+          Text(this.diagnosis.detail)
+            .id('pair.details.error')
+            .fontFamily('monospace')
+            .fontSize(Type.mono)
+            .lineHeight(Type.monoLine)
+            .fontColor($r('app.color.fg2'))
+            .copyOption(CopyOptions.LocalDevice)
+            .padding(Metrics.pad)
+            .borderRadius(Metrics.rLg)
+            .backgroundColor($r('app.color.form_row'))
+            .width('100%')
+          Row() {
+            Text(t('common.copy')).fontSize(Type.text1).fontColor($r('app.color.fg1'))
+          }
+          .id('pair.details.copy')
+          .padding({ left: Metrics.pad, right: Metrics.pad })
+          .height(PairMetrics.formRow)
+          .width('100%')
+          .borderRadius(Metrics.rLg)
+          .backgroundColor($r('app.color.form_row'))
+          .onClick(() => copyText(this.getUIContext(), diagnosisReport(this.computer, this.diagnosis, appVersionAndBuild())))
+        }
+        .padding({ left: Metrics.pad, right: Metrics.pad, bottom: Metrics.page })
+        .constraintSize({ maxWidth: Metrics.contentW })
+        .width('100%')
+      }
+      .scrollBar(BarState.Off)
+      .align(Alignment.Top)
+      .layoutWeight(1)
+    }
+    .backgroundColor($r('app.color.form_page'))
     .width('100%')
     .height('100%')
   }

@@ -21,6 +21,8 @@ data class PairedComputer(
   val addrs: List<String> = emptyList(),
   /** Epoch milliseconds */
   val pairedAt: Long = System.currentTimeMillis(),
+  /** The remote Acpira version last reported by the computer's gateway */
+  val version: String? = null,
 )
 
 /**
@@ -66,6 +68,40 @@ sealed class ConnectionError(message: String) : Exception(message) {
   val transient: Boolean get() = this is Offline || this is Other
 }
 
+/**
+ * Where the last dial to a paired computer stopped: the failure page's sentence, and the report its owner can copy and
+ * send. It sits beside [ConnectionError], which alone decides what is dialed again
+ */
+data class ConnectionDiagnosis(
+  val stop: Stop,
+  /** What the connection said, in its own words (English) */
+  val detail: String,
+  /** Whether this device's relay was connected when the dial failed; null when nothing was dialed or relays are off */
+  val relayConnected: Boolean? = null,
+  /** How long the dial ran */
+  val tookMs: Long? = null,
+  /** The computer's Acpira and protocol versions, when its gateway greeted */
+  val computerVersion: String? = null,
+  val computerProtocol: Long? = null,
+  /** Epoch milliseconds */
+  val at: Long = System.currentTimeMillis(),
+) {
+  /** The names go into the report as they are (the iOS `Stop` raw values) */
+  @Suppress("EnumEntryName")
+  enum class Stop {
+    /** This device has no network at all */
+    network,
+    /** The computer did not answer and this device reached no relay: only a shared network joins the two */
+    relay,
+    /** The computer did not answer the dial: asleep, off, Acpira not running, or remote access off */
+    unanswered,
+    /** The computer answered, then its Acpira closed the link or greeted nobody (starting, stopping, restarting) */
+    notReady,
+    /** The two speak different protocol versions: the computer's Acpira is the older one, this app is, or it is not known which */
+    computerOlder, appOlder, incompatible,
+  }
+}
+
 /** A wire to a paired computer's engine: envelopes like any other transport, plus the path it travels on */
 interface PairedConnection : EngineTransport {
   /** The current path first, then every change, until the connection ends */
@@ -100,6 +136,11 @@ interface PairingService {
   suspend fun connect(computer: PairedComputer): PairedConnection
   /** Whether a paired computer answers right now and over which path, without opening an engine wire. Null: not known */
   suspend fun presence(computer: PairedComputer): Presence? = null
+  /**
+   * Where the last [connect] to this computer stopped; null once one opened a wire, before any failed, or when the
+   * computer removed this phone (that page says it all)
+   */
+  suspend fun diagnosis(computer: PairedComputer): ConnectionDiagnosis? = null
   /** The app went to the background / came back (the service closes its node after a grace, rebuilds it on return) */
   fun enterBackground() {}
   fun enterForeground() {}

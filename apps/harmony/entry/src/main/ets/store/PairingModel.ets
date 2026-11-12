@@ -1,7 +1,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { t } from './L10n';
 import { ConnectionError, PairedTransport } from '../remote/PairedTransport';
-import { isPairingLink, PairingService, Presence } from '../remote/PairingService';
+import { ConnectionDiagnosis, isPairingLink, PairingService, Presence } from '../remote/PairingService';
 import { NearbyComputer, PairedComputer } from '../remote/Stores';
 
 /** The emitter event an `acpira://pair/…` link opened while the app runs travels on (EntryAbility `onNewWant` → pages/Index) */
@@ -46,6 +46,8 @@ export class PairingModel {
   /** What a probe (or the followed computer's live wire) last said about each computer */
   @Trace presence: Map<string, Presence> = new Map();
   @Trace link: PairLink = new PairLink('idle');
+  /** Where the followed computer's last dial stopped, while its failure shows */
+  @Trace diagnosis: ConnectionDiagnosis | undefined = undefined;
   /** The followed computer, kept across launches */
   @Trace selectedId: string | undefined = undefined;
   /** The add-computer sheet over the list */
@@ -168,6 +170,8 @@ export class PairingModel {
     if (!resuming) {
       this.reconnecting = false;
     }
+    // Another computer's, or a tap on Retry: the dial about to run tells anew
+    this.diagnosis = undefined;
     this.dial(false);
   }
 
@@ -192,6 +196,7 @@ export class PairingModel {
         wire.close();
         return;
       }
+      this.diagnosis = undefined;
       this.connection = wire;
       this.wiredAt = Date.now();
       wire.onPath = (path: string) => {
@@ -206,6 +211,11 @@ export class PairingModel {
         if (this.connection !== wire || this.selected?.id !== computer.id) {
           return;
         }
+        // A wire that opened and then failed in words of its own (the computer's engine ended) left no failed dial to
+        // tell: the computer answered, its Acpira did not carry on
+        if (error?.kind === 'Other') {
+          this.diagnosis = { stop: 'notReady', detail: error.message, at: Date.now() };
+        }
         this.ended(error ?? new ConnectionError('Offline', ''), computer.id);
       };
       if (wire.path !== undefined) {
@@ -216,6 +226,7 @@ export class PairingModel {
       if (generation !== this.generation || this.selected?.id !== computer.id) {
         return;
       }
+      this.diagnosis = this.service.diagnosis(computer);
       this.ended(e instanceof ConnectionError ? e : new ConnectionError('Other', `${e}`), computer.id);
     });
   }

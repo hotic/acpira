@@ -9,7 +9,7 @@ use napi_derive_ohos::napi;
 use napi_ohos::bindgen_prelude::{AsyncTask, Uint8Array};
 use napi_ohos::{Env, Error, Result, Status, Task};
 
-use crate::bridge::{self, Computer, Greeting, LinkEvent, NamedComputer, Relays, call};
+use crate::bridge::{self, Computer, DialReport, Greeting, LinkEvent, NamedComputer, Relays, call};
 
 fn told<T>(r: std::result::Result<T, String>) -> Result<T> {
   r.map_err(|message| Error::new(Status::GenericFailure, message))
@@ -118,6 +118,12 @@ impl Node {
   #[napi]
   pub async fn connect(&self, computer: Computer, protocol_version: i64, within_ms: u32) -> Result<Link> {
     Ok(Link { inner: told(call::connect(self.inner.clone(), computer, protocol_version, within_ms).await)? })
+  }
+
+  /// How the last dial to this computer failed; null once a dial opened a link, or before any failed
+  #[napi]
+  pub fn dial_report(&self, computer_id: String) -> Option<DialReport> {
+    call::dial_report(&self.inner, computer_id)
   }
 
   /// Closes the endpoint and every link on it

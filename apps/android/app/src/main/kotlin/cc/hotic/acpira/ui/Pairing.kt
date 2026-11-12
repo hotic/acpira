@@ -67,6 +67,7 @@ import cc.hotic.acpira.store.AppModel
 import cc.hotic.acpira.store.PairLink
 import cc.hotic.acpira.store.PairingModel
 import cc.hotic.acpira.store.pathLabel
+import cc.hotic.acpira.sync.ConnectionDiagnosis
 import cc.hotic.acpira.sync.ConnectionError
 import cc.hotic.acpira.sync.PairedComputer
 import cc.hotic.acpira.sync.PathKind
@@ -246,6 +247,10 @@ fun covers(pairing: PairingModel, model: AppModel): Boolean {
 fun PairHeroList(pairing: PairingModel, modifier: Modifier = Modifier) {
   if (!pairing.loaded) return
   val current = pairing.selected
+  var detailsOpen by remember { mutableStateOf(false) }
+  val diagnosis = pairing.diagnosis
+  // The failure it told is gone (a quiet redial got through, another computer followed): so is the report
+  LaunchedEffect(diagnosis == null) { if (diagnosis == null) detailsOpen = false }
   PairHeroPlacement(modifier.testTag("pair.hero")) {
     if (current == null) {
       PairHero("laptop", t("mobile.pair.none"), action = t("mobile.pair.add"), onAction = { pairing.addOpen = true })
@@ -254,17 +259,32 @@ fun PairHeroList(pairing: PairingModel, modifier: Modifier = Modifier) {
     val named = "name" to current.name
     val icon = computerIcon(current.model)
     val retry = { pairing.connectSelected() }
+    // A failure that knows where its dial stopped offers the report under the retry
+    val details = if (diagnosis != null) t("mobile.pair.details") else null
+    val open = { detailsOpen = true }
+    // A failure's sentence: where the dial stopped when the service knows, else the failure's own
+    fun told(fallback: String): String = when (diagnosis?.stop) {
+      ConnectionDiagnosis.Stop.network -> t("mobile.pair.offline.network")
+      ConnectionDiagnosis.Stop.relay -> t("mobile.pair.offline.relay", named)
+      ConnectionDiagnosis.Stop.notReady -> t("mobile.pair.offline.notReady", named)
+      ConnectionDiagnosis.Stop.appOlder -> t("mobile.pair.incompatible.app", named)
+      ConnectionDiagnosis.Stop.computerOlder -> t("mobile.pair.incompatible.computer", named)
+      ConnectionDiagnosis.Stop.unanswered, ConnectionDiagnosis.Stop.incompatible, null -> t(fallback, named)
+    }
     when (val l = pairing.link) {
       is PairLink.Failed -> when (l.error) {
-        ConnectionError.Offline -> PairHero(icon, t("mobile.pair.offline", named), action = t("mobile.pair.retry"), dim = true, onAction = retry)
-        ConnectionError.Revoked -> PairHero(icon, t("mobile.pair.revoked", named), action = t("mobile.pair.again"), dim = true, onAction = { pairing.addOpen = true })
-        is ConnectionError.Incompatible -> PairHero(icon, t("mobile.pair.incompatible", named), action = t("mobile.pair.retry"), dim = true, onAction = retry)
+        ConnectionError.Offline -> PairHero(icon, told("mobile.pair.offline"), action = t("mobile.pair.retry"), secondary = details, dim = true, onAction = retry, onSecondary = open)
+        ConnectionError.Revoked -> PairHero(icon, t("mobile.pair.revoked", named), action = t("mobile.pair.again"), secondary = details, dim = true, onAction = { pairing.addOpen = true }, onSecondary = open)
+        is ConnectionError.Incompatible -> PairHero(icon, told("mobile.pair.incompatible"), action = t("mobile.pair.retry"), secondary = details, dim = true, onAction = retry, onSecondary = open)
         // Online too until the engine's lists are in; a background close dials again on the way back
         ConnectionError.Suspended -> PairHero(icon, t("mobile.pair.connecting"), spin = true)
-        is ConnectionError.Other -> PairHero(icon, t("mobile.pair.connectFailed", named), action = t("mobile.pair.retry"), dim = true, onAction = retry)
+        is ConnectionError.Other -> PairHero(icon, told("mobile.pair.connectFailed"), action = t("mobile.pair.retry"), secondary = details, dim = true, onAction = retry, onSecondary = open)
       }
       else -> PairHero(icon, t("mobile.pair.connecting"), spin = true)
     }
+  }
+  if (detailsOpen && current != null && diagnosis != null) {
+    PairDiagnosisSheet(current, diagnosis, onDismiss = { detailsOpen = false })
   }
 }
 

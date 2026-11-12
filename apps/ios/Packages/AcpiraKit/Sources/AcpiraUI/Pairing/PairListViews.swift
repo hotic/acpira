@@ -65,6 +65,7 @@ struct PairHeroList: View {
   let pairing: PairingModel
   @Environment(AppModel.self) private var model
   @Environment(\.motionEnabled) private var motion
+  @State private var detailsOpen = false
 
   /// Whether the list gives way to this page: until the followed computer's lists are in (the wire is up well before
   /// its init, and the list in between read as empty), and whenever its wire failed. While the computer the list shows
@@ -84,13 +85,39 @@ struct PairHeroList: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .animation(motion ? Motion.ease : nil, value: pairing.link)
     .background(Palette.bg0)
+    .sheet(isPresented: $detailsOpen) {
+      if let computer = pairing.selected, let diagnosis = pairing.diagnosis {
+        PairDiagnosisSheet(computer: computer, diagnosis: diagnosis)
+      }
+    }
+    // `-pairing.details 1`: the report over the failure it belongs to, for screenshots
+    .onChange(of: pairing.diagnosis) { _, found in
+      if found != nil, UserDefaults.standard.bool(forKey: "pairing.details") { detailsOpen = true }
+      // The failure it told is gone (a quiet redial got through, another computer followed): so is the report
+      if found == nil { detailsOpen = false }
+    }
   }
 
   /// One frame for every case, so only its contents change between them
   private var hero: some View {
     let state = heroState
+    // A failure that knows where its dial stopped offers the report under the retry
+    let told: Bool = if case .failed = pairing.link { pairing.diagnosis != nil } else { false }
     return PairHero(symbol: state.symbol, ring: state.spin ? .spin : .rest, line: state.line, action: state.action,
-                    dim: state.dim, onAction: state.act)
+                    secondary: told ? t("mobile.pair.details") : nil, dim: state.dim, onAction: state.act,
+                    onSecondary: { detailsOpen = true })
+  }
+
+  /// A failure's sentence: where the dial stopped when the service knows, else the failure's own
+  private func told(_ fallback: String, _ named: [String: String]) -> String {
+    switch pairing.diagnosis?.stop {
+    case .network: t("mobile.pair.offline.network")
+    case .relay: t("mobile.pair.offline.relay", named)
+    case .notReady: t("mobile.pair.offline.notReady", named)
+    case .appOlder: t("mobile.pair.incompatible.app", named)
+    case .computerOlder: t("mobile.pair.incompatible.computer", named)
+    case .unanswered, .incompatible, nil: t(fallback, named)
+    }
   }
 
   private var heroState: (symbol: String, spin: Bool, line: String, action: String?, dim: Bool, act: () -> Void) {
@@ -101,10 +128,10 @@ struct PairHeroList: View {
     let symbol = computerSymbol(current.model)
     let retry = { pairing.connectSelected() }
     return switch pairing.link {
-    case .failed(.offline): (symbol, false, t("mobile.pair.offline", named), t("mobile.pair.retry"), true, retry)
+    case .failed(.offline): (symbol, false, told("mobile.pair.offline", named), t("mobile.pair.retry"), true, retry)
     case .failed(.revoked): (symbol, false, t("mobile.pair.revoked", named), t("mobile.pair.again"), true, { pairing.addOpen = true })
-    case .failed(.incompatible): (symbol, false, t("mobile.pair.incompatible", named), t("mobile.pair.retry"), true, retry)
-    case .failed(.other): (symbol, false, t("mobile.pair.connectFailed", named), t("mobile.pair.retry"), true, retry)
+    case .failed(.incompatible): (symbol, false, told("mobile.pair.incompatible", named), t("mobile.pair.retry"), true, retry)
+    case .failed(.other): (symbol, false, told("mobile.pair.connectFailed", named), t("mobile.pair.retry"), true, retry)
     // Online too until the engine's lists are in; a background close dials again on the way back
     case .idle, .connecting, .online, .failed(.suspended): (symbol, true, t("mobile.pair.connecting"), nil, false, {})
     }

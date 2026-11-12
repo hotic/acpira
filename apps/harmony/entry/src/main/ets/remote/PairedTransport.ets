@@ -60,6 +60,8 @@ export class PairedTransport implements EngineTransport {
   readonly computerId: string;
   /** The computer's name as it greeted this link */
   readonly computerName: string;
+  /** The computer's Acpira version as it greeted this link; undefined when it named none */
+  readonly computerVersion: string | undefined;
   /** The path the link travels on now, once iroh selected one */
   path: string | undefined = undefined;
   /** Hears every path change until the link ends (the pairing model's) */
@@ -80,7 +82,9 @@ export class PairedTransport implements EngineTransport {
   constructor(link: Link, computerId: string, hooks: TransportHooks) {
     this.link = link;
     this.computerId = computerId;
-    this.computerName = link.welcome().name;
+    const welcome = link.welcome();
+    this.computerName = welcome.name;
+    this.computerVersion = welcome.version.length > 0 ? welcome.version : undefined;
     this.hooks = hooks;
     this.followPaths();
   }

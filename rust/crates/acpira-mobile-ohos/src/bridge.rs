@@ -45,6 +45,19 @@ pub struct LinkEvent {
   pub what: Option<String>,
 }
 
+/// The last failed dial to a computer (acpira-mobile `DialReport`): `step` is `dial` (the computer never answered) or
+/// `greeting` (it answered; its gateway then closed the link, stayed silent or spoke another protocol version)
+#[cfg_attr(target_env = "ohos", napi_derive_ohos::napi(object))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DialReport {
+  pub step: String,
+  pub detail: String,
+  pub relay_connected: Option<bool>,
+  pub took_ms: u32,
+  pub version: Option<String>,
+  pub protocol: Option<i64>,
+}
+
 /// Where traffic goes when no direct path works: `mode` is `n0`, `custom` (with `urls`, `token`) or `off`
 #[cfg_attr(target_env = "ohos", napi_derive_ohos::napi(object))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +126,23 @@ impl From<m::LinkEvent> for LinkEvent {
       m::LinkEvent::Envelope { line } => LinkEvent { kind: "envelope".into(), line: Some(line), ..none },
       m::LinkEvent::Addresses { relay, addrs } => LinkEvent { kind: "addresses".into(), relay, addrs: Some(addrs), ..none },
       m::LinkEvent::Denied { what } => LinkEvent { kind: "denied".into(), what: Some(what), ..none },
+    }
+  }
+}
+
+impl From<m::DialReport> for DialReport {
+  fn from(r: m::DialReport) -> Self {
+    let step = match r.step {
+      m::DialStep::Dial => "dial",
+      m::DialStep::Greeting => "greeting",
+    };
+    DialReport {
+      step: step.to_owned(),
+      detail: r.detail,
+      relay_connected: r.relay_connected,
+      took_ms: u32::try_from(r.took_ms).unwrap_or(u32::MAX),
+      version: r.version,
+      protocol: r.protocol,
     }
   }
 }
@@ -210,6 +240,11 @@ pub mod call {
     node.connect(computer.into(), protocol_version, within_ms.into()).await.map_err(|e| link_failure(&e))
   }
 
+  /// How the last dial to this computer failed; `None` once a dial opened a link, or before any failed
+  pub fn dial_report(node: &m::Node, computer_id: String) -> Option<DialReport> {
+    node.dial_report(computer_id).map(DialReport::from)
+  }
+
   pub async fn send(link: Arc<m::Link>, line: String) -> Result<(), String> {
     link.send(line).await.map_err(|e| link_failure(&e))
   }
@@ -273,6 +308,18 @@ mod tests {
     assert_eq!(e.kind, "addresses");
     assert_eq!(e.addrs, Some(vec!["10.0.2.2:1".to_owned()]));
     assert_eq!(LinkEvent::from(m::LinkEvent::Envelope { line: "{}".into() }).line.as_deref(), Some("{}"));
+  }
+
+  #[test]
+  fn dial_reports_name_their_step() {
+    let unanswered = m::DialReport { step: m::DialStep::Dial, detail: "no answer within 15 s".into(), relay_connected: Some(false), took_ms: 15_004, version: None, protocol: None };
+    let told = DialReport::from(unanswered);
+    assert_eq!((told.step.as_str(), told.detail.as_str(), told.relay_connected, told.took_ms), ("dial", "no answer within 15 s", Some(false), 15_004));
+    assert_eq!((told.version, told.protocol), (None, None));
+    let greeted = m::DialReport { step: m::DialStep::Greeting, detail: "update this app".into(), relay_connected: None, took_ms: u64::MAX, version: Some("2.1.0".into()), protocol: Some(2) };
+    let told = DialReport::from(greeted);
+    assert_eq!((told.step.as_str(), told.relay_connected, told.took_ms), ("greeting", None, u32::MAX));
+    assert_eq!((told.version.as_deref(), told.protocol), (Some("2.1.0"), Some(2)));
   }
 
   #[test]

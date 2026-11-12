@@ -20,6 +20,8 @@ export interface PairedComputer {
   name: string;
   /** Its `hw.model` when it advertised one */
   model?: string;
+  /** Its Acpira version as it last greeted, for the connection report */
+  version?: string;
   /** Where it was last reachable, handed to iroh on every connect */
   relay?: string;
   addrs: string[];
