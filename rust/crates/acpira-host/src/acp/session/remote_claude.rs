@@ -216,6 +216,7 @@ impl AcpSession {
       history: PathBuf::new(),
       // A folder on an SSH host takes no scratch folder (`acpira_agent::scratch`)
       scratch: None,
+      path: None,
     };
     action.run(ctx).await
   }

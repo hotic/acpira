@@ -46,6 +46,18 @@ pub struct Ctx {
   /// The session's scratch folder, made by the time a command or a write runs (`scratch.rs`); None leaves the system's
   /// temp folder
   pub scratch: Option<PathBuf>,
+  /// PATH for commands with the skills' `bin` folders added (`skills::path_with`); None leaves the inherited one
+  pub path: Option<std::ffi::OsString>,
+}
+
+impl Ctx {
+  /// The variables a command starts with on top of what it inherits: the scratch folder's and PATH
+  pub fn command_env(&self, mut set: impl FnMut(&str, &std::ffi::OsStr)) {
+    crate::scratch::apply(self.scratch.as_deref(), |k, v| set(k, v.as_os_str()));
+    if let Some(p) = &self.path {
+      set("PATH", p);
+    }
+  }
 }
 
 /// A validated call, ready to describe and run. The variants an SSH host runs (`remote.rs`) cross the wire as JSON; the

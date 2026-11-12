@@ -461,6 +461,11 @@ pub(super) async fn run_action(server: &Arc<Server>, session: &Arc<Session>, act
   if matches!(action, Action::Bash { .. } | Action::Write { .. }) {
     ctx.scratch = session.scratch.ensure();
   }
+  // A skill's `bin` commands run by name; read per command, so a skill written mid-session works at once
+  if matches!(action, Action::Bash { .. }) {
+    let places = server.places_of(&session.cwd, None, session.layers.clone());
+    ctx.path = crate::skills::path_with(&crate::skills::bin_dirs(&places));
+  }
   action.run(ctx).await
 }
 
@@ -475,6 +480,7 @@ pub(super) fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -
     mcp: session.mcp.clone(),
     history: server.session_file(&session.id),
     scratch: None,
+    path: None,
     progress: Arc::new(move |mut u: Value| {
       u["sessionUpdate"] = "tool_call_update".into();
       u["toolCallId"] = id.clone().into();

@@ -67,6 +67,28 @@ fn scan_roots(places: &Places, roots: Vec<PathBuf>) -> Vec<Skill> {
   out
 }
 
+/// The `bin` folders of the session's skills on this disk, one per winning skill, so a command there runs by name
+/// without its path. Local sessions only: a folder on an SSH host is not on this disk. The shipped skill-creator
+/// (`acpira-host` `plugins/skill-creator/SKILL.md`) tells skill authors to rely on this
+pub fn bin_dirs(places: &Places) -> Vec<PathBuf> {
+  scan(places).iter().map(|s| s.dir().join("bin")).filter(|d| d.is_dir()).collect()
+}
+
+/// The inherited PATH with these folders added after it, so a skill's command never shadows a system one; None when
+/// there are none to add
+pub fn path_with(dirs: &[PathBuf]) -> Option<std::ffi::OsString> {
+  if dirs.is_empty() {
+    return None;
+  }
+  let mut all: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+  for d in dirs {
+    if !all.contains(d) {
+      all.push(d.clone());
+    }
+  }
+  std::env::join_paths(all).ok()
+}
+
 /// The skill folders, the later winning: the user's, the plugins', then the project's
 pub(crate) fn roots(places: &Places) -> Vec<PathBuf> {
   // A specialised agent sees its plugin's skills alone, and none when its tools leave `skill` out

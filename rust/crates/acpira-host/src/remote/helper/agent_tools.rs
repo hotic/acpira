@@ -95,6 +95,11 @@ pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireErr
       let keep = a.get("keep").and_then(Value::as_bool).unwrap_or(false);
       let jobs = JOBS.lock().entry(session.clone()).or_default().clone();
       let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+      // The host's own skills (the user's and the project's) put their `bin` folders on a command's PATH, as the
+      // engine does for a local session (`acpira_agent::skills::bin_dirs`)
+      let path = matches!(action, Action::Bash { .. })
+        .then(|| acpira_agent::skills::path_with(&acpira_agent::skills::bin_dirs(&acpira_agent::prompt::Places::new(&cwd, Some(&home)))))
+        .flatten();
       let ctx = Ctx {
         cwd,
         outputs: dir.clone(),
@@ -108,6 +113,7 @@ pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireErr
         history: PathBuf::new(),
         // Remote sessions take no scratch folder (`acpira_agent::scratch`)
         scratch: None,
+        path,
       };
       let run = action.run(ctx);
       tokio::pin!(run);
