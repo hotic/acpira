@@ -11,6 +11,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.0] - 2026-11-12
+
+### Added
+
+- **Sessions are stored in a SQLite database.** Transcripts move into `sessions.db` in the sessions folder as compressed rows, one session at a time on its first save after this update; a session that is never saved again stays in its file. A save writes only what changed (a debounced save of a 21 MB session takes about 8 ms instead of 200 ms), and the session list, search, the Storage page and the model and mode chips read only the rows they need. A migrated session keeps a small `<id>.json` that versions before 2.1.0 can still list and open, plus a compressed copy of its old file for when the database cannot be opened. A damaged database is set aside and the record files take over. `ACPIRA_STORE=files` writes whole record files again, and `acpira store revert <id>` moves one session back to its file. A data folder created by 2.1.0 or later keeps its sessions in the database alone, with no `<id>.json` at all; versions before 2.1.0 show no sessions in such a folder.
+- **The file tree in the tool panel creates, renames and deletes entries.** Its context menu adds a file or folder, renames or moves one, and deletes it, never over an existing entry or outside the project. A delete goes to the system trash on this computer and is final on an SSH host. The menu also copies paths and opens a folder in the terminal. Paired devices cannot make these edits.
+- **A session copy another computer left in an SSH host's folder can be continued from Acpira on the host.** Sending, editing or a list edit there takes the copy over, resuming the built-in agent's synced log when there is one. The computer it came from then follows the host's session, keeps anything it added meanwhile as a separate branch, and never deletes the host's session.
+- A running command inside a subagent's transcript can be stopped from the subagent inspector, except for summoned agents in an SSH folder that runs locally.
+- A question from a summoned agent goes to the agent that summoned it first; the question card reaches the user only when that agent cannot answer. `ask_agent` takes `early`, delivering each round's reply as soon as it ends and naming the rounds still running so the caller can stop them.
+- Model sources read a model's fast tier from the endpoint's model list. Refreshing an agent re-detects every source's models and says how many are new.
+- The phone apps say why a paired computer could not be reached (no network, relay blocked, Acpira not answering, version mismatch) and show the details on tap.
+- The new-session agent picker for an SSH folder offers agents by the host's own installed CLIs.
+- Exporting, copying or reading (`read_session`) a session an SSH host runs on its own asks the host for the record when none is stored here.
+- The built-in agent runs a skill's `bin` commands by name, on this computer and on an SSH host; a newly added skill works at once.
+- A relative file link that is not in the session folder is looked up under the project's other folders, then the folders above them. Absolute, `~` and `./` or `../` paths still mean exactly what they say.
+- Reply screenshots include videos (at their first frame), animated GIFs and widgets, and leave reasoning rows out. The card frames the reply on a darker sheet with a watermark line, and the action is now called Screenshot.
+
+### Changed
+
+- **A session whose native agent session is lost gets a fresh one instead of turning read-only.** When the agent's own session is gone, cannot be resumed or the agent has no restore, Acpira starts a new native session in place and hands the transcript so far over with the next prompt. Edits and retries right afterwards hand over only the shortened history.
+- The composer toolbar no longer has a summon menu: typing `@` lists the agents and starts a summon.
+- Long session lists and long process folds opened by hand render in parts, so they open without a stall.
+- The macOS desktop app's header line is 40 px tall, with the window buttons centred on it.
+- Managed native agent installs, such as Antigravity's, live in `installs/` in the data folder instead of `agents/`. An existing install moves on first use.
+- The Linux desktop packages (deb, rpm and AppImage) remain a preview. GNOME and Plasma on Wayland, NVIDIA drivers, input methods and fractional scaling are not checked yet.
+
+### Fixed
+
+- A model pick carries across the ids one model goes by, such as Claude's `fable` and `fable[1m]`, in replayed turn settings, remembered picks and edits.
+- Paired devices are no longer left without a computer when the engine running remote access retires: a successor engine starts.
+- A turn label naming a model that is no longer listed drops the model source's prefix.
+- In the desktop app, dragging a session row no longer lights the folder drop frame.
+- Pressing a row while the transcript grows above it keeps the press on that row, a hidden anchor no longer scrolls the thread to the top, and pinned prompts close the gap under the header.
+- The wide transcript column sits on a whole pixel, so the turn mark no longer twitches when a fold opens at odd window widths.
+- In a narrow composer, the item kept for the overflow menu no longer runs under the send button.
+- On iOS 18, the composer caret no longer gets stuck past the end of the text after an outside change.
+- On iOS, the pill behind a `/command` or `@name` in the prompt being written sits on its text instead of slightly low, Chinese lines included.
+
 ## [2.0.12] - 2026-11-11
 
 ### Added
