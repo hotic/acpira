@@ -27,11 +27,18 @@ export function useFitStage<I extends HTMLElement, B extends HTMLElement>(enable
   // Whether the toolbar is folded for this item, and what the rest of the toolbar took up just before it folded; `tight`:
   // what the bar took besides the item's room just before the optional chips went too
   const folded = useRef<{ others: number; tight?: number } | undefined>(undefined);
+  // The level last asked for. A level that lands without moving anything (below the sm tier the container queries have
+  // already folded the other chips) fires no resize, which left the item on the form held for the fold, running under the
+  // send button; the commit that carries the level measures again instead
+  const [level, setLevel] = useState<SqueezeLevel>(0);
+  const measure = useRef<(() => void) | undefined>(undefined);
+  useLayoutEffect(() => { measure.current?.(); }, [level]);
   useLayoutEffect(() => {
+    const ask = (next: SqueezeLevel) => { squeezeRef.current?.set(next); setLevel(next); };
     const unfold = () => {
       if (!folded.current) return;
       folded.current = undefined;
-      squeezeRef.current?.set(0);
+      ask(0);
     };
     if (!enabled) { setStage(0); unfold(); return; }
     const el = item.current, forms = box.current, row = el?.parentElement;
@@ -60,15 +67,15 @@ export function useFitStage<I extends HTMLElement, B extends HTMLElement>(enable
         const last = needs.length - 1;
         if (!folded.current) {
           // Hold the protected form while the fold lands; the measure after it settles the real stage
-          if (next > sq.stage) { folded.current = { others }; sq.set(1); next = sq.stage; }
+          if (next > sq.stage) { folded.current = { others }; ask(1); next = sq.stage; }
         } else if (folded.current.tight !== undefined) {
           // Tight: the optional chips come back once the room left without them again covers the last form
-          if (inner - folded.current.tight >= needs[last]! + 2) { folded.current.tight = undefined; sq.set(1); }
+          if (inner - folded.current.tight >= needs[last]! + 2) { folded.current.tight = undefined; ask(1); }
           next = last;
         } else if (fit < 0) {
           // Folded and still short of the last form: the marks would run under the send button, so the optional chips go
           folded.current.tight = inner - room;
-          sq.set(2);
+          ask(2);
           next = last;
         } else if (room - (folded.current.others - others) >= needs[sq.stage]! + 2) {
           // The room this row would have with the others unfolded again covers the form the fold protects
@@ -77,6 +84,7 @@ export function useFitStage<I extends HTMLElement, B extends HTMLElement>(enable
       }
       setStage(next);
     };
+    measure.current = update;
     const resize = new ResizeObserver(update);
     const watch = () => {
       resize.disconnect();
@@ -87,7 +95,7 @@ export function useFitStage<I extends HTMLElement, B extends HTMLElement>(enable
     const children = new MutationObserver(watch);
     children.observe(row, { childList: true });
     watch();
-    return () => { resize.disconnect(); children.disconnect(); unfold(); };
+    return () => { measure.current = undefined; resize.disconnect(); children.disconnect(); unfold(); };
   }, [enabled]);
   return { stage, item, box };
 }
