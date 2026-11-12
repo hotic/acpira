@@ -1243,7 +1243,9 @@ fn fallback_open_paths(roots: &[String], path: &str) -> Vec<String> {
 mod tests {
   use std::path::Path;
 
-  use super::{fallback_open_paths, remote_copy_path};
+  #[cfg(unix)]
+  use super::fallback_open_paths;
+  use super::remote_copy_path;
 
   #[cfg(unix)]
   #[test]
