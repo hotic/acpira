@@ -461,10 +461,7 @@ impl AcpSession {
                   failed = Some(e);
                   locked = true;
                 }
-                Some(RestoreFailure::Unresumable) => {
-                  failed = Some(e);
-                  unresumable = true;
-                }
+                Some(RestoreFailure::Unresumable) => unresumable = true,
                 Some(RestoreFailure::Failed) => failed = Some(e),
                 None => {}
               }
@@ -492,36 +489,30 @@ impl AcpSession {
         self.log(&format!("session held by pid {pid}{}", if sibling { " (another acpira sidecar's agent)" } else { "" }));
         self.core.lock().lock_holder = sibling.then_some(pid);
       }
-      if !gone {
-        let mut c = self.core.lock();
-        if unresumable {
-          c.status = SessionStatus::Readonly;
-          c.error = Some(tp("host.notResumable", &[("error", &failed.map(|e| error_text(&e)).unwrap_or_default())]));
-          return Ok(());
-        }
-        if let Some(f) = failed {
-          return Err(anyhow!(tp(if locked { "host.sessionLocked" } else { "host.resumeFailed" }, &[("error", &error_text(&f))])));
-        }
-        c.status = SessionStatus::Readonly;
-        c.error = Some(t("host.cannotResume"));
-        return Ok(());
-      }
-      if importing {
+      if gone && importing {
         return Err(anyhow!(t("host.importGone")));
       }
-      let mut c = self.core.lock();
-      // A fork whose copied turns were never handed over is as empty natively as a fresh session (peers such as the
-      // built-in agent persist nothing before the first prompt): a new one still gets the copy on its first prompt
-      if !c.state.turns.is_empty() && !c.lineage.history_pending {
-        c.status = SessionStatus::Readonly;
-        c.error = Some(t("host.sessionGone"));
-        drop(c);
-        self.log("peer no longer has this session; history kept read-only");
-        return Ok(());
+      // A lock or transient failure may still hide live native state, even if the other restore method cannot use it.
+      if let Some(f) = failed {
+        return Err(anyhow!(tp(if locked { "host.sessionLocked" } else { "host.resumeFailed" }, &[("error", &error_text(&f))])));
       }
+      let reason = if gone {
+        "peer no longer has this session"
+      } else if unresumable {
+        "peer cannot resume this session"
+      } else {
+        "peer supports neither resume nor load"
+      };
+      let mut c = self.core.lock();
+      if !c.state.turns.is_empty() {
+        // Keep the local identity and transcript; the next prompt hands them to the replacement native peer once.
+        c.lineage.history_pending = true;
+        c.lineage.history_context = true;
+      }
+      c.lineage.agent_title_muted = c.lineage.history_context || c.state.title.as_deref().is_some_and(|t| !t.is_empty() && t != crate::i18n::t("session.untitled"));
+      c.acp_session_id = None;
       drop(c);
-      self.log("Peer swept this empty session; starting a new one");
-      self.core.lock().acp_session_id = None;
+      self.log(&format!("{reason}; rebinding in place to a fresh native session, retained history owed on its next prompt"));
     }
     // A fresh native session starts with no command inventory; cleared before the request because peers advertise
     // commands while session/new is still in flight

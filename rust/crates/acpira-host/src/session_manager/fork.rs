@@ -19,10 +19,10 @@ use crate::store::record::{ForkedFrom, SessionRecord};
 use crate::store::transcript_store::is_session_id;
 use crate::util::{clip, ms_of_iso, now_iso, random_uuid};
 
-/// A fork's agent was handed its copied turns as a clipped (possibly trimmed) history, never as its own conversation:
-/// reading its own session is how it gets them in full. Any other session's own agent has its conversation in context
+/// A handed-over history may clip or omit turns even after it was sent: self-read recovers the full local record.
+/// Older forks predate `history_context`, so their copied prefix still grants access on its own.
 pub(super) fn holds_unseen_turns(record: &SessionRecord) -> bool {
-  record.forked_from.as_ref().is_some_and(|f| f.turn_index >= 0)
+  record.history_pending || record.history_context || record.forked_from.as_ref().is_some_and(|f| f.turn_index >= 0)
 }
 
 /// Same agent / account / cwd and still empty: keep the process instead of spawning another
@@ -180,6 +180,7 @@ impl SessionManager {
       category: source.category.clone(),
       renamed: false,
       history_pending: true,
+      history_context: true,
       forked_from: Some(ForkedFrom { session_id: source.id.clone(), turn_index, agent: target.as_ref().map(|_| source.agent.clone()), model }),
       import_pending: false,
       imported_from: None,

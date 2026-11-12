@@ -77,6 +77,9 @@ pub struct SessionRecord {
   pub category: Option<String>,
   #[serde(default, skip_serializing_if = "is_false")]
   pub history_pending: bool,
+  /// Some recorded turns reached the native peer only as clipped handoff context; self-read must stay available.
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub history_context: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub forked_from: Option<ForkedFrom>,
   #[serde(default, skip_serializing_if = "is_false")]

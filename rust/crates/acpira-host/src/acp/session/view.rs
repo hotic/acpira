@@ -419,6 +419,8 @@ struct RecordRef<'a> {
   renamed: bool,
   #[serde(skip_serializing_if = "std::ops::Not::not")]
   history_pending: bool,
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  history_context: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
   forked_from: Option<&'a ForkedFrom>,
   #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -456,6 +458,7 @@ impl AcpSession {
       category: c.category.as_deref(),
       renamed: c.lineage.renamed,
       history_pending: c.lineage.history_pending,
+      history_context: c.lineage.history_context,
       forked_from: c.lineage.forked_from.as_ref(),
       import_pending: c.lineage.import_pending,
       imported_from: c.lineage.imported_from.as_ref(),

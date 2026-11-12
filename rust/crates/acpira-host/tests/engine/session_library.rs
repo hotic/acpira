@@ -102,6 +102,22 @@ async fn agents_search_and_read_sessions_through_the_hub_within_their_grant() {
   assert!(op(&addr, &root, read("two words")).await.unwrap().is_err());
   assert_eq!(op(&addr, "nope", read(&a)).await, None);
 
+  // A rebound root has the same grant and local identity, but no longer has its recorded conversation natively.
+  session_b.start().await;
+  assert!(session_b.to_record().history_pending);
+  let own = op(&addr, &root, read(&b)).await.unwrap().unwrap();
+  assert!(own.contains("beta question"), "{own}");
+  session_b.prompt("after rebinding".into(), vec![], false, None, None).await;
+  let record = session_b.to_record();
+  assert!(!record.history_pending && record.history_context && record.forked_from.is_none());
+  m.store.flush(session_b.clone()).await.unwrap();
+  assert!(m.store.load(&b).await.unwrap().history_context);
+  // Even after the handoff was delivered, self-read and in-session search can recover clipped or omitted turns.
+  assert!(op(&addr, &root, read(&b)).await.unwrap().unwrap().contains("beta question"));
+  let inside = HubOp::SearchSessions(SessionSearchArgs { query: Some("beta".into()), session: Some(b.clone()), ..Default::default() });
+  assert!(op(&addr, &root, inside).await.unwrap().unwrap().contains("beta question"));
+  assert!(!op(&addr, &root, search("")).await.unwrap().unwrap().contains(&link(&b)));
+
   // A fork's agent never had its copied turns as its own conversation: it reads them back in full, but its list still
   // leaves it out
   m.handle(json!({ "type": "forkSession", "sessionId": a, "turnIndex": 1 })).await;

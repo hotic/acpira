@@ -878,16 +878,16 @@ async fn the_workspace_scope_keeps_most_recent_and_deletion_picks_inside_the_fol
   let store = TranscriptStore::new(sessions_dir.clone(), Arc::new(|_: &str| {}), None);
   assert_eq!(store.load(&a1).await.unwrap().cwd, proj("b"));
 
-  // Move a live idle session: it is reopened in the new folder (a fresh process; "gone" makes the fake report the old id swept —
-  // the transcript already ran, so it stays read-only with its history); a running one refuses
+  // Move a live idle session: it reopens in the new folder; a gone peer is rebound with its retained history owed.
+  // A running session still refuses the move.
   *opts.cwd.lock().unwrap() = proj("c-gone");
   m.handle(json!({ "type": "moveSession", "id": b1 })).await;
   assert_eq!(m.active_id().as_deref(), Some(b1.as_str()));
   let active = m.active().unwrap();
   assert_eq!(active["cwd"], proj("c-gone"));
-  assert_eq!(active["status"], "readonly");
+  assert_eq!(active["status"], "ready");
   assert_eq!(turns_in(&active), 2);
-  // A session mid-turn refuses the move; use a fresh one, since the moved b1 is read-only now
+  // A session mid-turn refuses the move; use a fresh one for that check.
   *opts.cwd.lock().unwrap() = proj("d");
   m.new_session(None).await;
   let d1 = m.active_id().unwrap();

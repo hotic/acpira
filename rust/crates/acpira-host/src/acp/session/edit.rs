@@ -613,8 +613,8 @@ impl AcpSession {
       if !prepared.problems.is_empty() {
         return Err(anyhow!(prepared.problems.join("\n")));
       }
-      // A fork whose history has not gone out yet: its native session holds nothing to rebuild or supersede, so the
-      // edit moves the fork point and the prompt hands the shortened prefix over as the fork's first message.
+      // A fork or rebound session whose history has not gone out yet has nothing native to rebuild or supersede:
+      // truncate the local history and hand the shortened prefix over on its first prompt.
       // `stale`: the history is owed again after a first prompt that ended without output (`reclaim_fork_history`), yet
       // that prompt went out and the peer may hold it, so a fresh native session takes the handoff instead
       let (pending, stale) = {
@@ -647,7 +647,7 @@ impl AcpSession {
         };
         let readable = self.reads_itself();
         let lead = self.prompts().text("edit/history", acpira_agent::prompt::BASE);
-        let spec = Handoff { lead: &lead, fork: fork.as_ref(), cwd: &cwd, trim: false, readable: readable && fork.is_some() };
+        let spec = Handoff { lead: &lead, fork: fork.as_ref(), cwd: &cwd, trim: false, readable };
         let files = self.file_reader(None).await;
         let history = history_context(&self.id, &prefix, &proc, &self.deps.blobs, &files, caps, spec).await?;
         let blocks = history.map(|h| {
@@ -733,7 +733,7 @@ impl AcpSession {
         self.log(if rewind_to.is_some() {
           "Rewound the native session to before the edited message"
         } else if pending {
-          "Edit before the fork's history went out: the prompt hands over the shortened prefix"
+          "Edit before retained history went out: the prompt hands over the shortened prefix"
         } else if continuing {
           "Continuing in the native session without rebuilding history"
         } else {
@@ -765,7 +765,11 @@ impl AcpSession {
         controls.modes = syn;
         controls.mode_id = Some("default".into());
       }
-      self.apply_edit_settings(&proc, &fresh_id, &mut controls, &edit.settings).await?;
+      if let Err(e) = self.apply_edit_settings(&proc, &fresh_id, &mut controls, &edit.settings).await {
+        // The live session stays; the fresh one would otherwise keep its query (Claude: a `claude` process) in the adapter
+        self.close_replaced(&proc, &fresh_id).await;
+        return Err(e);
+      }
       let notes = {
         let mut c = self.core.lock();
         c.acp_session_id = Some(fresh_id.clone());
@@ -773,6 +777,7 @@ impl AcpSession {
         c.state.controls = controls;
         c.state.turns.truncate(idx);
         c.lineage.truncated(idx);
+        c.lineage.history_context |= !prefix.is_empty();
         self.relay_truncate(&mut c, idx);
         c.state.usage = None;
         c.state.commands = vec![];
@@ -868,6 +873,7 @@ impl AcpSession {
         if !has_output {
           let keep = c.state.turns.len() - 2;
           c.state.turns.truncate(keep);
+          c.lineage.truncated(keep);
           self.relay_truncate(&mut c, keep);
         }
         c.retry_pending = true;
@@ -910,6 +916,7 @@ impl AcpSession {
         }
         let keep = c.state.turns.len() - 2;
         c.state.turns.truncate(keep);
+        c.lineage.truncated(keep);
         self.relay_truncate(&mut c, keep);
         c.retry_pending = true;
       }
@@ -927,6 +934,7 @@ impl AcpSession {
       }
       let keep = c.state.turns.len() - 2;
       c.state.turns.truncate(keep);
+      c.lineage.truncated(keep);
       self.relay_truncate(&mut c, keep);
       c.retry_pending = true;
     }
