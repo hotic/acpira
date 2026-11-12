@@ -801,6 +801,8 @@ export interface ForkOrigin {
 // Public account metadata from the SSH engine that owns a session; secrets never cross the peer wire.
 export interface RemoteAuth {
   agent: AgentInfo;
+  // The host's CLI availability for new sessions in this folder; absent on older peers.
+  agents?: AgentInfo[];
   accounts: AccountInfo[];
   action?: AccountAction;
 }

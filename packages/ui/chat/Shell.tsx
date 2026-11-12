@@ -51,7 +51,7 @@ import { compactingNow } from './usageBreakdown';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { imageMimeOf, stagedFileBlob } from '@acpira/shared/attachments';
 import { mediaKind } from '../panel/files';
-import { launchable } from '@acpira/shared/agentOrder';
+import { agentsForFolder, launchable } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder, SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ProjectDialog } from './ProjectDialog';
@@ -211,6 +211,8 @@ export interface ShellProps {
   accountAction?: AccountAction;
   // The session runs in an SSH host's engine (SessionView.remoteAuth): no local terminal can unlock that host's keychain
   remoteAuth?: boolean;
+  // That host's CLI availability, kept separate from this machine's settings and install state.
+  hostAgents?: AgentInfo[];
   // Option families hidden from the composer menus (acpira.hiddenOptions)
   hidden?: HiddenMap;
   title: string;
@@ -666,6 +668,7 @@ export function Shell(p: ShellProps) {
   // with the agent last used; a folder picked in the dialog or dropped on the column joins the projects and opens there.
   // The start page shows while the session on screen has not said a word
   const startPage = desktop && !p.noProject && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
+  const startAgents = useMemo(() => agentsForFolder(p.agents, p.cwd, p.hostAgents, p.sshLocalAgents), [p.agents, p.cwd, p.hostAgents, p.sshLocalAgents]);
   const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
   // A session in a folder on an SSH host, of an agent that runs in the host's engine but could run here (the host lacks
   // its CLI or its login, or cannot reach the vendor): its notice offers to run it on this machine instead
@@ -1310,7 +1313,7 @@ export function Shell(p: ShellProps) {
                 {/* Every surface under the thread (question, alert, notice, queue, composer) shares the DockStack rhythm; none carries its own outer margin */}
                 <DockStack className={cn(wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')} data-start-dock={desktop || undefined}>
                   {/* Pick who answers before handling that agent's notice. Keep it mounted across empty-session switches. */}
-                  {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} onPick={agent => startOver(agent)} />}
+                  {start.mounted && <StartPicker open={start.shown} agents={startAgents} current={p.agent.id} onPick={agent => startOver(agent)} />}
                   {question && on.answer && p.activeSessionId && <Questions key={question.id} block={question} subtitle={questionSubtitle} onAnswer={(blockId, answers, skip, images) => on.answer!(p.activeSessionId!, blockId, answers, skip, images)} />}
                   {alertTurn && (
                     <Alert

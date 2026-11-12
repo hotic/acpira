@@ -656,15 +656,24 @@ async fn host_account_metadata_and_actions_never_use_the_local_account_store() {
   connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
   let work = lab.path().join("hostfs/work");
   std::fs::create_dir_all(&work).unwrap();
-  let mut opts = crate::session_manager::Opts::with_agents(agents, "fake").projects();
+  // The viewing machine lacks the CLI; only the host's registry may decide whether it can start there.
+  let mut local_agents = agents;
+  local_agents["fake"]["command"] = json!("acpira-missing-local-cli-for-remote-test");
+  let mut opts = crate::session_manager::Opts::with_agents(local_agents, "fake").projects();
   opts.accounts = Some(accounts.clone());
   opts.remote = Some(connections.clone());
   let m = crate::session_manager::Mgr::new(&dir.path().join("sessions"), opts);
   m.init().await;
+  assert_eq!(m.m.agents().iter().find(|a| a.id == "fake").unwrap().available, Some(false));
   m.handle(json!({ "type": "newSession", "agent": "fake", "cwd": format!("ssh://gen1{}", work.display()) })).await;
   wait(&m, "host account metadata", 30_000, || m.active().is_some_and(|v| v["remoteAuth"]["accounts"][0]["label"] == "host@example.test")).await;
   let id = m.active_id().unwrap();
   assert_eq!(accounts.list()[0].label, "local@example.test");
+  wait(&m, "host CLI availability for the start picker", 15_000, || {
+    m.active().is_some_and(|v| v["remoteAuth"]["agents"].as_array().is_some_and(|agents| {
+      agents.iter().any(|a| a["id"] == "fake" && a["available"] == true)
+    }))
+  }).await;
   wait(&m, "the host's terminal auth method", 15_000, || m.active().is_some_and(|v| v["status"] == "auth_required")).await;
   m.handle(json!({ "type": "login", "sessionId": id, "methodId": "term-login" })).await;
   // A peer cannot yet display the host's terminal. The fallback names the host and never starts a local login.

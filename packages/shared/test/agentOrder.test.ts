@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { arrangeAgents, launchable, moveAgent, pickDefaultAgent } from '../agentOrder';
+import { agentsForFolder, arrangeAgents, launchable, moveAgent, pickDefaultAgent } from '../agentOrder';
 import { sanitizeSetting } from '../settings';
 import type { AgentInfo } from '../transcript';
 
@@ -38,6 +38,38 @@ describe('agent order', () => {
     // Nothing installed to take over: the missing default stays, so its error card names it
     const none: AgentInfo[] = [{ id: 'kimi', name: 'Kimi', available: false }, { id: 'pi', name: 'Pi', available: false }];
     expect(pickDefaultAgent(none, 'kimi')).toBe('kimi');
+  });
+
+  it('uses the executing machine for SSH availability without changing local order or enabled choices', () => {
+    const local: AgentInfo[] = [
+      { id: 'acpira', name: 'Acpira', available: true },
+      { id: 'codex', name: 'Codex', available: false },
+      { id: 'claude', name: 'Claude', available: true, disabled: true },
+    ];
+    const host: AgentInfo[] = [
+      { id: 'claude', name: 'Claude', available: false },
+      { id: 'codex', name: 'Codex', available: true, disabled: true },
+      { id: 'acpira', name: 'Acpira', available: true },
+    ];
+    const offered = agentsForFolder(local, 'ssh://mini/work', host);
+    expect(ids(offered)).toEqual(ids(local));
+    expect(launchable(offered).map(a => [a.id, a.available])).toEqual([['acpira', true], ['codex', true]]);
+    expect(offered[2]).toMatchObject({ available: false, disabled: true });
+    expect(local[1]?.available).toBe(false);
+    expect(host[1]?.disabled).toBe(true);
+    expect(agentsForFolder(local, '/work', host)).toBe(local);
+    expect(agentsForFolder(local, undefined, host)).toBe(local);
+    // Opted-in agents run here even when the host lacks them; everyone else still uses the host's probe.
+    const mixed = agentsForFolder(local, 'ssh://mini/work', host, ['claude']);
+    expect(mixed[2]).toBe(local[2]);
+    expect(mixed[1]?.available).toBe(true);
+  });
+
+  it('does not mistake missing local CLIs for missing remote CLIs on older peers', () => {
+    const local: AgentInfo[] = [{ id: 'codex', name: 'Codex', available: false }];
+    expect(agentsForFolder(local, 'ssh://mini/work', undefined)[0]?.available).toBeUndefined();
+    // A peer that did send its registry but lacks this agent is definitive, unlike an older peer.
+    expect(agentsForFolder(local, 'ssh://mini/work', [])[0]?.available).toBe(false);
   });
 
   it('defaults to the built-in agent', () => {
