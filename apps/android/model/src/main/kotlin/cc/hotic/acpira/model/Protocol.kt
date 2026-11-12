@@ -198,6 +198,7 @@ sealed interface ProjectError {
   data object NoProject : ProjectError { override val raw = "noProject" }
   data object Outside : ProjectError { override val raw = "outside" }
   data object Missing : ProjectError { override val raw = "missing" }
+  data object Exists : ProjectError { override val raw = "exists" }
   data object Binary : ProjectError { override val raw = "binary" }
   data object TooLarge : ProjectError { override val raw = "tooLarge" }
   /** Anything else: the system's own message */
@@ -205,7 +206,7 @@ sealed interface ProjectError {
 
   companion object {
     /** The reasons this build knows (ProjectError's literals) */
-    val reasons: List<ProjectError> = listOf(NoProject, Outside, Missing, Binary, TooLarge)
+    val reasons: List<ProjectError> = listOf(NoProject, Outside, Missing, Exists, Binary, TooLarge)
     fun of(raw: String): ProjectError = reasons.firstOrNull { it.raw == raw } ?: Message(raw)
   }
 
@@ -680,7 +681,8 @@ sealed interface WebviewMsg {
   /** Ask the adapter to stop one AIR async task */
   data class StopAsyncTask(val sessionId: String, val taskId: String) : WebviewMsg
   /** End one running command (SessionView.canStopCommands); the turn goes on */
-  data class StopCommand(val sessionId: String, val toolCallId: String) : WebviewMsg
+  /** `subagentId`: the command runs in that subagent's own transcript */
+  data class StopCommand(val sessionId: String, val toolCallId: String, val subagentId: String? = null) : WebviewMsg
   /** A goal control (SessionView.goalActions); turn-starting ones go out as a `/goal …` prompt */
   data class Goal(val sessionId: String, val action: GoalAction, val objective: String? = null) : WebviewMsg
   /** @ mention: fuzzy search over the workspace's files, answered with `files` echoing seq */
@@ -891,7 +893,7 @@ sealed interface WebviewMsg {
       is UnobserveSubagent -> { put("sessionId", m.sessionId); put("subagentId", m.subagentId) }
       is CancelSubagent -> { put("sessionId", m.sessionId); put("subagentId", m.subagentId) }
       is StopAsyncTask -> { put("sessionId", m.sessionId); put("taskId", m.taskId) }
-      is StopCommand -> { put("sessionId", m.sessionId); put("toolCallId", m.toolCallId) }
+      is StopCommand -> { put("sessionId", m.sessionId); put("toolCallId", m.toolCallId); opt("subagentId", m.subagentId) }
       is Goal -> { put("sessionId", m.sessionId); put("action", m.action.name); opt("objective", m.objective) }
       is SearchFiles -> { put("query", m.query); put("seq", m.seq) }
       is SetSetting -> { put("key", m.key); put("value", m.value) }

@@ -336,12 +336,12 @@ public enum GitMark: String, TolerantEnum, CaseIterable {
 
 /// Why a project listing or read failed (`ProjectError | string`): a known reason, or the system's own message
 public enum ProjectError: Codable, Hashable, Sendable {
-  case noProject, outside, missing, binary, tooLarge
+  case noProject, outside, missing, exists, binary, tooLarge
   /// Anything else: the system's own message
   case message(String)
 
   /// The reasons this build knows (ProjectError's literals)
-  public static let reasons: [ProjectError] = [.noProject, .outside, .missing, .binary, .tooLarge]
+  public static let reasons: [ProjectError] = [.noProject, .outside, .missing, .exists, .binary, .tooLarge]
 
   /// The wire string
   public var rawValue: String {
@@ -349,6 +349,7 @@ public enum ProjectError: Codable, Hashable, Sendable {
     case .noProject: "noProject"
     case .outside: "outside"
     case .missing: "missing"
+    case .exists: "exists"
     case .binary: "binary"
     case .tooLarge: "tooLarge"
     case .message(let text): text
@@ -627,7 +628,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   /// Ask the adapter to stop one AIR async task
   case stopAsyncTask(sessionId: String, taskId: String)
   /// End one running command (SessionView.canStopCommands); the turn goes on
-  case stopCommand(sessionId: String, toolCallId: String)
+  /// `subagentId`: the command runs in that subagent's own transcript
+  case stopCommand(sessionId: String, toolCallId: String, subagentId: String? = nil)
   /// A goal control (SessionView.goalActions): turn-starting ones go out as a `/goal …` prompt, which queues behind a
   /// running turn like any prompt
   case goal(sessionId: String, action: GoalAction, objective: String? = nil)
@@ -845,7 +847,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "unobserveSubagent": self = .unobserveSubagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId))
     case "cancelSubagent": self = .cancelSubagent(sessionId: try str(.sessionId), subagentId: try str(.subagentId))
     case "stopAsyncTask": self = .stopAsyncTask(sessionId: try str(.sessionId), taskId: try str(.taskId))
-    case "stopCommand": self = .stopCommand(sessionId: try str(.sessionId), toolCallId: try str(.toolCallId))
+    case "stopCommand":
+      self = .stopCommand(sessionId: try str(.sessionId), toolCallId: try str(.toolCallId), subagentId: try c.decodeIfPresent(String.self, forKey: .subagentId))
     case "goal":
       self = .goal(sessionId: try str(.sessionId), action: try c.decode(GoalAction.self, forKey: .action), objective: try opt(.objective))
     case "searchFiles": self = .searchFiles(query: try str(.query), seq: try int(.seq))
@@ -999,9 +1002,10 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case let .stopAsyncTask(sessionId, taskId):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(taskId, forKey: .taskId)
-    case let .stopCommand(sessionId, toolCallId):
+    case let .stopCommand(sessionId, toolCallId, subagentId):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(toolCallId, forKey: .toolCallId)
+      try c.encodeIfPresent(subagentId, forKey: .subagentId)
     case let .goal(sessionId, action, objective):
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(action, forKey: .action)

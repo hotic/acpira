@@ -401,7 +401,7 @@ private object Samples {
     WebviewMsg.UnobserveSubagent("s1", "n1"),
     WebviewMsg.CancelSubagent("s1", "n1"),
     WebviewMsg.StopAsyncTask("s1", "t1"),
-    WebviewMsg.StopCommand("s1", "c1"),
+    WebviewMsg.StopCommand("s1", "c1", "n1"),
     WebviewMsg.Goal("s1", GoalAction.set, "ship it"),
     WebviewMsg.SearchFiles("app", 5),
     WebviewMsg.SetSetting("theme", JsonPrimitive("dark")),

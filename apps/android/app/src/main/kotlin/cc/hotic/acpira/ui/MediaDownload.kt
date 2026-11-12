@@ -185,7 +185,7 @@ fun FileDownload(model: AppModel, sessionId: String, path: String, reason: Strin
 
 private fun message(error: ProjectError): String = when (error) {
   ProjectError.TooLarge -> t("mobile.download.tooLarge", "mb" to STAGED_FILE_MAX_MB)
-  ProjectError.Missing, ProjectError.Outside, ProjectError.Binary -> t("mobile.download.unreadable")
+  ProjectError.Missing, ProjectError.Outside, ProjectError.Exists, ProjectError.Binary -> t("mobile.download.unreadable")
   ProjectError.NoProject -> t("panel.error.other", "error" to "no project")
   is ProjectError.Message -> error.text
 }

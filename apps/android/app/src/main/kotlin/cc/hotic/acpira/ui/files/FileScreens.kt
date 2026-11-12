@@ -337,5 +337,7 @@ private fun message(error: ProjectError): String = when (error) {
   ProjectError.TooLarge -> t("panel.error.tooLarge")
   ProjectError.Outside -> t("panel.error.outside")
   ProjectError.NoProject -> t("panel.error.other", "error" to "no project")
+  // Only a file tree edit hears it, which a phone never sends
+  ProjectError.Exists -> t("panel.error.other", "error" to "exists")
   is ProjectError.Message -> t("panel.error.other", "error" to error.text)
 }
