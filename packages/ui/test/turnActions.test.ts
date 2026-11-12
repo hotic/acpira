@@ -59,6 +59,10 @@ describe('modelLabel', () => {
     expect(modelLabel(undefined, { config: { model: 'nightly-build' } }, CONTROLS)).toBe('nightly-build');
   });
 
+  it('drops the source prefix of an unresolved ref', () => {
+    expect(modelLabel({ model: '1/Qwen3.8-Flash-Next' }, undefined, { modes: [], options: [] })).toBe('Qwen3.8-Flash-Next');
+  });
+
   it('is undefined when neither the peer nor the settings name a model', () => {
     expect(modelLabel(undefined, undefined, CONTROLS)).toBeUndefined();
     expect(modelLabel(undefined, { config: {} }, CONTROLS)).toBeUndefined();

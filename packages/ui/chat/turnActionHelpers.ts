@@ -21,7 +21,9 @@ export function modelLabel(usage: TurnUsage | undefined, settings: TurnSettings 
   const id = usage?.model ?? (control ? settings?.config[control.id] : undefined);
   if (!id) return undefined;
   const name = control?.options.find(o => o.id === id)?.name;
-  if (!name) return id;
+  // No control to resolve it (a subagent's transcript, a session not attached yet): drop the `source/` prefix of a
+  // built-in agent ref so an opaque source id ("1/Qwen…") never reaches the card
+  if (!name) return id.slice(id.lastIndexOf('/') + 1) || id;
   // The family alone: effort, Thinking, Fast and 1M are the prompt's settings, not the model; a Fusion pair keeps its name
   const { family } = parseModelName(name);
   return family === FUSION ? name : family;
