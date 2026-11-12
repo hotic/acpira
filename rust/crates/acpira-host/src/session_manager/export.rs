@@ -15,10 +15,14 @@ impl SessionManager {
   /// Write the session as Markdown or JSON under exports/. Exporting a transcript that has not changed since the last export
   /// in the same format returns that file again (as long as it still exists) instead of writing a second copy
   /// A session's content as export, copy and read_session see it: the live session first, else its record. A record
-  /// that cannot be read answers the same message the viewer would show
+  /// that cannot be read answers the same message the viewer would show. A host's own session (remote run) is asked of
+  /// its host's engine, so an export still lands on this machine's disk
   pub async fn snapshot(&self, id: &str) -> Result<SessionRecord> {
     if let Some(l) = self.live(id) {
       return Ok(l.to_record());
+    }
+    if let Some(record) = self.host_record(id).await {
+      return record;
     }
     self.deps.store.load_detailed(id).await.map_err(|error| anyhow!(self.record_load_message(id, &error)))
   }
