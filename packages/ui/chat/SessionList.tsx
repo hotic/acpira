@@ -112,6 +112,36 @@ function Fold({ open, children }: { open: boolean; children: ReactNode }) {
   return <FoldRows open={open}><Collapsible.Section open={open}><div className="flex flex-col">{children}</div></Collapsible.Section></FoldRows>;
 }
 
+// A long run of rows (a project listing all of its sessions, a flat view) mounts by chunk: the first LEAD_ROWS are plain
+// siblings as before, the rest sit in chunks of CHUNK_ROWS that hold their rows only near the visible part of the list
+// and are an empty box of the same height otherwise (a row is as tall as --row or, with a large font, its title's line;
+// search rows with a snippet are taller, so a search lists plainly). With every row mounted, a 1,100-session project put ~24k nodes in the column: folding it
+// took 300-450 ms in the desktop app's WKWebView and every fold or drop elsewhere re-laid them all on each frame
+const LEAD_ROWS = 40;
+const CHUNK_ROWS = 24;
+// How far past the list's edges a chunk counts as near, in list heights
+const CHUNK_NEAR = '150% 0px';
+
+// `first`: the chunk right under the lead rows has its rows from the first paint (a fold opening shows them at once);
+// `keep`: it holds a row that must not unmount (being dragged: its dragend would be lost; being renamed)
+function RowChunk({ count, first, keep, children }: { count: number; first: boolean; keep: boolean; children: () => ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(first || typeof IntersectionObserver === 'undefined');
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(entries => {
+      const seen = entries.at(-1)!.isIntersecting;
+      // A row holding the focus stays: unmounting it would drop the focus to the page
+      setNear(was => seen || (was && el.contains(document.activeElement)));
+    }, { root: el.closest('[role="listbox"]'), rootMargin: CHUNK_NEAR });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  const shown = near || keep;
+  return <div ref={ref} data-chunk className="flex shrink-0 flex-col" style={shown ? undefined : { height: `calc(max(var(--row), var(--text-2-lh)) * ${count})` }}>{shown && children()}</div>;
+}
+
 // Rows that change place in a commit (a new session at the top of its project, one moved, pinned or unpinned, a project
 // added) slide from where they were instead of jumping. Only a genuinely new row fades in: an existing row that changes
 // group stays opaque, since fading what was already visible reads as the whole list blinking on an update. Positions
@@ -659,6 +689,21 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     />
   );
 
+  // The rows of one run, a long one by chunk (RowChunk). `run` names the run among its siblings' keys
+  const rowsOf = (list: SessionSummary[], run = 'chunk') => {
+    if (q || list.length <= LEAD_ROWS + CHUNK_ROWS) return list.map(renderItem);
+    const rows: ReactNode[] = list.slice(0, LEAD_ROWS).map(renderItem);
+    for (let at = LEAD_ROWS, n = 0; at < list.length; at += CHUNK_ROWS, n++) {
+      const part = list.slice(at, at + CHUNK_ROWS);
+      rows.push(
+        <RowChunk key={`${run}:${n}`} count={part.length} first={n === 0} keep={part.some(x => x.id === editing || (held?.kind === 'session' && x.id === held.id))}>
+          {() => part.map(renderItem)}
+        </RowChunk>,
+      );
+    }
+    return rows;
+  };
+
   // A category: a quiet sub-label and, open, its sessions at the same inset (one level of nesting is the project's alone).
   // The whole block is one drop zone and lights up as one; a collapsed category stays collapsed under a drag (no
   // spring-open), so its frame is just the header
@@ -692,7 +737,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
         />
         <Fold open={node.open}>
           {node.sessions.length
-            ? node.sessions.map(renderItem)
+            ? rowsOf(node.sessions)
             : <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.empty')}</div>}
         </Fold>
       </div>
@@ -723,7 +768,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     // A flat keyed array, not a fragment: a project's pinned rows are its siblings, so a row pinned or unpinned in place
     // keeps its element (renderBody)
     return [
-      ...list.slice(0, cut).map(renderItem),
+      ...rowsOf(list.slice(0, cut)),
       // One fold per page, so each click opens only the page it adds (a closed fold releases its rows)
       ...(rest.length > 0 ? pages(rest).map((page, i) => <Fold key={`fold:${i}`} open={shown > i * MORE_PAGE}>{page.map(renderItem)}</Fold>) : []),
       ...late.map(renderItem),
@@ -861,7 +906,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     ? flatGroups.map((g, i) => (
       <div key={g.key || 'all'} role="group" aria-label={flatLabel(g) || undefined} className={cn('flex flex-col', i > 0 && 'mt-gap')}>
         {flatLabel(g) && <div className="flex min-h-row items-center gap-gap px-2 text-3 text-fg-3"><span className="min-w-0 truncate">{flatLabel(g)}</span></div>}
-        {g.sessions.map(renderItem)}
+        {rowsOf(g.sessions)}
       </div>
     ))
     : tree.grouped ? unsectioned.map(renderProject) : tree.projects.map(p => <Fragment key={p.cwd}>{renderBody(p)}</Fragment>);

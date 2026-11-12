@@ -48,9 +48,15 @@ export const ToolCall = memo(function ToolCall({ block, grouped = false, continu
   return <div data-calls={block.id} className="contents"><EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} continuing={continuing} /></EntranceOnce></div>;
 });
 
+// A result shown under its row: always for a row of its own, and for one in a process fold only while that fold is
+// open. Read here rather than in the row, so toggling a fold re-renders these few and not every tool row inside it
+function InFold({ grouped, children }: { grouped: boolean; children: ReactNode }) {
+  const inFold = useContext(ImageInFoldContext);
+  return !grouped || inFold ? children : null;
+}
+
 function ToolCallRows({ block, grouped, continuing }: { block: ToolCallBlock; grouped: boolean; continuing: boolean }) {
   const { toolLine } = useAppearance();
-  const imageInFold = useContext(ImageInFoldContext);
   const running = block.status === 'in_progress' && block.observation !== 'unknown';
   const execute = block.kind === 'execute';
   const seconds = useToolSeconds(block);
@@ -157,23 +163,23 @@ function ToolCallRows({ block, grouped, continuing }: { block: ToolCallBlock; gr
       ? <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={false}
           body={<CodeSurface className="text-fg-2 whitespace-pre-wrap">{text}</CodeSurface>}>{label}</Disclosure>
       : <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <GeneratedImages block={block} />}</div>;
+    return <div className="flex flex-col gap-gap">{row}<InFold grouped={grouped}><GeneratedImages block={block} /></InFold></div>;
   }
   // Shown images (Acpira's show_image tool): a plain row naming the caption or files; the images stay below this row in
   // an open process fold and move outside it when closed, and the receipt text is for the model only.
   if (isShowImageTool(block)) {
     const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <GeneratedImages block={block} />}</div>;
+    return <div className="flex flex-col gap-gap">{row}<InFold grouped={grouped}><GeneratedImages block={block} /></InFold></div>;
   }
   if (isShowVideoTool(block) && block.status !== 'failed') {
     const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <ShownVideos block={block} />}</div>;
+    return <div className="flex flex-col gap-gap">{row}<InFold grouped={grouped}><ShownVideos block={block} /></InFold></div>;
   }
   // A shown widget (Acpira's show_widget) sits like a shown image: under its row in an open process fold, outside it
   // once the fold closes; the receipt text is for the model only
   if (isShowWidgetTool(block)) {
     const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <ShownWidget block={block} />}</div>;
+    return <div className="flex flex-col gap-gap">{row}<InFold grouped={grouped}><ShownWidget block={block} /></InFold></div>;
   }
   // A Claude workflow run: the launch receipt is written for the model (transcript dir, resume instructions), so the row
   // opens to the run's own report instead; its agents are the subagent rows after the turn's content

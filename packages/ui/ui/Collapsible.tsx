@@ -54,15 +54,22 @@ function PanelFrame({ open, children, ...attributes }: ComponentProps<'div'> & {
   if ((open || !lazy) && !kept) setKept(true);
   useEffect(() => {
     if (open || !lazy || !kept) return;
-    const el = frame.current;
-    // The shipped stylesheet is minified to `.32s`: read the token with its unit (cssTime.ts)
-    const close = el ? cssTimeVar(el, '--dur-close', DEFAULT_CLOSE_MS) : DEFAULT_CLOSE_MS;
-    const timer = setTimeout(() => setKept(false), close + RELEASE_SLACK_MS);
-    return () => clearTimeout(timer);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Read in the next frame, not here: this effect runs inside the click that closed the fold, where a style read
+    // resolves the whole body's style at once (tens of ms on a long process) before the close can start
+    const wait = requestAnimationFrame(() => {
+      const el = frame.current;
+      // The shipped stylesheet is minified to `.32s`: read the token with its unit (cssTime.ts)
+      const close = el ? cssTimeVar(el, '--dur-close', DEFAULT_CLOSE_MS) : DEFAULT_CLOSE_MS;
+      timer = setTimeout(() => setKept(false), close + RELEASE_SLACK_MS);
+    });
+    return () => { cancelAnimationFrame(wait); clearTimeout(timer); };
   }, [open, lazy, kept]);
-  // Inert replaces hidden so nested rails can keep measuring their mounted DOM.
+  // Inert replaces hidden so nested rails can keep measuring their mounted DOM. A lazy body on its way out is released
+  // right after the close, so it skips the flag: inert reaches every descendant's style, a restyle of the whole body
+  // in the frame the close starts in.
   // The ref sits on the inner clip: `attributes` carries Base UI's own ref for the panel element.
-  return <div {...attributes} inert={!open}>
+  return <div {...attributes} inert={!open && !(lazy && kept)}>
     <div ref={frame} className="min-h-0 min-w-0 overflow-hidden">{(kept || open || !lazy) && children}</div>
   </div>;
 }
