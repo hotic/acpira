@@ -31,6 +31,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtemp
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -323,7 +324,7 @@ async function main() {
     say('deleting an unseen session removes its icon mark; restoring it does not resurrect the mark');
 
     // A second launch with the link hands it to this instance (single instance socket), which brings session A back
-    await waitUntil('session A\'s record', () => existsSync(join(data, 'sessions', `${a}.json`)), 10_000);
+    await waitUntil('session A\'s record', () => records().includes(a), 10_000);
     const second = launch([`acpira://session/${a}`]);
     second.stdout.on('data', collect);
     second.stderr.on('data', collect);
@@ -638,12 +639,12 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
     say('a narrow window shows the list as a page; a pick closes it; widened, the column docks again');
 
     // "Remove from list" on a project's right-click menu takes it off the column although its session stays
-    await waitUntil('session B\'s record', () => existsSync(join(data, 'sessions', `${b}.json`)), 10_000);
+    await waitUntil('session B\'s record', () => records().includes(b), 10_000);
     const betaRow = `[...document.querySelectorAll('[data-project-row]')].find(e => e.title.endsWith('smoke-beta'))`;
     await page.press('smoke-beta\'s project row', betaRow, 2);
     await page.press('the remove item', `[...document.querySelectorAll('[role="menuitem"]')].find(e => e.textContent.includes('Remove from list'))`);
     await page.waitFor('smoke-beta to leave the column', `!${betaRow} && !!document.querySelector('[data-project-row]')`);
-    if (!existsSync(join(data, 'sessions', `${b}.json`))) fail('removing a project deleted its session');
+    if (!records().includes(b)) fail('removing a project deleted its session');
     say('a removed project leaves the column, its session stays');
 
     // Windows and Linux: no system title bar and no menu bar; the page draws the caption (maximize turns into restore and
@@ -953,9 +954,24 @@ async function serveRelease(pack, { installed, next, current, version, platform,
   return { installed, version, publicKey, manifest: `${base}/desktop-update.json`, deltaKb: Math.round(delta.size / 1024), fullKb: Math.round(manifest.full.size / 1024) };
 }
 
+// The ids of the live sessions the data folder keeps: record files, or (a store created with no record files) the
+// untrashed rows of sessions.db
 function records() {
   const dir = join(data, 'sessions');
-  return existsSync(dir) ? readdirSync(dir).filter(f => /^[0-9a-f-]{36}\.json$/.test(f)) : [];
+  if (!existsSync(dir)) return [];
+  const ids = new Set(readdirSync(dir).filter(f => /^[0-9a-f-]{36}\.json$/.test(f)).map(f => f.slice(0, -'.json'.length)));
+  if (existsSync(join(dir, 'sessions.db'))) {
+    let db;
+    try {
+      db = new DatabaseSync(join(dir, 'sessions.db'), { readOnly: true });
+      for (const row of db.prepare("SELECT id FROM session WHERE body = 'db' AND trashed_at IS NULL").all()) ids.add(row.id);
+    } catch {
+      // Busy or mid-creation: the next poll reads it
+    } finally {
+      db?.close();
+    }
+  }
+  return [...ids];
 }
 
 async function roundTrip(text) {
