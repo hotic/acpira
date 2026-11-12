@@ -2,7 +2,8 @@
 //! `<dir>/prefs.json` the per-agent memory, `<dir>/categories.json` the session list's user categories, `<dir>/<id>.json` the full record, `<dir>/<id>/` its blobs, `<dir>/trash/`
 //! the soft-deleted ones during their undo window. The directory is shared by every host, so the index is reconciled
 //! with the record files before every write, and every file is written tmp + rename. Record writes are debounced per
-//! session and serialized from the live session at write time
+//! session and serialized from the live session at write time. A store whose database was created with no record files
+//! (`SessionDb::stubless`) keeps no `<id>.json` for a database body: the catalogue alone lists it and marks it trashed
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -291,8 +292,12 @@ struct LogOwner {
 
 /// The built-in agent's session id a record file was driving, if it was one of its sessions
 async fn builtin_session_of(path: &Path) -> Option<String> {
-  let raw = fs::read(path).await.ok()?;
-  let owner: LogOwner = serde_json::from_slice(&raw).ok()?;
+  builtin_session_in(&fs::read(path).await.ok()?)
+}
+
+/// `builtin_session_of` for a record (or record head) already read
+fn builtin_session_in(raw: &[u8]) -> Option<String> {
+  let owner: LogOwner = serde_json::from_slice(raw).ok()?;
   owner.acp_session_id.filter(|acp| owner.agent == SELF_AGENT_ID && is_session_id(acp))
 }
 
@@ -351,6 +356,75 @@ impl TranscriptStore {
   fn forget_saved(&self, id: &str) {
     self.saves.lock().remove(id);
     self.stubs.lock().remove(id);
+  }
+
+  /// Whether this store keeps database bodies without a compatibility file (`SessionDb::stubless`)
+  fn stubless(&self) -> bool {
+    self.database().is_some_and(|db| db.stubless())
+  }
+
+  /// A stubless store's catalogue entry for a database body: what stands in for the record file a session is known by
+  async fn stubless_entry(&self, id: &str) -> Option<CatalogEntry> {
+    if !self.stubless() {
+      return None;
+    }
+    let key = id.to_owned();
+    self.db_call(move |db| db.entry(&key)).await.ok().flatten().flatten().filter(|entry| entry.body == BodyLocation::Database)
+  }
+
+  /// A stubless store's database body that is listed (not in the trash)
+  async fn listed_body(&self, id: &str) -> bool {
+    self.stubless_entry(id).await.is_some_and(|entry| entry.trashed_at.is_none())
+  }
+
+  /// Whether the session waits in the trash here: its record file there, or a stubless body the catalogue has trashed
+  async fn in_trash(&self, id: &str) -> bool {
+    fs::metadata(self.dir.join(TRASH_DIR).join(format!("{id}.json"))).await.is_ok() || self.stubless_entry(id).await.is_some_and(|entry| entry.trashed_at.is_some())
+  }
+
+  /// Whether a session is stored here and listed: its record file in the live directory, or a listed stubless body
+  pub async fn has_record(&self, id: &str) -> bool {
+    is_session_id(id) && (fs::try_exists(self.dir.join(format!("{id}.json"))).await.unwrap_or(false) || self.listed_body(id).await)
+  }
+
+  /// Sessions a stubless store's catalogue has in the trash: they have no record file there to say whose built-in agent
+  /// log they keep for their undo
+  pub async fn trashed_summaries(&self) -> Vec<SessionSummary> {
+    if !self.stubless() {
+      return vec![];
+    }
+    let Ok(Some(entries)) = self.db_call(SessionDb::catalog).await else { return vec![] };
+    entries.into_iter().filter(|entry| entry.body == BodyLocation::Database && entry.trashed_at.is_some()).map(|entry| entry.summary).collect()
+  }
+
+  /// What moves whenever the stored session changes, for a reader polling it (the mirror of a session another engine
+  /// drives): the record file's time, or a stubless body's revision. None when the session is not stored here
+  pub async fn record_stamp(&self, id: &str) -> Option<(Option<SystemTime>, u64)> {
+    if !is_session_id(id) {
+      return None;
+    }
+    if let Some((_, modified)) = file_stamp(&self.dir.join(format!("{id}.json"))).await {
+      return Some((modified, 0));
+    }
+    if !self.listed_body(id).await {
+      return None;
+    }
+    let key = id.to_owned();
+    self.db_call(move |db| db.body_revision(&key)).await.ok().flatten().flatten().map(|revision| (None, revision))
+  }
+
+  /// A database body's revision; None for a session whose body is not in the database. Blocking
+  pub fn body_revision(&self, id: &str) -> Option<u64> {
+    self.database()?.body_revision(id).ok().flatten()
+  }
+
+  /// The folder a record names: its file, else a database body's head
+  async fn cwd_of_session(&self, id: &str, file: &Path) -> String {
+    let cwd = cwd_of(file).await;
+    if !cwd.is_empty() {
+      return cwd;
+    }
+    self.db_head(id).await.and_then(|raw| serde_json::from_slice::<Stamped>(&raw).ok()).map(|s| s.cwd).unwrap_or_default()
   }
 
   /// Install the check every record write passes first
@@ -452,7 +526,8 @@ impl TranscriptStore {
       }
       self.forget_saved(&id);
       let gone = id.clone();
-      if let Err(error) = self.db_call(move |db| db.delete_session(&gone)).await {
+      // Only while it is still hidden: an undo or a save since the listing above lists it again
+      if let Err(error) = self.db_call(move |db| db.delete_trashed(&gone, cutoff)).await {
         (self.log)(&format!("session {id}: SQLite row not removed ({error:#})"));
       }
     }
@@ -492,7 +567,7 @@ impl TranscriptStore {
     }
     self.ensure().await?;
     let Some(path) = confined(&self.dir, &format!("{id}.json")).await else { return Err(anyhow!("{id}: outside the store")) };
-    if fs::metadata(self.dir.join(TRASH_DIR).join(format!("{id}.json"))).await.is_ok() {
+    if self.in_trash(id).await {
       return Ok(false);
     }
     // The helper shares the host's lease: a promotion cannot race the ownership check and write below.
@@ -547,7 +622,7 @@ impl TranscriptStore {
   pub async fn copy_stamps(&self, ids: &[String]) -> HashMap<String, CopyStamp> {
     let mut out = HashMap::new();
     for id in ids.iter().filter(|id| is_session_id(id)) {
-      if fs::metadata(self.dir.join(TRASH_DIR).join(format!("{id}.json"))).await.is_ok() {
+      if self.in_trash(id).await {
         continue;
       }
       let Some(stamp) = self.stamp_of(id).await else { continue };
@@ -559,14 +634,23 @@ impl TranscriptStore {
   /// What the search checks its cache against: every listed record with the stamp its text goes by
   pub async fn search_sources(&self) -> Vec<SearchSource> {
     let files = self.record_files().await.unwrap_or_default();
-    let bodies: HashMap<String, u64> = self.db_call(SessionDb::body_revisions).await.ok().flatten().unwrap_or_default().into_iter().collect();
-    files
+    let mut bodies: HashMap<String, (u64, String)> =
+      self.db_call(SessionDb::body_revisions).await.ok().flatten().unwrap_or_default().into_iter().map(|(id, revision, updated)| (id, (revision, updated))).collect();
+    let mut out: Vec<SearchSource> = files
       .into_iter()
-      .map(|(id, (len, modified))| match bodies.get(&id) {
-        Some(revision) => SearchSource { id, stamp: (modified, *revision), in_database: true },
+      .map(|(id, (len, modified))| match bodies.remove(&id) {
+        Some((revision, _)) => SearchSource { id, stamp: (modified, revision), in_database: true },
         None => SearchSource { id, stamp: (modified, len), in_database: false },
       })
-      .collect()
+      .collect();
+    // A stubless body has no file to take the time from: its `updatedAt` orders the hits instead
+    if self.stubless() {
+      out.extend(bodies.into_iter().map(|(id, (revision, updated))| {
+        let time = chrono::DateTime::parse_from_rfc3339(&updated).ok().map(SystemTime::from);
+        SearchSource { id, stamp: (time, revision), in_database: true }
+      }));
+    }
+    out
   }
 
   /// A database body as record JSON, not parsed; None for a file-backed session. `main_only` leaves the subagents'
@@ -757,7 +841,7 @@ impl TranscriptStore {
     let stored: HashMap<String, CatalogEntry> = entries.into_iter().map(|entry| (entry.summary.id.clone(), entry)).collect();
     let local: HashMap<&str, &SessionSummary> = mine.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut seen = HashSet::new();
-    let (mut changed, mut gone) = (vec![], vec![]);
+    let (mut changed, mut gone, mut listed) = (vec![], vec![], vec![]);
     let mut out = vec![];
     for (id, stamp) in self.record_files().await? {
       seen.insert(id.clone());
@@ -803,7 +887,25 @@ impl TranscriptStore {
     // from a backup): only an explicit removal or `purge_lost_bodies` takes a body
     if !seeded {
       let now = timestamp_ms(SystemTime::now());
+      let stubless = self.stubless();
       for entry in stored.values().filter(|entry| !seen.contains(&entry.summary.id)) {
+        // A stubless store's body has no file to be seen by: listed while the catalogue does not have it in the trash,
+        // this host's view winning for the sessions it drives, as for a file
+        if stubless && entry.body == BodyLocation::Database {
+          if entry.trashed_at.is_none() {
+            let id = entry.summary.id.as_str();
+            let summary = match local.get(id) {
+              Some(mine) if own.contains(id) && !mine.cwd.is_empty() => (*mine).clone(),
+              _ => entry.summary.clone(),
+            };
+            let stored = stored_form(&summary);
+            if stored != entry.summary {
+              listed.push(stored);
+            }
+            out.push(summary);
+          }
+          continue;
+        }
         let trashed_file = self.dir.join(TRASH_DIR).join(format!("{}.json", entry.summary.id));
         let in_trash = fs::metadata(trashed_file).await.ok().and_then(|meta| meta.modified().ok()).and_then(timestamp_ms);
         let trashed_at = match (in_trash, entry.body) {
@@ -822,6 +924,9 @@ impl TranscriptStore {
     sort_index(&mut out);
     if !changed.is_empty() || !gone.is_empty() {
       let _ = self.db_call(move |db| db.apply_catalog(&changed, &gone)).await?;
+    }
+    if !listed.is_empty() {
+      let _ = self.db_call(move |db| db.set_listed_summaries(&listed)).await?;
     }
     Ok(out)
   }
@@ -968,7 +1073,7 @@ impl TranscriptStore {
       Some(path) => file_stamp(path).await,
       None => None,
     };
-    if path.is_some() && stamp.is_none() {
+    if path.is_some() && stamp.is_none() && !self.listed_body(id).await {
       return Err(RecordLoadError::Missing);
     }
     let mut file_wins = false;
@@ -1217,7 +1322,7 @@ impl TranscriptStore {
       return Ok(());
     }
     let on_disk = file_stamp(&path).await;
-    if self.knew(&id) && on_disk.is_none() {
+    if self.knew(&id) && on_disk.is_none() && !self.listed_body(&id).await {
       (self.log)(&format!("session {id}: deleted by another window, not written back"));
       return Ok(());
     }
@@ -1302,6 +1407,14 @@ impl TranscriptStore {
     }
     self.state.lock().stale.remove(id);
     let grown = self.stub_stale.lock().remove(id);
+    if db.stubless() {
+      // No compatibility file in this store: a whole record that was there (an older engine's, a revert, a copy) is in
+      // the rows just committed
+      if on_disk.is_some() {
+        rm_confined(&self.dir, &format!("{id}.json"), false).await;
+      }
+      return Ok(());
+    }
     let due = match self.stubs.lock().get(id) {
       None => true,
       Some(stub) => stub.stamp != on_disk || grown || (stub.head != head && (full || stub.at.elapsed() >= STUB_REFRESH)),
@@ -1372,6 +1485,15 @@ impl TranscriptStore {
       rm_confined(&dir, &format!("{id}.json"), false).await;
       rm_confined(&dir, id, true).await;
     }
+    // A stubless body has no file to tell them: its head does
+    if (log.is_none() || (hooked && cwd.is_empty()))
+      && let Some(raw) = self.db_head(id).await
+    {
+      log = log.or_else(|| builtin_session_in(&raw));
+      if hooked && cwd.is_empty() {
+        cwd = serde_json::from_slice::<Stamped>(&raw).map(|s| s.cwd).unwrap_or_default();
+      }
+    }
     let db_id = id.to_owned();
     if let Err(error) = self.db_call(move |db| db.delete_session(&db_id)).await {
       (self.log)(&format!("session {id}: SQLite row not removed ({error:#})"));
@@ -1396,6 +1518,13 @@ impl TranscriptStore {
       }
     };
     if listed {
+      return;
+    }
+    // A stubless body in its undo window has no file in the trash: the catalogue knows whose session it drives
+    if self.stubless()
+      && let Ok(Some(entries)) = self.db_call(SessionDb::catalog).await
+      && entries.iter().any(|e| e.summary.id != removed && e.trashed_at.is_some() && e.summary.agent == SELF_AGENT_ID && e.summary.acp_session_id.as_deref() == Some(acp))
+    {
       return;
     }
     let trash = self.dir.join(TRASH_DIR);
@@ -1466,7 +1595,7 @@ impl TranscriptStore {
       let _ = f.set_modified(now);
     }
     if self.on_change.read().is_some() {
-      let cwd = cwd_of(&stamped).await;
+      let cwd = self.cwd_of_session(id, &stamped).await;
       self.changed(id, RecordChange::Gone { cwd: &cwd });
     }
     Ok(())
@@ -1481,18 +1610,37 @@ impl TranscriptStore {
     }
     let trash = self.dir.join(TRASH_DIR);
     let file = format!("{id}.json");
+    // A stubless body leaves the trash in the catalogue first, so a sweep in another engine meanwhile finds it listed and
+    // keeps it; one already gone (swept) has nothing to restore
+    let mut untrashed = None;
+    if let Some(entry) = self.stubless_entry(id).await
+      && let Some(at) = entry.trashed_at
+      && !entry_exists(&trash.join(&file)).await.unwrap_or(true)
+    {
+      let key = id.to_owned();
+      if self.db_call(move |db| db.untrash(&key)).await?.unwrap_or(false) {
+        untrashed = Some(at);
+      } else if !self.listed_body(id).await {
+        return Ok(());
+      }
+    }
     // The record arrives last: an entry left behind by a failed undo is then a stray blob folder, not a listed session
-    async {
+    let moved = async {
       if real_dir(&trash).await? {
         move_entries(&trash, &self.dir, [id, file.as_str()]).await?;
       }
       anyhow::Ok(())
     }
-    .await
-    .map_err(|e| anyhow!("session {id}: not restored from the trash ({e:#})"))?;
+    .await;
+    if let Err(e) = moved {
+      if untrashed.is_some() {
+        let _ = self.set_trashed(id, untrashed).await;
+      }
+      return Err(anyhow!("session {id}: not restored from the trash ({e:#})"));
+    }
     self.set_trashed(id, None).await?;
     if self.on_change.read().is_some() {
-      let cwd = cwd_of(&self.dir.join(&file)).await;
+      let cwd = self.cwd_of_session(id, &self.dir.join(&file)).await;
       self.changed(id, RecordChange::Restored { cwd: &cwd });
     }
     Ok(())
@@ -1501,8 +1649,11 @@ impl TranscriptStore {
   /// Remove what was trashed more than `older_than` ago
   pub async fn sweep_trash(&self, older_than: Duration) {
     let trash = self.dir.join(TRASH_DIR);
-    let Ok(mut rd) = fs::read_dir(&trash).await else { return };
     let cutoff = SystemTime::now() - older_than;
+    if self.stubless() {
+      self.sweep_trashed_bodies(cutoff).await;
+    }
+    let Ok(mut rd) = fs::read_dir(&trash).await else { return };
     while let Ok(Some(e)) = rd.next_entry().await {
       let f = e.file_name().to_string_lossy().into_owned();
       let Some(id) = f.strip_suffix(".json") else { continue };
@@ -1522,11 +1673,51 @@ impl TranscriptStore {
         continue;
       }
       let db_id = id.to_owned();
-      if let Err(error) = self.db_call(move |db| db.delete_session(&db_id)).await {
+      // A stubless store has no file to show an undo and first save since the listing: the row goes only while trashed
+      let removed = if self.stubless() {
+        self.db_call(move |db| db.delete_trashed(&db_id, i64::MAX).map(|_| ())).await
+      } else {
+        self.db_call(move |db| db.delete_session(&db_id)).await
+      };
+      if let Err(error) = removed {
         (self.log)(&format!("session {id}: SQLite row not removed ({error:#})"));
       }
       if let Some(acp) = log {
         self.remove_agent_log(id, &acp).await;
+      }
+    }
+  }
+
+  /// The trash of a stubless store: bodies the catalogue has had in the trash since `cutoff`, and their blob folders. The
+  /// row goes first and only while it is still trashed, so an undo in another engine mid-sweep keeps the session whole
+  async fn sweep_trashed_bodies(&self, cutoff: SystemTime) {
+    let Some(cutoff) = timestamp_ms(cutoff) else { return };
+    let Ok(Some(entries)) = self.db_call(SessionDb::catalog).await else { return };
+    let trash = self.dir.join(TRASH_DIR);
+    for entry in entries {
+      let id = entry.summary.id;
+      if entry.body != BodyLocation::Database || entry.trashed_at.is_none_or(|at| at > cutoff) || !is_session_id(&id) {
+        continue;
+      }
+      // A record file beside it (an older engine's, a revert) goes with the file sweep, which takes the row along
+      let file = format!("{id}.json");
+      if entry_exists(&trash.join(&file)).await.unwrap_or(true) || entry_exists(&self.dir.join(&file)).await.unwrap_or(true) {
+        continue;
+      }
+      let log = self.db_head(&id).await.and_then(|raw| builtin_session_in(&raw));
+      self.forget_saved(&id);
+      let key = id.clone();
+      match self.db_call(move |db| db.delete_trashed(&key, cutoff)).await {
+        Ok(Some(true)) => {}
+        Ok(_) => continue,
+        Err(error) => {
+          (self.log)(&format!("session {id}: SQLite row not removed ({error:#})"));
+          continue;
+        }
+      }
+      rm_confined(&trash, &id, true).await;
+      if let Some(acp) = log {
+        self.remove_agent_log(&id, &acp).await;
       }
     }
   }
@@ -1877,6 +2068,12 @@ mod tests {
     TranscriptStore::with_timing(dir.to_path_buf(), Arc::new(|_| {}), None, Duration::from_millis(20), Duration::from_millis(60))
   }
 
+  /// A store whose database keeps compatibility files: a machine that had sessions before the database
+  fn stubbed(dir: &Path) -> Arc<TranscriptStore> {
+    drop(SessionDb::open_stubbed(dir).unwrap());
+    store(dir)
+  }
+
   #[tokio::test]
   async fn an_unavailable_database_keeps_the_file_backend_usable() {
     let dir = tempfile::tempdir().unwrap();
@@ -1901,7 +2098,7 @@ mod tests {
   #[tokio::test]
   async fn save_debounces_and_index_reconciles() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path());
+    let s = stubbed(dir.path());
     s.save(Arc::new(record("a", "2026-01-01T00:00:00.000Z")));
     s.save(Arc::new(record("b", "2026-01-02T00:00:00.000Z")));
     assert!(s.load("a").await.is_some(), "pending record is served from memory");
@@ -1929,7 +2126,7 @@ mod tests {
   #[tokio::test]
   async fn turns_an_older_engine_added_to_a_migration_stub_are_recovered() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path());
+    let s = stubbed(dir.path());
     let mut stored = record("legacy", "2026-01-01T00:00:00.000Z");
     stored.turns = serde_json::from_value(serde_json::json!([{ "role": "user", "text": "before migration" }])).unwrap();
     s.flush(Arc::new(stored.clone())).await.unwrap();
@@ -2044,6 +2241,78 @@ mod tests {
     s.trash("undo").await.unwrap();
     s.sweep_trash(Duration::ZERO).await;
     assert!(s.database().unwrap().catalog().unwrap().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_fresh_store_keeps_its_sessions_in_the_database_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut stored = record("fresh", "2026-01-01T00:00:00.000Z");
+    stored.turns = turns(&["hello"]);
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    assert!(s.database().unwrap().stubless());
+    assert!(!dir.path().join("fresh.json").exists(), "no compatibility file");
+    assert_eq!(s.load("fresh").await.unwrap(), stored);
+    assert!(s.has_record("fresh").await);
+    let stamp = s.record_stamp("fresh").await.unwrap();
+    assert_eq!(s.load_index().await.unwrap().iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["fresh"]);
+    assert!(!dir.path().join("index.json").exists());
+    assert!(s.search_sources().await.iter().any(|source| source.id == "fresh" && source.in_database && source.stamp.0.is_some()));
+
+    // Another engine on the same store sees it, and sees it change
+    let other = store(dir.path());
+    assert_eq!(other.load_index().await.unwrap()[0].id, "fresh");
+    stored.title = "renamed".into();
+    stored.updated_at = "2026-01-02T00:00:00.000Z".into();
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    assert_ne!(other.record_stamp("fresh").await.unwrap(), stamp, "a mirror polling it sees the save");
+    assert_eq!(other.load_index().await.unwrap()[0].title, "renamed");
+
+    // Trashed by the other engine: hidden everywhere, never written back by this one, back on undo
+    std::fs::create_dir_all(dir.path().join("fresh")).unwrap();
+    std::fs::write(dir.path().join("fresh").join("blob.png"), b"png").unwrap();
+    other.trash("fresh").await.unwrap();
+    assert!(dir.path().join(TRASH_DIR).join("fresh").join("blob.png").exists(), "the blob folder waits in the trash");
+    assert!(s.load_index().await.unwrap().is_empty());
+    assert!(s.load_detailed("fresh").await.unwrap_err().is_missing());
+    assert!(!s.has_record("fresh").await && s.record_stamp("fresh").await.is_none());
+    s.flush(Arc::new(stored.clone())).await.unwrap();
+    assert!(s.load_index().await.unwrap().is_empty(), "a trashed session is not written back");
+    assert!(s.copy_stamps(&["fresh".into()]).await.is_empty());
+    other.restore("fresh").await.unwrap();
+    assert_eq!(s.load_index().await.unwrap()[0].id, "fresh");
+    assert!(dir.path().join("fresh").join("blob.png").exists());
+
+    // The undo window closes: the row and the blob folder go together
+    s.trash("fresh").await.unwrap();
+    s.sweep_trash(Duration::from_secs(3600)).await;
+    assert_eq!(s.database().unwrap().catalog().unwrap().len(), 1, "a fresh trash entry is still in its window");
+    s.sweep_trash(Duration::ZERO).await;
+    assert!(s.database().unwrap().catalog().unwrap().is_empty());
+    assert!(!dir.path().join(TRASH_DIR).join("fresh").exists());
+
+    // A whole record an older engine left here moves into the rows on its first save, and its file goes
+    let legacy = record("legacy", "2026-01-03T00:00:00.000Z");
+    std::fs::write(dir.path().join("legacy.json"), serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert_eq!(s.load_index().await.unwrap()[0].id, "legacy");
+    s.flush(Arc::new(s.load("legacy").await.unwrap())).await.unwrap();
+    assert!(!dir.path().join("legacy.json").exists());
+    assert!(!dir.path().join("legacy").join(migration::MIGRATED_FILE).exists(), "nothing to fall back to, nothing archived");
+    assert_eq!(s.load("legacy").await.unwrap(), legacy);
+    assert_eq!(s.load_index().await.unwrap()[0].id, "legacy");
+
+    // A trashed record file whose session was restored and saved elsewhere since: the sweep takes the file, never the body
+    std::fs::create_dir_all(dir.path().join(TRASH_DIR)).unwrap();
+    std::fs::write(dir.path().join(TRASH_DIR).join("legacy.json"), serde_json::to_vec(&legacy).unwrap()).unwrap();
+    s.sweep_trash(Duration::ZERO).await;
+    assert!(!dir.path().join(TRASH_DIR).join("legacy.json").exists());
+    assert_eq!(s.load("legacy").await.unwrap(), legacy);
+
+    // An undo that finds the session swept already has nothing to bring back
+    s.trash("legacy").await.unwrap();
+    s.sweep_trash(Duration::ZERO).await;
+    s.restore("legacy").await.unwrap();
+    assert!(s.load_index().await.unwrap().is_empty());
   }
 
   #[tokio::test]
@@ -2229,7 +2498,7 @@ mod tests {
   #[tokio::test]
   async fn a_reconcile_never_takes_a_database_body() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path());
+    let s = stubbed(dir.path());
     let mut stored = record("kept", "2026-01-01T00:00:00.000Z");
     stored.turns = turns(&["one", "two"]);
     s.flush(Arc::new(stored.clone())).await.unwrap();
@@ -2327,6 +2596,7 @@ mod tests {
   #[tokio::test]
   async fn the_stub_follows_lazily_and_the_body_never_reads_stale() {
     let dir = tempfile::tempdir().unwrap();
+    drop(SessionDb::open_stubbed(dir.path()).unwrap());
     let s = TranscriptStore::with_timing(dir.path().to_path_buf(), Arc::new(|_| {}), None, Duration::from_millis(5), Duration::from_millis(20));
     let path = dir.path().join("lazy.json");
     let mut stored = record("lazy", "2026-01-01T00:00:00.000Z");
@@ -2382,7 +2652,7 @@ mod tests {
   #[tokio::test]
   async fn a_trash_sweep_leaves_the_body_of_a_session_that_is_listed_again() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path());
+    let s = stubbed(dir.path());
     let mut stored = record("back", "2026-01-01T00:00:00.000Z");
     stored.turns = turns(&["kept"]);
     s.flush(Arc::new(stored.clone())).await.unwrap();
@@ -2399,7 +2669,7 @@ mod tests {
   #[tokio::test]
   async fn a_save_lists_a_body_a_reconcile_had_hidden() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path());
+    let s = stubbed(dir.path());
     let mut stored = record("hidden", "2026-01-01T00:00:00.000Z");
     s.flush(Arc::new(stored.clone())).await.unwrap();
     s.database().unwrap().set_trashed("hidden", Some(1)).unwrap();
@@ -2413,7 +2683,7 @@ mod tests {
   #[tokio::test]
   async fn a_list_edit_an_older_engine_made_on_the_stub_is_kept() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path());
+    let s = stubbed(dir.path());
     let mut stored = record("renamed", "2026-01-01T00:00:00.000Z");
     stored.turns = turns(&["kept"]);
     s.flush(Arc::new(stored.clone())).await.unwrap();

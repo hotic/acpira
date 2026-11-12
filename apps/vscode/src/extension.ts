@@ -473,8 +473,11 @@ export async function activate(context: vscode.ExtensionContext) {
       handleUri(uri) {
         const id = sessionIdOfLink(`${uri.scheme}://${uri.authority}${uri.path}`);
         if (!id) { log.warn(`unhandled URI: ${uri.path}`); return; }
+        // A store with sessions.db may keep a session in the database alone, with no record file to look for: the engine
+        // answers for it when the session is selected
         const known = [...bridges].some(b => b.sessionId === id)
-          || existsSync(join(sessionsDir, `${id}.json`));
+          || existsSync(join(sessionsDir, `${id}.json`))
+          || existsSync(join(sessionsDir, 'sessions.db'));
         if (known) revealSession(id);
         else void vscode.window.showWarningMessage(t('sessionLink.notHere'));
       },

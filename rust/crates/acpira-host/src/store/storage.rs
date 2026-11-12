@@ -43,6 +43,9 @@ pub struct ScanInput {
   pub body: Option<BodyText>,
   /// Bytes each database body takes in `sessions.db` (`TranscriptStore::body_sizes`)
   pub body_sizes: HashMap<String, u64>,
+  /// Sessions waiting in the trash that have no record file there (`TranscriptStore::trashed_summaries`): the
+  /// built-in agent logs they drive stay for their undo
+  pub trashed: Vec<SessionSummary>,
   pub now: SystemTime,
 }
 
@@ -219,6 +222,15 @@ pub fn scan(input: &ScanInput) -> Scan {
       residue.push(leftover(StorageResidueKind::Unreadable, path, d, targets, Some(id.to_owned())));
     }
   }
+  // A listed database body without a file (a stubless store) is a record by its rows alone
+  for (id, bytes) in &input.body_sizes {
+    if has_record.contains(id) || unreadable.contains(id) || !listed.contains(id.as_str()) {
+      continue;
+    }
+    has_record.insert(id.clone());
+    usage.entry(id.clone()).or_default().record = *bytes;
+    t.seg(StorageSegmentKind::Sessions, 0, 1);
+  }
   for (name, path) in &entries {
     if name.ends_with(".json") && !is_dir(path) && name.strip_suffix(".json").is_some_and(is_session_id) {
       continue;
@@ -242,8 +254,14 @@ pub fn scan(input: &ScanInput) -> Scan {
       continue;
     }
     if has_record.contains(name) {
-      let raw = input.body.as_ref().and_then(|body| body(name)).unwrap_or_else(|| std::fs::read(sessions_dir.join(format!("{name}.json"))).unwrap_or_default());
-      let text = String::from_utf8_lossy(&raw);
+      // A database body that cannot be read now names nothing we can see: its blobs all stay rather than turn into leftovers
+      let raw = match input.body.as_ref().and_then(|body| body(name)) {
+        Some(raw) => Some(raw),
+        None if input.body_sizes.contains_key(name.as_str()) => None,
+        None => Some(std::fs::read(sessions_dir.join(format!("{name}.json"))).unwrap_or_default()),
+      };
+      let unread = raw.is_none();
+      let text = String::from_utf8_lossy(raw.as_deref().unwrap_or_default());
       let mut kept = 0;
       let (mut orphan, mut targets) = (Du::default(), vec![]);
       for (blob, file) in names(path) {
@@ -256,7 +274,7 @@ pub fn scan(input: &ScanInput) -> Scan {
         }
         // Any mention keeps it: a blob is named by its content hash, so its name in the record is the reference
         // The pre-migration archive is no blob a record names: it stays for a store that cannot open the database
-        if is_dir(&file) || !older(&d, now, FRESH) || blob == migration::MIGRATED_FILE || text.contains(blob.as_str()) {
+        if unread || is_dir(&file) || !older(&d, now, FRESH) || blob == migration::MIGRATED_FILE || text.contains(blob.as_str()) {
           kept += d.bytes;
         } else {
           orphan.add(d);
@@ -290,8 +308,9 @@ pub fn scan(input: &ScanInput) -> Scan {
       drives.entry(acp.clone()).or_insert_with(|| s.id.clone());
     }
   }
-  let trash_drives: HashSet<String> =
+  let mut trash_drives: HashSet<String> =
     names(&sessions_dir.join("trash")).into_iter().filter(|(n, _)| n.ends_with(".json")).filter_map(|(_, p)| builtin_session_of(&p)).collect();
+  trash_drives.extend(input.trashed.iter().filter(|s| s.agent == SELF_AGENT_ID).filter_map(|s| s.acp_session_id.clone()));
   let agent_root = acpira_agent::acp::sessions_root(root);
   let mut logs: HashMap<String, (Du, Vec<PathBuf>)> = HashMap::new();
   for (name, path) in names(&agent_root) {
@@ -664,7 +683,7 @@ mod tests {
     put(&not_ours.join("f"), 1, true);
     fs::write(root.join(".migrated"), serde_json::to_vec(&serde_json::json!({ "sources": [legacy, not_ours, root] })).unwrap()).unwrap();
 
-    let scan = scan(&ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions: vec![a, b], body: None, body_sizes: HashMap::new(), now: SystemTime::now() });
+    let scan = scan(&ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions: vec![a, b], body: None, body_sizes: HashMap::new(), trashed: vec![], now: SystemTime::now() });
     assert_eq!(seg(&scan, K::Sessions), (ra + rb, 2));
     assert_eq!(seg(&scan, K::Attachments), (107, 1));
     // b's log, plus the fresh one no record names yet
@@ -706,6 +725,44 @@ mod tests {
     assert!(kept.exists() && !legacy.exists() && not_ours.exists());
     assert!(elsewhere.path().join("big").exists());
     drop(held);
+  }
+
+  #[test]
+  fn a_database_body_without_a_file_places_its_blobs() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let s = root.join("sessions");
+    let summary = record(root, "db", "grok", None, "");
+    fs::remove_file(s.join("db.json")).unwrap();
+    put(&s.join("db/1111111111111111.png"), 100, true);
+    put(&s.join("db/2222222222222222.png"), 30, true);
+    let body: BodyText = std::sync::Arc::new(|id| (id == "db").then(|| b"see 1111111111111111.png".to_vec()));
+    let scan = scan(&ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions: vec![summary], body: Some(body), body_sizes: HashMap::from([("db".to_owned(), 64)]), trashed: vec![], now: SystemTime::now() });
+    assert_eq!(scan.usage["db"], SessionUsage { record: 64, blobs: 100, log: 0 });
+    assert_eq!(seg(&scan, K::Sessions).1, 1);
+    let kinds: Vec<(StorageResidueKind, u64)> = scan.residue.iter().map(|r| (r.item.kind, r.item.bytes)).collect();
+    assert_eq!(kinds, [(StorageResidueKind::Blob, 30)], "only the blob its rows do not name");
+
+    // Rows that cannot be read now name nothing seen: every blob stays
+    let unreadable: BodyText = std::sync::Arc::new(|_| None);
+    let sessions = scan.usage.keys().map(|id| record(root, id, "grok", None, "")).collect::<Vec<_>>();
+    fs::remove_file(s.join("db.json")).unwrap();
+    let again = super::scan(&ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions, body: Some(unreadable), body_sizes: HashMap::from([("db".to_owned(), 64)]), trashed: vec![], now: SystemTime::now() });
+    assert!(again.residue.is_empty(), "{:?}", again.residue.iter().map(|r| r.item.kind).collect::<Vec<_>>());
+  }
+
+  #[test]
+  fn a_trashed_session_without_a_file_keeps_its_builtin_log() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let s = root.join("sessions");
+    let trashed = record(root, "gone", SELF_AGENT_ID, Some("acp-gone"), "");
+    fs::remove_file(s.join("gone.json")).unwrap();
+    let agent = acpira_agent::acp::sessions_root(root);
+    put(&agent.join("acp-gone.jsonl"), 40, true);
+    let input = |trashed: Vec<SessionSummary>| ScanInput { root: root.to_path_buf(), sessions_dir: s.clone(), sessions: vec![], body: None, body_sizes: HashMap::new(), trashed, now: SystemTime::now() };
+    assert!(scan(&input(vec![trashed])).residue.is_empty(), "its undo may still need it");
+    assert_eq!(scan(&input(vec![])).residue.len(), 1);
   }
 
   #[test]

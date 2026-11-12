@@ -86,8 +86,11 @@ impl App {
       return;
     };
     let sessions = self.client().sessions_dir().map(PathBuf::from).unwrap_or_else(|| self.paths.data_home.join("sessions"));
+    // A store with sessions.db may keep a session in the database alone, with no record file to look for: the engine
+    // answers for it when the session is shown
     let known = self.windows().iter().any(|w| w.session_id().as_deref() == Some(id.as_str()))
-      || sessions.join(format!("{id}.json")).exists();
+      || sessions.join(format!("{id}.json")).exists()
+      || sessions.join("sessions.db").exists();
     if known {
       self.show_session(&id);
       return;

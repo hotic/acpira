@@ -44,17 +44,17 @@ async fn delete_is_soft_restore_brings_it_back_and_rename_and_pin_land_in_the_in
   assert_eq!(m.session_ids(), [a.clone()]);
   assert_eq!(m.active_id().as_deref(), Some(a.as_str()));
   assert_eq!(m.active().unwrap()["title"], "第一条");
-  assert!(!dir.path().join(format!("{b}.json")).exists());
-  assert!(dir.path().join("trash").join(format!("{b}.json")).exists());
+  assert!(!listed(dir.path(), &b));
+  assert!(trashed(dir.path(), &b));
   m.handle(json!({ "type": "restoreSession", "id": b })).await;
   assert_eq!(sorted(m.session_ids()), sorted(vec![a.clone(), b.clone()]));
-  assert!(dir.path().join(format!("{b}.json")).exists());
+  assert!(listed(dir.path(), &b));
   // delete a again, then reopen the manager: only b left in the index
   m.handle(json!({ "type": "deleteSession", "id": a })).await;
   assert_eq!(m.active_id().as_deref(), Some(b.as_str()));
   m.dispose().await;
-  assert!(!dir.path().join(format!("{a}.json")).exists());
-  assert!(!dir.path().join("trash").join(format!("{a}.json")).exists());
+  assert!(!listed(dir.path(), &a));
+  assert!(!trashed(dir.path(), &a));
   let m2 = Mgr::new(dir.path(), Opts::with_agents(Value::Null, "fake"));
   m2.init().await;
   assert_eq!(m2.session_ids(), [b]);

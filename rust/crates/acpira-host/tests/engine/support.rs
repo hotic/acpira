@@ -320,6 +320,44 @@ pub fn turns_in(view: &Value) -> usize {
   view["turns"].as_array().expect("view.turns").len()
 }
 
+/// Whether the store at `dir` lists the session: its record file in the live directory, or (a store created with no
+/// record files) its catalogue row outside the trash
+pub fn listed(dir: &std::path::Path, id: &str) -> bool {
+  dir.join(format!("{id}.json")).exists() || catalogued(dir, id) == Some(false)
+}
+
+/// Whether the session waits in the trash of the store at `dir`: its record file there, or a trashed catalogue row of a
+/// store with no record files
+pub fn trashed(dir: &std::path::Path, id: &str) -> bool {
+  dir.join("trash").join(format!("{id}.json")).exists() || catalogued(dir, id) == Some(true)
+}
+
+/// A stubless store's database body: Some(whether it is trashed); None for a store that keeps record files or no body
+fn catalogued(dir: &std::path::Path, id: &str) -> Option<bool> {
+  let path = dir.join(acpira_host::store::db::DB_FILE);
+  if !path.exists() {
+    return None;
+  }
+  let db = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+  let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).ok()?;
+  if version & (1 << 16) == 0 {
+    return None;
+  }
+  db.query_row("SELECT trashed_at IS NOT NULL FROM session WHERE id = ?1 AND body = 'db'", [id], |row| row.get(0)).ok()
+}
+
+/// Make `dir` a store whose database keeps record files beside its bodies (a machine that had sessions before the
+/// database): a record in the trash when the database is created decides it, and goes again
+pub fn with_stubs(dir: &std::path::Path) {
+  let seed = dir.join("trash").join("stub-seed.json");
+  std::fs::create_dir_all(seed.parent().unwrap()).unwrap();
+  std::fs::write(&seed, b"{}").unwrap();
+  drop(acpira_host::store::db::SessionDb::open(dir).unwrap());
+  std::fs::remove_file(seed).unwrap();
+  // The trash it made, unless something else was in it
+  let _ = std::fs::remove_dir(dir.join("trash"));
+}
+
 /// Polls until the condition holds (5 s by default in the TS suites)
 pub async fn until(mut pred: impl FnMut() -> bool, ms: u64) {
   let t0 = Instant::now();
