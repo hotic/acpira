@@ -653,7 +653,8 @@ impl AcpSession {
     if self.remote_folder().is_some() {
       return self.vendor == Vendor::Claude;
     }
-    cfg!(unix) && c.proc.as_ref().is_some_and(|p| p.pid.is_some())
+    // A live process to search below: the session's own agent, or a summoned child's while its round runs
+    cfg!(unix) && (c.proc.as_ref().is_some_and(|p| p.pid.is_some()) || c.relays.procs.values().any(|rp| rp.proc.pid.is_some()))
   }
 
   /// The goal controls the running agent advertises (`vendors::goal::actions`)
