@@ -32,6 +32,8 @@ final class PairingModel {
   /// What a probe (or the followed computer's live wire) last said about each computer
   private(set) var presence: [String: Presence] = [:]
   private(set) var link: PairLink = .idle
+  /// Where the followed computer's last dial stopped, while its failure shows
+  private(set) var diagnosis: ConnectionDiagnosis?
   /// The followed computer, kept across launches
   private(set) var selectedId: String?
   /// The add-computer sheet over the list
@@ -129,6 +131,8 @@ final class PairingModel {
   func connectSelected(resuming: Bool = false) {
     failures = 0
     if !resuming { reconnecting = false }
+    // Another computer's, or a tap on Retry: the dial about to run tells anew
+    diagnosis = nil
     dial(quiet: false)
   }
 
@@ -155,12 +159,15 @@ final class PairingModel {
           return
         }
         computers = updated
+        diagnosis = nil
         connection = wire
         wiredAt = .now
         onConnection?(computer, wire)
         watch(wire, of: computer)
       } catch {
+        let stopped = await service.diagnosis(of: computer)
         guard !Task.isCancelled, selected?.id == computer.id else { return }
+        diagnosis = stopped
         ended(error as? ConnectionError ?? .other(error.localizedDescription), computer.id)
       }
     }
@@ -185,6 +192,9 @@ final class PairingModel {
   func connectionEnded(_ error: ConnectionError, of wire: any PairedConnection) {
     guard let id = selected?.id, let connection, connection as AnyObject === wire as AnyObject else { return }
     watching?.cancel()
+    // A wire that opened and then failed in words of its own (the computer's engine ended) left no failed dial to
+    // tell: the computer answered, its Acpira did not carry on
+    if case .other(let said) = error { diagnosis = ConnectionDiagnosis(stop: .notReady, detail: said) }
     ended(error, id)
   }
 

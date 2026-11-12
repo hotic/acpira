@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use acpira_gateway::gateway::{Gateway, Opts};
 use acpira_host::sidecar::server::{Engine, ServerOpts};
-use acpira_mobile::{ComputerAddr, DeviceType, Link, LinkEvent, LinkFailure, LinkPath, Node, PairFailure, RelayChoice, decode_link, generate_key, protocol_version};
+use acpira_mobile::{ComputerAddr, DeviceType, DialStep, Link, LinkEvent, LinkFailure, LinkPath, Node, PairFailure, RelayChoice, decode_link, generate_key, protocol_version};
 use acpira_net::endpoint::Relays;
 use serde_json::{Value, json};
 
@@ -143,8 +143,12 @@ fn pairs_by_link_reaches_the_engine_and_learns_it_was_revoked() {
       Err(LinkFailure::Incompatible { message }) => assert!(message.contains("update Acpira on the computer"), "{message}"),
       other => panic!("{:?}", other.map(|_| ())),
     }
+    // The report carries the computer's version, and goes with the dial that opens a link
+    let report = node.dial_report(to.id.clone()).unwrap();
+    assert_eq!((report.step, report.protocol), (DialStep::Greeting, Some(protocol_version())));
 
     let l = node.connect(to.clone(), protocol_version(), 10_000).await.unwrap();
+    assert_eq!(node.dial_report(to.id.clone()), None);
     assert_eq!(l.welcome().protocol_version, protocol_version());
     assert_eq!(l.welcome().name, desk.g.name());
     l.send(hello()).await.unwrap();
@@ -229,6 +233,8 @@ fn a_computer_nobody_answers_for_is_offline() {
         Err(e) => assert_eq!(e, LinkFailure::Offline),
         Ok(_) => panic!("connected to nobody"),
       }
+      // The report says the dial itself went unanswered
+      assert_eq!(node.dial_report(stranger.clone()).map(|r| r.step), Some(DialStep::Dial));
       assert!(t.elapsed() < Duration::from_secs(5), "the deadline holds: {:?}", t.elapsed());
     }
     assert_eq!(

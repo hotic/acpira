@@ -93,9 +93,13 @@ fn pairs_and_talks_to_the_engine_through_the_binding() {
 
     let mismatch = call::connect(node.clone(), at.clone(), protocol_version() + 1, 10_000).await;
     assert!(mismatch.err().unwrap().starts_with("Incompatible: "));
+    // The failed dial is told with how far it got, until one opens a link
+    let report = call::dial_report(&node, at.id.clone()).unwrap();
+    assert_eq!((report.step.as_str(), report.protocol), ("greeting", Some(protocol_version())));
 
     let l = call::connect(node.clone(), Computer { id: paired.id, relay: paired.relay, addrs: paired.addrs }, protocol_version(), 10_000).await.unwrap();
     assert_eq!(bridge::Greeting::from(l.welcome()).protocol_version, protocol_version());
+    assert_eq!(call::dial_report(&node, at.id.clone()), None);
     // Two envelopes in one write, as EngineClient may queue them
     let hello = json!({
       "type": "hello", "protocolVersion": protocol_version(), "requestId": "hello-1",

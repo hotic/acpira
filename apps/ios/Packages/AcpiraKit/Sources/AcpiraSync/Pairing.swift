@@ -81,6 +81,47 @@ public enum ConnectionError: Error, Equatable, Sendable {
   case other(String)
 }
 
+/// Where the last dial to a paired computer stopped: the failure page's sentence, and the report its owner can copy and
+/// send. It sits beside `ConnectionError`, which alone decides what is dialed again
+public struct ConnectionDiagnosis: Equatable, Sendable {
+  public enum Stop: String, Sendable {
+    /// This device has no network at all
+    case network
+    /// The computer did not answer and this device reached no relay: only a shared network joins the two
+    case relay
+    /// The computer did not answer the dial: asleep, off, Acpira not running, or remote access off
+    case unanswered
+    /// The computer answered, then its Acpira closed the link or greeted nobody (starting, stopping, restarting)
+    case notReady
+    /// The two speak different protocol versions: the computer's Acpira is the older one, this app is, or it is not
+    /// known which
+    case computerOlder, appOlder, incompatible
+  }
+
+  public var stop: Stop
+  /// What the connection said, in its own words (English)
+  public var detail: String
+  /// Whether this device's relay was connected when the dial failed; nil when nothing was dialed or relays are off
+  public var relayConnected: Bool?
+  /// How long the dial ran
+  public var tookMs: Int?
+  /// The computer's Acpira and protocol versions, when its gateway greeted
+  public var computerVersion: String?
+  public var computerProtocol: Int?
+  public var at: Date
+
+  public init(stop: Stop, detail: String, relayConnected: Bool? = nil, tookMs: Int? = nil, computerVersion: String? = nil,
+              computerProtocol: Int? = nil, at: Date = .now) {
+    self.stop = stop
+    self.detail = detail
+    self.relayConnected = relayConnected
+    self.tookMs = tookMs
+    self.computerVersion = computerVersion
+    self.computerProtocol = computerProtocol
+    self.at = at
+  }
+}
+
 /// A wire to a paired computer's engine: envelopes like any other transport, plus the path it travels on
 public protocol PairedConnection: EngineTransport {
   /// The current path first, then every change, until the connection ends
@@ -136,6 +177,9 @@ public protocol PairingService: AnyObject, Sendable {
   /// Whether a paired computer answers right now and over which path, without opening an engine wire: the title menu
   /// and the settings list show it for every computer, not only the one the app follows. nil: not known
   func presence(of computer: PairedComputer) async -> Presence?
+  /// Where the last `connect` to this computer stopped; nil once one opened a wire, before any failed, or when the
+  /// computer removed this phone (that page says it all)
+  func diagnosis(of computer: PairedComputer) async -> ConnectionDiagnosis?
 }
 
 /// A paired computer's state as a probe saw it
@@ -150,4 +194,5 @@ public enum Presence: Hashable, Sendable {
 extension PairingService {
   /// A service without a cheap probe says nothing; the screens then show a computer's state once connected to it
   public func presence(of computer: PairedComputer) async -> Presence? { nil }
+  public func diagnosis(of computer: PairedComputer) async -> ConnectionDiagnosis? { nil }
 }

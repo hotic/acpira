@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import cc.hotic.acpira.i18n.t
+import cc.hotic.acpira.sync.ConnectionDiagnosis
 import cc.hotic.acpira.sync.ConnectionError
 import cc.hotic.acpira.sync.PairedComputer
 import cc.hotic.acpira.sync.PairedConnection
@@ -45,6 +46,9 @@ class PairingModel(val service: PairingService, context: Context, private val sc
   /** What a probe (or the followed computer's live wire) last said about each computer */
   val presence = mutableStateMapOf<String, Presence>()
   var link by mutableStateOf<PairLink>(PairLink.Idle)
+    private set
+  /** Where the followed computer's last dial stopped, while its failure shows */
+  var diagnosis by mutableStateOf<ConnectionDiagnosis?>(null)
     private set
   /** The followed computer, kept across launches */
   private var selectedId by mutableStateOf<String?>(null)
@@ -119,6 +123,8 @@ class PairingModel(val service: PairingService, context: Context, private val sc
   fun connectSelected() {
     failures = 0
     reconnecting = false
+    // Another computer's, or a tap on Retry: the dial about to run tells anew
+    diagnosis = null
     dial(quiet = false)
   }
 
@@ -139,10 +145,14 @@ class PairingModel(val service: PairingService, context: Context, private val sc
     dialing = scope.launch {
       try {
         val wire = service.connect(computer)
+        // The service may have learned the computer's name or version from the greeting
+        val updated = service.computers()
         if (selected?.id != computer.id) {
           wire.close()
           return@launch
         }
+        computers = updated
+        diagnosis = null
         connection = wire
         wiredAt = now()
         onConnection?.invoke(computer, wire)
@@ -150,7 +160,9 @@ class PairingModel(val service: PairingService, context: Context, private val sc
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
+        val stopped = service.diagnosis(computer)
         if (selected?.id != computer.id) return@launch
+        diagnosis = stopped
         ended(e as? ConnectionError ?: ConnectionError.Other(e.message ?: e.toString()), computer.id)
       }
     }
@@ -178,6 +190,9 @@ class PairingModel(val service: PairingService, context: Context, private val sc
     val id = selected?.id ?: return
     if (connection !== wire) return
     watching?.cancel()
+    // A wire that opened and then failed in words of its own (the computer's engine ended) left no failed dial to
+    // tell: the computer answered, its Acpira did not carry on
+    if (error is ConnectionError.Other) diagnosis = ConnectionDiagnosis(ConnectionDiagnosis.Stop.notReady, error.message.orEmpty())
     ended(error, id)
   }
 

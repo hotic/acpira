@@ -1,7 +1,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Module } from '../../cpp/types/libacpira_mobile_ohos/index';
 
-export { Computer, Greeting, Link, LinkEvent, Module, NamedComputer, Node, Relays } from '../../cpp/types/libacpira_mobile_ohos/index';
+export { Computer, DialReport, Greeting, Link, LinkEvent, Module, NamedComputer, Node, Relays } from '../../cpp/types/libacpira_mobile_ohos/index';
 
 // The paired-remote library (rust/crates/acpira-mobile-ohos, `libacpira_mobile_ohos.so` from scripts/build-net.sh) as
 // ArkTS sees it: the N-API surface of its src/napi.rs, typed by hand in cpp/types/libacpira_mobile_ohos/index.d.ts.

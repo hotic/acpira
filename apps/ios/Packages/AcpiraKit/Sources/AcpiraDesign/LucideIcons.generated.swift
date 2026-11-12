@@ -50,6 +50,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case columns3
   case compass
   case copy
+  case copySlash
   case crosshair
   case download
   case ellipsis
@@ -64,6 +65,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case fileJson
   case fileMusic
   case filePen
+  case filePlus
   case fileText
   case fileVideo
   case fileX
@@ -74,6 +76,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case folderOpen
   case folderPen
   case folderPlus
+  case folderSearch
   case folderTree
   case gitBranch
   case gitCommitHorizontal
@@ -86,6 +89,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case history
   case house
   case image
+  case imageIcon
   case imagePlus
   case `import`
   case inbox
@@ -151,7 +155,6 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case server
   case settings
   case settings2
-  case share
   case shieldAlert
   case shieldOff
   case shieldX
@@ -241,6 +244,7 @@ extension LucideIcon {
     case .columns3: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .path("M9 3v18"), .path("M15 3v18")]
     case .compass: [.circle(cx: 12, cy: 12, r: 10), .path("m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z")]
     case .copy: [.rect(x: 8, y: 8, width: 14, height: 14, rx: 2), .path("M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2")]
+    case .copySlash: [.line(x1: 12, y1: 18, x2: 18, y2: 12), .rect(x: 8, y: 8, width: 14, height: 14, rx: 2), .path("M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2")]
     case .crosshair: [.circle(cx: 12, cy: 12, r: 10), .line(x1: 22, y1: 12, x2: 18, y2: 12), .line(x1: 6, y1: 12, x2: 2, y2: 12), .line(x1: 12, y1: 6, x2: 12, y2: 2), .line(x1: 12, y1: 22, x2: 12, y2: 18)]
     case .download: [.path("M12 15V3"), .path("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"), .path("m7 10 5 5 5-5")]
     case .ellipsis: [.circle(cx: 12, cy: 12, r: 1), .circle(cx: 19, cy: 12, r: 1), .circle(cx: 5, cy: 12, r: 1)]
@@ -255,6 +259,7 @@ extension LucideIcon {
     case .fileJson: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"), .path("M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1")]
     case .fileMusic: [.path("M11.65 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v10.35"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M8 20v-7l3 1.474"), .circle(cx: 6, cy: 20, r: 2)]
     case .filePen: [.path("M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z")]
+    case .filePlus: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M9 15h6"), .path("M12 18v-6")]
     case .fileText: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M10 9H8"), .path("M16 13H8"), .path("M16 17H8")]
     case .fileVideo: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("M15.033 13.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56v-4.704a.645.645 0 0 1 .967-.56z")]
     case .fileX: [.path("M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"), .path("M14 2v5a1 1 0 0 0 1 1h5"), .path("m14.5 12.5-5 5"), .path("m9.5 12.5 5 5")]
@@ -265,6 +270,7 @@ extension LucideIcon {
     case .folderOpen: [.path("m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2")]
     case .folderPen: [.path("M2 11.5V5a2 2 0 0 1 2-2h3.9c.7 0 1.3.3 1.7.9l.8 1.2c.4.6 1 .9 1.7.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-9.5"), .path("M11.378 13.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z")]
     case .folderPlus: [.path("M12 10v6"), .path("M9 13h6"), .path("M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z")]
+    case .folderSearch: [.path("M10.7 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v4.1"), .path("m21 21-1.9-1.9"), .circle(cx: 17, cy: 17, r: 3)]
     case .folderTree: [.path("M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"), .path("M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"), .path("M3 5a2 2 0 0 0 2 2h3"), .path("M3 3v13a2 2 0 0 0 2 2h3")]
     case .gitBranch: [.path("M15 6a9 9 0 0 0-9 9V3"), .circle(cx: 18, cy: 6, r: 3), .circle(cx: 6, cy: 18, r: 3)]
     case .gitCommitHorizontal: [.circle(cx: 12, cy: 12, r: 3), .line(x1: 3, y1: 12, x2: 9, y2: 12), .line(x1: 15, y1: 12, x2: 21, y2: 12)]
@@ -277,6 +283,7 @@ extension LucideIcon {
     case .history: [.path("M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"), .path("M3 3v5h5"), .path("M12 7v5l4 2")]
     case .house: [.path("M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"), .path("M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z")]
     case .image: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .circle(cx: 9, cy: 9, r: 2), .path("m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21")]
+    case .imageIcon: [.rect(x: 3, y: 3, width: 18, height: 18, rx: 2), .circle(cx: 9, cy: 9, r: 2), .path("m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21")]
     case .imagePlus: [.path("M16 5h6"), .path("M19 2v6"), .path("M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"), .path("m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"), .circle(cx: 9, cy: 9, r: 2)]
     case .`import`: [.path("M12 3v12"), .path("m8 11 4 4 4-4"), .path("M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4")]
     case .inbox: [.polyline([22, 12, 16, 12, 14, 15, 10, 15, 8, 12, 2, 12]), .path("M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z")]
@@ -342,7 +349,6 @@ extension LucideIcon {
     case .server: [.rect(x: 2, y: 2, width: 20, height: 8, rx: 2), .rect(x: 2, y: 14, width: 20, height: 8, rx: 2), .line(x1: 6, y1: 6, x2: 6.01, y2: 6), .line(x1: 6, y1: 18, x2: 6.01, y2: 18)]
     case .settings: [.path("M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"), .circle(cx: 12, cy: 12, r: 3)]
     case .settings2: [.path("M14 17H5"), .path("M19 7h-9"), .circle(cx: 17, cy: 17, r: 3), .circle(cx: 7, cy: 7, r: 3)]
-    case .share: [.path("M12 2v13"), .path("m16 6-4-4-4 4"), .path("M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8")]
     case .shieldAlert: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("M12 8v4"), .path("M12 16h.01")]
     case .shieldOff: [.path("m2 2 20 20"), .path("M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.94a1 1 0 0 0 .67.01c2.35-.82 4.48-1.97 5.9-3.71"), .path("M9.309 3.652A12.252 12.252 0 0 0 11.24 2.28a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1v7a9.784 9.784 0 0 1-.08 1.264")]
     case .shieldX: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("m14.5 9.5-5 5"), .path("m9.5 9.5 5 5")]

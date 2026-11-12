@@ -35,6 +35,20 @@ export interface LinkEvent {
   what?: string;
 }
 
+/** The last failed dial to a computer, for a failure page that says where it stopped */
+export interface DialReport {
+  /** `dial` (the computer never answered) or `greeting` (it answered; its gateway closed, stayed silent or refused) */
+  step: string;
+  /** What the connection said, in its own words (English) */
+  detail: string;
+  /** Whether this device's home relay was connected when the dial failed; absent with relays off */
+  relayConnected?: boolean;
+  tookMs: number;
+  /** The computer's Acpira and protocol versions, when its gateway greeted */
+  version?: string;
+  protocol?: number;
+}
+
 /** `n0`, `custom` (urls, token) or `off` */
 export interface Relays {
   mode: string;
@@ -70,6 +84,8 @@ export interface Node {
   pairLink(link: string, name: string, kind: string, version: string, withinMs: number): Promise<NamedComputer>;
   pairCode(computer: Computer, code: string, name: string, kind: string, version: string, withinMs: number): Promise<NamedComputer>;
   connect(computer: Computer, protocolVersion: number, withinMs: number): Promise<Link>;
+  /** How the last dial to this computer failed; null once a dial opened a link, or before any failed */
+  dialReport(computerId: string): DialReport | null;
   close(): Promise<void>;
 }
 

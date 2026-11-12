@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import cc.hotic.acpira.model.SidecarProtocol
+import cc.hotic.acpira.sync.ConnectionDiagnosis
 import cc.hotic.acpira.sync.ConnectionError
 import cc.hotic.acpira.sync.NearbyComputer
 import cc.hotic.acpira.sync.PairedComputer
@@ -29,6 +30,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.acpira_mobile.ComputerAddr
 import uniffi.acpira_mobile.DeviceType
+import uniffi.acpira_mobile.DialReport
+import uniffi.acpira_mobile.DialStep
 import uniffi.acpira_mobile.Link
 import uniffi.acpira_mobile.Node
 import uniffi.acpira_mobile.RelayChoice
@@ -70,6 +73,8 @@ class RemotePairingService(
   /** When the network last dropped away entirely, while it stays away */
   private var offlineSince: Long? = null
   private val live = HashMap<String, RemoteConnection>()
+  /** Where the last failed [connect] to each computer stopped, dropped by the next one that opens a wire */
+  private val diagnoses = HashMap<String, ConnectionDiagnosis>()
   /** Computers being dialed now: the gateway keeps one connection per device, so a probe must never dial one of them */
   private val dialing = HashMap<String, Int>()
   /** The path each computer was last reached on, for the probe deadline */
@@ -130,12 +135,17 @@ class RemotePairingService(
   }
 
   override suspend fun connect(computer: PairedComputer): PairedConnection {
-    if (network?.satisfied == false) throw ConnectionError.Other(NO_NETWORK)
+    if (network?.satisfied == false) {
+      lock.withLock { diagnoses[computer.id] = ConnectionDiagnosis(ConnectionDiagnosis.Stop.network, NO_NETWORK) }
+      throw ConnectionError.Other(NO_NETWORK)
+    }
     val node = try {
       liveNode()
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
+      // A fixed sentence: the node's own error may name the relay's address
+      lock.withLock { diagnoses[computer.id] = ConnectionDiagnosis(ConnectionDiagnosis.Stop.unanswered, NODE_DOWN) }
       throw connectionError(e)
     }
     // The stored entry carries the addresses later links reported; the caller's copy may be older
@@ -149,8 +159,14 @@ class RemotePairingService(
       throw e
     } catch (e: Exception) {
       // The short LAN deadline was a guess: this Wi-Fi may not be the computer's, so the next dial waits for the relay
-      if (within < RELAY_PROBE_MS) lock.withLock { lastPath.remove(computer.id) }
-      throw connectionError(e)
+      val failed = connectionError(e)
+      val report = runCatching { node.dialReport(known.id) }.getOrNull()
+      lock.withLock {
+        if (within < RELAY_PROBE_MS) lastPath.remove(computer.id)
+        val told = diagnose(failed, report, viaRelay = within >= RELAY_PROBE_MS)
+        if (told != null) diagnoses[computer.id] = told else diagnoses.remove(computer.id)
+      }
+      throw failed
     } finally {
       lock.withLock { dialing[computer.id] = (dialing[computer.id] ?: 1) - 1 }
     }
@@ -162,15 +178,19 @@ class RemotePairingService(
       ended = { scope.launch { lock.withLock { live.remove(key) } } },
     )
     val connection = RemoteConnection(link, id, scope, hooks)
+    val version = link.welcome().version.ifEmpty { null }
     lock.withLock {
+      diagnoses.remove(id)
       live[key] = connection
-      if (known.name != connection.computerName) {
-        list = list.map { if (it.id == id) it.copy(name = connection.computerName) else it }
+      if (known.name != connection.computerName || known.version != version) {
+        list = list.map { if (it.id == id) it.copy(name = connection.computerName, version = version) else it }
         runCatching { store.save(list) }
       }
     }
     return connection
   }
+
+  override suspend fun diagnosis(computer: PairedComputer): ConnectionDiagnosis? = lock.withLock { diagnoses[computer.id] }
 
   /**
    * A live connection answers for its computer; otherwise a link is dialed and greeted within the probe deadline and
@@ -406,6 +426,35 @@ class RemotePairingService(
   private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
   companion object {
+    /**
+     * A failed dial as the failure page tells it: the report says how far it got. A relay that is down only explains an
+     * unanswered dial that waited for it ([viaRelay]): a node's relay comes up a moment after the node, and the short
+     * LAN probe ends before it
+     */
+    internal fun diagnose(error: ConnectionError, report: DialReport?, viaRelay: Boolean): ConnectionDiagnosis? {
+      if (error == ConnectionError.Revoked || error == ConnectionError.Suspended) return null
+      if (report == null) return ConnectionDiagnosis(ConnectionDiagnosis.Stop.unanswered, error.message ?: error.toString())
+      val theirs = report.protocol
+      val stop = if (error is ConnectionError.Incompatible) {
+        when {
+          theirs == null -> ConnectionDiagnosis.Stop.incompatible
+          theirs > SidecarProtocol.VERSION.toLong() -> ConnectionDiagnosis.Stop.appOlder
+          else -> ConnectionDiagnosis.Stop.computerOlder
+        }
+      } else {
+        when (report.step) {
+          DialStep.DIAL -> if (viaRelay && report.relayConnected == false) ConnectionDiagnosis.Stop.relay else ConnectionDiagnosis.Stop.unanswered
+          DialStep.GREETING -> ConnectionDiagnosis.Stop.notReady
+        }
+      }
+      return ConnectionDiagnosis(
+        stop, report.detail, relayConnected = report.relayConnected, tookMs = report.tookMs.toLong(),
+        computerVersion = report.version?.ifEmpty { null }, computerProtocol = theirs,
+      )
+    }
+
+    /** What a dial reports when this device's node did not start */
+    const val NODE_DOWN = "this device's node did not start"
     /** What a connection reports while the device has no network at all */
     const val NO_NETWORK = "no network"
     const val BACKGROUND_GRACE_MS = 20_000L

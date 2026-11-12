@@ -169,6 +169,13 @@ nonisolated final class PreviewPairingService: PairingService {
     try? await wait(0.3)
     return reachNow(computer.id)
   }
+
+  /// An offline fixture computer never answered its dial (`-pairing.stop` names another stop for screenshots)
+  func diagnosis(of computer: PairedComputer) async -> ConnectionDiagnosis? {
+    guard reachNow(computer.id) == .offline else { return nil }
+    let stop = UserDefaults.standard.string(forKey: "pairing.stop").flatMap(ConnectionDiagnosis.Stop.init) ?? .unanswered
+    return ConnectionDiagnosis(stop: stop, detail: "no answer within 15 s", relayConnected: stop != .relay, tookMs: 15_004)
+  }
 }
 
 /// A wire that carries nothing: the path once, then silence until closed

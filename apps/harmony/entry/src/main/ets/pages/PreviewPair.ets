@@ -6,14 +6,14 @@ import { PairingModel, PairLink } from '../store/PairingModel';
 import { PairingService, Presence } from '../remote/PairingService';
 import { ConnectionError } from '../remote/PairedTransport';
 import { PairedComputer } from '../remote/Stores';
-import { ComputersPage, PairConnect } from './Pairing';
+import { ComputersPage, PairConnect, PairDiagnosisSheet } from './Pairing';
 import { PairSheet } from './PairSheet';
 import { SessionList } from './SessionList';
 import { WelcomeFlow } from './Welcome';
 
-// The pairing screens as phone-wide frames side by side for the Previewer (scripts/preview.sh <out> 3780 1170 dark
-// pages/PreviewPair 240): the connect frame empty and offline, the add sheet, the code page, the computers page, the
-// first run's pairing step and the list following a computer. The Previewer has no remote access library, so the camera
+// The pairing screens as phone-wide frames side by side for the Previewer (scripts/preview.sh <out> 3600 975 dark
+// pages/PreviewPair 200): the connect frame empty and offline, the failure's report, the add sheet, the code page, the
+// computers page, the first run's pairing step and the list following a computer. The Previewer has no remote access library, so the camera
 // card shows its unavailable state and nothing dials. Not reached from the app's own pages.
 
 /** A phone's width in vp (1080 px at 480 dpi) */
@@ -41,8 +41,9 @@ struct PairScene {
       const away: Presence = { kind: 'offline' };
       pairing.presence = new Map<string, Presence>([[AIR.id, away]]);
     }
-    if (this.scene === 'offline') {
+    if (this.scene === 'offline' || this.scene === 'details') {
       pairing.link = new PairLink('failed', undefined, new ConnectionError('Offline', ''));
+      pairing.diagnosis = { stop: 'relay', detail: 'no answer within 15 s', relayConnected: false, tookMs: 15004, at: 0 };
     } else if (this.scene === 'computers' || this.scene === 'list') {
       pairing.link = new PairLink('online', 'lan');
     }
@@ -56,6 +57,8 @@ struct PairScene {
       if (this.pairing !== undefined) {
         if (this.scene === 'none' || this.scene === 'offline') {
           PairConnect({ pairing: this.pairing })
+        } else if (this.scene === 'details' && this.pairing.selected !== undefined && this.pairing.diagnosis !== undefined) {
+          PairDiagnosisSheet({ computer: this.pairing.selected, diagnosis: this.pairing.diagnosis })
         } else if (this.scene === 'sheet') {
           PairSheet({ pairing: this.pairing })
         } else if (this.scene === 'code') {
@@ -85,7 +88,7 @@ struct PreviewPair {
 
   build() {
     Row() {
-      ForEach(['none', 'offline', 'sheet', 'code', 'computers', 'welcome', 'list'], (scene: string) => {
+      ForEach(['none', 'offline', 'details', 'sheet', 'code', 'computers', 'welcome', 'list'], (scene: string) => {
         PairScene({ scene: scene })
       }, (scene: string) => scene)
     }
