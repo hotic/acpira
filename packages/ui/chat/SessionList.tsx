@@ -277,7 +277,7 @@ export interface SessionListProps {
   onNewChat?: () => void;
 }
 
-// The drag payload's type: only rows of this list carry it, so files or text dragged in are left alone
+// The drag payload's type: WebKit starts no drag without data. Telling a row's drag goes by `held`, not by this type
 const DRAG_TYPE = 'application/x-acpira-session';
 // A drop zone's marks, set by the drag handlers straight on the DOM (`paint`), never by a render. `data-hot` frames the
 // zone: a thin light outline drawn inset (never shifts layout) around the whole block, header and children. `data-insert`
@@ -596,7 +596,9 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   };
   const end = () => { setHeld(undefined); over.current = undefined; unpaint(); };
   const onDragOver = (e: DragEvent) => {
-    if (!held || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
+    // `held` alone tells a row's drag: the desktop app's WKWebView may list "Files" and leave the payload's type out of
+    // `types` (the column's folder frame lit while no zone did)
+    if (!held) return;
     const target = e.target as Element;
     // The margin between two zones (above a project) belongs to none: the pointer keeps the zone it came from on its way
     // to the next, instead of the frame blinking off and the cursor flipping to "no drop" in between

@@ -799,7 +799,19 @@ export function Shell(p: ShellProps) {
   const pathForFile = desktop ? droppedPathResolver() : undefined;
   // Linux: the drag's files exist only as the shell's paths (VsCodeApi.dragPaths)
   const dragPaths = desktop ? hostDragPaths() : undefined;
-  const carriesFiles = (dt: DataTransfer) => dt.types.includes('Files') || !!dragPaths?.().length;
+  // A drag that began on the page (a session or project row, selected text) never carries the OS's files, yet the desktop
+  // app's WKWebView lists "Files" in its types: the frame lit for every row drag and took its drop. Only a page drag fires
+  // dragstart here; a press clears a flag whose dragend never arrived (a source removed mid-drag)
+  const pageDrag = useRef(false);
+  useEffect(() => {
+    const on = () => { pageDrag.current = true; };
+    const off = () => { pageDrag.current = false; };
+    addEventListener('dragstart', on, true);
+    addEventListener('dragend', off, true);
+    addEventListener('pointerdown', off, true);
+    return () => { removeEventListener('dragstart', on, true); removeEventListener('dragend', off, true); removeEventListener('pointerdown', off, true); };
+  }, []);
+  const carriesFiles = (dt: DataTransfer) => !pageDrag.current && (dt.types.includes('Files') || !!dragPaths?.().length);
   const folderDrop = pathForFile && {
     onDragOver: (e: DragEvent) => {
       if (!carriesFiles(e.dataTransfer)) return;
