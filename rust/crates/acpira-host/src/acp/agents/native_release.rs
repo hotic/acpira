@@ -118,8 +118,21 @@ impl NativeRelease {
     (cmd, args)
   }
 
+  /// `installs/<agent>` in the data root. An install made while the folder was still `agents` (one letter from the
+  /// built-in agent's `agent`) moves over on first use; one that cannot move yet (Windows, while its binary runs) is
+  /// used where it is
   pub fn dir(&self, root: &Path) -> PathBuf {
-    root.join("agents").join(self.agent)
+    let installs = root.join("installs");
+    let dir = installs.join(self.agent);
+    let legacy = root.join("agents").join(self.agent);
+    if !dir.exists() && legacy.is_dir() {
+      if std::fs::create_dir_all(&installs).and_then(|()| std::fs::rename(&legacy, &dir)).is_err() {
+        return legacy;
+      }
+      // Gone only when that was its last agent
+      let _ = std::fs::remove_dir(root.join("agents"));
+    }
+    dir
   }
 
   /// The version `current` points at, when that install is complete
@@ -662,6 +675,21 @@ mod tests {
     let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     v.sort();
     v
+  }
+
+  #[test]
+  fn an_install_under_the_old_folder_name_moves_over() {
+    let tmp = tempfile::tempdir().unwrap();
+    let old = tmp.path().join("agents/antigravity");
+    std::fs::create_dir_all(old.join("1.0.0")).unwrap();
+    std::fs::write(old.join("current"), "1.0.0\n").unwrap();
+    let dir = ANTIGRAVITY.dir(tmp.path());
+    assert_eq!(dir, tmp.path().join("installs/antigravity"));
+    assert_eq!(listing(&dir), ["1.0.0", "current"]);
+    assert!(!tmp.path().join("agents").exists());
+    // A later install under the new name is never replaced by a leftover of the old one
+    std::fs::create_dir_all(old.join("0.9.0")).unwrap();
+    assert_eq!(listing(&ANTIGRAVITY.dir(tmp.path())), ["1.0.0", "current"]);
   }
 
   #[test]

@@ -341,7 +341,7 @@ fn antigravity_is_a_native_release_installed_by_this_executable() {
   assert!(AgentRegistry::new(&json!({ "antigravity": { "command": "/x/agy" } })).get("antigravity").unwrap().release.is_none());
 }
 
-// The sidecar looks in $ACPIRA_HOME/agents/antigravity/<current>/ first and re-reads `current` on every pass
+// The sidecar looks in $ACPIRA_HOME/installs/antigravity/<current>/ first and re-reads `current` on every pass
 #[cfg(unix)]
 #[test]
 fn the_managed_antigravity_install_is_found_through_current() {
@@ -352,7 +352,7 @@ fn the_managed_antigravity_install_is_found_through_current() {
     let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     j["agents"].as_array().unwrap().iter().find(|a| a["id"] == "antigravity").unwrap()["binary"].clone()
   };
-  let dir = home.path().join("agents/antigravity");
+  let dir = home.path().join("installs/antigravity");
   for version in ["1.2.0", "1.2.1"] {
     std::fs::create_dir_all(dir.join(version)).unwrap();
     let launcher = dir.join(version).join("agy_acp_server.par");
