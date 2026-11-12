@@ -1087,6 +1087,7 @@ export const ko = {
   'settings.providers.checkOk': '연결됨',
   'settings.providers.fetching': '모델을 가져오는 중…',
   'settings.providers.addModel': '모델 추가',
+  'settings.providers.newModels': '새 모델: {count}',
   'settings.providers.addModel.search': '검색하거나 모델 ID 입력',
   'settings.providers.addModel.typeId': '모델 ID를 입력해 추가할 수 있어요',
   'settings.providers.addModel.useId': '“{id}” 추가',

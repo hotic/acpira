@@ -197,6 +197,58 @@ fn ok(body: Value) -> Reply {
   Reply::Status(200, body.to_string())
 }
 
+#[test]
+fn service_tiers_flag_the_fast_models_and_absence_leaves_them_undecided() {
+  // Codex-style gateway listings name tiers per model; fast-capable models carry `priority` or `fast`
+  assert_eq!(listed(json!({ "id": "gpt-6.1-sol", "service_tiers": [{ "id": "default" }, { "id": "priority", "name": "Fast" }] })).fast, Some(true));
+  let strings = listed(json!({ "id": "grok-4.7", "service_tiers": ["default", "priority"] }));
+  assert_eq!(strings.fast, Some(true));
+  // The tier may be spelled out either way, upper case or with padding
+  assert_eq!(listed(json!({ "id": "m", "service_tiers": [" FAST "] })).fast, Some(true));
+  // A list that only names the standard tier is a listing, and it rules fast out
+  assert_eq!(listed(json!({ "id": "gpt-6-astra", "service_tiers": [{ "id": "default" }] })).fast, Some(false));
+  // Not listing tiers at all, or listing them some other shape, leaves the flag undecided
+  assert_eq!(listed(json!({ "id": "plain" })).fast, None);
+  assert_eq!(listed(json!({ "id": "plain", "service_tiers": "priority" })).fast, None);
+}
+
+#[test]
+fn the_listing_flag_carries_into_the_model() {
+  assert_eq!(model(json!({ "id": "m", "service_tiers": ["priority"] })).fast_listed, Some(true));
+  assert_eq!(model(json!({ "id": "m", "service_tiers": [{ "id": "default" }] })).fast_listed, Some(false));
+  assert_eq!(model(json!({ "id": "m" })).fast_listed, None);
+}
+
+#[tokio::test]
+async fn discover_carries_the_listing_flags_to_fast_listed() {
+  let server = MockModel::start();
+  // The gateway lists `service_tiers` on the models it serves fast; the fast-excluded ones go without it
+  server.push(ok(json!({ "object": "list", "data": [
+    { "id": "grok-4.7", "service_tiers": ["default", "priority"] },
+    { "id": "gpt-6.1-sol", "service_tiers": [{ "id": "default" }, { "id": "priority", "name": "Fast" }] },
+    { "id": "gpt-6-astra" }] })));
+  // Plain OpenAI omits `service_tiers` on every model
+  server.push(ok(json!({ "object": "list", "data": [{ "id": "gpt-6.1-sol" }, { "id": "gpt-6-astra" }] })));
+  // The same listing with duplicate entries in both orders: the claim wins either way
+  server.push(ok(json!({ "object": "list", "data": [
+    { "id": "dup" }, { "id": "dup", "service_tiers": ["priority"] },
+    { "id": "dup-rev", "service_tiers": ["priority"] }, { "id": "dup-rev" }] })));
+  let p = provider("openai-chat", &server.base_url(), "custom");
+  let http = acpira_agent::llm::default_http();
+  let models = tokio::task::spawn_blocking(move || {
+    let discover = |http: &ureq::Agent| discover::discover(http, &p, None, &catalog()).unwrap();
+    (discover(&http), discover(&http), discover(&http))
+  }).await.unwrap();
+  let flag = |list: &Vec<ProviderModel>, id: &str| list.iter().find(|m| m.id == id).unwrap().fast_listed;
+  // Some entry listed tiers: the fast ones get `Some(true)`, the unlisted ones an explicit `Some(false)`
+  assert_eq!((flag(&models.0, "gpt-6.1-sol"), flag(&models.0, "grok-4.7"), flag(&models.0, "gpt-6-astra")),
+    (Some(true), Some(true), Some(false)));
+  // No entry lists tiers: every model keeps the flag undecided
+  assert_eq!((flag(&models.1, "gpt-6.1-sol"), flag(&models.1, "gpt-6-astra")), (None, None));
+  // The duplicate's claim survives the merge in both orders
+  assert_eq!((flag(&models.2, "dup"), flag(&models.2, "dup-rev")), (Some(true), Some(true)));
+}
+
 #[tokio::test]
 async fn anthropic_lists_follow_pages_with_its_headers() {
   let server = MockModel::start();

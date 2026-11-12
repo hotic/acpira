@@ -1120,6 +1120,7 @@ export const en = {
   'settings.providers.checkOk': 'Connected',
   'settings.providers.fetching': 'Fetching models…',
   'settings.providers.addModel': 'Add model',
+  'settings.providers.newModels': 'New models: {count}',
   'settings.providers.addModel.search': 'Search, or type a model id',
   'settings.providers.addModel.typeId': 'Type a model id to add it',
   'settings.providers.addModel.useId': 'Add “{id}”',

@@ -1094,6 +1094,7 @@ export const de = {
   'settings.providers.checkOk': 'Verbunden',
   'settings.providers.fetching': 'Modelle werden abgerufen…',
   'settings.providers.addModel': 'Modell hinzufügen',
+  'settings.providers.newModels': 'Neue Modelle: {count}',
   'settings.providers.addModel.search': 'Suchen oder Modell-ID eingeben',
   'settings.providers.addModel.typeId': 'Modell-ID eingeben, um es hinzuzufügen',
   'settings.providers.addModel.useId': '„{id}“ hinzufügen',

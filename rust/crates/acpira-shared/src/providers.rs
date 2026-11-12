@@ -214,10 +214,14 @@ pub struct ProviderModel {
   /// The prompt / request family pinned for this model; None matches automatically
   #[serde(default)]
   pub family: Option<String>,
-  /// Whether the session offers a Fast switch (the provider's premium speed tier): None decides from the API format and
-  /// the model id (`acpira_agent::llm::fast`), true / false override that
+  /// Whether the session offers a Fast switch (the provider's premium speed tier): None decides from the endpoint's
+  /// listing and the known model id list (`acpira_agent::llm::fast`), true / false override both
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub fast: Option<bool>,
+  /// Whether the endpoint's model list advertised a fast tier (`service_tiers`) for this model; consulted while `fast`
+  /// is `None`
+  #[serde(default, rename = "fastListed", skip_serializing_if = "Option::is_none")]
+  pub fast_listed: Option<bool>,
   #[serde(default)]
   pub sampling: Sampling,
   /// Tool-call rounds per turn before the agent pauses; None = no cap
@@ -255,6 +259,7 @@ impl ProviderModel {
       efforts: vec![],
       family: None,
       fast: None,
+      fast_listed: None,
       sampling: Sampling::default(),
       max_steps: None,
       estimated: vec![],

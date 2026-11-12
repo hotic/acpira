@@ -106,17 +106,19 @@ export function AgentDialog(p: AgentSettingsProps & {
   const version = inventory?.runtime?.version ?? inventory?.adapter?.adapter?.version;
   const sub = agent.id === BUILTIN_AGENT_ID ? t('settings.plugins.bundled') : agent.available === false ? t('settings.plugins.notInstalled') : version;
   const refresh = t('settings.agent.refresh');
+  // Counts clicks on the refresh: the sources tab asks every source for its model list on each
+  const [detect, setDetect] = useState(0);
   return (
     <SettingsDialog wide tall icon={<AgentMark id={agent.id} name={agent.name} />} title={agent.name} sub={sub} onClose={p.onClose}
       control={<Switch checked={p.enabled} disabled={p.last && p.enabled} onChange={p.onEnabled} label={t('settings.agent.enabled', { agent: agent.name })} />}
       footer={<>
-        <SectionActionLeft icon={<RefreshCw strokeWidth={1.75} className={cn(p.busy && 'animate-spin live-spin')} />} disabled={p.busy} onClick={() => p.on.refreshAgent(agent.id)}>{refresh}</SectionActionLeft>
+        <SectionActionLeft icon={<RefreshCw strokeWidth={1.75} className={cn(p.busy && 'animate-spin live-spin')} />} disabled={p.busy} onClick={() => { setDetect(n => n + 1); p.on.refreshAgent(agent.id); }}>{refresh}</SectionActionLeft>
         <span className="flex-1" />
         <Button variant="primary" onClick={p.onClose}>{t('common.done')}</Button>
       </>}>
       <DialogBody>
         <Tabs label={t('settings.agent.title', { agent: agent.name })} items={tabs} value={shown} onChange={setTab} />
-        <AgentSettings {...p} tab={shown} />
+        <AgentSettings {...p} tab={shown} detect={detect} />
       </DialogBody>
     </SettingsDialog>
   );
@@ -133,7 +135,7 @@ function SectionActionLeft({ icon, onClick, disabled, children }: { icon: ReactN
 }
 
 // One tab's blocks. The reads it needs run while the dialog is open: the inventory once, the quotas every minute
-export function AgentSettings({ agent, accounts, install, inventory, controls, providers, settings, env, on, onShared, tab }: AgentSettingsProps & { tab: AgentTab }) {
+export function AgentSettings({ agent, accounts, install, inventory, controls, providers, settings, env, on, onShared, tab, detect }: AgentSettingsProps & { tab: AgentTab; detect?: number }) {
   useEffect(() => { if (!inventory) on.refreshInventory(agent.id); }, [agent.id, inventory, on]);
   // Re-read when the dialog opens and whenever the set of accounts changes (a login finishes while it is open)
   const accountKey = accounts.map(a => a.id).join();
@@ -162,7 +164,7 @@ export function AgentSettings({ agent, accounts, install, inventory, controls, p
     case 'prompts': return <PromptsTab {...sources} />;
     case 'skills': return <SkillsTab {...sources} />;
     case 'mcp': return <McpTab {...sources} />;
-    case 'sources': return <ProvidersSection state={providers} on={on} />;
+    case 'sources': return <ProvidersSection state={providers} on={on} detect={detect} />;
     case 'behavior': return <>
       <BehaviorTab state={providers} on={on} />
       <SshHostSection agent={agent} settings={settings} on={on} />

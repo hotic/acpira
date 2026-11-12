@@ -33,6 +33,8 @@ pub struct Listed {
   pub reasoning: Option<bool>,
   /// The effort levels the endpoint lists for the model, in its order and spelling
   pub efforts: Option<Vec<String>>,
+  /// Whether `service_tiers` on the entry named a fast / priority tier; None when the entry had no `service_tiers` list
+  pub fast: Option<bool>,
   /// An embedding / speech / image model: no use as a chat model
   pub not_chat: bool,
 }
@@ -193,6 +195,13 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
       .iter()
       .any(|p| matches!(p.as_str(), "enablereasoning" | "enableadaptivethinking" | "reasoningbudgettoken" | "opus47effort" | "thinkinglevel"));
   let efforts = listed_efforts(e);
+  // OpenAI's `service_tier` naming, as gateways list it: each element is a string ("priority", "fast") or an object
+  // ({ "id": "priority", "name": "Fast" }); a tier named priority / fast marks the model as fast-capable
+  let tier = |v: &Value| v.as_str().or_else(|| v.get("id").and_then(Value::as_str)).map(|s| s.trim().to_lowercase());
+  let fast = e
+    .get("service_tiers")
+    .and_then(Value::as_array)
+    .map(|tiers| tiers.iter().filter_map(tier).any(|t| matches!(t.as_str(), "priority" | "fast")));
   let reasoning = if flagged || efforts.is_some() || params.iter().any(|p| p == "reasoning" || p == "include_reasoning") || caps.iter().any(|c| c == "thinking") {
     Some(true)
   } else {
@@ -211,7 +220,7 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
     .map(|n| n.strip_prefix("models/").unwrap_or(n).trim())
     .find(|n| !n.is_empty() && *n != id)
     .map(str::to_owned);
-  Some(Listed { id, name, context, output, images, tools, reasoning, efforts, not_chat })
+  Some(Listed { id, name, context, output, images, tools, reasoning, efforts, fast, not_chat })
 }
 
 /// The effort levels a listing reports, where gateways put them: `capabilities.reasoning.effort` (a list of levels),
@@ -284,6 +293,7 @@ pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
   if m.name.is_none() {
     m.name = entry.map(|c| c.name.clone()).filter(|n| n != &listed.id);
   }
+  m.fast_listed = listed.fast;
   m.estimated = estimated.into_iter().map(str::to_owned).collect();
   m
 }
@@ -336,7 +346,25 @@ pub fn discover(http: &ureq::Agent, provider: &Provider, api_key: Option<&str>, 
     listed.retain(|l| !l.not_chat);
   }
   listed.sort_by(|a, b| a.id.cmp(&b.id));
-  listed.dedup_by(|a, b| a.id == b.id);
+  // Fast is a capability, not a setting: a duplicate listing keeps the claim
+  listed.dedup_by(|a, b| {
+    if a.id == b.id {
+      b.fast = match (a.fast, b.fast) {
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        (f, None) => f,
+        (None, f) => f,
+        _ => Some(false),
+      };
+    }
+    a.id == b.id
+  });
+  // Codex-style gateways list `service_tiers` only on the models they serve with a fast tier (plain OpenAI never lists
+  // it at all), so an entry without the list means "not offered" once another entry in the same listing carries it
+  if listed.iter().any(|l| l.fast.is_some()) {
+    for l in &mut listed {
+      l.fast = Some(l.fast == Some(true));
+    }
+  }
   let mut models: Vec<ProviderModel> = listed.iter().map(|l| complete_for(provider, l, catalog)).collect();
   // Ollama reports the model's trained window, not the `num_ctx` it serves with: still an estimate
   if local == Some(Local::Ollama) {
