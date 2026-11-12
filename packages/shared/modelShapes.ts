@@ -11,6 +11,18 @@ export function isModelControl(c: Pick<ConfigControl, 'id' | 'category'>): boole
   return c.category === 'model' || (!c.category && c.id === 'model');
 }
 
+// A model id without its trailing `[…]` hint (`fable[1m]` → `fable`)
+const bare = (id: string) => /^(.+)\[[^[]*\]$/.exec(id)?.[1] ?? id;
+
+// The offered option a model id picked on another native session stands for on this one. An agent can spell one model
+// differently per session (Claude lists Fable 5.2 as `fable` on a resumed session and `fable[1m]` on a fresh one), so an
+// id the select lacks falls back to the only option that differs by its `[…]` hint; none when that is ambiguous
+export function offeredModel(model: Pick<ConfigControl, 'options'>, value: string | undefined): string | undefined {
+  if (value === undefined || model.options.some(o => o.id === value)) return value;
+  const same = model.options.filter(o => bare(o.id) === bare(value));
+  return same.length === 1 ? same[0]!.id : undefined;
+}
+
 // Structure only: a value change (another effort picked) is not a new shape and must not rewrite the shared prefs file
 const structure = (controls: ConfigControl[]) => JSON.stringify(controls.map(c => [c.id, c.category, c.type, c.options.map(o => o.id)]));
 
