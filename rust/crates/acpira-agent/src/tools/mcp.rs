@@ -81,6 +81,7 @@ mod tests {
       mcp: Default::default(),
       history: Default::default(),
       scratch: None,
+      path: None,
     }
   }
 

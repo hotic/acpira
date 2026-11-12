@@ -118,7 +118,7 @@ impl Jobs {
       return self.start_tty(command_line, workdir, ctx).await;
     }
     let mut cmd = command(command_line, workdir);
-    crate::scratch::apply(ctx.scratch.as_deref(), |k, v| {
+    ctx.command_env(|k, v| {
       cmd.env(k, v);
     });
     let mut child = match cmd.spawn() {
@@ -178,7 +178,7 @@ impl Jobs {
       let (cols, rows) = TTY_SIZE;
       let pair = portable_pty::native_pty_system().openpty(portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
       let mut cmd = tty_command(command_line, workdir);
-      crate::scratch::apply(ctx.scratch.as_deref(), |k, v| cmd.env(k, v));
+      ctx.command_env(|k, v| cmd.env(k, v));
       let mut child = pair.slave.spawn_command(cmd)?;
       // The child holds the only slave end: once it and its own children are gone, the reader sees the end
       drop(pair.slave);
@@ -515,7 +515,7 @@ mod tests {
   use super::*;
 
   fn ctx(dir: &Path) -> Ctx {
-    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "j".into(), progress: std::sync::Arc::new(|_| {}), jobs: Arc::new(Jobs::default()), search: Default::default(), mcp: Default::default(), history: Default::default(), scratch: None }
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "j".into(), progress: std::sync::Arc::new(|_| {}), jobs: Arc::new(Jobs::default()), search: Default::default(), mcp: Default::default(), history: Default::default(), scratch: None, path: None }
   }
 
   #[tokio::test]

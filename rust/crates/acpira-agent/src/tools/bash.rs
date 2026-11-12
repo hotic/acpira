@@ -178,7 +178,7 @@ pub(crate) fn command(command: &str, workdir: &Path) -> tokio::process::Command 
 
 pub async fn run(command_line: &str, workdir: &Path, timeout_ms: u64, ctx: &Ctx) -> Output {
   let mut cmd = command(command_line, workdir);
-  crate::scratch::apply(ctx.scratch.as_deref(), |k, v| {
+  ctx.command_env(|k, v| {
     cmd.env(k, v);
   });
   let mut child = match cmd.spawn() {
@@ -301,6 +301,7 @@ mod tests {
       mcp: Default::default(),
       history: Default::default(),
       scratch: None,
+      path: None,
     }
   }
 
@@ -331,6 +332,34 @@ mod tests {
     assert!(!marker.exists(), "the background child was killed with the group");
   }
 
+  #[tokio::test]
+  async fn a_skills_bin_command_runs_by_name() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let (home, work) = (dir.path().join("home"), dir.path().join("work"));
+    std::fs::create_dir_all(work.join(".git")).unwrap();
+    let skill = home.join(".agents/skills/greet");
+    std::fs::create_dir_all(skill.join("bin")).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "---\nname: greet\n---\nRun `greet-cli`.\n").unwrap();
+    let bin = skill.join("bin/greet-cli");
+    std::fs::write(&bin, "#!/bin/sh\necho hello from the skill\n").unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // A skill without a bin folder adds nothing
+    std::fs::create_dir_all(work.join(".agents/skills/plain")).unwrap();
+    std::fs::write(work.join(".agents/skills/plain/SKILL.md"), "---\nname: plain\n---\n").unwrap();
+    let dirs = crate::skills::bin_dirs(&crate::prompt::Places::new(&work, Some(&home)));
+    assert_eq!(dirs, [skill.join("bin")]);
+    let mut c = ctx(&work, Default::default());
+    c.path = crate::skills::path_with(&dirs);
+    let out = run("greet-cli && command -v ls", &work, 5_000, &c).await;
+    assert!(!out.is_error && out.model.contains("hello from the skill"), "{}", out.model);
+    // The inherited PATH comes first, so the system's commands still win
+    let path = c.path.unwrap();
+    let parts: Vec<_> = std::env::split_paths(&path).collect();
+    assert_eq!(parts.last(), Some(&skill.join("bin")));
+    assert_eq!(crate::skills::path_with(&[]), None);
+  }
+
   #[test]
   fn utf8_is_never_split() {
     let mut d = Utf8Tail::default();
@@ -349,7 +378,7 @@ mod windows_tests {
 
   fn ctx(dir: &Path) -> Ctx {
     let seen = Arc::new(parking_lot::Mutex::new(String::new()));
-    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: std::sync::Arc::new(move |u| seen.lock().push_str(u.to_string().as_str())), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default(), scratch: None }
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: std::sync::Arc::new(move |u| seen.lock().push_str(u.to_string().as_str())), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default(), scratch: None, path: None }
   }
 
   #[tokio::test]
