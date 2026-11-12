@@ -105,11 +105,12 @@ pub(super) fn save(connection: &mut Connection, id: &str, parts: &RecordParts, c
   }
   let summary = serde_json::to_string(&parts.summary)?;
   let tx = connection.transaction()?;
-  // The catalogue row comes first: the item rows refer to it
+  // The catalogue row comes first: the item rows refer to it. A session that is saved is listed: a mark left by a
+  // reconcile that missed its file goes, or the search would skip the body until the next reconcile
   if summary != cache.summary {
     tx.execute(
       "INSERT INTO session (id, summary, body) VALUES (?1, ?2, 'db')
-       ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, body = 'db'",
+       ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, body = 'db', trashed_at = NULL",
       params![id, summary],
     )?;
   }

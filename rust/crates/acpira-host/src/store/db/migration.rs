@@ -11,6 +11,9 @@ use crate::i18n::t;
 
 pub const MIGRATED_FILE: &str = "record.pre-db.json.zst";
 const MARK: &str = "acpira-sqlite:";
+/// Set on every stub written here. An older engine keeps only the record fields it knows, so a stub without it was
+/// rewritten by one
+const WRITER_FIELD: &str = "sqliteStub";
 
 pub fn is_placeholder(turn: &Turn) -> bool {
   turn.as_agent().and_then(|turn| turn.blocks.first()).is_some_and(|block| matches!(block, AgentBlock::Text(text) if text.id.as_deref().is_some_and(|id| id.starts_with(MARK))))
@@ -46,6 +49,17 @@ pub fn is_stub(raw: &[u8]) -> bool {
     })
 }
 
+/// Whether an older engine wrote this stub last (`WRITER_FIELD`)
+pub fn rewritten(raw: &[u8]) -> bool {
+  #[derive(Deserialize)]
+  #[serde(rename_all = "camelCase")]
+  struct Lite {
+    #[serde(default)]
+    sqlite_stub: bool,
+  }
+  serde_json::from_slice::<Lite>(raw).is_ok_and(|stub| !stub.sqlite_stub)
+}
+
 /// Merge a compatibility stub with the current database body. Turns and subagents an older engine added after the
 /// placeholder win over their archived counterparts, matching cold-pack splicing.
 pub fn splice(mut stub: SessionRecord, archived: SessionRecord) -> Result<SessionRecord> {
@@ -70,19 +84,25 @@ pub fn splice(mut stub: SessionRecord, archived: SessionRecord) -> Result<Sessio
 }
 
 /// A database body with what an older engine added to its compatibility stub: turns after the placeholder, subagents,
-/// and the stub's own fields when it was written later than the body (a rename there). A stub nobody touched adds
-/// nothing, however old its fields are: this store refreshes it lazily, and the body is the record
-pub fn merge(body: SessionRecord, mut stub: SessionRecord) -> Result<SessionRecord> {
+/// and the stub's own fields when it was written later than the body. A list edit there (rename, pin, archive, filing)
+/// writes the record without moving `updatedAt`: a stub an older engine wrote last (`rewritten`) gives those fields. A
+/// stub nobody touched adds nothing, however old its fields are: this store refreshes it lazily, and the body is the
+/// record
+pub fn merge(body: SessionRecord, mut stub: SessionRecord, rewritten: bool) -> Result<SessionRecord> {
   let Some(at) = stub.turns.iter().position(is_placeholder) else { return Ok(body) };
-  if stub.turns.len() == at + 1 && stub.subagents.is_none() && stub.updated_at <= body.updated_at {
-    return Ok(body);
-  }
   if stub.updated_at > body.updated_at {
     return splice(stub, body);
   }
-  // The body's fields are the newer ones: only the additions come over
+  // The body's fields are the newer ones: only the list edits and the additions come over
   let later = stub.turns.split_off(at + 1);
   let mut merged = body;
+  if rewritten {
+    merged.title = stub.title;
+    merged.renamed = stub.renamed;
+    merged.pinned = stub.pinned;
+    merged.archived = stub.archived;
+    merged.category = stub.category;
+  }
   if !merged.turns.ends_with(&later) {
     merged.turns.extend(later);
   }
@@ -120,6 +140,7 @@ pub fn stub(head: &[u8], names: &[String]) -> Result<Vec<u8>> {
   let mut value: Value = serde_json::from_slice(head)?;
   let object = value.as_object_mut().ok_or_else(|| anyhow!("session record is not an object"))?;
   object.insert("turns".into(), serde_json::to_value([placeholder])?);
+  object.insert(WRITER_FIELD.into(), Value::Bool(true));
   // None and an empty list both deserialize to no visible subagents; omitting keeps the old file smaller.
   object.shift_remove("subagents");
   Ok(serde_json::to_vec(&value)?)
@@ -147,7 +168,9 @@ mod tests {
     let text = String::from_utf8(raw).unwrap();
     assert!(text.contains(MIGRATED_FILE) && text.contains("blob.png"));
     assert!(!text.contains("secret transcript") && !text.contains("child"));
-    assert!(is_stub(text.as_bytes()));
+    assert!(is_stub(text.as_bytes()) && !rewritten(text.as_bytes()));
+    // An older engine reads the record into the fields it knows and writes those back
+    assert!(rewritten(&serde_json::to_vec(&stub).unwrap()));
     // A transcript that only talks about the mark is a whole record
     assert!(!is_stub(format!(r#"{{"id":"s","turns":[{{"role":"user","text":"{MARK}"}}]}}"#).as_bytes()));
   }
