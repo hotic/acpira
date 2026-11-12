@@ -129,11 +129,23 @@ impl SessionManager {
   async fn patch_record(&self, id: &str, patch: impl FnOnce(&mut SessionRecord)) -> Result<()> {
     let Some(mut r) = self.deps.store.load(id).await else { return Ok(()) };
     patch(&mut r);
+    // A list edit claims the copied record without launching an agent; keep a synced built-in log resumable.
+    if r.copy_of.is_some() {
+      self.prepare_copy_takeover(&mut r);
+      r.updated_at = crate::util::now_iso();
+    }
     if let Err(e) = self.deps.store.flush(Arc::new(r.clone())).await {
       self.log(&format!("session {id}: save failed ({e})"));
       return Err(anyhow!(tp("host.saveFailed", &[("error", &e.to_string())])));
     }
     self.replace_summary(&r);
+    if let Some(mirror) = self.mirror_of(id) {
+      let mut shown = r.clone();
+      self.apply_copy_picks(&mut shown);
+      let replacement = AcpSession::standby(shown, self.mirror_deps(), self.next_mirror_rev(), mirror.epoch);
+      self.state.lock().mirrors.insert(id.to_owned(), replacement.clone());
+      self.emit_session(&replacement);
+    }
     // Open nowhere, so no engine announces it: the others read the list again
     self.bus.touch("index");
     Ok(())
@@ -164,10 +176,6 @@ impl SessionManager {
     if let Some(summary) = snapshot {
       self.state.lock().deleting.insert(id.to_owned(), summary);
     }
-    // Not every foreign copy has been opened here: check the record as well as the mirror before asking any owner to yield.
-    if self.deps.store.load(id).await.is_some_and(|r| r.copy_of.is_some_and(|c| c.machine != crate::remote::host_store::this_machine().0)) {
-      return Err(anyhow!(t("host.sessionBusyElsewhere")));
-    }
     let hold = self.hold_deletion(id).await?;
     if let Some(live) = self.live(id) {
       live.cancel_for_handover().await;
@@ -192,12 +200,7 @@ impl SessionManager {
     // Read only after taking the lease: this is the former owner's last record. A second deleting engine must not
     // arm a timer from its stale list entry when the first one has already moved the record to the trash.
     let sum = match self.deps.store.load_detailed(id).await {
-      Ok(record) => {
-        if record.copy_of.as_ref().is_some_and(|c| c.machine != crate::remote::host_store::this_machine().0) {
-          return Err(anyhow!(t("host.sessionBusyElsewhere")));
-        }
-        Some(record.summary())
-      }
+      Ok(record) => Some(record.summary()),
       Err(error) if error.is_missing() => None,
       Err(error) => return Err(anyhow!(error.detail())),
     };
@@ -261,6 +264,9 @@ impl SessionManager {
       st.health_seen.remove(id);
       st.dirty.remove(id);
       st.mirrors.remove(id);
+      st.copies.remove(id);
+      st.copy_picks.remove(id);
+      st.pending_copies.remove(id);
       st.idle_since.remove(id);
       let live = st.live.remove(id);
       if live.is_some() {

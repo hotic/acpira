@@ -21,6 +21,7 @@ use crate::fake_or_skip;
 use crate::support::{FakeAgent, expect_match, turns_in, until, v};
 
 mod persistence;
+mod continuity;
 mod agents;
 mod viewers;
 mod prefs;

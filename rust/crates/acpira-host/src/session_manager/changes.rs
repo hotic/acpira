@@ -20,6 +20,12 @@ impl SessionManager {
   pub(super) fn process_change(&self, id: &str) {
     let Some(s) = self.live(id) else { return };
     self.learn_shape_of(&s);
+    let ready = s.status() == SessionStatus::Ready;
+    let promoted = {
+      let mut st = self.state.lock();
+      ready && !st.loading.contains_key(id) && st.pending_copies.remove(id)
+    };
+    if promoted { s.mark_owned(); }
     let sum = s.summary();
     {
       let mut st = self.state.lock();
@@ -32,7 +38,9 @@ impl SessionManager {
       }
       sort_index(&mut st.index);
     }
-    self.deps.store.save(s.clone() as Arc<dyn RecordSource>);
+    if !self.state.lock().pending_copies.contains(id) {
+      self.deps.store.save(s.clone() as Arc<dyn RecordSource>);
+    }
     self.save_index();
     let running = s.is_running();
     let idle_edge = {

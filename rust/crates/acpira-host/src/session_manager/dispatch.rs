@@ -68,7 +68,8 @@ impl SessionManager {
     s
   }
 
-  pub async fn edit_turn(&self, edit: EditTurnRequest) -> Result<()> {
+  pub async fn edit_turn(self: &Arc<Self>, edit: EditTurnRequest) -> Result<()> {
+    self.promote_copy(&edit.session_id).await?;
     if let Some(result) = self.edit_on_host(&edit).await {
       return result;
     }
@@ -180,6 +181,34 @@ impl SessionManager {
   pub(super) async fn dispatch(self: &Arc<Self>, v: &Arc<Viewer>, m: WebviewMsg) -> Result<()> {
     use WebviewMsg as W;
     let target_id = session_id_of(&m).or_else(|| v.active_id());
+    // Picker changes on standby stay process-free and survive later disk updates.
+    if let Some(id) = target_id.as_deref().filter(|id| self.state.lock().copies.contains(*id)) {
+      let pick = match &m {
+        W::SetMode { id, .. } => Some((None, id.as_str())),
+        W::SetConfig { config_id, value, .. } => Some((Some(config_id.as_str()), value.as_str())),
+        _ => None,
+      };
+      if let Some((config, value)) = pick {
+        let _op = self.session_op(id).await;
+        if let Some(s) = self.mirror_of(id) {
+          s.standby_pick(config, value)?;
+          let mut st = self.state.lock();
+          let picks = st.copy_picks.entry(id.to_owned()).or_default();
+          match config {
+            Some(key) => { picks.config.insert(key.to_owned(), value.to_owned()); }
+            None => picks.mode_id = Some(value.to_owned()),
+          }
+          drop(st);
+          self.emit_session(&s);
+          return Ok(());
+        }
+      }
+    }
+    if is_execution(&m) && !matches!(m, W::SetMode { .. } | W::SetConfig { .. } | W::Stop { .. })
+      && let Some(id) = target_id.as_deref()
+    {
+      self.promote_copy(id).await?;
+    }
     // Shown here read-only while another engine owns it and pushes its view: the action runs there
     if let Some(tid) = &target_id
       && is_forwarded(&m)
@@ -192,6 +221,7 @@ impl SessionManager {
     // entry. An owner that cannot take it (off the bus, older) leaves the edit to the refusal below
     if let Some(id) = list_edit_target(&m)
       && self.live(id).is_none()
+      && !self.state.lock().copies.contains(id)
       && self.bus.connected()
       && (self.mirror_of(id).is_some() || self.leases.held_elsewhere(id))
       && self.forward(id, &m).await.is_ok()

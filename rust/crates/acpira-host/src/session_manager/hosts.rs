@@ -27,6 +27,7 @@ use acpira_shared::transcript::{ConfigControl, SessionSummary, SlashCommand};
 
 use super::{SessionManager, Viewer, is_forwarded, remote_view, session_id_of};
 use crate::remote::client::Event;
+use crate::store::record::SessionRecord;
 use crate::remote::peer::{PeerHello, PeerLink};
 
 /// How long one attempt waits for the host's helper channel
@@ -491,6 +492,64 @@ impl SessionManager {
       self.save_host_list(alias, &items);
       self.emit_sessions();
     }
+  }
+
+  /// Retire a source-side record after its host took ownership. A running turn is never cut off by reconciliation.
+  pub async fn retire_host_copy(self: &Arc<Self>, id: &str, host: &SessionRecord) -> Result<()> {
+    let op = self.session_op(id).await;
+    if !self.yielding.lock().insert(id.to_owned()) {
+      return Err(anyhow!("the local session is handing over"));
+    }
+    // Block new prompt claims while snapshots and blobs are copied, including across filesystem awaits.
+    struct Retiring<'a>(&'a parking_lot::Mutex<HashSet<String>>, String);
+    impl Drop for Retiring<'_> {
+      fn drop(&mut self) { self.0.lock().remove(&self.1); }
+    }
+    let _retiring = Retiring(&self.yielding, id.to_owned());
+    let pin = match self.leases.claim(id) {
+      crate::store::session_lease::Claim::Held(pin) => pin,
+      _ => return Err(anyhow!("the local session is held by another engine")),
+    };
+    let hold = super::leases::LeaseHold { leases: &self.leases, id, pin };
+    let live = self.live(id);
+    if live.as_ref().is_some_and(|s| s.in_flight()) {
+      return Err(anyhow!("the local turn has not settled"));
+    }
+    let local = match &live {
+      Some(s) => Some(s.to_record()),
+      None => self.deps.store.load(id).await,
+    };
+    if let Some(local) = &local {
+      crate::remote::host_store::preserve_branch(&self.deps.store, local, host).await?;
+    }
+    let alias = local.as_ref().and_then(|r| parse_remote_folder(&r.cwd)).map(|f| f.alias);
+    let viewers = self.viewers_on(id, None);
+    self.forget(id);
+    let closing = self.state.lock().closing.get(id).cloned();
+    if let Some(mut closing) = closing { let _ = closing.wait_for(|done| *done).await; }
+    self.deps.store.remove(id).await;
+    {
+      let mut st = self.state.lock();
+      st.index.retain(|s| s.id != id);
+      for items in st.elsewhere.values_mut() { items.retain(|s| s.id != id); }
+    }
+    self.sync_leases();
+    self.refresh_index().await;
+    self.emit_sessions();
+    drop(hold);
+    // The host may not have republished its list yet. Seed its authoritative summary before reopening viewers, or a
+    // transiently empty peer list would turn this deliberate retirement into an ordinary missing-record fallback.
+    if let Some(run) = alias.as_ref().and_then(|a| self.hosts.runs.lock().get(a).cloned()) {
+      let mut summary = host.summary();
+      summary.cwd = local_folder(&run.alias, &summary.cwd);
+      let mut items = run.items.lock();
+      items.retain(|s| s.id != id);
+      items.push(summary);
+      drop(items);
+    }
+    drop(op);
+    for viewer in viewers { self.select_session_for(&viewer, id).await; }
+    Ok(())
   }
 
   /// The host engines this engine is connected to, with their pids

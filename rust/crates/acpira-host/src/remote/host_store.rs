@@ -2,7 +2,7 @@
 //! whichever run mode is used. A session this engine drives in a host folder (local run) keeps its record here, written
 //! by its owner as any session's, and a copy goes into the host's store with the folder as the host names it, so the
 //! host's engine lists it beside its own and remote run, the host's other clients and other machines see one history.
-//! The copy names this machine (`copyOf`): every other engine shows it read-only, so only this machine ever writes it.
+//! The copy names this machine (`copyOf`): the host follows it without a process until a local action takes ownership.
 //!
 //! `serve` is the helper's side (the host's store, through the same `TranscriptStore` code); `HostMirror` this engine's:
 //! told of every record change by the store, it sends the copies of host folders' records in batches while the host is
@@ -10,7 +10,7 @@
 //! existed. A copy never replaces one the host updated later, nor one deleted there and still in its trash
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use acpira_shared::remote::{ConnectionState, ConnectionView, parse_remote_folder};
+use acpira_shared::transcript::Turn;
 
 use super::client::RemoteClient;
 use super::connections::Connections;
@@ -67,6 +68,19 @@ pub(super) async fn call_with_body(client: &RemoteClient, op: &str, a: Value, by
   Ok(call.collect().await.map_err(|e| anyhow!("{e}"))?.value)
 }
 
+fn gunzip(bytes: &[u8]) -> Result<Vec<u8>> {
+  let mut raw = vec![];
+  flate2::read::GzDecoder::new(bytes).take(MAX_BODY as u64 + 1).read_to_end(&mut raw)?;
+  if raw.len() > MAX_BODY { return Err(anyhow!("the expanded body is too large")); }
+  Ok(raw)
+}
+
+fn gzip(bytes: &[u8]) -> Result<Vec<u8>> {
+  let mut gz = flate2::write::GzEncoder::new(vec![], flate2::Compression::new(6));
+  gz.write_all(bytes)?;
+  Ok(gz.finish()?)
+}
+
 /// The helper's store operations on this host's sessions directory
 pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result<Value, WireError> {
   let root = a.get("home").and_then(Value::as_str).map(PathBuf::from).unwrap_or_else(crate::store::data_dir::acpira_home);
@@ -86,11 +100,32 @@ pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedRece
     // A record copy, gzipped JSON as the body; answers whether it was written and the blobs the session has here
     "storePut" => {
       let gz = body(stdin).await?;
-      let mut raw = vec![];
-      std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&gz[..]), &mut raw).map_err(|e| WireError::new("invalid", format!("not gzip: {e}")))?;
+      let raw = gunzip(&gz).map_err(|e| WireError::new("invalid", e.to_string()))?;
       let record: SessionRecord = serde_json::from_slice(&raw).map_err(|e| WireError::new("invalid", format!("not a session record: {e}")))?;
-      let written = store.put_copy(&record).await.map_err(failed)?;
-      Ok(json!({ "written": written, "blobs": store.blob_names(&record.id).await }))
+      // The built-in agent's log the host has is of the copy being replaced: it goes with that copy, and the log of
+      // this one follows (`storeAgentLog`). Until it does a promotion hands the transcript over, never the old context
+      let log = (record.agent == "acpira").then_some(record.acp_session_id.as_deref()).flatten().filter(|sid| is_session_id(sid)).map(|sid| root.join("agent/sessions").join(format!("{sid}.jsonl")));
+      let written = store.put_copy(&record, log.as_deref()).await.map_err(failed)?;
+      let stamps = store.copy_stamps(std::slice::from_ref(&record.id)).await;
+      let taken_over = stamps.get(&record.id).is_some_and(|s| s.copy_of.as_ref().map(|c| &c.machine) != record.copy_of.as_ref().map(|c| &c.machine));
+      Ok(json!({ "written": written, "takenOver": taken_over, "blobs": store.blob_names(&record.id).await }))
+    }
+    "storeAgentLog" => {
+      let id = id_arg()?;
+      let session = a.get("sessionId").and_then(Value::as_str).filter(|s| is_session_id(s)).ok_or_else(|| WireError::new("invalid", "invalid sessionId"))?;
+      let bytes = gunzip(&body(stdin).await?).map_err(|e| WireError::new("invalid", e.to_string()))?;
+      let leases = crate::store::session_lease::SessionLeases::new(&root, Arc::new(|_: &str| {}));
+      if !matches!(leases.claim(session), crate::store::session_lease::Claim::Held(_)) {
+        return Ok(json!({ "written": false }));
+      }
+      let record = store.load(session).await.ok_or_else(|| WireError::new("notFound", "session record missing"))?;
+      if record.copy_of.is_none() || record.agent != "acpira" || record.acp_session_id.as_deref() != Some(&id) {
+        return Ok(json!({ "written": false, "takenOver": record.copy_of.is_none() }));
+      }
+      let dir = root.join("agent/sessions");
+      tokio::fs::create_dir_all(&dir).await.map_err(|e| WireError::io(&e, "agent sessions"))?;
+      write_atomic(&dir.join(format!("{id}.jsonl")), &bytes, None).await.map_err(failed)?;
+      Ok(json!({ "written": true }))
     }
     // One blob of a session, named by its content as every blob is: a name that does not match the bytes is refused. A
     // diff text blob is named by the text it holds compressed (`store::diff_texts`)
@@ -109,11 +144,28 @@ pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedRece
     }
     // A session deleted where it ran: its copy and blobs go, from the trash too
     "storeRemove" => {
-      store.remove(&id_arg()?).await;
+      let id = id_arg()?;
+      let leases = crate::store::session_lease::SessionLeases::new(&root, Arc::new(|_: &str| {}));
+      if !matches!(leases.claim(&id), crate::store::session_lease::Claim::Held(_)) {
+        return Ok(json!({ "written": false }));
+      }
+      if store.load(&id).await.is_some_and(|r| r.copy_of.is_none()) {
+        return Ok(json!({ "takenOver": true }));
+      }
+      store.remove(&id).await;
       Ok(json!({}))
     }
     other => Err(WireError::new("unknownOp", format!("unknown operation \"{other}\""))),
   }
+}
+
+/// A complete record sent in bulk frames, never squeezed into the helper's bounded response line.
+pub(crate) async fn get_record(a: &Value) -> Result<Vec<u8>, WireError> {
+  let root = a.get("home").and_then(Value::as_str).map(PathBuf::from).unwrap_or_else(crate::store::data_dir::acpira_home);
+  let id = a.get("id").and_then(Value::as_str).filter(|id| is_session_id(id)).ok_or_else(|| WireError::new("invalid", "invalid session id"))?;
+  let store = TranscriptStore::new(root.join("sessions"), Arc::new(|_: &str| {}), None);
+  let record = store.load_detailed(id).await.map_err(|e| WireError::new("notFound", e.detail()))?;
+  gzip(&serde_json::to_vec(&record).map_err(|e| WireError::new("io", e.to_string()))?).map_err(|e| WireError::new("io", e.to_string()))
 }
 
 /// One blob of a session in this host's store opened for `storeBlobGet`, with its length: the store confines both names
@@ -128,6 +180,48 @@ pub(crate) async fn open_blob(a: &Value) -> Result<(tokio::fs::File, u64), WireE
     return Err(WireError::io(&e, name));
   }
   store.open_blob(id, name).await.map_err(|e| WireError::new("io", format!("{e:#}")))
+}
+
+/// Whether the host's turns open with every local one. Ignore presentation-only live state.
+fn turns_within(local: &[Turn], host: &[Turn]) -> bool {
+  local.len() <= host.len() && local.iter().zip(host).all(|(a, b)| match (a, b) {
+    (Turn::User(a), Turn::User(b)) => a.text == b.text && a.attachments == b.attachments,
+    (Turn::Agent(a), Turn::Agent(b)) => a.blocks == b.blocks,
+    _ => false,
+  })
+}
+
+/// True only when every retained local turn is already present on the host, a subagent's as much as the session's own:
+/// a subagent still writing after the last copy leaves the session's turns as the host has them.
+fn is_prefix(local: &SessionRecord, host: &SessionRecord) -> bool {
+  let there = host.subagents.as_deref().unwrap_or_default();
+  turns_within(&local.turns, &host.turns)
+    && local.subagents.iter().flatten().all(|mine| {
+      mine.turns.is_empty() || there.iter().any(|theirs| theirs.core.id == mine.core.id && turns_within(&mine.turns, &theirs.turns))
+    })
+}
+
+/// Save the losing branch before retiring an identity. A copy failure leaves the original intact for a later retry.
+pub(crate) async fn preserve_branch(store: &TranscriptStore, local: &SessionRecord, host: &SessionRecord) -> Result<Option<String>> {
+  if is_prefix(local, host) { return Ok(None); }
+  let mut branch = local.clone();
+  branch.id = crate::util::random_uuid();
+  branch.acp_session_id = None;
+  branch.copy_of = None;
+  branch.history_pending = !branch.turns.is_empty();
+  branch.history_context = branch.history_pending;
+  branch.forked_from = Some(crate::store::record::ForkedFrom {
+    session_id: local.id.clone(), turn_index: local.turns.len() as i64 - 1, agent: None, model: None,
+  });
+  branch.created_at = crate::util::now_iso();
+  branch.updated_at = branch.created_at.clone();
+  for name in store.blob_names(&local.id).await {
+    let bytes = store.read_blob(&local.id, &name).await?;
+    store.put_blob(&branch.id, &name, bytes).await?;
+  }
+  let id = branch.id.clone();
+  store.flush(Arc::new(branch)).await?;
+  Ok(Some(id))
 }
 
 /// Told about deletions on a host (`alias`): a session id as it is deleted here, so the host's list drops it at once;
@@ -173,6 +267,10 @@ struct State {
 pub struct HostMirror {
   connections: Arc<Connections>,
   store: Arc<TranscriptStore>,
+  root: PathBuf,
+  manager: parking_lot::RwLock<Weak<crate::session_manager::SessionManager>>,
+  retiring: parking_lot::Mutex<HashSet<String>>,
+  reconcile_lock: tokio::sync::Mutex<()>,
   /// `Tombs`
   gone_file: PathBuf,
   log: LogFn,
@@ -191,7 +289,7 @@ impl HostMirror {
   /// `new` gathering changes for `batch` (tests)
   pub fn with_batch(connections: Arc<Connections>, store: Arc<TranscriptStore>, root: &Path, log: LogFn, batch: Duration) -> Arc<HostMirror> {
     let gone_file = root.join("run").join("remote").join("gone.json");
-    Arc::new_cyclic(|me| HostMirror { connections, store, gone_file, log, batch, state: Default::default(), on_gone: Default::default(), me: me.clone() })
+    Arc::new_cyclic(|me| HostMirror { connections, store, root: root.to_path_buf(), manager: Default::default(), retiring: Default::default(), reconcile_lock: Default::default(), gone_file, log, batch, state: Default::default(), on_gone: Default::default(), me: me.clone() })
   }
 
   /// Follow the store's changes and the hosts' connections
@@ -203,6 +301,7 @@ impl HostMirror {
       while let Some((alias, id, gone)) = rx.recv().await {
         let Some(m) = weak.upgrade() else { return };
         let filed = edit_tombs(&m.gone_file, |t| {
+          if m.retiring.lock().contains(&id) { return; }
           let ids = t.entry(alias.clone()).or_default();
           if gone {
             ids.insert(id.clone());
@@ -243,11 +342,16 @@ impl HostMirror {
     }
   }
 
+  pub fn set_manager(&self, manager: Weak<crate::session_manager::SessionManager>) {
+    *self.manager.write() = manager;
+  }
+
   pub fn set_gone_hook(&self, hook: GoneHook) {
     *self.on_gone.write() = Some(hook);
   }
 
   fn changed(&self, id: &str, change: RecordChange) {
+    if self.retiring.lock().contains(id) { return; }
     let cwd = match change {
       RecordChange::Written { cwd } | RecordChange::Gone { cwd } | RecordChange::Restored { cwd } => cwd,
     };
@@ -309,7 +413,14 @@ impl HostMirror {
       let Some(client) = self.connections.client(&alias) else { continue };
       let mut done = vec![];
       for id in ids {
+        if self.retiring.lock().contains(&id) { done.push(id); continue; }
         match client.call("storeRemove", json!({ "id": id })).await {
+          Ok(reply) if reply.value.get("takenOver").and_then(Value::as_bool) == Some(true) => {
+            if let Err(e) = self.reconcile(&client, &alias, &id).await {
+              (self.log)(&format!("host store: {alias}: {id} reconciliation deferred: {e:#}"));
+            } else { done.push(id); }
+          }
+          Ok(reply) if reply.value.get("written").and_then(Value::as_bool) == Some(false) => self.schedule(),
           Ok(_) => done.push(id),
           Err(e) => (self.log)(&format!("host store: {alias}: {id} not removed there: {e}")),
         }
@@ -342,6 +453,7 @@ impl HostMirror {
         if let Err(e) = self.push(&client, &alias, &id).await {
           (self.log)(&format!("host store: {alias}: {id} not copied: {e:#}"));
           self.requeue(&alias, [id].into());
+          self.schedule();
         }
       }
     }
@@ -400,6 +512,14 @@ impl HostMirror {
     };
     let mut sent = 0;
     for (id, updated_at) in &mine {
+      if stamps.get(id).is_some_and(|s| s.taken_over || s.copy_of.as_ref().is_some_and(|c| c.machine != this_machine().0)) {
+        if let Err(e) = self.reconcile(&client, alias, id).await {
+          (self.log)(&format!("host store: {alias}: {id} reconciliation deferred: {e:#}"));
+          self.requeue(alias, [id.clone()].into());
+          self.schedule();
+        }
+        continue;
+      }
       let behind = match stamps.get(id) {
         None => true,
         Some(there) => there.updated_at < *updated_at || self.store.blob_names(id).await.iter().any(|b| !there.blobs.contains(b)),
@@ -417,9 +537,48 @@ impl HostMirror {
     }
   }
 
+  /// The host now owns this identity. Keep any local divergent work before retiring it, never as a deletion there.
+  async fn reconcile(&self, client: &RemoteClient, alias: &str, id: &str) -> Result<()> {
+    let _serial = self.reconcile_lock.lock().await;
+    let reply = client.call("storeGet", json!({ "id": id })).await.map_err(|e| anyhow!("{e}"))?;
+    let host: SessionRecord = serde_json::from_slice(&gunzip(&reply.data)?)?;
+    if host.id != id || host.copy_of.as_ref().is_some_and(|c| c.machine == this_machine().0) {
+      return Err(anyhow!("host ownership changed while reconciling"));
+    }
+    let manager = self.manager.read().upgrade();
+    self.retiring.lock().insert(id.to_owned());
+    let result = match manager {
+      Some(manager) => manager.retire_host_copy(id, &host).await,
+      None => async {
+        let leases = crate::store::session_lease::SessionLeases::new(&self.root, self.log.clone());
+        if !matches!(leases.claim(id), crate::store::session_lease::Claim::Held(_)) {
+          return Err(anyhow!("local session is held by another engine"));
+        }
+        if let Some(local) = self.store.load(id).await {
+          preserve_branch(&self.store, &local, &host).await?;
+          self.store.remove(id).await;
+          self.store.sync_index(&[], &HashSet::new()).await?;
+        }
+        Ok(())
+      }.await,
+    };
+    if let Err(e) = result {
+      self.retiring.lock().remove(id);
+      return Err(e);
+    }
+    // Keep the id suppressed: already queued change notifications must not resurrect its deletion later.
+    if let Some(ids) = self.state.lock().dirty.get_mut(alias) { ids.remove(id); }
+    edit_tombs(&self.gone_file, |t| {
+      if let Some(ids) = t.get_mut(alias) { ids.remove(id); }
+    }).await?;
+    if let Some(hook) = self.on_gone.read().clone() { hook(alias, None); }
+    Ok(())
+  }
+
   /// One record's copy and the blobs the host lacks. The folder becomes the host's own path; the category stays here
   /// (categories are this machine's list)
   async fn push(&self, client: &RemoteClient, alias: &str, id: &str) -> Result<()> {
+    if self.retiring.lock().contains(id) { return Ok(()); }
     // The wire format stays a complete record whether the local body is a file, a packed archive or SQLite rows.
     let Some(record) = self.store.load(id).await else { return Ok(()) };
     let mut record: Value = serde_json::to_value(record)?;
@@ -436,14 +595,110 @@ impl HostMirror {
     gz.write_all(&serde_json::to_vec(&record)?)?;
     let reply = call_with_body(client, "storePut", json!({}), &gz.finish()?).await?;
     let there: Vec<String> = serde_json::from_value(reply.get("blobs").cloned().unwrap_or(Value::Null)).unwrap_or_default();
+    if reply.get("takenOver").and_then(Value::as_bool) == Some(true) {
+      return self.reconcile(client, alias, id).await;
+    }
     if reply.get("written").and_then(Value::as_bool) == Some(false) {
       (self.log)(&format!("host store: {alias}: {id} kept as the host has it (newer there, or deleted there)"));
       return Ok(());
+    }
+    if record.get("agent").and_then(Value::as_str) == Some("acpira")
+      && let Some(sid) = record.get("acpSessionId").and_then(Value::as_str).filter(|s| is_session_id(s))
+      && let Ok(bytes) = tokio::fs::read(self.root.join("agent/sessions").join(format!("{sid}.jsonl"))).await
+    {
+      let call = client.request("storeAgentLog", json!({ "sessionId": id, "id": sid }));
+      for chunk in gzip(&bytes)?.chunks(wire::CHUNK) {
+        call.stdin(chunk);
+      }
+      call.stdin_eof();
+      match call.collect().await {
+        Ok(reply) if reply.value.get("takenOver").and_then(Value::as_bool) == Some(true) => return self.reconcile(client, alias, id).await,
+        // The host dropped the log of its last copy when it took this record: the copy is whole again only with this
+        // one, so a log that did not land goes again with the record
+        Ok(reply) if reply.value.get("written").and_then(Value::as_bool) == Some(false) => return Err(anyhow!("native log {sid}: the host is busy with the session")),
+        Ok(_) => {}
+        // Older helpers have no native-log operation; the transcript handoff still works there.
+        Err(e) if e.code() == "unknownOp" => (self.log)(&format!("host store: {alias}: native log {sid} not copied: {e}")),
+        Err(e) => return Err(anyhow!("native log {sid}: {e}")),
+      }
     }
     for name in self.store.blob_names(id).await.into_iter().filter(|n| !there.contains(n)) {
       let bytes = self.store.read_blob(id, &name).await?;
       call_with_body(client, "storeBlob", json!({ "id": id, "name": name }), &bytes).await?;
     }
     Ok(())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn body_of(bytes: Vec<u8>) -> Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    tx.send(Some(bytes)).unwrap();
+    tx.send(None).unwrap();
+    Some(rx)
+  }
+
+  #[tokio::test]
+  async fn owned_records_and_native_logs_refuse_later_foreign_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().join("sessions"), Arc::new(|_| {}), None);
+    let mut record: SessionRecord = serde_json::from_value(json!({
+      "id": "session", "agent": "acpira", "acpSessionId": "native", "cwd": "/work", "title": "owned",
+      "updatedAt": "2026-01-01T00:00:00.000Z", "turns": []
+    })).unwrap();
+    store.flush(Arc::new(record.clone())).await.unwrap();
+    record.copy_of = Some(crate::store::record::CopyOf { machine: "source".into(), name: "Source".into() });
+    record.updated_at = "2999-01-01T00:00:00.000Z".into();
+    let args = json!({ "home": dir.path(), "sessionId": "session", "id": "native" });
+    let result = serve("storePut", &args, body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    assert_eq!(result["written"], false);
+    assert_eq!(result["takenOver"], true);
+    assert!(store.load("session").await.unwrap().copy_of.is_none());
+    let result = serve("storeAgentLog", &args, body_of(gzip(b"do not replace").unwrap())).await.unwrap();
+    assert_eq!(result["written"], false);
+    assert!(!dir.path().join("agent/sessions/native.jsonl").exists());
+    let bad = json!({ "home": dir.path(), "sessionId": "session", "id": "../outside" });
+    assert!(serve("storeAgentLog", &bad, body_of(gzip(b"bad").unwrap())).await.is_err());
+    let bytes = get_record(&json!({ "home": dir.path(), "id": "session" })).await.unwrap();
+    assert!(serde_json::from_slice::<SessionRecord>(&gunzip(&bytes).unwrap()).unwrap().copy_of.is_none());
+  }
+
+  #[tokio::test]
+  async fn a_new_copy_drops_the_native_log_of_the_one_it_replaces() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut record: SessionRecord = serde_json::from_value(json!({
+      "id": "session", "agent": "acpira", "acpSessionId": "native", "cwd": "/work", "title": "copied",
+      "updatedAt": "2026-01-01T00:00:00.000Z", "turns": [], "copyOf": { "machine": "source", "name": "Source" }
+    })).unwrap();
+    let args = json!({ "home": dir.path(), "sessionId": "session", "id": "native" });
+    let log = dir.path().join("agent/sessions/native.jsonl");
+    let put = serve("storePut", &args, body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    assert_eq!(put["written"], true);
+    assert_eq!(serve("storeAgentLog", &args, body_of(gzip(b"first").unwrap())).await.unwrap()["written"], true);
+    assert_eq!(std::fs::read(&log).unwrap(), b"first");
+    // The next copy lands and its log does not (yet): a promotion now must not resume the context of the copy before
+    record.updated_at = "2026-01-02T00:00:00.000Z".into();
+    let put = serve("storePut", &args, body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    assert_eq!(put["written"], true);
+    assert!(!log.exists());
+    assert_eq!(serve("storeAgentLog", &args, body_of(gzip(b"second").unwrap())).await.unwrap()["written"], true);
+    assert_eq!(std::fs::read(&log).unwrap(), b"second");
+  }
+
+  #[test]
+  fn a_subagent_ahead_of_the_host_is_local_work_to_keep() {
+    let host: SessionRecord = serde_json::from_value(json!({
+      "id": "session", "agent": "claude", "cwd": "/work", "updatedAt": "1", "turns": [{ "role": "user", "text": "go" }],
+      "subagents": [{ "id": "child", "turnIndex": 0, "visibility": "session", "state": "running", "stateSource": "agent", "announcedAt": 1,
+        "turns": [{ "role": "user", "text": "task" }] }]
+    })).unwrap();
+    let mut local = host.clone();
+    assert!(is_prefix(&local, &host));
+    local.subagents.as_mut().unwrap()[0].turns.push(serde_json::from_value(json!({ "role": "user", "text": "written after the last copy" })).unwrap());
+    assert!(!is_prefix(&local, &host), "the session's own turns match, the subagent's do not");
+    assert!(is_prefix(&host, &local));
   }
 }

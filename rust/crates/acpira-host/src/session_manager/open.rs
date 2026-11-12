@@ -225,6 +225,73 @@ impl SessionManager {
     })
   }
 
+  pub(super) fn prepare_copy_takeover(&self, record: &mut crate::store::record::SessionRecord) {
+    record.copy_of = None;
+    let native = record.agent == crate::acp::agents::registry::SELF_AGENT_ID
+      && record.acp_session_id.as_deref().filter(|sid| is_session_id(sid)).is_some_and(|sid| {
+        self.deps.lease_root.join("agent/sessions").join(format!("{sid}.jsonl")).is_file()
+      });
+    if !native {
+      record.acp_session_id = None;
+      record.history_pending = !record.turns.is_empty();
+      record.history_context |= record.history_pending;
+    }
+  }
+
+  /// Promote only on execution; an unavailable local CLI leaves the authoritative foreign record untouched.
+  pub(super) async fn promote_copy(self: &Arc<Self>, id: &str) -> Result<()> {
+    let _op = self.session_op(id).await;
+    if self.live(id).is_some() {
+      return Ok(());
+    }
+    let Some(mut record) = self.deps.store.load(id).await else { return Ok(()) };
+    if !record.copy_of.as_ref().is_some_and(|c| c.machine != crate::remote::host_store::this_machine().0)
+      && !self.state.lock().copies.contains(id)
+    {
+      return Ok(());
+    }
+    let pin = match self.leases.claim(id) {
+      crate::store::session_lease::Claim::Held(pin) => pin,
+      crate::store::session_lease::Claim::Elsewhere => {
+        self.state.lock().copies.remove(id);
+        self.start_mirror(id, record, t("host.sessionElsewhere"), true);
+        return Err(anyhow!(t("host.sessionBusyElsewhere")));
+      }
+      crate::store::session_lease::Claim::Failed(e) => return Err(anyhow!(e)),
+    };
+    let hold = LeaseHold { leases: &self.leases, id, pin };
+    // Read once more after taking the lease: another local engine may have promoted it while this one waited.
+    record = self.deps.store.load_detailed(id).await.map_err(|e| anyhow!(e.detail()))?;
+    let mut settings = capture_turn_settings(&record.controls);
+    if let Some(picks) = self.state.lock().copy_picks.get(id) {
+      if picks.mode_id.is_some() { settings.mode_id = picks.mode_id.clone(); }
+      settings.config.extend(picks.config.clone());
+    }
+    self.prepare_copy_takeover(&mut record);
+    let s = AcpSession::new(record, self.session_deps());
+    s.hold_settings(&settings);
+    {
+      let mut st = self.state.lock();
+      st.copies.remove(id);
+      st.copy_picks.remove(id);
+      st.mirrors.remove(id);
+      st.pending_copies.insert(id.to_owned());
+      st.live.insert(id.to_owned(), s.clone());
+    }
+    self.emit_session(&s);
+    s.start().await;
+    s.adopt_controls(settings).await;
+    self.sync_leases();
+    if s.status() == SessionStatus::Ready {
+      s.mark_owned();
+      self.state.lock().pending_copies.remove(id);
+      self.deps.store.flush(s.clone()).await?;
+      self.process_change(id);
+    }
+    drop(hold);
+    Ok(())
+  }
+
   async fn load_session(self: &Arc<Self>, v: &Arc<Viewer>, id: &str, previous: Option<String>) {
     // An idle release still closing this session's old agent process: a new one must not resume the native session
     // while the old one may still write to it
@@ -268,11 +335,10 @@ impl SessionManager {
     if self.live(id).is_some() {
       return;
     }
-    // A copy of a session another machine drives in this machine's folder: only that machine writes it
-    if let Some(from) = record.copy_of.clone().filter(|c| c.machine != crate::remote::host_store::this_machine().0) {
+    // A foreign copy stays process-free and follows its source until a local execution asks to take over.
+    if record.copy_of.as_ref().is_some_and(|c| c.machine != crate::remote::host_store::this_machine().0) && refused.is_none() {
       self.state.lock().copies.insert(id.to_owned());
-      let name = if from.name.is_empty() { t("host.sessionCopyAnother") } else { from.name };
-      self.start_mirror(id, record, tp("host.sessionCopy", &[("machine", &name)]), false);
+      self.start_mirror(id, record, String::new(), false);
       return;
     }
     // Another engine is mid-turn on this session (or holds it while draining): starting an agent here would race it

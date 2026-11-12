@@ -102,6 +102,9 @@ impl SessionManager {
       st.health_seen.remove(&s.id);
       st.dirty.remove(&s.id);
       st.idle_since.remove(&s.id);
+      // A promotion that stopped on sign-in held the record against this session's writes; with the session gone the
+      // record is the foreign copy again, open to a list edit or the next promotion
+      st.pending_copies.remove(&s.id);
       st.closing.insert(s.id.clone(), closed_rx);
     }
     // A pin of its own holds the lease across the close; the session's turn pin (if any) can go now
@@ -151,7 +154,9 @@ impl SessionManager {
       if let Some(f) = closing {
         exits.spawn(f);
       }
-      if let Err(e) = self.deps.store.flush(s as Arc<dyn RecordSource>).await {
+      if !self.state.lock().pending_copies.contains(&s.id)
+        && let Err(e) = self.deps.store.flush(s as Arc<dyn RecordSource>).await
+      {
         self.log(&format!("dispose flush failed: {e}"));
       }
     }

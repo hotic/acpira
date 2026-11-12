@@ -124,3 +124,68 @@ async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   mirror.stop();
   connections.dispose();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_work_without_deleting_the_host() {
+  use acpira_shared::transcript::Turn;
+  let lab = Lab::new();
+  let connections = lab.engine("continuity");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  let root = lab.path().join("continuity");
+  let store = TranscriptStore::new(root.join("sessions"), Arc::new(|_: &str| {}), None);
+  store.set_agent_home(root.clone());
+  let mirror = HostMirror::with_batch(connections.clone(), store.clone(), &root, Arc::new(|_: &str| {}), Duration::from_millis(50));
+  mirror.start();
+  let host = TranscriptStore::new(host_sessions(&lab), Arc::new(|_: &str| {}), None);
+  for diverged in [false, true] {
+    let id = if diverged { "diverged-copy" } else { "ancestor-copy" };
+    let sid = format!("native-{id}");
+    let mut local = (*record(id, "ssh://gen1/work", "2026-10-01T00:00:00.000Z")).clone();
+    local.acp_session_id = Some(sid.clone());
+    local.turns = serde_json::from_value(json!([
+      { "role": "user", "text": "shared question" },
+      { "role": "agent", "stop": "end_turn", "blocks": [{ "type": "text", "markdown": "shared answer" }] }
+    ])).unwrap();
+    let (blob, _) = store.save_blob(id, ".txt", b"branch attachment").await.unwrap();
+    let logs = root.join("agent/sessions");
+    std::fs::create_dir_all(&logs).unwrap();
+    let native = format!("{{\"type\":\"session\",\"id\":\"{sid}\",\"cwd\":\"/work\",\"format\":1}}\n");
+    std::fs::write(logs.join(format!("{sid}.jsonl")), &native).unwrap();
+    store.flush(Arc::new(local.clone())).await.unwrap();
+    let remote_log = lab.host_home().join(".acpira/agent/sessions").join(format!("{sid}.jsonl"));
+    until("native log synced", || std::fs::read_to_string(&remote_log).ok().as_deref() == Some(&native)).await;
+    connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+    let mut remote = host.load(id).await.unwrap();
+    remote.copy_of = None;
+    remote.updated_at = "2026-10-02T00:00:00.000Z".into();
+    remote.turns.push(serde_json::from_value::<Turn>(json!({ "role": "user", "text": "host continuation" })).unwrap());
+    host.flush(Arc::new(remote.clone())).await.unwrap();
+    if diverged {
+      local.turns.push(serde_json::from_value::<Turn>(json!({ "role": "user", "text": "offline local continuation" })).unwrap());
+      local.updated_at = "2026-10-03T00:00:00.000Z".into();
+      store.flush(Arc::new(local)).await.unwrap();
+    }
+    connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
+    until("local identity retired", || !root.join("sessions").join(format!("{id}.json")).exists()).await;
+    assert_eq!(host.load(id).await.unwrap().turns, remote.turns);
+    assert!(std::fs::read_to_string(&remote_log).unwrap() == native);
+    let tombs = read(&root.join("run/remote/gone.json")).unwrap_or(json!({}));
+    assert!(!tombs.to_string().contains(id), "{tombs}");
+    let list = store.load_index().await.unwrap();
+    if diverged {
+      let branch = list.iter().find(|s| s.id != id && store.dir().join(format!("{}.json", s.id)).is_file()).unwrap();
+      let saved = store.load(&branch.id).await.unwrap();
+      assert!(saved.history_pending && saved.history_context && saved.acp_session_id.is_none());
+      assert_eq!(saved.forked_from.unwrap().session_id, id);
+      assert!(serde_json::to_string(&saved.turns).unwrap().contains("offline local continuation"));
+      assert_eq!(store.read_blob(&branch.id, &blob).await.unwrap(), b"branch attachment");
+    } else {
+      assert!(list.iter().all(|s| s.id != id));
+    }
+    let stamp = connections.client("gen1").unwrap().call("storeStat", json!({ "ids": [id] })).await.unwrap();
+    assert_eq!(stamp.value["records"][id]["takenOver"], true);
+  }
+  mirror.stop();
+  connections.dispose();
+}

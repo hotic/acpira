@@ -91,7 +91,7 @@ pub struct SessionRecord {
   /// The agent's goal when the record was written (`vendors::goal`); the agent's own snapshot replaces it once connected
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub goal: Option<SessionGoal>,
-  /// Set on a copy of a session another machine drives in a folder of this one: shown read-only here, never driven
+  /// A session another machine drives in a folder of this one: followed passively until a local execution takes over.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub copy_of: Option<CopyOf>,
   /// The `clientId`s of the latest actions a paired device drove the session with (`AcpSession::claim_client_id`),

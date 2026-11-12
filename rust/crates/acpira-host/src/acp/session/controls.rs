@@ -43,6 +43,28 @@ pub(crate) fn in_full_access(controls: &SessionControls) -> bool {
 }
 
 impl AcpSession {
+  /// A standby mirror has no peer yet; selections stay local until promotion.
+  pub fn standby_pick(&self, config: Option<&str>, value: &str) -> Result<()> {
+    let mut c = self.core.lock();
+    if c.proc.is_some() {
+      return Err(anyhow!(t("history.unavailable")));
+    }
+    match config {
+      Some(id) => {
+        let ctl = c.state.controls.options.iter_mut().find(|c| c.id == id).ok_or_else(|| anyhow!(t("history.unavailable")))?;
+        ctl.value = Some(value.to_owned());
+      }
+      None => c.state.controls.mode_id = Some(value.to_owned()),
+    }
+    self.touch(&mut c);
+    Ok(())
+  }
+
+  /// Commit ownership without inventing a user turn or unarchiving the session.
+  pub fn mark_owned(&self) {
+    self.core.lock().updated_at = crate::util::now_iso();
+  }
+
   /// Whether picking `value` grants full access: a mode when `config_id` is None or names the mode select, yolo, a
   /// known bypass mode or one the agent marks `full_access`; for another select, an option the agent marks so (the
   /// built-in agent's approval level). A plugin may not pick one (`plugins/host_api.rs`)

@@ -340,6 +340,16 @@ impl AcpSession {
     Self::build(record, deps, true, next_view_epoch())
   }
 
+  /// A foreign copy is writable in the UI but stays process-free until the manager promotes it.
+  pub fn standby(record: SessionRecord, deps: SessionDeps, rev: i64, epoch: u64) -> Arc<AcpSession> {
+    let s = Self::build(record, deps, false, epoch);
+    let mut c = s.core.lock();
+    c.status = SessionStatus::Ready;
+    c.rev = rev;
+    drop(c);
+    s
+  }
+
   /// A read-only copy of a record another engine is driving right now (`store::session_lease`): turns stay as that
   /// engine last saved them (a running turn is not sealed as interrupted), no agent is ever started, and `deps` should
   /// not save (the record belongs to the other engine). `note` is the notice the view shows. `rev` must grow from one
