@@ -19,7 +19,6 @@ import { CommandButtons } from '../plugins/CommandButtons';
 import { collectDrafts, collectImageSources, hasPayload, hiddenText, imageSources, pastedText, pathlessWorkbenchDrag, typeInto, type Collected } from './drafts';
 import { droppedPathResolver, hostDragPaths } from '../vscodeApi';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
-import { SummonMenu } from './SummonMenu';
 import { SlashList, commandAt, commandHint, completeCommand, promptMarks, useSlashHits } from './Slash';
 import { accessLabel, modeIcon, modeLabel } from './modeIcons';
 import { SegmentScale } from '../ui/Field';
@@ -91,7 +90,7 @@ export interface ComposerProps {
   // and, with `shareSelection`, offers the editor's live selection as a toolbar chip that goes out with the next prompt
   main?: boolean;
   shareSelection?: boolean;
-  // Cross-harness subagents the user defined: they lead the @ list and the toolbar's summon menu
+  // Cross-harness subagents the user defined: they lead the @ list, the one place a summon starts
   personas?: MentionPersona[];
 }
 
@@ -505,7 +504,6 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         )}
         {/* Plugin chips (plugins/Pieces.tsx) after the built-in ones, on the main composer only */}
         {!p.edit && p.main && !tight && <SlotPieces slot="composer.toolbar" className="flex shrink-0 items-center gap-1" />}
-        {!p.edit && p.main && !tight && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
         {/* flex-auto: the model side's base size is its content, so the live chips above shrink before it does */}
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-auto items-center gap-1 border-0 p-0">
           <div className="min-w-0 flex-1" />
