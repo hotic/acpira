@@ -206,7 +206,24 @@ async fn a_steered_composer_send_joins_the_running_turn_without_a_queue_row() {
   let s = started(&h, "/tmp").await;
   let running = spawn_prompt(&s, "slow");
   wait_turns(&s, 2).await;
+  // Watched while the steer is on the wire: the entry never shows up as a queued row first
+  let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+  let watcher = {
+    let (s, done) = (s.0.clone(), done.clone());
+    tokio::task::spawn_blocking(move || {
+      let mut seen = None;
+      while !done.load(std::sync::atomic::Ordering::Acquire) && seen.is_none() {
+        let q = view(&s)["queued"].clone();
+        seen = (!q.is_null()).then_some(q);
+      }
+      seen
+    })
+  };
   s.steer_prompt("use pnpm".into(), vec![]).await.unwrap();
+  done.store(true, std::sync::atomic::Ordering::Release);
+  if let Some(q) = watcher.await.unwrap() {
+    panic!("a steered send showed as queued: {q}");
+  }
   // Steered on the spot: no queued row left behind, the message sits in the running turn
   let vw = view(&s);
   assert!(vw["queued"].is_null(), "{}", vw["queued"]);
