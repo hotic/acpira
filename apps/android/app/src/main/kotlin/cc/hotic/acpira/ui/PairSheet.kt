@@ -17,6 +17,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -308,7 +311,10 @@ private fun PairAddForm(
   var notice by remember { mutableStateOf<String?>(null) }
   var noticeGen by remember { mutableIntStateOf(0) }
   Column(
-    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Metrics.pad),
+    Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+      // In place on a wide page the bar spans the window and the form keeps a column under it
+      .then(if (lead != null) Modifier.wrapContentWidth().widthIn(max = Metrics.pairColumn) else Modifier)
+      .padding(horizontal = Metrics.pad),
     verticalArrangement = Arrangement.spacedBy(Metrics.s6),
   ) {
     lead?.let { (title, hint) ->
@@ -318,8 +324,12 @@ private fun PairAddForm(
       }
     }
     FormCard {
-      Box(Modifier.fillMaxWidth().height(Metrics.pairScanCard).clip(RoundedCornerShape(Metrics.rCardRound))) {
-        PairCameraCard(onLink = { link, rows -> if (isPairingLink(link)) onLink(link, rows) })
+      BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // In a wide column the card grows with its width
+        val height = maxOf(Metrics.pairScanCard, maxWidth * Metrics.pairScanAspect)
+        Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(Metrics.rCardRound))) {
+          PairCameraCard(onLink = { link, rows -> if (isPairingLink(link)) onLink(link, rows) })
+        }
       }
     }
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.s2)) {

@@ -264,6 +264,10 @@ object Metrics {
   val pairLineSlot = 52.dp
   /** The camera card, its viewfinder and the finder's corners */
   val pairScanCard = 340.dp
+  /** In a wide column (tablets, foldables open) the card grows with its width at this height-to-width share */
+  const val pairScanAspect = 0.7f
+  /** The form's column on a wide page, in place of a sheet (the first-run flow) */
+  val pairColumn = 640.dp
   val pairFinder = 176.dp
   val pairFinderCorner = 30.dp
   val pairFinderRadius = 22.dp
@@ -403,7 +407,7 @@ object WelcomeMetrics {
   val agentMark = 22.dp
   val agentStep = 20.dp
   val actionsGap = 40.dp
-  /** The pairing step keeps to a phone's column on a wide screen */
+  /** The notification step keeps to a phone's column on a wide screen (the pairing form: Metrics.pairColumn) */
   val column = 480.dp
   /** The outline's thinnest stroke, the finger's spotlight and its outline */
   val outlineMin = 0.75.dp
