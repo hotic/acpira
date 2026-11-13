@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentBlock, DiffLine, ToolCallBlock } from '@acpira/shared/transcript';
-import { DWELL_MS, continuingToolItem, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, processParts, type FoldInput } from '../chat/processGroups';
+import { DWELL_MS, chunkItems, continuingToolItem, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemRows, itemSettled, processParts, type FoldInput } from '../chat/processGroups';
 
 const read = (id: string, path: string, status: ToolCallBlock['status'] = 'completed'): ToolCallBlock => ({
   type: 'tool_call', id, kind: 'read', verb: 'Read', status, target: path.split('/').pop(), locations: [{ path }],
@@ -155,5 +155,36 @@ describe('process parts', () => {
 
   it('never groups a delegation with the reads around it, whatever its kind', () => {
     expect(groupProcess([read('r1', '/a.ts'), delegate('d1', 'n1'), read('r2', '/b.ts')]).map(item => item.type)).toEqual(['block', 'block', 'block']);
+  });
+});
+
+describe('process chunks', () => {
+  const run = (id: string): ToolCallBlock => ({ type: 'tool_call', id, kind: 'execute', verb: 'Run', status: 'completed', target: 'ls' });
+  const text = (markdown: string): AgentBlock => ({ type: 'text', markdown });
+  const ids = (blocks: AgentBlock[], size: number) => chunkItems(groupProcess(blocks), size).map(chunk => chunk.items.map(item => item.id));
+
+  it('counts the rows an item shows: a read of several files lists them, a group or a search only while open', () => {
+    const [group] = groupProcess([read('a', '/r/a.ts'), read('b', '/r/b.ts')]);
+    expect([itemRows(group!, false), itemRows(group!, true)]).toEqual([1, 3]);
+    const [one] = groupProcess([read('a', '/r/a.ts')]);
+    expect(itemRows(one!, false)).toBe(1);
+    const [many] = groupProcess([{ ...read('a', '/r/a.ts'), locations: [{ path: '/r/a.ts' }, { path: '/r/b.ts' }] }]);
+    expect(itemRows(many!, false)).toBe(3);
+    const [hits] = groupProcess([{ ...search, locations: [{ path: '/r/a.ts' }, { path: '/r/b.ts' }] }]);
+    expect([itemRows(hits!, false), itemRows(hits!, true)]).toEqual([1, 3]);
+    expect(itemRows(groupProcess([thought])[0]!, true)).toBe(1);
+  });
+
+  it('keeps the earlier chunks as the process grows at its end', () => {
+    const blocks = Array.from({ length: 7 }, (_, i) => run(`c${i}`));
+    const before = ids(blocks, 3);
+    expect(before).toEqual([['c0', 'c1', 'c2'], ['c3', 'c4', 'c5'], ['c6']]);
+    expect(ids([...blocks, run('c7'), run('c8'), run('c9')], 3).slice(0, 2)).toEqual(before.slice(0, 2));
+  });
+
+  it('never opens a chunk with narrative text, and marks the chunk that follows it', () => {
+    const chunks = chunkItems(groupProcess([run('a'), run('b'), text('one'), text('two'), run('c'), run('d'), run('e')]), 2);
+    expect(chunks.map(chunk => chunk.items.length)).toEqual([4, 2, 1]);
+    expect(chunks.map(chunk => chunk.afterText)).toEqual([false, true, false]);
   });
 });

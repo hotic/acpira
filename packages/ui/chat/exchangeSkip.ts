@@ -7,7 +7,10 @@ import { useEffect, useRef, useState } from 'react';
 // remembers that size (`contain-intrinsic-block-size: auto`). A remembered size goes stale when the exchange's width changes
 // (window or panel resize) or the text metrics do (appearance, locale, font sizes): such an exchange drops the mark, is laid out in full
 // once, which is what every exchange costs without skipping, and is marked again.
-// WebKit is left out: skipped session rows painted blank there (`[data-session]`, chat.css, docs/dev/webview.md).
+// A width that keeps changing (a pane dragged or easing beside the chat, the window resized) would do that in every frame,
+// costing more than no skipping at all: the exchanges are laid out again only once the width has held still, and the
+// ones out of sight keep their old heights until then. `rewrap` is told as that layout starts, since it moves what is
+// under a reader as the width change itself does (useBottomFollow.ts).
 
 interface Skipper {
   ref: (el: HTMLElement | null) => (() => void) | void;
@@ -16,15 +19,23 @@ interface Skipper {
 
 const NONE: Skipper = { ref: () => {}, remeasure: () => {} };
 
-function createSkipper(): Skipper {
+// How long a width has to hold still before the exchanges it changed under are measured again
+const SETTLE_MS = 120;
+// How many are measured again per frame: all of a long transcript at once is one long frame
+const REMEASURE_BATCH = 4;
+
+function createSkipper(rewrap: () => void): Skipper {
   if (typeof ResizeObserver !== 'function' || typeof requestAnimationFrame !== 'function') return NONE;
-  if (typeof CSS !== 'undefined' && CSS.supports('-webkit-nbsp-mode', 'space')) return NONE;
   // The width each marked exchange was measured at
   const widths = new WeakMap<Element, number>();
   const observed = new Set<HTMLElement>();
-  // Exchanges to mark / unmark in the next frame, with the width they were laid out at
-  let mark = new Map<HTMLElement, number>();
-  let unmark = new Map<HTMLElement, number>();
+  // Exchanges to mark / unmark in the next frame, with the width they were laid out at. `fresh`: reported in the last
+  // frame, with that height
+  let mark = new Map<HTMLElement, { width: number; fresh?: number }>();
+  const unmark = new Map<HTMLElement, number>();
+  // Marked exchanges whose width is still changing
+  const stale = new Map<HTMLElement, number>();
+  let settle: ReturnType<typeof setTimeout> | undefined;
   let frame = 0;
   const schedule = () => {
     if (!frame && (mark.size || unmark.size)) frame = requestAnimationFrame(flush);
@@ -32,31 +43,52 @@ function createSkipper(): Skipper {
   const flush = () => {
     frame = 0;
     const marking = mark;
-    const unmarking = unmark;
     mark = new Map();
-    unmark = new Map();
-    for (const [el, width] of marking) {
+    // A reported size waits one more frame: WebKit remembers a size that changed twice in one frame (a block fitting
+    // itself from its own observer) only in the next, and a mark set before that skips the exchange at the first.
+    // Content can also change between the report and this frame (a commit in between): read first, and leave such an
+    // exchange to its next report
+    const ready: [HTMLElement, number][] = [];
+    for (const [el, size] of marking) {
       if (!el.isConnected || el.hasAttribute('data-seen')) continue;
+      if (size.fresh === undefined) ready.push([el, size.width]);
+      else if (Math.abs(el.getBoundingClientRect().height - size.fresh) < 0.01) mark.set(el, { width: size.width });
+    }
+    for (const [el, width] of ready) {
       el.setAttribute('data-seen', '');
       widths.set(el, width);
     }
     // Shown in full for this frame's layout, marked again in the next: the observer reports nothing when the height came
     // out the same, so the mark is not left to it
-    for (const [el, width] of unmarking) {
+    let shown = 0;
+    for (const [el, width] of unmark) {
+      if (shown >= REMEASURE_BATCH) break;
+      unmark.delete(el);
       if (!el.isConnected) continue;
       el.removeAttribute('data-seen');
       widths.delete(el);
-      mark.set(el, width);
+      mark.set(el, { width });
+      shown++;
     }
+    if (shown) rewrap();
     schedule();
   };
   // Mark and unmark in a frame of their own, never in the callback: a size change caused there is a ResizeObserver loop
   const observer = new ResizeObserver(entries => {
     for (const entry of entries) {
       const el = entry.target as HTMLElement;
-      const width = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
-      if (!el.hasAttribute('data-seen')) mark.set(el, width);
-      else if (widths.get(el) !== width) unmark.set(el, width);
+      const box = entry.borderBoxSize?.[0];
+      const width = box?.inlineSize ?? entry.contentRect.width;
+      if (!el.hasAttribute('data-seen')) mark.set(el, { width, fresh: box?.blockSize ?? el.getBoundingClientRect().height });
+      else if (widths.get(el) !== width) stale.set(el, width);
+    }
+    if (stale.size) {
+      clearTimeout(settle);
+      settle = setTimeout(() => {
+        for (const [el, width] of stale) unmark.set(el, width);
+        stale.clear();
+        schedule();
+      }, SETTLE_MS);
     }
     schedule();
   });
@@ -70,6 +102,7 @@ function createSkipper(): Skipper {
         observer.unobserve(el);
         mark.delete(el);
         unmark.delete(el);
+        stale.delete(el);
       };
     },
     remeasure: () => {
@@ -82,9 +115,10 @@ function createSkipper(): Skipper {
   };
 }
 
-// The ref for each exchange `section`. `appearance`, `locale` and `fontSizes` change text metrics without changing the width
-export function useExchangeSkip(appearance: unknown, locale: unknown, fontSizes: unknown): Skipper['ref'] {
-  const [skipper] = useState(createSkipper);
+// The ref for each exchange `section`. `appearance`, `locale` and `fontSizes` change text metrics without changing the width;
+// `rewrap` must be stable
+export function useExchangeSkip(appearance: unknown, locale: unknown, fontSizes: unknown, rewrap: () => void): Skipper['ref'] {
+  const [skipper] = useState(() => createSkipper(rewrap));
   const first = useRef(true);
   useEffect(() => {
     if (first.current) {

@@ -8,7 +8,7 @@ import { AgentMessage } from './Turns';
 
 // The bottom-follow and per-row fold stores have no server snapshot: a reader at the bottom is what a live turn assumes,
 // and rows without an automatic fold state fall back to their own
-vi.mock('./useBottomFollow', () => ({ useFollowing: () => true }));
+vi.mock('./useBottomFollow', async importOriginal => ({ ...await importOriginal<typeof import('./useBottomFollow')>(), useFollowing: () => true }));
 vi.mock('./autoFold', async importOriginal => ({ ...await importOriginal<typeof import('./autoFold')>(), useAutoFold: () => undefined }));
 
 setLocale('en');

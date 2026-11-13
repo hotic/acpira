@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DependencyList, type RefObject } from 'react';
-import { anchorOffset, followsBottom, pressAnchorNode, SCROLL_INTENT_MS, scrollerUsable } from './promptStuck';
+import { anchorOffset, followsBottom, pressAnchorNode, readingAnchor, readingOffset, SCROLL_INTENT_MS, scrollerUsable, type ReadingAnchor } from './promptStuck';
 
 // Whether the transcript is following its bottom, for rows that must not move under a reader who scrolled up
 // (the live turn's automatic fold closes wait for them). Subscribed per reader, so a scroll re-renders nothing else
@@ -7,6 +7,10 @@ export class FollowState {
   value = true;
   // Stop following as a reader's own scroll would, before the page moves the view itself (a plugin's scrollTo)
   release: () => void = () => this.set(false);
+  // The height change about to land is a re-wrap, not growth: what the reader has stays put through it as through a
+  // width change (exchangeSkip.ts lays the exchanges out of sight out again once the width has settled)
+  rewrap = () => { this.rewrapAt = performance.now(); };
+  rewrapAt = -Infinity;
   private listeners = new Set<() => void>();
   set(value: boolean) {
     if (value === this.value) return;
@@ -40,6 +44,8 @@ export function useFollowing(): boolean {
 // so a stream chunk arriving mid-toggle cannot re-arm content-growth pinning while the fold is still opening
 const FOLD_SETTLE_MS = 400;
 const DRAG_SLOP_PX = 8;
+// How long after a width change, or after `FollowState.rewrap`, a height change still belongs to the re-wrap
+const REWRAP_SETTLE_MS = 100;
 
 export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, content: RefObject<HTMLDivElement | null>, resetKey: unknown, changes: DependencyList, prompt?: unknown): FollowState {
   const pinned = useRef(true);
@@ -62,6 +68,8 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     // Only a held tail is aligned: a new pad moves every row by the fraction, so a reader parked above the tail (a fold
     // opened by hand, a scroll up) saw the whole thread twitch a device pixel with every growth below them
     let lead = 0;
+    // The content element carrying the pad (the thread remounts its own with the transcript)
+    let padded: HTMLElement | null = null;
     const align = () => {
       const body = content.current;
       if (!body || !scrollerUsable(el)) return false;
@@ -72,13 +80,16 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       // be the only overflow, hence the pixel of slack while one is set
       const fits = el.scrollHeight - el.clientHeight <= (lead ? 1 : 0);
       const next = fits || frac < 0.01 || frac > 0.99 ? 0 : Math.round((1 - frac) * 100) / 100;
-      if (next === lead) return false;
+      if (next === lead && padded === body) return false;
       lead = next;
-      el.style.paddingTop = next ? `${next}px` : '';
-      // Sticky prompts stick at the padding edge: they read the pad to stick at the scroller's own top instead, or the
-      // stuck card sat a fraction of a pixel low and the row behind it showed through as a seam under the header
-      if (next) el.style.setProperty('--follow-lead', `${next}px`);
-      else el.style.removeProperty('--follow-lead');
+      // The content adds it to its own top padding (`follow-pad`, chat.css). Not a padding on the scroller: sticky prompts
+      // stick at the scroller's padding edge, and handing them the pad took a property every element of the transcript
+      // inherited, each change restyling them all; a width change at the tail (a pane dragged or easing beside the
+      // chat) makes one in every frame
+      if (padded !== body) padded?.style.removeProperty('--follow-lead');
+      padded = body;
+      if (next) body.style.setProperty('--follow-lead', `${next}px`);
+      else body.style.removeProperty('--follow-lead');
       return true;
     };
     // What a press landed on and where it shows in the scroller: content growing above it (a skin's borders, an image or
@@ -93,6 +104,25 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       const at = anchorOffset(anchor.node, el);
       if (at === undefined) anchor = undefined;
       else anchor.at = at;
+    };
+    // A re-wrap (a pane dragged or easing beside the chat, the window resized) changes every height above a reader parked
+    // above the tail, which moved the text under them by whole paragraphs. `reading` is what they have at the top of the
+    // view, and the view moves with it. It is read after the reader's own scrolls and plain growth, never after such a
+    // move: WebKit's offsets are whole pixels, and re-reading would add the rounding up over a drag
+    let reading: ReadingAnchor | undefined;
+    // The offset the last such move left, to tell its scroll event from the reader's
+    let heldTop: number | undefined;
+    const read = () => {
+      const body = content.current;
+      reading = body && !pinned.current && scrollerUsable(el) ? readingAnchor(body, el) : undefined;
+    };
+    const hold = () => {
+      const at = reading && readingOffset(reading, el);
+      if (at === undefined) return read();
+      const shift = at - reading!.at;
+      if (Math.abs(shift) < 0.5) return;
+      el.scrollTop += shift;
+      heldTop = el.scrollTop;
     };
     const pin = () => {
       if (!scrollerUsable(el) || !pinned.current) return;
@@ -131,6 +161,10 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       if (was && pinned.current && !user && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
       lastTop = el.scrollTop;
       syncAnchor();
+      if (lastTop !== heldTop) {
+        heldTop = undefined;
+        read();
+      }
     };
     // Whether the browser has clamped the offset since the reader's last input: content above a held tail shrank (a
     // fold closing over it), so the tail is what stays put and the pad follows every frame. A fold closing back to
@@ -191,16 +225,32 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     // A fold opened or closed by hand changes scrollHeight without firing a scroll event: sync the bottom state so
     // an opened fold that now overflows below shows the bottom fade (and is not yanked to the bottom by the next
     // streamed chunk), and closing it back into the viewport restores the follow.
-    const grew = () => {
-      if (untouched.current) {
-        if (pinned.current) align();
-        pin();
-        return;
-      }
-      if (!scrollerUsable(el)) return;
+    let lastWidth = -1;
+    const grew = (entries: ResizeObserverEntry[]) => {
+      const width = entries[entries.length - 1]?.contentRect.width ?? lastWidth;
+      if (lastWidth >= 0 && width !== lastWidth) follow.rewrap();
+      lastWidth = width;
+      const rewrap = performance.now() - follow.rewrapAt < REWRAP_SETTLE_MS;
       if (anchor && !pointerDown && performance.now() - holding.current >= FOLD_SETTLE_MS) {
         anchor = undefined;
       }
+      // A re-wrap keeps what the reader has: the tail when held (growth alone lets go of it once they touched the
+      // thread), else the top of the view. A press still settling keeps its own row under the pointer below
+      if (rewrap && !anchor && scrollerUsable(el)) {
+        if (!pinned.current) hold();
+        else if (!untouched.current) {
+          align();
+          pin();
+        }
+        seenTop = el.scrollTop;
+      }
+      if (untouched.current) {
+        if (pinned.current) align();
+        pin();
+        if (!rewrap) read();
+        return;
+      }
+      if (!scrollerUsable(el)) return;
       if (anchor) {
         const nowAt = anchorOffset(anchor.node, el);
         if (nowAt === undefined) {
@@ -221,6 +271,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       if (el.scrollTop < seenTop - 0.5) clamping = true;
       if (atBottom && clamping && align()) pin();
       seenTop = el.scrollTop;
+      if (!rewrap || pinned.current) read();
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('pointerdown', pressed, { passive: true });
@@ -236,8 +287,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     const body = new ResizeObserver(grew);
     if (content.current) body.observe(content.current, { box: 'border-box' });
     return () => {
-      el.style.paddingTop = '';
-      el.style.removeProperty('--follow-lead');
+      padded?.style.removeProperty('--follow-lead');
       box.disconnect();
       body.disconnect();
       el.removeEventListener('scroll', onScroll);

@@ -129,7 +129,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
     <QuietEntranceContext.Provider value={opening}>
       {/* The main thread's column: share its dock margins and scrollbar gutter, with turns carrying their own --pad */}
       <div ref={scroll} className="pane-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter">
-        <div ref={body} className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}>
+        <div ref={body} className={cn('follow-pad mx-auto flex min-w-0 flex-col gap-msg pb-msg', wide && 'max-w-chat-column')}>
           {node.task !== undefined && !taskInTurns && <TaskCard task={node.task} />}
           {receiptOnly(node) ? (
             <>

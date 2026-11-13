@@ -20,7 +20,7 @@ import { useStableList } from '../ui/useStableList';
 import { useMergedRefs } from '../ui/mergeRefs';
 import { QuietEntranceContext } from '../ui/Row';
 import { FollowContext, useBottomFollow } from './useBottomFollow';
-import { captureSliceScroll, restoreSliceScroll, type SliceScroll } from './sliceScroll';
+import { captureSliceScroll, landSlice, readerScrolling, type SliceScroll } from './sliceScroll';
 import { useExchangeSkip } from './exchangeSkip';
 import { Header } from './Header';
 import { SessionList, projectName } from './SessionList';
@@ -1535,16 +1535,22 @@ function useExchangeWindow(
     if (start <= 0) return;
     let frame2 = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const land = () => {
+      const scroller = scrollerRef.current;
+      // A scroll the reader has in flight would not survive the offset moving under it: look again next frame
+      if (scroller && readerScrolling(scroller)) {
+        frame2 = requestAnimationFrame(() => { timer = setTimeout(land, 0); });
+        return;
+      }
+      before.current = scroller ? captureSliceScroll(scroller, follow.value) : undefined;
+      slicing.current = true;
+      flushSync(() => setStart(cur => Math.max(0, cur - EXCHANGE_SLICE)));
+    };
+    // Listening from the mount on, so a wheel turned before the first slice holds it too
+    if (scrollerRef.current) readerScrolling(scrollerRef.current);
     // Wait until the first frame has painted before prepending earlier slices so the switch paint is never delayed by background mounts.
     const frame1 = requestAnimationFrame(() => {
-      frame2 = requestAnimationFrame(() => {
-        timer = setTimeout(() => {
-          const scroller = scrollerRef.current;
-          before.current = scroller ? captureSliceScroll(scroller, follow.value) : undefined;
-          slicing.current = true;
-          flushSync(() => setStart(cur => Math.max(0, cur - EXCHANGE_SLICE)));
-        }, 0);
-      });
+      frame2 = requestAnimationFrame(() => { timer = setTimeout(land, 0); });
     });
     return () => {
       cancelAnimationFrame(frame1);
@@ -1558,7 +1564,7 @@ function useExchangeWindow(
     const kept = before.current;
     before.current = undefined;
     if (!kept) return;
-    restoreSliceScroll(kept);
+    landSlice(kept);
   }, [start]);
 
   const effectiveStart = start > 0 ? Math.min(start, Math.max(0, count - INITIAL_EXCHANGES)) : 0;
@@ -1575,9 +1581,7 @@ const goalSetByAgent = new Map<AgentId, boolean>();
 
 const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal, goalRoom }: ThreadProps) {
   const locale = useLocale();
-  // Exchanges out of sight skip style, layout and paint once laid out at their real size (chat/exchangeSkip.ts)
   const appearance = useAppearance();
-  const exchangeRef = useExchangeSkip(appearance, locale, fontSizes);
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
@@ -1586,6 +1590,8 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
     return undefined;
   }, [turns]);
   const follow = useBottomFollow(ref, body, replayKey, [turns, running], lastPrompt);
+  // Exchanges out of sight skip style, layout and paint once laid out at their real size (chat/exchangeSkip.ts)
+  const exchangeRef = useExchangeSkip(appearance, locale, fontSizes, follow.rewrap);
   // Fade the lower edge while the reader is scrolled away from the bottom (thread-fade): text leaving the view above a
   // borderless dock row (the connecting notice) dissolves instead of being cut off flat. Driven by the follow state rather
   // than useScrollFade, whose content observer would flash the fade for a frame on every streamed chunk before the re-pin
@@ -1644,7 +1650,7 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
     <div ref={ref} data-thread tabIndex={-1} className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter outline-none [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it,
           plus the floating connecting row's room when the tail holds no action row (`--thread-tail-room`, chat.css) */}
-      <div key={replayKey} ref={bodyRef} data-thread-body className={cn('flex flex-col gap-msg pt-pad-y pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide ? 'thread-column' : 'mx-auto')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
+      <div key={replayKey} ref={bodyRef} data-thread-body className={cn('follow-pad flex flex-col gap-msg pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide ? 'thread-column' : 'mx-auto')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
         {exchangeSlots.slice(window.start).map((slot, offset) => {
           const k = window.start + offset;
           const messages: ReactNode[] = [];
