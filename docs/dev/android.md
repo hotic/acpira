@@ -34,6 +34,12 @@
 - The activity is not recreated on rotation or fold (`configChanges`): state survives, and a layout reads its size from `BoxWithConstraints`, not the configuration.
 - Emulators: `acpira_tablet` and `acpira_fold` (`cmd device_state state 0|2` folds it; two displays, so `screencap -d <id>` from `dumpsys SurfaceFlinger --display-id`). With several devices up, scripts need `ANDROID_SERIAL`.
 
+## Short windows
+
+- A window too short for a page (a 326 dp square cover screen, a phone on its side, split-screen) squashes nothing: pieces give way in an order shared with iOS and HarmonyOS, then the page scrolls (`ui/Welcome.kt` `YieldColumn`, `ui/NewSessionScreen.kt` `HeroColumn`, `ui/Pairing.kt` `PairHeroPlacement`, the pair form's camera card). `wm size 652x652` with `wm density 320` is that square; the AVD's status and gesture bars take 76 dp of it.
+- A scroller laid over a tappable backdrop takes its taps (hit testing stops at the first sibling hit): the new session's hero column folds the open ring itself.
+- Open: at that square the composer's pickers (`ui/Composer.kt` `GooLayer`) have room for one bean between the top bar and the composer, and a second column starts outside the window, so the beans still rise over the bar and a fourth is out of reach.
+
 ## Composer
 
 - Ported from the iOS `Chat/Composer.swift`, `Design/Goo.swift` and `Logic/ModelCatalog.swift`, Fusion and the built-in agent's sidekick included (`ui/SidekickBeans.kt`; the sidekick's beans are a second level, `Goo.deeper`). The pickers' layer (`GooLayer`) sits over the whole Scaffold, the composer included: under the bar a card grown round a long prompt or attachments covered the lowest beans and took their taps. The layer handles the chip's own tap (one level back) itself.

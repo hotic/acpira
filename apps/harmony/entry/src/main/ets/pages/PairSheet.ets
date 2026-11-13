@@ -142,6 +142,8 @@ struct PairCodeEntry {
       }
     }
     .width(PairMetrics.codeBox)
+    // A window narrower than the six boxes narrows them all alike
+    .flexShrink(1)
     .height(PairMetrics.codeBoxH)
     .borderRadius(Metrics.rLg)
     .backgroundColor($r('app.color.form_row'))
@@ -153,66 +155,80 @@ struct PairCodeEntry {
   }
 
   build() {
-    Column() {
-      Text(t('mobile.pair.code.hint'))
-        .fontSize(Type.body)
-        .lineHeight(Type.bodyLine)
-        .fontColor($r('app.color.fg2'))
-        .textAlign(TextAlign.Center)
-        .margin({ bottom: Metrics.page })
-      Stack() {
-        // Kept all but invisible rather than hidden: a hidden field takes no focus
-        TextInput({ text: this.code })
-          .id('pair.code.field')
-          .type(InputType.Number)
-          .maxLength(CODE_LENGTH)
-          .caretColor(Color.Transparent)
-          .fontColor(Color.Transparent)
-          .backgroundColor(Color.Transparent)
-          .defaultFocus(true)
+    // Scrolls, so a short window with the keyboard up (a phone on its side) still shows the boxes
+    Scroll() {
+      Column() {
+        Text(t('mobile.pair.code.hint'))
+          .fontSize(Type.body)
+          .lineHeight(Type.bodyLine)
+          .fontColor($r('app.color.fg2'))
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: Metrics.page })
+        Stack() {
+          // Kept all but invisible rather than hidden: a hidden field takes no focus
+          TextInput({ text: this.code })
+            .id('pair.code.field')
+            .type(InputType.Number)
+            .maxLength(CODE_LENGTH)
+            .caretColor(Color.Transparent)
+            .fontColor(Color.Transparent)
+            .backgroundColor(Color.Transparent)
+            .width('100%')
+            .height(PairMetrics.codeBoxH)
+            // defaultFocus only counts when a page is first created; this page swaps in inside a sheet or a step
+            .onAppear(() => {
+              setTimeout(() => {
+                focusControl.requestFocus('pair.code.field');
+              }, 0);
+            })
+            .onFocus(() => {
+              this.focused = true;
+            })
+            .onBlur(() => {
+              this.focused = false;
+            })
+            .onChange((typed: string) => {
+              // What is typed while a code is checked is dropped
+              if (this.checking) {
+                return;
+              }
+              const digits = typed.replace(/[^0-9]/g, '').slice(0, CODE_LENGTH);
+              this.code = digits;
+              if (digits.length === CODE_LENGTH) {
+                this.onCode(digits);
+              }
+            })
+          Row({ space: Metrics.s2 }) {
+            ForEach([0, 1, 2, 3, 4, 5], (i: number) => {
+              this.box(i)
+            }, (i: number) => `${i}`)
+          }
+          .justifyContent(FlexAlign.Center)
           .width('100%')
-          .height(PairMetrics.codeBoxH)
-          .onFocus(() => {
-            this.focused = true;
-          })
-          .onBlur(() => {
-            this.focused = false;
-          })
-          .onChange((typed: string) => {
-            // What is typed while a code is checked is dropped
-            if (this.checking) {
-              return;
-            }
-            const digits = typed.replace(/[^0-9]/g, '').slice(0, CODE_LENGTH);
-            this.code = digits;
-            if (digits.length === CODE_LENGTH) {
-              this.onCode(digits);
-            }
-          })
-        Row({ space: Metrics.s2 }) {
-          ForEach([0, 1, 2, 3, 4, 5], (i: number) => {
-            this.box(i)
-          }, (i: number) => `${i}`)
+          .hitTestBehavior(HitTestMode.None)
         }
-        .hitTestBehavior(HitTestMode.None)
-      }
-      // Checking, or why the last code was refused; the slot stays, so nothing under it moves
-      Stack({ alignContent: Alignment.Top }) {
-        if (this.checking) {
-          LoadingProgress().color($r('app.color.fg2')).width(Metrics.iconCtl).height(Metrics.iconCtl)
-        } else if (this.error !== undefined) {
-          Text(this.error)
-            .id('pair.code.error')
-            .fontSize(Type.text3)
-            .fontColor($r('app.color.danger'))
-            .textAlign(TextAlign.Center)
+        // Checking, or why the last code was refused; the slot stays, so nothing under it moves
+        Stack({ alignContent: Alignment.Top }) {
+          if (this.checking) {
+            LoadingProgress().color($r('app.color.fg2')).width(Metrics.iconCtl).height(Metrics.iconCtl)
+          } else if (this.error !== undefined) {
+            Text(this.error)
+              .id('pair.code.error')
+              .fontSize(Type.text3)
+              .fontColor($r('app.color.danger'))
+              .textAlign(TextAlign.Center)
+          }
         }
+        .width('100%')
+        .constraintSize({ minHeight: PairMetrics.statusSlot })
+        .margin({ top: Metrics.gap })
       }
+      .padding({ top: Metrics.page * 2, left: Metrics.pad, right: Metrics.pad })
       .width('100%')
-      .constraintSize({ minHeight: PairMetrics.statusSlot })
-      .margin({ top: Metrics.gap })
     }
-    .padding({ top: Metrics.page * 2, left: Metrics.pad, right: Metrics.pad })
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.None)
     .width('100%')
   }
 }
@@ -238,6 +254,8 @@ export struct PairSheet {
   @Local typed: string = '';
   @Local checking: boolean = false;
   @Local codeError: string | undefined = undefined;
+  /** The form's height, for the camera card (components/PairScanner.ets) */
+  @Local formRoom: number = 0;
   private browser: NearbyBrowser | undefined = undefined;
   private noticeGen: number = 0;
   private closeTimer: number = -1;
@@ -476,7 +494,7 @@ export struct PairSheet {
   form() {
     Scroll() {
       Column() {
-        PairCameraCard({ active: this.phase.kind === 'choose', onLink: (link: string) => this.pair(link) })
+        PairCameraCard({ active: this.phase.kind === 'choose', room: this.formRoom, onLink: (link: string) => this.pair(link) })
           .borderRadius(Metrics.rLg)
           .clip(true)
 
@@ -584,6 +602,9 @@ export struct PairSheet {
     .align(Alignment.Top)
     .layoutWeight(1)
     .width('100%')
+    .onSizeChange((_: SizeOptions, now: SizeOptions) => {
+      this.formRoom = Number(now.height);
+    })
   }
 
   @Builder

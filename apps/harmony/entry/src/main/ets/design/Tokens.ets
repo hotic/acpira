@@ -145,6 +145,11 @@ export class RingMetrics {
 export class WelcomeMetrics {
   static readonly column: number = 480;
   static readonly markMax: number = 220;
+  /** Below this the mark is left out rather than drawn small */
+  static readonly markMin: number = 72;
+  /** displayPriority: what a short window keeps to the last, and what it gives up before that (unset goes first) */
+  static readonly keepFirst: number = 3;
+  static readonly keepSecond: number = 2;
   static readonly brandMark: number = 17;
   static readonly headline: number = 34;
   static readonly headlineLine: number = 42;
@@ -314,6 +319,8 @@ export class PairMetrics {
   static readonly statusSlot: number = 40;
   /** The camera card, its viewfinder and the finder's corners */
   static readonly scanCard: number = 340;
+  /** What a short form keeps showing under the card: the next section's head */
+  static readonly scanPeek: number = 72;
   static readonly finder: number = 176;
   static readonly finderCorner: number = 30;
   static readonly finderStroke: number = 4;

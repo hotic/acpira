@@ -13,13 +13,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
@@ -40,8 +42,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import cc.hotic.acpira.design.Lucide
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
@@ -179,10 +185,12 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
           .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = ring) { ring = false },
       )
     }
-    Column(
-      Modifier.fillMaxSize().padding(padding).gooRecede(goo, model.motion),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(Metrics.gap, Alignment.CenterVertically),
+    BoxWithConstraints(Modifier.fillMaxSize().padding(padding).gooRecede(goo, model.motion)) {
+    val ringRoom = remember { RingRoom() }
+    HeroColumn(
+      constraints.maxHeight, ringRoom,
+      // The column takes the page's taps as a scroller, so it folds an open ring itself, as the dim under it does
+      Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = ring) { ring = false },
     ) {
       AgentRing(
         agent = info,
@@ -193,7 +201,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
         onSelect = { pickedAgent = it },
         landing = landing,
         onLanding = { landing = it },
-        modifier = Modifier.padding(bottom = Metrics.s3),
+        room = ringRoom,
       )
       // The name and the folder step back while the ring is out, and rise back as a picked mark lands or once the
       // bubbles are home after a plain close
@@ -208,10 +216,11 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
       }
       Text(
         (landing?.let { model.agent(it) } ?: info).name, color = Palette.fgStrong, fontSize = Type.field, lineHeight = Type.fieldLine,
-        fontWeight = FontWeight.SemiBold, modifier = hero,
+        fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = hero.padding(horizontal = Metrics.pad),
       )
       var pickFolder by remember { mutableStateOf(false) }
-      Box(hero) {
+      Box(hero.padding(horizontal = Metrics.pad)) {
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
@@ -225,7 +234,11 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
         ) {
           val asChat = chat || cwd == null
           Lucide(if (asChat) "messagesSquare" else "folder", Palette.fg2, size = Metrics.icon)
-          Text(if (asChat) t("session.group.chats") else model.placeName(cwd!!), color = Palette.fg2, fontSize = Type.text1)
+          // A long folder name keeps to one line inside the window
+          Text(
+            if (asChat) t("session.group.chats") else model.placeName(cwd!!), color = Palette.fg2, fontSize = Type.text1,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+          )
         }
         FolderMenu(
           open = pickFolder,
@@ -242,11 +255,50 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
       }
     }
     }
+    }
   }
   // The composer's open picker, over everything (the composer included), so no piece hides under the card
   GooLayer(goo, model.motion)
   // Add folder: the browser over the whole page; the added folder becomes this draft's
   AddProject(model, adding, onClose = { adding = false }, onAdded = { pickedCwd = it; picked = true })
+  }
+}
+
+/**
+ * The hero column: the ring's drop, the agent's name and the folder capsule, centred in [room] (px). A window too short
+ * for them takes the height from the drop (the gap under it, then its size down to [Metrics.heroTileMin]), then from
+ * the gaps, and scrolls past that, so the capsule stays in reach. It also tells the ring how far it may reach above and below the drop
+ */
+@Composable
+private fun HeroColumn(room: Int, ringRoom: RingRoom, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+  val scroll = rememberScrollState()
+  Layout(content, Modifier.verticalScroll(scroll).then(modifier)) { measurables, constraints ->
+    val loose = constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity)
+    val (ring, name, folder) = measurables.map { it.measure(loose) }
+    val words = name.height + folder.height
+    val loosest = Metrics.gap.roundToPx()
+    val pad = (room - words - loosest * 2 - ring.height).coerceIn(0, Metrics.s3.roundToPx())
+    val tile = (room - words - loosest * 2 - pad).coerceIn(Metrics.heroTileMin.roundToPx(), ring.height)
+    val gap = ((room - words - tile - pad) / 2).coerceIn(Metrics.s2.roundToPx(), loosest)
+    val scale = tile.toFloat() / ring.height
+    val total = tile + pad + words + gap * 2
+    val height = maxOf(room, total)
+    val top = (height - total) / 2
+    // From the drop's centre to the page's edges less a margin, in the ring's own (scaled) px
+    val centre = top + tile / 2f - scroll.value
+    val margin = Metrics.s2.toPx()
+    ringRoom.up = (centre - margin) / scale
+    ringRoom.down = (room - centre - margin) / scale
+    layout(constraints.maxWidth, height) {
+      val mid = constraints.maxWidth / 2
+      ring.placeWithLayer(mid - ring.width / 2, top) {
+        scaleX = scale; scaleY = scale
+        transformOrigin = TransformOrigin(0.5f, 0f)
+      }
+      val nameTop = top + tile + pad + gap
+      name.place(mid - name.width / 2, nameTop)
+      folder.place(mid - folder.width / 2, nameTop + name.height + gap)
+    }
   }
 }
 

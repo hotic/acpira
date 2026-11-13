@@ -5,6 +5,7 @@
     "pages/PreviewShell",
     "pages/PreviewForms",
     "pages/PreviewSplit",
+    "pages/PreviewSplitChat",
     "pages/PreviewComposer",
     "pages/PreviewPair",
     "pages/PreviewShare"

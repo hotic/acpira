@@ -45,6 +45,8 @@ export struct WelcomeFlow {
   @Local step: Step = Step.Intro;
   /** The intro's copy has come in */
   @Local shown: boolean = false;
+  /** The room above the intro's copy, less the air the mark keeps around it */
+  @Local markRoom: number = 0;
   @Local address: string = '';
   @Local token: string = '';
 
@@ -145,58 +147,68 @@ export struct WelcomeFlow {
 
   @Builder
   intro() {
+    // One column, so a window too short for all of it drops the lines by their priority: the agents first, then the
+    // brand; the headline and Start stay. The mark takes whatever room is left above the copy
     Column() {
-      Blank()
-      // The mark, lit up solid
-      AgentMark({ agent: 'acpira', name: 'Acpira', tint: $r('app.color.fg1'), extent: WelcomeMetrics.markMax })
-        .opacity(this.shown ? 1 : 0)
-        .scale({ x: this.shown ? 1 : 0.92, y: this.shown ? 1 : 0.92 })
-        .animation(this.rise(0))
-      Blank()
-      Column() {
-        Row({ space: Metrics.s2 }) {
-          AgentMark({ agent: 'acpira', name: 'Acpira', tint: $r('app.color.fg1'), extent: WelcomeMetrics.brandMark })
-          Text('Acpira').fontSize(Type.text2).fontWeight(FontWeight.Medium).fontColor($r('app.color.fg2'))
+      Stack() {
+        if (this.markRoom >= WelcomeMetrics.markMin) {
+          // The mark, lit up solid
+          AgentMark({ agent: 'acpira', name: 'Acpira', tint: $r('app.color.fg1'), extent: Math.min(WelcomeMetrics.markMax, this.markRoom) })
+            .opacity(this.shown ? 1 : 0)
+            .scale({ x: this.shown ? 1 : 0.92, y: this.shown ? 1 : 0.92 })
+            .animation(this.rise(0))
         }
+      }
+      .layoutWeight(1)
+      .width('100%')
+      .displayPriority(WelcomeMetrics.keepFirst)
+      .onSizeChange((o: SizeOptions, n: SizeOptions) => {
+        this.markRoom = Number(n.height) - Metrics.page * 2;
+      })
+      Row({ space: Metrics.s2 }) {
+        AgentMark({ agent: 'acpira', name: 'Acpira', tint: $r('app.color.fg1'), extent: WelcomeMetrics.brandMark })
+        Text('Acpira').fontSize(Type.text2).fontWeight(FontWeight.Medium).fontColor($r('app.color.fg2'))
+      }
+      .margin({ left: WelcomeMetrics.copyInset, bottom: WelcomeMetrics.headlineGap })
+      .displayPriority(WelcomeMetrics.keepSecond)
+      .opacity(this.shown ? 1 : 0)
+      .translate({ y: this.shown ? 0 : WelcomeMetrics.rise })
+      .animation(this.rise(WelcomeMetrics.brandAt))
+      Text(t('mobile.welcome.hero.1'))
+        .fontSize(WelcomeMetrics.headline)
+        .lineHeight(WelcomeMetrics.headlineLine)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.fg3'))
+        .margin({ left: WelcomeMetrics.copyInset })
+        .displayPriority(WelcomeMetrics.keepFirst)
         .opacity(this.shown ? 1 : 0)
         .translate({ y: this.shown ? 0 : WelcomeMetrics.rise })
-        .animation(this.rise(WelcomeMetrics.brandAt))
-        Text(t('mobile.welcome.hero.1'))
-          .fontSize(WelcomeMetrics.headline)
-          .lineHeight(WelcomeMetrics.headlineLine)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.fg3'))
-          .margin({ top: WelcomeMetrics.headlineGap })
-          .opacity(this.shown ? 1 : 0)
-          .translate({ y: this.shown ? 0 : WelcomeMetrics.rise })
-          .animation(this.rise(WelcomeMetrics.hero1At))
-        Text(t('mobile.welcome.hero.2'))
-          .fontSize(WelcomeMetrics.headline)
-          .lineHeight(WelcomeMetrics.headlineLine)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.fg_strong'))
-          .opacity(this.shown ? 1 : 0)
-          .translate({ y: this.shown ? 0 : WelcomeMetrics.rise })
-          .animation(this.rise(WelcomeMetrics.hero2At))
-        Column({ space: WelcomeMetrics.agentsRow }) {
-          Text(t('mobile.welcome.agents')).fontSize(Type.text3).fontColor($r('app.color.fg3'))
-          Row({ space: WelcomeMetrics.agentStep }) {
-            ForEach(VENDORS, (v: string, i: number) => {
-              AgentMark({ agent: v, name: v, tint: $r('app.color.fg1'), extent: WelcomeMetrics.agentMark })
-                .opacity(this.shown ? 1 : 0)
-                .translate({ x: this.shown ? 0 : -Metrics.s1 })
-                .animation(this.rise(WelcomeMetrics.factAt + VENDOR_STEP_MS * (i + 1)))
-            }, (v: string) => v)
-          }
-        }
-        .alignItems(HorizontalAlign.Start)
-        .margin({ top: WelcomeMetrics.agentsGap })
+        .animation(this.rise(WelcomeMetrics.hero1At))
+      Text(t('mobile.welcome.hero.2'))
+        .fontSize(WelcomeMetrics.headline)
+        .lineHeight(WelcomeMetrics.headlineLine)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.fg_strong'))
+        .margin({ left: WelcomeMetrics.copyInset })
+        .displayPriority(WelcomeMetrics.keepFirst)
         .opacity(this.shown ? 1 : 0)
-        .animation(this.rise(WelcomeMetrics.factAt))
+        .translate({ y: this.shown ? 0 : WelcomeMetrics.rise })
+        .animation(this.rise(WelcomeMetrics.hero2At))
+      Column({ space: WelcomeMetrics.agentsRow }) {
+        Text(t('mobile.welcome.agents')).fontSize(Type.text3).fontColor($r('app.color.fg3'))
+        Row({ space: WelcomeMetrics.agentStep }) {
+          ForEach(VENDORS, (v: string, i: number) => {
+            AgentMark({ agent: v, name: v, tint: $r('app.color.fg1'), extent: WelcomeMetrics.agentMark })
+              .opacity(this.shown ? 1 : 0)
+              .translate({ x: this.shown ? 0 : -Metrics.s1 })
+              .animation(this.rise(WelcomeMetrics.factAt + VENDOR_STEP_MS * (i + 1)))
+          }, (v: string) => v)
+        }
       }
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: WelcomeMetrics.copyInset })
-      .width('100%')
+      .margin({ left: WelcomeMetrics.copyInset, top: WelcomeMetrics.agentsGap })
+      .opacity(this.shown ? 1 : 0)
+      .animation(this.rise(WelcomeMetrics.factAt))
       Button(t('welcome.start'))
         .id('welcome.start')
         .fontSize(Type.body)
@@ -206,6 +218,7 @@ export struct WelcomeFlow {
         .height(Metrics.barCtl)
         .width('100%')
         .margin({ top: WelcomeMetrics.actionsGap, bottom: Metrics.s2 })
+        .displayPriority(WelcomeMetrics.keepFirst)
         .opacity(this.shown ? 1 : 0)
         .translate({ y: this.shown ? 0 : WelcomeMetrics.rise })
         .animation(this.rise(WelcomeMetrics.actionsAt))
@@ -213,6 +226,7 @@ export struct WelcomeFlow {
           this.step = this.connectStep();
         })
     }
+    .alignItems(HorizontalAlign.Start)
     .constraintSize({ maxWidth: WelcomeMetrics.column })
     .padding({ left: Metrics.page, right: Metrics.page, top: Metrics.page, bottom: Metrics.page })
     .height('100%')
@@ -245,29 +259,36 @@ export struct WelcomeFlow {
       }
       .height(Metrics.barCtl + Metrics.gap)
       .width('100%')
-      Column({ space: Metrics.gap }) {
-        Lucide({ name: 'laptop', tint: $r('app.color.fg1'), extent: WelcomeMetrics.bell })
-        Text(t('mobile.pair.connectTitle'))
-          .fontSize(WelcomeMetrics.notifyTitle)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.fg_strong'))
-          .margin({ top: Metrics.gap })
-        Text(t('mobile.engine.desc'))
-          .fontSize(Type.text2)
-          .fontColor($r('app.color.fg2'))
-          .textAlign(TextAlign.Center)
+      // A window too short for the form (a small square one, or any with the keyboard up) scrolls it over the actions
+      Scroll() {
         Column({ space: Metrics.gap }) {
-          this.field(this.address, 'host:port', 'welcome.address', (v: string) => {
-            this.address = v;
-          })
-          this.field(this.token, 'token', 'welcome.token', (v: string) => {
-            this.token = v;
-          })
+          Lucide({ name: 'laptop', tint: $r('app.color.fg1'), extent: WelcomeMetrics.bell })
+          Text(t('mobile.pair.connectTitle'))
+            .fontSize(WelcomeMetrics.notifyTitle)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.fg_strong'))
+            .margin({ top: Metrics.gap })
+          Text(t('mobile.engine.desc'))
+            .fontSize(Type.text2)
+            .fontColor($r('app.color.fg2'))
+            .textAlign(TextAlign.Center)
+          Column({ space: Metrics.gap }) {
+            this.field(this.address, 'host:port', 'welcome.address', (v: string) => {
+              this.address = v;
+            })
+            this.field(this.token, 'token', 'welcome.token', (v: string) => {
+              this.token = v;
+            })
+          }
+          .margin({ top: Metrics.page })
         }
-        .margin({ top: Metrics.page })
+        .justifyContent(FlexAlign.Center)
+        .constraintSize({ minHeight: '100%' })
+        .width('100%')
       }
       .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.None)
       Column({ space: Metrics.s3 }) {
         Button(t('mobile.pair.connect'))
           .id('welcome.connect')
@@ -299,7 +320,9 @@ export struct WelcomeFlow {
   @Builder
   notify() {
     Column() {
-      Blank()
+      // The spacers outrank the ring: dropped with it, what stays would bunch up at the top
+      Blank().displayPriority(WelcomeMetrics.keepSecond)
+      // A window too short for all of it goes without the ring
       Stack() {
         Circle()
           .width(WelcomeMetrics.bellRing)
@@ -314,12 +337,14 @@ export struct WelcomeFlow {
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.fg_strong'))
         .margin({ top: WelcomeMetrics.notifyTitleGap })
+        .displayPriority(WelcomeMetrics.keepFirst)
       Text(t('mobile.welcome.notify.desc'))
         .fontSize(Type.text1)
         .fontColor($r('app.color.fg2'))
         .textAlign(TextAlign.Center)
         .margin({ top: WelcomeMetrics.notifyDescGap })
-      Blank()
+        .displayPriority(WelcomeMetrics.keepFirst)
+      Blank().displayPriority(WelcomeMetrics.keepSecond)
       Column({ space: Metrics.s3 }) {
         Button(t('mobile.notify.ask'))
           .id('welcome.notify.ask')
@@ -349,6 +374,7 @@ export struct WelcomeFlow {
           })
       }
       .margin({ bottom: Metrics.s2 })
+      .displayPriority(WelcomeMetrics.keepFirst)
     }
     .constraintSize({ maxWidth: WelcomeMetrics.column })
     .padding({ left: Metrics.page, right: Metrics.page, top: Metrics.page, bottom: Metrics.page })

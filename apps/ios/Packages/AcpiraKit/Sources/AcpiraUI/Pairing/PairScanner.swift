@@ -16,6 +16,8 @@ struct PairCameraCard: View {
   var active: Bool
   /// A pairing link and the code's rows as read
   var onLink: (String, [String]?) -> Void
+  /// The height of the form the card leads (0 until measured): the card never takes all of it
+  var room: CGFloat = 0
   @Environment(\.pairing) private var pairing
   @Environment(\.scenePhase) private var scenePhase
   @State private var source: Source?
@@ -59,7 +61,7 @@ struct PairCameraCard: View {
       }
     }
     .frame(maxWidth: .infinity)
-    .frame(height: max(Metrics.pairScanCard, (width * Metrics.pairScanAspect).rounded()))
+    .frame(height: height)
     .clipped()
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     .task { source = await resolve() }
@@ -68,6 +70,13 @@ struct PairCameraCard: View {
       guard phase == .active, source == .denied else { return }
       Task { source = await resolve() }
     }
+  }
+
+  /// Grows with a wide column, and gives way where the form is short, down to the viewfinder and its margin
+  private var height: CGFloat {
+    let tall = max(Metrics.pairScanCard, (width * Metrics.pairScanAspect).rounded())
+    guard room > 0 else { return tall }
+    return min(tall, max(Metrics.pairFinder + Metrics.page * 2, room - Metrics.pairScanPeek))
   }
 
   private func resolve() async -> Source {

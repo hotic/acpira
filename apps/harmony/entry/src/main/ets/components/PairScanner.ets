@@ -63,6 +63,8 @@ struct FinderCorners {
 export struct PairCameraCard {
   /** Scans only while the sheet's form shows and nothing is being paired */
   @Param active: boolean = true;
+  /** The height of the form the card leads (0 until measured): the card never takes all of it */
+  @Param room: number = 0;
   @Event onLink: (link: string) => void = () => {};
   @Local source: Source = Source.Unknown;
   private xc: XComponentController = new XComponentController();
@@ -232,6 +234,14 @@ export struct PairCameraCard {
     }).catch(() => {});
   }
 
+  /** Gives way where the form is short (a phone on its side), down to the viewfinder and its margin */
+  private cardHeight(): number {
+    if (this.room <= 0) {
+      return PairMetrics.scanCard;
+    }
+    return Math.min(PairMetrics.scanCard, Math.max(PairMetrics.finder + Metrics.page * 2, this.room - PairMetrics.scanPeek));
+  }
+
   build() {
     Stack() {
       if (this.source === Source.Live) {
@@ -263,7 +273,7 @@ export struct PairCameraCard {
     }
     .id('pair.camera')
     .width('100%')
-    .height(PairMetrics.scanCard)
+    .height(this.cardHeight())
     .backgroundColor($r('app.color.form_row'))
     .clip(true)
   }

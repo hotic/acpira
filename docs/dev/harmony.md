@@ -27,6 +27,14 @@
 - The Oniro emulator (`oniro_emulator.zip` from `eclipse-oniro4openharmony/device_board_oniro` releases) is x86_64 QEMU with `run.sh` / `run.bat`; its user network forwards HDC to `127.0.0.1:55555` (`hdc tconn`, through an SSH tunnel when QEMU runs on another machine). Accelerated on Linux KVM, very slow on Apple silicon.
 - On Windows, `run.sh` picks WHPX with an AVX2 CPU model, yet the guest's `foundation` still died of SIGILL and init rebooted; TCG (`-accel tcg,thread=multi -cpu max`) boots it. Under TCG the first launch after boot often trips a lifecycle timeout (the main thread waits on the render service for a VSync receiver; a `sysfreeze` log in `/data/log/faultlog/faultlogger/`); launching again works.
 - Driving it: `power-shell wakeup` / `setmode 602` (screen stays on) and a `uinput -T -m` swipe unlock (`aa start` refuses a locked screen); `uinput -T -c x y` taps in px; `uitest uiInput inputText x y text` types; `snapshot_display -f /data/local/tmp/x.jpeg` sometimes fails right after a wake, retry. Resolution comes from the QEMU `virtio-gpu` `xres`/`yres` plus the kernel's `video=` (density 1, so px = vp): 1280×800 shows the split.
+
+## Window sizes
+
+- Layout follows the window's width alone (`Navigation` Auto at `splitMinW`), as Huawei's foldable guides ask: never the device type or the fold status, whose values mean different forms per device (`FOLD_STATUS_EXPANDED` is a tri-fold's two-screen form and a Pura X's slab). `scripts/preview-matrix.sh` shoots a page at those guides' full-screen sizes; an unfold itself (the page and scroll position kept) needs a device or DevEco's emulator.
+- `orientation` is `follow_desktop`: rotation gated on the fold status leaves a tri-fold's three-screen form in portrait, and a setting per form shows the old turn first after an unfold in the background.
+- `bindSheet` defaults to a popup hung off its host from 840 vp (centred from 600), and the add-computer sheet's host has no size: every sheet asks for `SheetType.CENTER`, still the bottom sheet under 600. Open: not seen on a wide device.
+- `displayPriority` tells children apart only above 1 and only among one container's direct children: the first run's intro is one flat column so a short window (a Pura X's 326 vp square cover screen) drops its lines in order. A `Blank` left at 1 goes with the first thing dropped, and what stays bunches up at the top: spacers take a priority of their own.
+
 ## Engine wire
 
 - Same contract as the other clients: hello, `attachView` (`initial: {empty: true}`), `ready` with `patches` and `listPatches`, `sessionPatch` / `sessionsPatch` applied as `sessionPatch.ts` and the sessions patch runs, `resync` / `resyncSessions` when one does not fit.
@@ -37,6 +45,7 @@
 - A `bindMenu` / `bindContextMenu` builder gets no width from the menu: a card without a definite width lets `'100%'` rows stretch to the window and on device draws them empty (no text, no glyphs; the Previewer's `start` levels look fine). `MenuCard` carries a fixed width for this.
 - A `bindContextMenu` builder closes itself through `getUIContext().getContextMenuController().close()`; it has no `isShow` binding like `bindMenu`.
 - `EntryAbility` sets the keyboard to resize the page; the default lifts the whole page, bar included, off screen.
+- `defaultFocus` counts only when a page is first created: a field that swaps in later (a sheet's step) asks through `focusControl.requestFocus` on appear, or no keyboard comes until a tap. Open: not seen on a device.
 - `scripts/build.sh` with `DEV_ENGINE=host:port:token` (and `DEV_PROMPT`) compiles a default engine in, since nothing passes launch parameters to the Previewer; `apps/ios/scripts/engine.sh` takes `TOKEN` to match.
 - A field added to `SessionView` must be copied in `viewWithTurns` (`wire/Wire.ets`) too, or the app's own edits (send, stop, edit, fork) drop it; `applySessionPatch` completes the parsed patch in place, so a patch keeps every field the wire sent.
 - Turn rows key on the turn object (`store/Thread.ets` `turnKey`): a patch keeps the objects of the turns before `keep`, so their rows stay. What a row reads from the view beyond its turn (subagents, controls, the running and retryable turn) comes through the observed `ThreadContext`, written only when its content changed, not through ForEach params. The chat page keeps it in step with `view`: a `@Monitor('view')` inside the `@ObservedV2` `AppModel` never fired in the Previewer, while a component's `@Monitor('model.view')` does (it skips the initial value, hence the `aboutToAppear` call).

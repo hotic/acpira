@@ -302,10 +302,7 @@ private struct LightMark: View {
   private static var placed: Placed?
   static func place(_ size: CGSize, cap: CGFloat) -> Placed {
     if let p = placed, p.size == size, p.cap == cap { return p }
-    // The room's width scaled down, capped, and short enough for the room's height
-    let aspect = AcpiraLogo.size.width / AcpiraLogo.size.height
-    let width = min(size.width * WL.posterScale, cap, size.height * WL.markFill * aspect)
-    let s = max(width, 1) / AcpiraLogo.size.width
+    let s = max(width(in: size, cap: cap), 1) / AcpiraLogo.size.width
     let c = CGPoint(x: size.width / 2, y: size.height / 2)
     let m = CGAffineTransform(translationX: c.x - AcpiraLogo.size.width * s / 2, y: c.y - AcpiraLogo.size.height * s / 2).scaledBy(x: s, y: s)
     let docks = AcpiraLogo.docks.map { $0.applying(m) }
@@ -313,6 +310,12 @@ private struct LightMark: View {
     let p = Placed(size: size, cap: cap, unit: s, centre: c, bounds: bounds, docks: docks, samples: docks.map { samplePath($0, WL.samples) })
     placed = p
     return p
+  }
+
+  /// The mark's width in a room: the room's width scaled down, capped, and short enough for the room's height
+  static func width(in size: CGSize, cap: CGFloat) -> CGFloat {
+    let aspect = AcpiraLogo.size.width / AcpiraLogo.size.height
+    return min(size.width * WL.posterScale, cap, size.height * WL.markFill * aspect)
   }
 
   private func draw(_ ctx: inout GraphicsContext, _ at: Placed, _ t: Double) {
@@ -482,6 +485,13 @@ struct WelcomeFlow: View {
       let wide = page.size.width > page.size.height * WL.sideBySide
       let design = wide ? WL.landscape : WL.portrait
       let k = max(WL.minScale, min(page.size.width / design.width, page.size.height / design.height))
+      let frame = CGSize(width: min(page.size.width, design.width * k), height: min(page.size.height, design.height * k))
+      // Side by side the mark stands in the middle of the room the copy leaves, so the pair ends further from the
+      // leading edge than from the trailing one. A phone's side insets take that up; a screen without them (iPad)
+      // shows the pair right of centre, so there it moves over by half the difference
+      let bare = page.safeAreaInsets.leading == 0 && page.safeAreaInsets.trailing == 0
+      let room = CGSize(width: frame.width - (Metrics.page * 4 + WL.wideColumn) * k, height: frame.height)
+      let drift = wide && bare ? (room.width - LightMark.width(in: room, cap: WL.markMax * k)) / 4 : 0
       Group {
         if wide {
           HStack(spacing: Metrics.page * 2 * k) {
@@ -497,8 +507,8 @@ struct WelcomeFlow: View {
         }
       }
       .padding(.horizontal, Metrics.page * k)
-      .frame(width: min(page.size.width, design.width * k), height: min(page.size.height, design.height * k))
-      .position(x: page.size.width / 2,
+      .frame(width: frame.width, height: frame.height)
+      .position(x: page.size.width / 2 - max(0, drift),
                 y: page.size.height / 2 + (wide ? max(0, page.size.height - design.height * k) * WL.wideDrop : 0))
     }
   }

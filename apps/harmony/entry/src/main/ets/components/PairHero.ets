@@ -178,14 +178,27 @@ export struct PairHero {
 @ComponentV2
 export struct PairHeroPlacement {
   @BuilderParam content: () => void;
-  @Local top: number = 0;
+  @Local room: number = 0;
+  @Local tall: number = 0;
+
+  /** The glyph's place, lifted where the window is too short to hold what hangs under it: the action stays in view */
+  private top(): number {
+    return Math.max(0, Math.min(this.room * PairMetrics.heroRise - PairMetrics.glyphBox / 2, this.room - this.tall));
+  }
 
   build() {
     Scroll() {
       Column() {
-        this.content()
+        Column() {
+          this.content()
+        }
+        .padding({ bottom: Metrics.page })
+        .width('100%')
+        .onSizeChange((_: SizeOptions, now: SizeOptions) => {
+          this.tall = Number(now.height);
+        })
       }
-      .padding({ top: this.top })
+      .padding({ top: this.top() })
       .width('100%')
     }
     .scrollBar(BarState.Off)
@@ -194,8 +207,7 @@ export struct PairHeroPlacement {
     .width('100%')
     .height('100%')
     .onAreaChange((_old: Area, now: Area) => {
-      const h = Number(now.height);
-      this.top = Math.max(0, h * PairMetrics.heroRise - PairMetrics.glyphBox / 2);
+      this.room = Number(now.height);
     })
   }
 }

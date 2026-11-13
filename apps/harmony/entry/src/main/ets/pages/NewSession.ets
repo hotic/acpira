@@ -141,6 +141,16 @@ export struct NewSession {
     openTextPrompt(this.getUIContext(), args);
   }
 
+  /**
+   * The floating ring's scale: whole where the page has the room above the drop for its top bubble, smaller on a
+   * window too short for that (a small square one), so the ring stays on the drop and inside the page
+   */
+  ringFit(): number {
+    const room = this.dropY - this.pageY + RingMetrics.heroTile / 2 - Metrics.s2;
+    const reach = ringRadius(this.others().length) + RingMetrics.bubble / 2;
+    return room <= 0 ? 1 : Math.min(1, room / reach);
+  }
+
   build() {
     Stack() {
       Column() {
@@ -276,6 +286,7 @@ export struct NewSession {
             x: this.dropX - this.pageX - (ringSpan(this.others().length) - RingMetrics.heroTile) / 2,
             y: this.dropY - this.pageY - (ringSpan(this.others().length) - RingMetrics.heroTile) / 2
           })
+          .scale({ x: this.ringFit(), y: this.ringFit() })
           // The component's own wrapper node covers the ring's span too (docs/dev/harmony.md)
           .hitTestBehavior(HitTestMode.Transparent)
       }

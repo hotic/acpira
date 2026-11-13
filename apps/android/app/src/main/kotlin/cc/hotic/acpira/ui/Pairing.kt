@@ -51,6 +51,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -220,10 +222,16 @@ fun PrimaryPill(label: String, onClick: () -> Unit, modifier: Modifier = Modifie
 @Composable
 fun PairHeroPlacement(modifier: Modifier = Modifier, box: androidx.compose.ui.unit.Dp = Metrics.pairGlyphBox, content: @Composable () -> Unit) {
   BoxWithConstraints(modifier.fillMaxSize()) {
-    val top = (maxHeight * Metrics.heroRise - box / 2).coerceAtLeast(Metrics.s0)
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-      Spacer(Modifier.height(top))
-      content()
+    val room = constraints.maxHeight
+    val rule = with(LocalDensity.current) { (maxHeight * Metrics.heroRise - box / 2).roundToPx() }
+    Layout(
+      content = { Column(Modifier.fillMaxWidth()) { content() } },
+      modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+    ) { measurables, constraints ->
+      val hero = measurables.first().measure(constraints.copy(minHeight = 0))
+      // In a short window the hero rises so its action stays inside it, and scrolls once it is taller than the window
+      val top = minOf(rule, room - hero.height).coerceAtLeast(0)
+      layout(constraints.maxWidth, maxOf(room, top + hero.height)) { hero.place(0, top) }
     }
   }
 }
@@ -302,7 +310,11 @@ fun ListBarTitle(pairing: PairingModel) {
       horizontalArrangement = Arrangement.spacedBy(Metrics.s1),
       modifier = Modifier.clip(RoundedCornerShape(percent = 50)).clickable { open = true }.padding(horizontal = Metrics.s2, vertical = Metrics.s1).testTag("list.computer"),
     ) {
-      Text(current.name, fontWeight = FontWeight.SemiBold, fontSize = Type.barTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      // A long name gives way to its ellipsis; the chevron keeps its room
+      Text(
+        current.name, fontWeight = FontWeight.SemiBold, fontSize = Type.barTitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f, fill = false),
+      )
       Lucide("chevronDown", Palette.fg3, size = Metrics.icon)
     }
     ComputerMenu(pairing, open, onDismiss = { open = false })

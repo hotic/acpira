@@ -227,11 +227,12 @@ struct PairAddForm: View {
   var onLink: (String, [String]?) -> Void
   @State private var notice: String?
   @State private var noticeGen = 0
+  @State private var room: CGFloat = 0
 
   var body: some View {
     Form {
       Section {
-        PairCameraCard(active: scanning, onLink: onLink)
+        PairCameraCard(active: scanning, onLink: onLink, room: room)
           .listRowInsets(EdgeInsets())
       } header: {
         if let lead {
@@ -288,6 +289,7 @@ struct PairAddForm: View {
       }
     }
     .formPage()
+    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room = $0 }
   }
 
   private func pasted(_ text: String) {

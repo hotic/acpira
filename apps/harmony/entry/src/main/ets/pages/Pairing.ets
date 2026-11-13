@@ -48,6 +48,8 @@ export struct PairBar {
         .fontColor($r('app.color.fg1'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        // The name gives way, the chevron never does
+        .flexShrink(1)
       if (this.menu) {
         Lucide({ name: 'chevronDown', tint: $r('app.color.fg3'), extent: Metrics.icon })
       }
@@ -201,8 +203,9 @@ export struct PairConnect {
     .backgroundColor($r('app.color.bg0'))
     .width('100%')
     .height('100%')
+    // A wide window hangs a sheet off its host as a popup by default: centred there, the bottom sheet on a phone as before
     .bindSheet(this.detailsOpen, this.details(), {
-      detents: [SheetSize.MEDIUM, SheetSize.LARGE], dragBar: true, showClose: false, onDisappear: () => {
+      preferType: SheetType.CENTER, detents: [SheetSize.MEDIUM, SheetSize.LARGE], dragBar: true, showClose: false, onDisappear: () => {
         this.detailsOpen = false;
       }
     })

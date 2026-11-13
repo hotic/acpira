@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -310,69 +312,74 @@ private fun PairAddForm(
   val scope = rememberCoroutineScope()
   var notice by remember { mutableStateOf<String?>(null) }
   var noticeGen by remember { mutableIntStateOf(0) }
-  Column(
-    Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-      // In place on a wide page the bar spans the window and the form keeps a column under it
-      .then(if (lead != null) Modifier.wrapContentWidth().widthIn(max = Metrics.pairColumn) else Modifier)
-      .padding(horizontal = Metrics.pad),
-    verticalArrangement = Arrangement.spacedBy(Metrics.s6),
-  ) {
-    lead?.let { (title, hint) ->
-      Column(Modifier.padding(horizontal = Metrics.s1), verticalArrangement = Arrangement.spacedBy(Metrics.s1)) {
-        Text(title, color = Palette.fgStrong, fontSize = Type.largeTitle, lineHeight = Type.largeTitleLine, fontWeight = FontWeight.Bold)
-        Text(hint, color = Palette.fg2, fontSize = Type.text3, lineHeight = Type.text3Line)
-      }
-    }
-    FormCard {
-      BoxWithConstraints(Modifier.fillMaxWidth()) {
-        // In a wide column the card grows with its width
-        val height = maxOf(Metrics.pairScanCard, maxWidth * Metrics.pairScanAspect)
-        Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(Metrics.rCardRound))) {
-          PairCameraCard(onLink = { link, rows -> if (isPairingLink(link)) onLink(link, rows) })
+  // The form's own height, for the camera card to leave the next section's head in sight
+  BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    val formHeight = maxHeight
+    Column(
+      Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        // In place on a wide page the bar spans the window and the form keeps a column under it
+        .then(if (lead != null) Modifier.wrapContentWidth().widthIn(max = Metrics.pairColumn) else Modifier)
+        .padding(horizontal = Metrics.pad),
+      verticalArrangement = Arrangement.spacedBy(Metrics.s6),
+    ) {
+      lead?.let { (title, hint) ->
+        Column(Modifier.padding(horizontal = Metrics.s1), verticalArrangement = Arrangement.spacedBy(Metrics.s1)) {
+          Text(title, color = Palette.fgStrong, fontSize = Type.largeTitle, lineHeight = Type.largeTitleLine, fontWeight = FontWeight.Bold)
+          Text(hint, color = Palette.fg2, fontSize = Type.text3, lineHeight = Type.text3Line)
         }
-      }
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(Metrics.s2)) {
-      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.s2), modifier = Modifier.padding(horizontal = Metrics.pad)) {
-        Text(t("mobile.pair.nearby"), color = Palette.fg3, fontSize = Type.text3, fontWeight = FontWeight.Medium)
-        if (browsing) CircularProgressIndicator(Modifier.size(Metrics.chevron), color = Palette.fg3, strokeWidth = Metrics.pairCodeLine)
       }
       FormCard {
-        if (nearby.isEmpty()) {
-          FormRow(t("mobile.pair.nearby.none"), Modifier.testTag("pair.nearby.none")) {}
-        }
-        nearby.forEachIndexed { i, c ->
-          if (i > 0) RowRule(lead = true)
-          FormRow(c.name, Modifier.clickable { onNearby(c) }.testTag("pair.nearby:${c.id}"), lead = {
-            Lucide(computerIcon(c.model), Palette.fg2, size = Metrics.rowMark)
-          }) { Lucide("chevronRight", Palette.fg3, size = Metrics.chevron) }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+          // In a wide column the card grows with its width; it never takes the whole form, down to its viewfinder
+          val natural = maxOf(Metrics.pairScanCard, maxWidth * Metrics.pairScanAspect)
+          val height = minOf(natural, maxOf(Metrics.pairFinder + Metrics.page * 2, formHeight - Metrics.pairScanPeek))
+          Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(Metrics.rCardRound))) {
+            PairCameraCard(onLink = { link, rows -> if (isPairingLink(link)) onLink(link, rows) })
+          }
         }
       }
-    }
-    FormCard {
-      FormRow(notice ?: t("mobile.pair.paste"), Modifier.testTag("pair.paste"), lead = {
-        Lucide("link", Palette.fg2, size = Metrics.rowMark)
-      }) {
-        OutlinedButton(
-          onClick = {
-            val text = clipboardText(context).trim()
-            if (isPairingLink(text)) {
-              onLink(text, null)
-            } else {
-              // Not a pairing link: the row says so for a moment, in place
-              val gen = ++noticeGen
-              notice = t("mobile.pair.paste.notLink")
-              scope.launch {
-                delay(PAIR_NOTICE_MS)
-                if (gen == noticeGen) notice = null
+      Column(verticalArrangement = Arrangement.spacedBy(Metrics.s2)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.s2), modifier = Modifier.padding(horizontal = Metrics.pad)) {
+          Text(t("mobile.pair.nearby"), color = Palette.fg3, fontSize = Type.text3, fontWeight = FontWeight.Medium)
+          if (browsing) CircularProgressIndicator(Modifier.size(Metrics.chevron), color = Palette.fg3, strokeWidth = Metrics.pairCodeLine)
+        }
+        FormCard {
+          if (nearby.isEmpty()) {
+            FormRow(t("mobile.pair.nearby.none"), Modifier.testTag("pair.nearby.none")) {}
+          }
+          nearby.forEachIndexed { i, c ->
+            if (i > 0) RowRule(lead = true)
+            FormRow(c.name, Modifier.clickable { onNearby(c) }.testTag("pair.nearby:${c.id}"), lead = {
+              Lucide(computerIcon(c.model), Palette.fg2, size = Metrics.rowMark)
+            }) { Lucide("chevronRight", Palette.fg3, size = Metrics.chevron) }
+          }
+        }
+      }
+      FormCard {
+        FormRow(notice ?: t("mobile.pair.paste"), Modifier.testTag("pair.paste"), lead = {
+          Lucide("link", Palette.fg2, size = Metrics.rowMark)
+        }) {
+          OutlinedButton(
+            onClick = {
+              val text = clipboardText(context).trim()
+              if (isPairingLink(text)) {
+                onLink(text, null)
+              } else {
+                // Not a pairing link: the row says so for a moment, in place
+                val gen = ++noticeGen
+                notice = t("mobile.pair.paste.notLink")
+                scope.launch {
+                  delay(PAIR_NOTICE_MS)
+                  if (gen == noticeGen) notice = null
+                }
               }
-            }
-          },
-          modifier = Modifier.heightIn(min = Metrics.ctlSm).testTag("pair.paste.button"),
-        ) { Text(t("desktop.menu.paste"), color = Palette.fg1, fontSize = Type.text3) }
+            },
+            modifier = Modifier.heightIn(min = Metrics.ctlSm).testTag("pair.paste.button"),
+          ) { Text(t("desktop.menu.paste"), color = Palette.fg1, fontSize = Type.text3) }
+        }
       }
+      Spacer(Modifier.height(Metrics.page))
     }
-    Spacer(Modifier.height(Metrics.page))
   }
 }
 
@@ -493,13 +500,27 @@ private fun PairCodePage(pairing: PairingModel, computer: NearbyComputer, onJoin
     delay(Motion.fade.toLong())
     runCatching { focus.requestFocus() }
   }
+  // The page scrolls, so the keyboard (or a short window) never hides the boxes: the paste capsule comes into view
+  // first, then the boxes, which win where both do not fit
+  val scroll = rememberScrollState()
+  val boxesView = remember { BringIntoViewRequester() }
+  val pasteView = remember { BringIntoViewRequester() }
+  LaunchedEffect(focused, scroll.maxValue) {
+    if (!focused) return@LaunchedEffect
+    pasteView.bringIntoView()
+    boxesView.bringIntoView()
+  }
   Column(
-    Modifier.fillMaxSize().padding(horizontal = Metrics.pad).padding(top = Metrics.page * 2),
+    Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = Metrics.pad).padding(top = Metrics.page * 2),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Text(t("mobile.pair.code.hint"), color = Palette.fg2, fontSize = Type.body, lineHeight = Type.bodyLine, textAlign = TextAlign.Center)
     Spacer(Modifier.height(Metrics.page))
-    Box(contentAlignment = Alignment.Center) {
+    BoxWithConstraints(Modifier.bringIntoViewRequester(boxesView), contentAlignment = Alignment.Center) {
+      // A window narrower than the six boxes narrows them all alike, their height with them
+      val gaps = Metrics.s2 * (CODE_LENGTH - 1) + (Metrics.pairCodeSplit - Metrics.s2)
+      val boxW = minOf(Metrics.pairCodeBox, (maxWidth - gaps) / CODE_LENGTH)
+      val boxH = Metrics.pairCodeBoxH * (boxW / Metrics.pairCodeBox)
       BasicTextField(
         // The cursor pinned to the end: a pasted code then takes the next typed digit after it, not in front
         value = TextFieldValue(code, TextRange(code.length)),
@@ -524,7 +545,7 @@ private fun PairCodePage(pairing: PairingModel, computer: NearbyComputer, onJoin
           if (i > 0) Spacer(Modifier.width(Metrics.s2))
           val next = focused && !checking && i == code.length
           Box(
-            Modifier.size(Metrics.pairCodeBox, Metrics.pairCodeBoxH).codeBox(next, Palette.line, Palette.formRow, Palette.fg1),
+            Modifier.size(boxW, boxH).codeBox(next, Palette.line, Palette.formRow, Palette.fg1),
             contentAlignment = Alignment.Center,
           ) {
             code.getOrNull(i)?.let {
@@ -545,7 +566,7 @@ private fun PairCodePage(pairing: PairingModel, computer: NearbyComputer, onJoin
     Row(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
-      modifier = Modifier.padding(top = Metrics.s2).height(Metrics.ctlSm)
+      modifier = Modifier.bringIntoViewRequester(pasteView).padding(top = Metrics.s2, bottom = Metrics.gap).height(Metrics.ctlSm)
         .clip(RoundedCornerShape(percent = 50)).background(Palette.formRow)
         .clickable(enabled = !checking) {
           val digits = clipboardText(context).filter { it.isDigit() }.take(CODE_LENGTH)

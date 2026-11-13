@@ -346,6 +346,8 @@ export struct Root {
         .width(0)
         .height(0)
         .bindSheet(this.model.pairing !== undefined && this.model.pairing.addOpen && !this.welcoming, this.pairSheet(), {
+          // A wide window hangs a sheet off its host as a popup by default, and this host has no size: centred there
+          preferType: SheetType.CENTER,
           height: SheetSize.LARGE,
           dragBar: false,
           showClose: false,

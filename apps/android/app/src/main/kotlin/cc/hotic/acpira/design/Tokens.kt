@@ -235,6 +235,8 @@ object Metrics {
   val gooMerge = 10.dp
   val toastShadow = 6.dp
   val heroTile = 64.dp
+  /** The drop at its smallest, in a window too short for the hero column (ui/NewSessionScreen.kt HeroColumn) */
+  val heroTileMin = 40.dp
   val heroBare = 38.dp
   /**
    * The agent ring (new session, apps/ios Metrics.ring*): the other agents' bubbles round the hero's mark, their marks,
@@ -268,6 +270,8 @@ object Metrics {
   val pairScanCard = 340.dp
   /** In a wide column (tablets, foldables open) the card grows with its width at this height-to-width share */
   const val pairScanAspect = 0.7f
+  /** What the form keeps in sight under the camera card: the next section's head (apps/harmony PairMetrics.scanPeek) */
+  val pairScanPeek = 72.dp
   /** The form's column on a wide page, in place of a sheet (the first-run flow) */
   val pairColumn = 640.dp
   val pairFinder = 176.dp
@@ -397,6 +401,8 @@ object WelcomeMetrics {
   val copyLift = 48.dp
   /** The mark's widest; its width against the room, and its height against a short room */
   val markMax = 300.dp
+  /** The mark's room at its smallest: with less, a short or narrow window leaves the mark out */
+  val markMin = 120.dp
   const val posterScale = 0.7f
   const val markFill = 0.62f
   /** How far the copy sits in from the button's edge, so it lines up with the capsule's round end by eye */
