@@ -32,6 +32,9 @@ docs/*
 !docs/roadmap.md
 !docs/releasing.md
 
+# Eval tasks kept local (docs/dev/evals.md, Ledger build)
+scripts/eval/tasks/ledger-*/
+
 # Local agent skills and workspace hooks
 .agents/
 

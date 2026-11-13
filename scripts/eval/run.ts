@@ -47,10 +47,11 @@ function arg(name: string, fallback?: string): string | undefined {
 // tests need) and the files under its `add/` (the task's own ISSUES.md or TASK.md). Its hidden tests are its `hidden/`
 // folder, or with `hidden` those paths as the reference change left them, under `.eval_hidden/` at their own paths.
 // `env`: set for the agent and the hidden tests on top of the run's HOME, for a task that needs the user's own toolchains
-// (a Rust task's RUSTUP_HOME / CARGO_HOME); a value starting with `~/` is under the real home, since HOME is the run's
+// (a Rust task's RUSTUP_HOME / CARGO_HOME); a value starting with `~/` is under the real home, since HOME is the run's.
+// `from`: another task's folder holds this one's repo and hidden tests (the same work under another prompt)
 interface Task {
   id: string; kind: string; prompt: string; verify: string; timeoutMin: number; env?: Record<string, string>;
-  base?: string; patch?: string; hidden?: { rev: string; paths: string[] };
+  base?: string; patch?: string; hidden?: { rev: string; paths: string[] }; from?: string;
 }
 
 const taskEnv = (t: Task): Record<string, string> =>
@@ -74,7 +75,7 @@ const unpack = (rev: string, into: string, paths: string[] = []) =>
   must(`git -C '${REPO}' archive --format=tar '${rev}' ${paths.map(p => `'${p}'`).join(' ')} | tar -x -C '${into}'`, into);
 
 function materialize(t: Task, work: string) {
-  const dir = join(TASKS_DIR, t.id);
+  const dir = join(TASKS_DIR, t.from ?? t.id);
   if (!t.base) return cpSync(join(dir, 'repo'), work, { recursive: true });
   unpack(t.base, work);
   if (t.patch) must(`git apply '${join(dir, t.patch)}'`, work);
@@ -85,7 +86,7 @@ function hideTests(t: Task, work: string) {
   const into = join(work, '.eval_hidden');
   mkdirSync(into, { recursive: true });
   if (t.hidden) unpack(t.hidden.rev, into, t.hidden.paths);
-  else cpSync(join(TASKS_DIR, t.id, 'hidden'), into, { recursive: true });
+  else cpSync(join(TASKS_DIR, t.from ?? t.id, 'hidden'), into, { recursive: true });
 }
 
 // Hidden tests run one at a time across every runner process (a timing test must not compete with another verify);
@@ -109,8 +110,12 @@ async function verifyLock<T>(root: string, f: () => T): Promise<T> {
   }
 }
 
-// Python unittest's summary, or the sum of cargo test's per-binary `test result:` lines (a build that fails has none)
+// Python unittest's summary, the sum of cargo test's per-binary `test result:` lines (a build that fails has none), or
+// the last `# tests` / `# pass` summary of node --test (a grader of its own prints the same lines)
 function testCounts(out: string): { total: number; passed: number } {
+  const node = [...out.matchAll(/^# tests (\d+)$/gm)].pop();
+  const nodePass = [...out.matchAll(/^# pass (\d+)$/gm)].pop();
+  if (node && nodePass) return { total: Number(node[1]), passed: Number(nodePass[1]) };
   const cargo = [...out.matchAll(/^test result: \w+\. (\d+) passed; (\d+) failed;/gm)];
   if (cargo.length) {
     const passed = cargo.reduce((a, m) => a + Number(m[1]), 0);
@@ -248,7 +253,7 @@ async function applyPicks(view: View, picks: Record<string, string>) {
 // background (summoned rounds and the automatic messages delivering them) waited out within the same time limit
 async function driveSidecar(setup: HarnessSetup, o: {
   runId: string; work: string; home: string; acpiraHome: string; prompt: string; timeoutMin: number;
-  picks: Record<string, string>; agents?: Record<string, unknown>; env: Record<string, string>;
+  picks: Record<string, string>; mode?: string; agents?: Record<string, unknown>; env: Record<string, string>;
 }): Promise<Outcome> {
   const { work, home, acpiraHome } = o;
   const host = await Host.start({
@@ -268,6 +273,13 @@ async function driveSidecar(setup: HarnessSetup, o: {
     }
     await view.newSession(setup.agent);
     if (!DRY) await applyPicks(view, o.picks);
+    // A configuration's session mode: one the session does not offer fails the run, like a missing pick
+    if (!DRY && o.mode) {
+      const mode = o.mode;
+      await view.until(() => !!view.active()?.controls.modes.some(x => x.id === mode), 60_000, `session mode ${mode}`);
+      view.post({ type: 'setMode', sessionId: view.activeId, id: mode });
+      await view.until(() => view.active()?.controls.modeId === mode, 60_000, `mode = ${mode}`);
+    }
     const v0 = view.active()!;
     const shown = v0.controls.options.filter(x => x.category === 'model' || x.id in o.picks).map(x => `${x.id}=${x.value}`);
     console.log(`[${o.runId}] session ${v0.id} status=${v0.status} ${shown.join(' ')}`);
@@ -359,7 +371,7 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   for (const f of existsSync(bodies) ? readdirSync(bodies) : []) if (f.startsWith(`${runId}.`)) rmSync(join(bodies, f));
   for (const d of [work, home, acpiraHome]) mkdirSync(d, { recursive: true });
   materialize(o.task, work);
-  sh('git init -q && git add -A && git -c user.name=eval -c user.email=eval@localhost commit -qm "Initial state"', work);
+  sh('git init -q -b main && git add -A && git -c user.name=eval -c user.email=eval@localhost commit -qm "Initial state"', work);
 
   const spec = MODELS[cell.model]!;
   const upstream = spec.upstream ?? 'gw';
@@ -373,11 +385,12 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const low = quotaBefore && belowFloor(quotaBefore);
   if (low) throw new FloorReached(`${runId} not started: ${low}`);
   const started = Date.now();
-  const prompt = DRY ? dryPrompt(cell) : o.task.prompt;
+  // A configuration's trigger line goes first on its own line, the way a user would start that orchestration
+  const prompt = DRY ? dryPrompt(cell) : [cell.config?.trigger, o.task.prompt].filter(Boolean).join('\n');
   const env = taskEnv(o.task);
   const outcome = setup.cli
     ? driveCli(setup.cli, { runId, dir, work, home, prompt, timeoutMin: o.timeoutMin, env })
-    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt, timeoutMin: o.timeoutMin, picks, agents, env: { ...env, ...helped.env } });
+    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt, timeoutMin: o.timeoutMin, picks, mode: cell.config?.mode, agents, env: { ...env, ...helped.env } });
   const { timedOut, failure, tools } = outcome;
   const wallS = Math.round((Date.now() - started) / 1000);
   const quotaAfter = natives.length ? readQuota(natives) : undefined;

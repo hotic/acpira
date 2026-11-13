@@ -40,6 +40,20 @@ Scripts under `scripts/eval/` measuring orchestration choices against real CLIs 
 - A brief carries the lead's reading of the task: `semver-port`'s JavaScript numbers as floats, a misreading Astra alone made now and then, went into every sidekick brief as a requirement.
 - Unmeasured: Claude leads under this split, and the cache a long round lets expire (small at the lead's context on the gateway's GPT route).
 
+## Ledger build
+
+`run.ts --config … --task ledger-build,ledger-solo`: a lead splits four work items of a small TypeScript API across workers in worktrees and merges them on `main`; hidden tests grade five groups (one per item, one for all together). `ledger-solo` is the same work for one agent.
+
+- The task folders are local only (git-ignored): their repo and prompts are third-party material, whose origin and licence `tasks/ledger-build/NOTICE` records. `hidden/` is checked against `solution/` (every group passes) and the untouched repo (none does).
+- `grade.mjs` grades `main`: the work tree while it is on `main`, else `main` as committed. Work left on a branch scores nothing.
+- A configuration's `trigger` goes first on its own line and `mode` picks the session mode; no persona or trigger ships by default, so every orchestrated cell runs on a roster the bench wrote.
+- The tasks set a git identity: a run's HOME has none, and workers stop to ask their lead whose name to commit under.
+- Outcome: every cell passed every group, so the set is saturated and shows cost and time only. The built-in agent alone matched Codex on the same model. A Claude Code lead with built-in workers on a cheaper model cost less than Claude Code alone at about its time, and well under its own subagents.
+- Team mode took about twice the built-in agent's own time and three times its cost: `main` already passed everything once the four branches were merged, and the follow-up, review and fix rounds the mode asks for changed no group.
+- A worker's question reaches its lead only once the lead's turn ends or it waits: a Codex lead that kept working left all four workers blocked for minutes on a question each (a worktree its sandbox had refused to create), which was most of that cell's time.
+- Leads put worktrees wherever they liked: beside the project, in the system temp folder, or inside the project where `git status` lists them.
+- Unmeasured: Opus 5.5 on the built-in agent and as its workers (the gateway's Claude routes were down), more than one or two runs per cell.
+
 ## Evolve loop
 
 `evolve.ts` tunes the review bench's policy (`policy.ts`): the handoff pack's recipe and the reviewer's brief.
