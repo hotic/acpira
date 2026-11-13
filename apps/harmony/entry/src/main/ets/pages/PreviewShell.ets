@@ -12,13 +12,14 @@ import { MenuCard } from '../components/Menu';
 import { ToastLayer } from '../components/Chrome';
 import { ChatBarActions } from '../components/ChatBar';
 import { Metrics } from '../design/Tokens';
+import { PREVIEW_FRAME } from '../generated/Assets.generated';
 
 // The Previewer cannot tap, so the shell around the chat shows here as phone-wide frames side by side
 // (scripts/preview.sh <out> 3780 1170 dark pages/PreviewShell 240): every frame its own demo model in one state.
 // Not reached from the app's own pages.
 
-/** A phone's width in vp (1080 px at 480 dpi) */
-const PHONE: number = 360;
+/** A frame's width in vp: a phone's (1080 px at 480 dpi), or the build's PREVIEW_FRAME (326 for a small square screen) */
+const PHONE: number = PREVIEW_FRAME > 0 ? PREVIEW_FRAME : 360;
 
 function demoModel(): AppModel {
   const model = new AppModel();

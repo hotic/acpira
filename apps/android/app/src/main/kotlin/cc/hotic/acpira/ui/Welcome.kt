@@ -37,7 +37,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
@@ -77,12 +78,15 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cc.hotic.acpira.design.AcpiraLogo
@@ -482,26 +486,27 @@ private fun NotifyStep(motion: Boolean, onDone: () -> Unit) {
   val ask = androidx.activity.compose.rememberLauncherForActivityResult(
     androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
   ) { onDone() }
-  Box(Modifier.fillMaxSize().background(Palette.bg0).safeDrawingPadding().testTag("welcome.notify"), contentAlignment = Alignment.TopCenter) {
-    Column(
-      Modifier.widthIn(max = WelcomeMetrics.column).fillMaxHeight().padding(horizontal = Metrics.page),
-      horizontalAlignment = Alignment.CenterHorizontally,
+  BoxWithConstraints(Modifier.fillMaxSize().background(Palette.bg0).safeDrawingPadding().testTag("welcome.notify"), contentAlignment = Alignment.TopCenter) {
+    // A short window: the ring gives way, what stays spreads over the height, and the page scrolls if it is still short
+    YieldColumn(
+      constraints.maxHeight,
+      Modifier.verticalScroll(rememberScrollState()).widthIn(max = WelcomeMetrics.column).padding(horizontal = Metrics.page),
+      Alignment.CenterHorizontally,
     ) {
-      Spacer(Modifier.weight(1f))
-      Box(Modifier.size(WelcomeMetrics.bellRing), contentAlignment = Alignment.Center) {
+      Spacer(Modifier.spring())
+      Box(Modifier.yields(1).padding(bottom = WelcomeMetrics.notifyTitleGap).size(WelcomeMetrics.bellRing), contentAlignment = Alignment.Center) {
         EdgeLight(still = !motion, modifier = Modifier.fillMaxSize())
         Lucide("bell", Palette.fg1, size = WelcomeMetrics.bell)
       }
       Text(
         t("mobile.welcome.notify.title"), color = Palette.fgStrong, fontSize = WelcomeMetrics.notifyTitle,
         lineHeight = WelcomeMetrics.notifyTitleLine, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(top = WelcomeMetrics.notifyTitleGap),
       )
       Text(
         t("mobile.welcome.notify.desc"), color = Palette.fg2, fontSize = Type.text1, textAlign = TextAlign.Center,
         modifier = Modifier.padding(top = WelcomeMetrics.notifyDescGap),
       )
-      Spacer(Modifier.weight(1f))
+      Spacer(Modifier.spring())
       Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Metrics.s3), modifier = Modifier.padding(bottom = Metrics.s2)) {
         PrimaryPill(t("mobile.notify.ask"), onClick = {
           spend()
@@ -512,6 +517,54 @@ private fun NotifyStep(motion: Boolean, onDone: () -> Unit) {
             .padding(horizontal = Metrics.pad).testTag("welcome.notify.later"),
           contentAlignment = Alignment.Center,
         ) { Text(t("mobile.welcome.later"), color = Palette.fg3, fontSize = Type.text2) }
+      }
+    }
+  }
+}
+
+/** A [YieldColumn] child that gives way when the column runs short: [order] 1 goes first; a child without it stays */
+private fun Modifier.yields(order: Int): Modifier = layoutId(Yield(order))
+
+/** A [YieldColumn] child that takes an equal share of the height to spare */
+private fun Modifier.spring(): Modifier = layoutId(YieldSpring)
+
+private data class Yield(val order: Int)
+private object YieldSpring
+
+/**
+ * A column that fits [room] (px) by leaving children out in their [yields] order instead of squashing any; with
+ * springs it fills the room. Still taller than the room with every one of them gone, it keeps its height for a scroll
+ * around it
+ */
+@Composable
+private fun YieldColumn(
+  room: Int,
+  modifier: Modifier = Modifier,
+  alignment: Alignment.Horizontal = Alignment.Start,
+  content: @Composable () -> Unit,
+) {
+  Layout(content, modifier) { measurables, constraints ->
+    val loose = constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity)
+    val placeables = measurables.map { if (it.layoutId == YieldSpring) null else it.measure(loose) }
+    val kept = BooleanArray(measurables.size) { true }
+    fun used() = placeables.indices.sumOf { if (kept[it]) placeables[it]?.height ?: 0 else 0 }
+    val givers = measurables.indices.filter { measurables[it].layoutId is Yield }.sortedBy { (measurables[it].layoutId as Yield).order }
+    for (i in givers) {
+      if (used() <= room) break
+      kept[i] = false
+    }
+    val total = used()
+    val springs = placeables.count { it == null }
+    val share = if (springs > 0) (room - total).coerceAtLeast(0) / springs else 0
+    val width = maxOf(constraints.minWidth, placeables.maxOfOrNull { it?.width ?: 0 } ?: 0)
+    layout(width, if (springs > 0) maxOf(room, total) else total) {
+      var y = 0
+      placeables.forEachIndexed { i, p ->
+        if (p == null) y += share
+        else if (kept[i]) {
+          p.place(alignment.align(p.width, width, layoutDirection), y)
+          y += p.height
+        }
       }
     }
   }
@@ -565,24 +618,46 @@ private fun Intro(clock: State<Float>, copyIn: Boolean, motion: Boolean, onStart
     val dh = if (wide) WelcomeMetrics.landscapeH else WelcomeMetrics.portraitH
     val k = max(WelcomeMetrics.minScale, min(w / dw, h / dh))
     val drop = if (wide) (h - dh * k).coerceAtLeast(0.dp) * WelcomeMetrics.wideDrop else 0.dp
+    val pageH = minOf(h, dh * k)
+    val density = LocalDensity.current
+    val room = with(density) { pageH.roundToPx() }
+    val markMin = WelcomeMetrics.markMin * k
     Box(
-      Modifier.align(Alignment.Center).offset(y = drop).width(minOf(w, dw * k)).height(minOf(h, dh * k))
+      Modifier.align(Alignment.Center).offset(y = drop).width(minOf(w, dw * k)).height(pageH)
         .padding(horizontal = Metrics.page * k),
     ) {
       if (wide) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.page * 2 * k)) {
-          LightMark(clock, WelcomeMetrics.markMax * k, Modifier.weight(1f).fillMaxHeight())
-          CopyColumn(k, copyIn, motion, onStart, Modifier.width(WelcomeMetrics.wideColumn * k))
+        // The mark gives way first: without room beside the copy it is left out and the copy stands alone
+        val beside = minOf(w, dw * k) - Metrics.page * k * 4 - WelcomeMetrics.wideColumn * k
+        if (beside >= markMin && pageH >= markMin) {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.page * 2 * k)) {
+            LightMark(clock, WelcomeMetrics.markMax * k, Modifier.weight(1f).fillMaxHeight())
+            CopyColumn(k, room, copyIn, motion, onStart, Modifier.width(WelcomeMetrics.wideColumn * k).verticalScroll(rememberScrollState()))
+          }
+        } else {
+          CopyColumn(
+            k, room, copyIn, motion, onStart,
+            Modifier.align(Alignment.Center).widthIn(max = WelcomeMetrics.wideColumn * k).verticalScroll(rememberScrollState()),
+          )
         }
       } else {
-        Box {
-          LightMark(clock, WelcomeMetrics.markMax * k, Modifier.fillMaxWidth().height(WelcomeMetrics.markRoom * k))
-          // The copy rises into the mark's room, so it stands closer under the mark with room left below the button. It
-          // starts there in layout, not by an offset, so the room it takes from the mark is given back below it
-          CopyColumn(
-            k, copyIn, motion, onStart,
-            Modifier.padding(top = (WelcomeMetrics.markRoom - WelcomeMetrics.copyLift) * k).wrapContentHeight(Alignment.Top, unbounded = true),
-          )
+        Layout(
+          content = {
+            LightMark(clock, WelcomeMetrics.markMax * k)
+            CopyColumn(k, room, copyIn, motion, onStart)
+          },
+          modifier = Modifier.verticalScroll(rememberScrollState()),
+        ) { measurables, constraints ->
+          val copy = measurables[1].measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+          // The copy rises into the mark's room, so it stands closer under the mark with room left below the button. A
+          // short page takes the height it lacks from the mark, which is left out under its smallest room
+          val top = minOf(((WelcomeMetrics.markRoom - WelcomeMetrics.copyLift) * k).roundToPx(), room - copy.height).coerceAtLeast(0)
+          val markRoom = top + (WelcomeMetrics.copyLift * k).roundToPx()
+          val mark = if (markRoom >= markMin.roundToPx()) measurables[0].measure(Constraints.fixed(constraints.maxWidth, markRoom)) else null
+          layout(constraints.maxWidth, maxOf(room, top + copy.height)) {
+            mark?.place(0, 0)
+            copy.place(0, top)
+          }
         }
       }
     }
@@ -604,26 +679,30 @@ private fun Modifier.rise(on: Boolean, at: Float, motion: Boolean, x: Dp = 0.dp)
   }
 }
 
-/** Brand, headline, the agents supported, and Start: one phone-wide column on every screen */
+/**
+ * Brand, headline, the agents supported, and Start: one phone-wide column on every screen. Taller than [room] (px), it
+ * leaves out the agents, then the brand line; the headline and Start always stay whole
+ */
 @Composable
-private fun CopyColumn(k: Float, copyIn: Boolean, motion: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier) {
+private fun CopyColumn(k: Float, room: Int, copyIn: Boolean, motion: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier) {
   val inset = WelcomeMetrics.copyInset * k
-  Column(modifier.fillMaxWidth().padding(bottom = Metrics.s2 * k)) {
+  YieldColumn(room, modifier.fillMaxWidth()) {
     Row(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(Metrics.s2 * k),
-      modifier = Modifier.padding(start = inset).rise(copyIn, WL.brandAt, motion),
+      // Its gap to the headline goes with it
+      modifier = Modifier.yields(2).padding(start = inset, bottom = WelcomeMetrics.headlineGap * k).rise(copyIn, WL.brandAt, motion),
     ) {
       LogoGlyph(Modifier.size(WelcomeMetrics.brandMarkW * k, WelcomeMetrics.brandMarkH * k))
       Text("Acpira", color = Palette.fg2, fontSize = Type.text2 * k, fontWeight = FontWeight.Medium)
     }
-    Column(Modifier.padding(start = inset, top = WelcomeMetrics.headlineGap * k)) {
+    Column(Modifier.padding(start = inset)) {
       Chars(t("mobile.welcome.hero.1"), copyIn, WL.heroAt[0], motion, Palette.fg3, k)
       Chars(t("mobile.welcome.hero.2"), copyIn, WL.heroAt[1], motion, Palette.fgStrong, k)
     }
     Column(
       verticalArrangement = Arrangement.spacedBy(WelcomeMetrics.agentsRow * k),
-      modifier = Modifier.padding(start = inset, top = WelcomeMetrics.agentsGap * k).rise(copyIn, WL.factAt, motion),
+      modifier = Modifier.yields(1).padding(start = inset, top = WelcomeMetrics.agentsGap * k).rise(copyIn, WL.factAt, motion),
     ) {
       Text(t("mobile.welcome.agents"), color = Palette.fg3, fontSize = Type.text3 * k, lineHeight = Type.text3Line * k)
       Row(horizontalArrangement = Arrangement.spacedBy(WelcomeMetrics.agentStep * k)) {
@@ -638,7 +717,7 @@ private fun CopyColumn(k: Float, copyIn: Boolean, motion: Boolean, onStart: () -
     Button(
       onClick = onStart,
       colors = ButtonDefaults.buttonColors(containerColor = Palette.btn1Bg, contentColor = Palette.btn1Fg),
-      modifier = Modifier.padding(top = WelcomeMetrics.actionsGap * k).fillMaxWidth().heightIn(min = Metrics.barCtl * k)
+      modifier = Modifier.padding(top = WelcomeMetrics.actionsGap * k, bottom = Metrics.s2 * k).fillMaxWidth().heightIn(min = Metrics.barCtl * k)
         .rise(copyIn, WL.actionsAt, motion).testTag("welcome.start"),
     ) { Text(t("welcome.start"), fontSize = Type.body * k, fontWeight = FontWeight.SemiBold, maxLines = 1) }
   }

@@ -287,7 +287,9 @@ export struct TextAttachmentChip {
     AttachmentPill({ name: this.name, icon: 'fileText', removable: this.removable, onOpen: () => {
       this.open = true;
     }, onRemove: () => this.onRemove() })
+      // A wide window hangs a sheet off its host as a popup by default: centred there, the bottom sheet on a phone as before
       .bindSheet(this.open, this.sheet(), {
+        preferType: SheetType.CENTER,
         height: SheetSize.LARGE,
         backgroundColor: $r('app.color.bg0'),
         title: { title: this.name },

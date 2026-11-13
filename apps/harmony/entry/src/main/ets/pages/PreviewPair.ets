@@ -10,14 +10,15 @@ import { ComputersPage, PairConnect, PairDiagnosisSheet } from './Pairing';
 import { PairSheet } from './PairSheet';
 import { SessionList } from './SessionList';
 import { WelcomeFlow } from './Welcome';
+import { PREVIEW_FRAME } from '../generated/Assets.generated';
 
 // The pairing screens as phone-wide frames side by side for the Previewer (scripts/preview.sh <out> 3600 975 dark
 // pages/PreviewPair 200): the connect frame empty and offline, the failure's report, the add sheet, the code page, the
 // computers page, the first run's pairing step and the list following a computer. The Previewer has no remote access library, so the camera
 // card shows its unavailable state and nothing dials. Not reached from the app's own pages.
 
-/** A phone's width in vp (1080 px at 480 dpi) */
-const PHONE: number = 360;
+/** A frame's width in vp: a phone's (1080 px at 480 dpi), or the build's PREVIEW_FRAME */
+const PHONE: number = PREVIEW_FRAME > 0 ? PREVIEW_FRAME : 360;
 
 const STUDIO: PairedComputer = { id: 'a1b2c3d4e5f6', name: 'Mac Studio', addrs: ['192.168.1.20:7790'], pairedAt: 0 };
 const AIR: PairedComputer = { id: 'f6e5d4c3b2a1', name: 'MacBook Air', addrs: [], pairedAt: 0 };

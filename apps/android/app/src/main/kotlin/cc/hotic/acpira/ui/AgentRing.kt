@@ -10,12 +10,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.requiredWidthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,7 +54,9 @@ import kotlin.math.sin
  * which buds the other agents off it on a ring, clockwise from the top, one after another; a tap outside (the screen's
  * dim) folds them back, the last one first. A pick flies the picked mark into the drop, growing to the centre's size as
  * the old mark shrinks away under it, while the others fold home on the same spring; the agent changes under the flown
- * mark once it is inside. [landing] carries the picked agent meanwhile, so the screen's name shows it at once
+ * mark once it is inside. [landing] carries the picked agent meanwhile, so the screen's name shows it at once. With
+ * less [room] than the open ring reaches, the whole ring is drawn smaller and the drop moves with it, so no bubble
+ * leaves the page
  */
 @Composable
 fun AgentRing(
@@ -66,6 +69,7 @@ fun AgentRing(
   landing: String?,
   onLanding: (String?) -> Unit,
   modifier: Modifier = Modifier,
+  room: RingRoom? = null,
 ) {
   val density = LocalDensity.current
   val haptics = LocalHapticFeedback.current
@@ -74,6 +78,21 @@ fun AgentRing(
   fun spot(i: Int): Offset {
     val angle = -PI / 2 + 2 * PI * i / max(n, 1)
     return Offset((cos(angle) * radius).toFloat(), (sin(angle) * radius).toFloat())
+  }
+  // A caption keeps to the slot between two neighbours' centres, so a long name ends in an ellipsis, not in the next
+  val slot = with(density) { (2 * radius * sin(PI / max(n, 2)).toFloat()).toDp() }
+  // The open ring's reach from the drop's centre: the top bubble's edge, the lowest caption's foot
+  val reachUp = radius + with(density) { Metrics.ringBubble.toPx() / 2 }
+  val reachDown = max(others.indices.maxOfOrNull { spot(it).y } ?: 0f, 0f) + with(density) { (Metrics.ringBubble / 2 + Metrics.s6 - Metrics.s0_5).toPx() }
+  // The ring's scale in a short room, and how far its centre moves to stand inside it; read as it draws
+  fun fit(): Float {
+    val have = room?.let { it.up + it.down } ?: return 1f
+    return if (have >= reachUp + reachDown) 1f else (have / (reachUp + reachDown)).coerceAtLeast(FIT_MIN)
+  }
+  fun shift(): Float {
+    val r = room ?: return 0f
+    val f = fit()
+    return max(reachUp * f - r.up, min(0f, r.down - reachDown * f))
   }
   // Each bubble's way out (position and scale), its ink and its caption, 0 at home in the drop and 1 on the ring
   val out = remember(others) { others.map { Animatable(0f) } }
@@ -121,7 +140,7 @@ fun AgentRing(
       onOpen(false)
       return
     }
-    from = spot(i) * out[i].value
+    from = spot(i) * (fit() * out[i].value)
     onLanding(a.id)
     onOpen(false)
     scope.launch {
@@ -136,7 +155,13 @@ fun AgentRing(
   }
 
   val captionDrop = with(density) { (Metrics.ringBubble / 2 + Metrics.s6 - Metrics.s0_5).toPx() - Type.fieldLine.toPx() / 2 }
-  Box(modifier.size(Metrics.heroTile).zIndex(1f), contentAlignment = Alignment.Center) {
+  Box(
+    modifier.size(Metrics.heroTile).zIndex(1f).graphicsLayer {
+      // The drop goes with the ring as far as the ring is out
+      translationY = shift() * (out.maxOfOrNull { it.value } ?: 0f).coerceIn(0f, 1f)
+    },
+    contentAlignment = Alignment.Center,
+  ) {
     others.forEachIndexed { i, a ->
       val flying = landing == a.id
       val s = spot(i)
@@ -146,9 +171,10 @@ fun AgentRing(
           .size(Metrics.ringBubble)
           .graphicsLayer {
             val p = out[i].value
-            translationX = s.x * p
-            translationY = s.y * p
-            val k = SEED + (1 - SEED) * p
+            val f = fit()
+            translationX = s.x * f * p
+            translationY = s.y * f * p
+            val k = (SEED + (1 - SEED) * p) * (1 + (f - 1) * p.coerceIn(0f, 1f))
             scaleX = k; scaleY = k
             alpha = ink[i].value.coerceIn(0f, 1f)
           }
@@ -171,11 +197,13 @@ fun AgentRing(
       // Its name under it, in the hero name's style: in after the bubble, out first
       Text(
         a.name, color = if (a.available == false) Palette.fg3 else Palette.fgStrong, fontSize = Type.field, lineHeight = Type.fieldLine, fontWeight = FontWeight.SemiBold,
-        maxLines = 1, softWrap = false, overflow = TextOverflow.Visible,
-        modifier = Modifier.wrapContentWidth(unbounded = true).graphicsLayer {
+        maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.requiredWidthIn(max = slot).graphicsLayer {
           val p = out[i].value
-          translationX = s.x * p
-          translationY = s.y * p + captionDrop
+          val f = fit()
+          translationX = s.x * f * p
+          translationY = (s.y * p + captionDrop) * f
+          scaleX = f; scaleY = f
           alpha = caption[i].value.coerceIn(0f, 1f)
         },
       )
@@ -210,7 +238,7 @@ fun AgentRing(
           val f = flight.value
           translationX = from.x * (1 - f)
           translationY = from.y * (1 - f)
-          val start = Metrics.ringMark / Metrics.heroBare
+          val start = Metrics.ringMark / Metrics.heroBare * fit()
           val k = start + (1 - start) * f
           scaleX = k; scaleY = k
         },
@@ -219,6 +247,17 @@ fun AgentRing(
   }
 }
 
+/**
+ * How far the open ring may reach above and below the drop's centre, in the ring's own px. The page's layout sets it
+ * (ui/NewSessionScreen.kt HeroColumn) and the ring reads it as it draws
+ */
+class RingRoom {
+  var up by mutableFloatStateOf(Float.POSITIVE_INFINITY)
+  var down by mutableFloatStateOf(Float.POSITIVE_INFINITY)
+}
+
+/** The ring is drawn no smaller than this share, however short the room */
+private const val FIT_MIN = 0.3f
 /** A missing agent's mark, faded as a disabled row's (RingGeometry.missingInk) */
 private const val MISSING_INK = 0.35f
 /** A bubble leaves the drop at this share of its size (Metrics.gooSeed) */

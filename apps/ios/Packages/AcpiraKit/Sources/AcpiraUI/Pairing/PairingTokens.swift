@@ -18,6 +18,8 @@ nonisolated extension Metrics {
   static let pairScanCard: CGFloat = 340
   /// In a wide column (iPad) the card grows with its width at this height-to-width share, never under `pairScanCard`
   static let pairScanAspect: CGFloat = 0.7
+  /// What a short form (a phone on its side) keeps showing under the card: the next section's head
+  static let pairScanPeek: CGFloat = 72
   /// The form's column on a wide page, in place of a sheet (the first-run flow on iPad)
   static let pairColumn: CGFloat = 640
   static let pairFinder: CGFloat = 176

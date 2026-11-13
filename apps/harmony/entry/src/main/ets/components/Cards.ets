@@ -446,8 +446,9 @@ export struct PlanDocumentCard {
         .onClick(() => {
           this.sheet = true;
         })
+        // A wide window hangs a sheet off its host as a popup by default: centred there, the bottom sheet on a phone as before
         .bindSheet(this.sheet, this.wholePlan(), {
-          height: SheetSize.LARGE, dragBar: true, showClose: false, onDisappear: () => {
+          preferType: SheetType.CENTER, height: SheetSize.LARGE, dragBar: true, showClose: false, onDisappear: () => {
             this.sheet = false;
           }
         })
