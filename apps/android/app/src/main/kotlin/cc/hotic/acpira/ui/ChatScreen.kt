@@ -3,10 +3,13 @@ package cc.hotic.acpira.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import cc.hotic.acpira.design.footFade
 import cc.hotic.acpira.design.readableWidth
+import cc.hotic.acpira.design.topFade
 import cc.hotic.acpira.design.readablePadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -279,8 +282,9 @@ fun ChatScreen(model: AppModel, id: String) {
       )
     },
     bottomBar = {
-      // The dock holds to the reading column in a wide window, as the thread above it does
-      Box(Modifier.readableWidth()) {
+      // The dock holds to the reading column in a wide window, as the thread above it does; the page colour fades up
+      // under it at the full width, the gesture bar's strip included (design/Layout.kt footFade)
+      Box(Modifier.fillMaxWidth().background(footFade()).readableWidth()) {
       val edit = draft.edit
       val dockView = view ?: SessionView(id = id, agent = agent)
       Dock(model, id, dockView, editing = edit?.original) {
@@ -371,9 +375,12 @@ fun ChatScreen(model: AppModel, id: String) {
       LocalPromptMarks provides marks,
       LocalThreadTaps provides threadTaps,
     ) {
+    // Messages leave under the bar through a fade, once the thread has moved off its top
+    val scrolled by remember(thread) { derivedStateOf { thread.canScrollBackward } }
     LazyColumn(
       state = thread,
-      modifier = Modifier.fillMaxSize().gooRecede(goo, model.motion).threadTaps(threadTaps).testTag("chat.thread"),
+      modifier = Modifier.fillMaxSize().gooRecede(goo, model.motion).topFade(scrolled, padding.calculateTopPadding())
+        .threadTaps(threadTaps).testTag("chat.thread"),
       // The list stays full width so a drag beside the reading column still scrolls it
       contentPadding = readablePadding(maxWidth, top = padding.calculateTopPadding() + Metrics.s2, bottom = padding.calculateBottomPadding() + planDock + Metrics.pad),
       verticalArrangement = Arrangement.spacedBy(Metrics.msgGap),

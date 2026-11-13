@@ -1,5 +1,5 @@
 import { AgentBlock, Attachment, QuestionAnswer, QueuedPrompt, SessionControls, SlashCommand, Turn } from '../wire/Wire';
-import { Cmp, Metrics, Type } from '../design/Tokens';
+import { Cmp, ListMetrics, Metrics, Type } from '../design/Tokens';
 import { AppModel } from '../store/AppModel';
 import { t } from '../store/L10n';
 import { canEditPrompts, dockPlan, goalHeadActions, openQuestion, pendingPlanReview, shortStop } from '../logic/Composing';
@@ -12,6 +12,7 @@ import { AlertCard, EditingBar, PlanDock, QuestionCard, QueueBubble } from '../c
 import { attachBeans, Bean, modelBeans } from '../components/composer/Beans';
 import { GooLayer } from '../components/composer/GooLayer';
 import { ChatBar, ChatBarActions } from '../components/ChatBar';
+import { topFade } from '../components/Chrome';
 import { turnKey } from '../store/Thread';
 
 // The chat (apps/ios Chat/ChatView.swift): the bar with back and the title, the thread in the reading column, the
@@ -33,6 +34,8 @@ export struct ChatPage {
   @Local dismissedAlert: string = '';
   /** The to-do card's height over the thread's foot, so the last turn can scroll clear of it */
   @Local planHeight: number = 0;
+  /** The thread has moved off its top: the fade under the bar shows */
+  @Local scrolled: boolean = false;
   private scroller: Scroller = new Scroller();
   private atEnd: boolean = true;
 
@@ -116,6 +119,13 @@ export struct ChatPage {
     return view !== undefined && (dockPlan(view.turns, view.running) !== undefined || view.goal !== undefined);
   }
 
+  private trackTop(): void {
+    const moved = this.scroller.currentOffset().yOffset > 0;
+    if (moved !== this.scrolled) {
+      this.scrolled = moved;
+    }
+  }
+
   private receded(): boolean {
     return this.model.goo.open !== undefined;
   }
@@ -135,6 +145,15 @@ export struct ChatPage {
       } else {
         Stack({ alignContent: Alignment.Bottom }) {
           this.thread()
+          // Messages leave under the bar through a fade, not a cut
+          Column()
+            .width('100%')
+            .height(ListMetrics.topFadeTail)
+            .linearGradient(topFade())
+            .opacity(this.scrolled ? 1 : 0)
+            .animation({ duration: ListMetrics.topFadeMs })
+            .hitTestBehavior(HitTestMode.None)
+            .position({ x: 0, y: 0 })
           // The to-do card floats over the thread's foot, headed by the session goal
           PlanDock({
             entries: dockPlan(this.model.view.turns, this.model.view.running), running: this.model.view.running,
@@ -261,6 +280,11 @@ export struct ChatPage {
     .edgeEffect(EdgeEffect.Spring)
     .onReachEnd(() => {
       this.atEnd = true;
+    })
+    .onDidScroll(() => this.trackTop())
+    // A chat opens at its end without a scroll of its own to report
+    .onAppear(() => {
+      setTimeout(() => this.trackTop(), 0);
     })
     .onScrollIndex((start: number, end: number) => {
       this.atEnd = end >= (this.model.view?.turns.length ?? 0) - 1;

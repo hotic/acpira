@@ -10,7 +10,7 @@ import { AgentMark, Lucide } from '../components/Glyphs';
 import { StateMark } from '../components/StateMark';
 import { SessionMenu } from '../components/SessionMenu';
 import { MenuCaption, MenuCard, MenuGap, MenuRow, menuOptions, MenuBack } from '../components/Menu';
-import { connectionNote, ConnectionBanner, GlassButton } from '../components/Chrome';
+import { connectionNote, ConnectionBanner, GlassButton, topFade } from '../components/Chrome';
 import { PairBar } from './Pairing';
 
 // The session list (apps/ios Sessions/SessionListScreen.swift, apps/android ui/SessionListScreen.kt): every session,
@@ -75,6 +75,9 @@ export struct SessionList {
   @Local query: string = '';
   @Local archivedOnly: boolean = false;
   @Local viewMenu: boolean = false;
+  /** The list has moved off its top: the fade under the bar shows */
+  @Local scrolled: boolean = false;
+  private listScroller: ListScroller = new ListScroller();
   /** Per open project, how many sessions past its latest few are out */
   @Local moreShown: Map<string, number> = new Map<string, number>();
   private searchTimer: number = -1;
@@ -313,65 +316,95 @@ export struct SessionList {
         }
         .padding({ left: Metrics.pad, right: Metrics.pad, bottom: Metrics.s2 })
       }
-      if (this.model.connection === Connection.Connecting && this.model.summaries.length === 0) {
-        // The engine's first list is on its way: its state takes the page, so the list giving way moves nothing
-        Column({ space: Metrics.gap }) {
-          Lucide({ name: 'laptop', tint: $r('app.color.fg2'), extent: Metrics.barCtl })
-          Row({ space: Metrics.s2 }) {
-            LoadingProgress().color($r('app.color.fg3')).width(Metrics.iconCtl).height(Metrics.iconCtl)
-            Text(t('connections.state.connecting')).fontSize(Type.text2).fontColor($r('app.color.fg2'))
-          }
-        }
-        .id('list.connecting')
-        .justifyContent(FlexAlign.Center)
-        .layoutWeight(1)
-      } else {
-        List() {
-          ForEach(this.entries(), (e: ListEntry) => {
-            if (e.kind === 'row' && e.session !== undefined) {
-              ListItem() {
-                SessionRowItem({
-                  model: this.model,
-                  session: e.session,
-                  place: e.place,
-                  time: e.time,
-                  snippet: e.snippet,
-                  terms: searchTerms(this.query),
-                  divider: e.divider,
-                  nested: e.nested,
-                  active: e.session.id === this.openId,
-                  onOpen: (id: string) => this.onOpen(id)
-                })
-              }
-              .swipeAction({ end: { builder: () => { this.deleteAction(e.session?.id ?? ''); } }, edgeEffect: SwipeEdgeEffect.Spring })
-            } else {
-              ListItem() {
-                this.entry(e)
-              }
+      // The list runs under the bottom bar (the sidebar's foot), whose fade lets the rows go out rather than cut them
+      Stack({ alignContent: Alignment.Bottom }) {
+        if (this.model.connection === Connection.Connecting && this.model.summaries.length === 0) {
+          // The engine's first list is on its way: its state takes the page, so the list giving way moves nothing
+          Column({ space: Metrics.gap }) {
+            Lucide({ name: 'laptop', tint: $r('app.color.fg2'), extent: Metrics.barCtl })
+            Row({ space: Metrics.s2 }) {
+              LoadingProgress().color($r('app.color.fg3')).width(Metrics.iconCtl).height(Metrics.iconCtl)
+              Text(t('connections.state.connecting')).fontSize(Type.text2).fontColor($r('app.color.fg2'))
             }
-          }, (e: ListEntry) => e.key)
+          }
+          .id('list.connecting')
+          .justifyContent(FlexAlign.Center)
+          .padding({ bottom: ListMetrics.footH })
+          .height('100%')
+          .width('100%')
+        } else {
+          List({ scroller: this.listScroller }) {
+            ForEach(this.entries(), (e: ListEntry) => {
+              if (e.kind === 'row' && e.session !== undefined) {
+                ListItem() {
+                  SessionRowItem({
+                    model: this.model,
+                    session: e.session,
+                    place: e.place,
+                    time: e.time,
+                    snippet: e.snippet,
+                    terms: searchTerms(this.query),
+                    divider: e.divider,
+                    nested: e.nested,
+                    active: e.session.id === this.openId,
+                    onOpen: (id: string) => this.onOpen(id)
+                  })
+                }
+                .swipeAction({ end: { builder: () => { this.deleteAction(e.session?.id ?? ''); } }, edgeEffect: SwipeEdgeEffect.Spring })
+              } else {
+                ListItem() {
+                  this.entry(e)
+                }
+              }
+            }, (e: ListEntry) => e.key)
+          }
+          .id('list.sessions')
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          .contentEndOffset(ListMetrics.footH + Metrics.msgGap)
+          .onDidScroll(() => {
+            const moved = this.listScroller.currentOffset().yOffset > 0;
+            if (moved !== this.scrolled) {
+              this.scrolled = moved;
+            }
+          })
+          .height('100%')
+          .width('100%')
+          // Rows leave under the bar through a fade, not a cut
+          Column()
+            .width('100%')
+            .height(ListMetrics.topFadeTail)
+            .linearGradient(topFade())
+            .opacity(this.scrolled ? 1 : 0)
+            .animation({ duration: ListMetrics.topFadeMs })
+            .hitTestBehavior(HitTestMode.None)
+            .position({ x: 0, y: 0 })
         }
-        .id('list.sessions')
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-        .contentEndOffset(Metrics.msgGap)
-        .layoutWeight(1)
-        .width('100%')
+        if (this.sidebar) {
+          this.foot()
+        } else {
+          this.bottomBar()
+        }
       }
-      if (this.sidebar) {
-        this.foot()
-      } else {
-        this.bottomBar()
-      }
+      .layoutWeight(1)
+      .width('100%')
     }
     .backgroundColor($r('app.color.bg0'))
     .height('100%')
     .width('100%')
   }
 
+  /** The grouping filter and its menu */
+  @Builder
+  filterButton() {
+    GlassButton({ icon: 'listFilter', tag: 'list.view', onTap: () => { this.viewMenu = true; } })
+      .bindMenu(this.viewMenu, this.viewMenuCard(), menuOptions(() => { this.viewMenu = false; }, Placement.BottomLeft))
+  }
+
   /**
    * The bar: the grouping filter at the start, the title centred, settings at the end; in the sidebar no title, and
-   * the end hides the sidebar (Navigation's split has no toggle of its own once its title bar is off)
+   * the end hides the sidebar instead (Navigation's split has no toggle of its own once its title bar is off; iOS has
+   * the system's toggle there), settings standing in the foot
    */
   @Builder
   bar() {
@@ -379,7 +412,14 @@ export struct SessionList {
       // The sidebar shows no title, as iOS keeps it off there
       if (!this.sidebar && this.model.paired) {
         // A paired computer's name, which opens the computers page (apps/ios ComputerMenu)
-        PairBar({ title: this.model.pairing?.selected?.name ?? '', menu: true, onTitle: () => this.onComputers() })
+        Row() {
+          PairBar({ title: this.model.pairing?.selected?.name ?? '', menu: true, onTitle: () => this.onComputers() })
+        }
+        .justifyContent(FlexAlign.Center)
+        // A long name stops short of the buttons at both ends instead of running under them. The room is what the
+        // title's content gets, its own padding coming on top: that much more is held back here
+        .padding({ left: Metrics.pad + Metrics.barCtl + Metrics.s2 * 2, right: Metrics.pad + Metrics.barCtl + Metrics.s2 * 2 })
+        .width('100%')
       } else if (!this.sidebar) {
         Text(t('mobile.home'))
           .fontSize(Type.barTitle)
@@ -387,17 +427,10 @@ export struct SessionList {
           .fontColor($r('app.color.fg_strong'))
       }
       Row({ space: Metrics.s2 }) {
-        // In the sidebar the filter joins the hide button at the bar's end rather than sit alone at the far end
-        if (this.sidebar) {
-          Blank()
-        }
         if (this.showsFilter()) {
-          GlassButton({ icon: 'listFilter', tag: 'list.view', onTap: () => { this.viewMenu = true; } })
-            .bindMenu(this.viewMenu, this.viewMenuCard(), menuOptions(() => { this.viewMenu = false; }, this.sidebar ? Placement.BottomRight : Placement.BottomLeft))
+          this.filterButton()
         }
-        if (!this.sidebar) {
-          Blank()
-        }
+        Blank()
         if (this.sidebar) {
           GlassButton({ icon: 'panelLeft', tag: 'split.hide', onTap: () => this.onHide() })
         } else {
@@ -607,6 +640,7 @@ export struct SessionList {
     .padding({ left: Metrics.pad, right: Metrics.pad, top: Metrics.s2, bottom: Metrics.s2 })
     .constraintSize({ maxWidth: Metrics.contentW })
     .width('100%')
+    .linearGradient(footFade())
   }
 
   /** The sidebar's foot, as the desktop's session column ends: settings, then the engine followed and its state */
@@ -641,7 +675,19 @@ export struct SessionList {
     }
     .padding({ left: Metrics.pad, right: Metrics.pad, top: Metrics.s2, bottom: Metrics.s2 })
     .width('100%')
+    .linearGradient(footFade())
   }
+}
+
+/**
+ * The page colour fading up into the list under the bottom bar and the sidebar's foot (apps/ios SidebarFoot.swift
+ * FootFade's stops): clear at the top, half a fifth of the way down, whole from the middle
+ */
+function footFade(): LinearGradientOptions {
+  return {
+    direction: GradientDirection.Bottom,
+    colors: [[$r('app.color.bg0_clear'), 0], [$r('app.color.bg0_half'), 0.2], [$r('app.color.bg0'), 0.5], [$r('app.color.bg0'), 1]]
+  };
 }
 
 function latest(a: SessionSummary, b: SessionSummary): number {
@@ -691,16 +737,8 @@ struct SessionRowItem {
   @Param nested: boolean = false;
   @Param active: boolean = false;
 
-  /** The sidebar's open chat: the desktop column's fill, rounded and held in from both edges */
-  @Builder
-  activeFill() {
-    Column()
-      .width('100%')
-      .height('100%')
-      .margin({ left: Metrics.s2, right: Metrics.s2 })
-      .borderRadius(Metrics.rLg)
-      .backgroundColor(this.active ? $r('app.color.active') : Color.Transparent)
-  }
+  /** A finger is down on the row */
+  @Local pressed: boolean = false;
   @Event onOpen: (id: string) => void = () => {};
 
   @Builder
@@ -713,71 +751,87 @@ struct SessionRowItem {
   }
 
   build() {
-    Row({ space: Metrics.gap }) {
-      // The bare mark; its column starts the slot, so the ink stands on the title's and captions' edge
-      Stack() {
-        AgentMark({ agent: this.session.agent, name: this.model.agentName(this.session.agent), tint: $r('app.color.fg2'), extent: Metrics.rowMark })
-      }
-      .width(Metrics.lead)
-      .alignContent(Alignment.Start)
-      Column({ space: ListMetrics.s0_5 }) {
-        Row() {
+    Column() {
+      Row({ space: Metrics.gap }) {
+        // The bare mark; its column starts the slot, so the ink stands on the title's and captions' edge
+        Stack() {
+          AgentMark({ agent: this.session.agent, name: this.model.agentName(this.session.agent), tint: $r('app.color.fg2'), extent: Metrics.rowMark })
+        }
+        .width(Metrics.lead)
+        .alignContent(Alignment.Start)
+        Column({ space: ListMetrics.s0_5 }) {
           Row() {
-            marked(this.session.title, this.terms, Type.text1, $r('app.color.fg_strong'), 1)
-          }
-          .layoutWeight(1)
-          if (this.time !== undefined) {
-            Text(this.time)
-              .fontSize(Type.text3)
-              .fontColor($r('app.color.fg3'))
-              .fontFeature('"tnum" on')
-              .maxLines(1)
-              .margin({ left: Metrics.s2 })
-          }
-          // The state is its mark alone; every row keeps the slot, so the times above line up
-          Stack() {
-            if (this.session.state !== undefined && this.session.state.length > 0) {
-              StateMark({ state: this.session.state, unread: this.session.unread === true, motion: this.model.motion })
+            Row() {
+              marked(this.session.title, this.terms, Type.text1, $r('app.color.fg_strong'), 1)
             }
-          }
-          .width(ListMetrics.stateSlot)
-          .height(ListMetrics.stateSlot)
-          .margin({ left: Metrics.gap - Metrics.s2 })
-        }
-        .width('100%')
-        if (this.place !== undefined) {
-          Text(this.place)
-            .fontSize(Type.text3)
-            .fontColor($r('app.color.fg3'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        if (this.snippet !== undefined) {
-          Row() {
-            marked(this.snippet, this.terms, Type.text3, $r('app.color.fg2'), 2)
+            .layoutWeight(1)
+            if (this.time !== undefined) {
+              Text(this.time)
+                .fontSize(Type.text3)
+                .fontColor($r('app.color.fg3'))
+                .fontFeature('"tnum" on')
+                .maxLines(1)
+                .margin({ left: Metrics.s2 })
+            }
+            // The state is its mark alone; every row keeps the slot, so the times above line up
+            Stack() {
+              if (this.session.state !== undefined && this.session.state.length > 0) {
+                StateMark({ state: this.session.state, unread: this.session.unread === true, motion: this.model.motion })
+              }
+            }
+            .width(ListMetrics.stateSlot)
+            .height(ListMetrics.stateSlot)
+            .margin({ left: Metrics.gap - Metrics.s2 })
           }
           .width('100%')
-          .id(`session.snippet:${this.session.id}`)
+          if (this.place !== undefined) {
+            Text(this.place)
+              .fontSize(Type.text3)
+              .fontColor($r('app.color.fg3'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          if (this.snippet !== undefined) {
+            Row() {
+              marked(this.snippet, this.terms, Type.text3, $r('app.color.fg2'), 2)
+            }
+            .width('100%')
+            .id(`session.snippet:${this.session.id}`)
+          }
         }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
       }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
+      .constraintSize({ minHeight: this.place === undefined && this.snippet === undefined ? ListMetrics.sheetRow : ListMetrics.sessionRow })
+      .padding({
+        left: Metrics.pad - Metrics.s2 + (this.nested ? ListMetrics.nest : 0), right: Metrics.pad - Metrics.s2,
+        top: this.snippet === undefined ? 0 : Metrics.s2, bottom: this.snippet === undefined ? 0 : Metrics.s2
+      })
+      .width('100%')
+      // The sidebar's open chat: the desktop column's fill, rounded and held in from both edges
+      .borderRadius(Metrics.rLg)
+      .backgroundColor(this.active ? $r('app.color.active') : Color.Transparent)
     }
     .id(`session:${this.session.id}`)
-    .constraintSize({ minHeight: this.place === undefined && this.snippet === undefined ? ListMetrics.sheetRow : ListMetrics.sessionRow })
-    .padding({
-      left: Metrics.pad + (this.nested ? ListMetrics.nest : 0), right: Metrics.pad,
-      top: this.snippet === undefined ? 0 : Metrics.s2, bottom: this.snippet === undefined ? 0 : Metrics.s2
-    })
+    .padding({ left: Metrics.s2, right: Metrics.s2 })
     .width('100%')
-    .backgroundColor($r('app.color.bg0'))
-    .background(this.activeFill())
+    // A press lights the whole row. Kept by hand: a pressed state style stayed on after the tap opened the chat
+    .backgroundColor(this.pressed ? $r('app.color.active') : $r('app.color.bg0'))
     .border({
       width: { bottom: this.divider ? Metrics.hairline : 0 },
       color: { bottom: $r('app.color.line') }
     })
-    .stateStyles({ pressed: { .backgroundColor($r('app.color.active')) } })
-    .onClick(() => this.onOpen(this.session.id))
+    .onTouch((e: TouchEvent) => {
+      if (e.type === TouchType.Down) {
+        this.pressed = true;
+      } else if (e.type === TouchType.Up || e.type === TouchType.Cancel) {
+        this.pressed = false;
+      }
+    })
+    .onClick(() => {
+      this.pressed = false;
+      this.onOpen(this.session.id);
+    })
     .bindContextMenu(this.menu(), ResponseType.LongPress, {
       preview: MenuPreviewMode.NONE, enableArrow: false, backgroundColor: Color.Transparent, backgroundBlurStyle: BlurStyle.NONE
     })

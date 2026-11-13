@@ -153,6 +153,8 @@ object Metrics {
   val gap = 12.dp
   val gapHalf = 6.dp
   val msgGap = 32.dp
+  /** How far the page colour fades into a scrolled page under its top bar (apps/ios Metrics.topFadeTail) */
+  val topFadeTail = 28.dp
   val s0 = 0.dp
   val s0_5 = 2.dp
   val s1 = 4.dp

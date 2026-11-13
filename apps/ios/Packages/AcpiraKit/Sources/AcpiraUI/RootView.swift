@@ -94,6 +94,12 @@ extension EnvironmentValues {
   @Entry var listInSidebar = false
 }
 
+/// Counts the pages opened from the sidebar, the open one tapped again included: where the sidebar slides over the
+/// chat, each one folds it away again (a path change alone misses the repeat)
+@MainActor @Observable final class SidebarPicks {
+  var count = 0
+}
+
 /// The app's root: the session list, pushing a chat or the new-session screen, the settings over it as a sheet; the app
 /// model holds the stack, so a language switch (which rebuilds every screen) keeps the reader where they were
 public struct RootView: View {
@@ -249,6 +255,7 @@ public struct RootView: View {
   /// sidebar sliding over it) where it would not; the toggle works in between
   @State private var columns: NavigationSplitViewVisibility = .automatic
   @State private var roomy = true
+  @State private var picks = SidebarPicks()
 
   private func setRoomy(_ now: Bool) {
     roomy = now
@@ -268,6 +275,7 @@ public struct RootView: View {
           // The keyboard belongs to the chat or terminal beside the sidebar: its foot stays at the window's bottom
           .ignoresSafeArea(.keyboard)
           .environment(\.listInSidebar, true)
+          .environment(picks)
           .navigationSplitViewColumnWidth(Metrics.sidebarW)
       } detail: {
         NavigationStack(path: Binding(get: { Array(model.path.dropFirst()) },
@@ -279,6 +287,7 @@ public struct RootView: View {
         }
       }
       .modifier(SplitStyle(roomy: roomy))
+      .onChange(of: picks.count) { if !roomy { columns = .detailOnly } }
       // Read on the first layout too (onGeometryChange only reports changes)
       .background {
         GeometryReader { g in

@@ -25,6 +25,14 @@
       "value": "#FFF8F8F8"
     },
     {
+      "name": "bg0_clear",
+      "value": "#00F8F8F8"
+    },
+    {
+      "name": "bg0_half",
+      "value": "#80F8F8F8"
+    },
+    {
       "name": "bg1",
       "value": "#FFFFFFFF"
     },
