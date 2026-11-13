@@ -24,6 +24,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -272,7 +273,8 @@ fun EffortTag(label: String, modifier: Modifier = Modifier) {
 /** useElapsed: a running child ticks on the app's clock; a finished one reads its engine timestamps */
 @Composable
 fun SubagentElapsed(node: SubagentSummary, modifier: Modifier = Modifier) {
-  val clock = LocalClock.current
+  // Read through the latest clock: the loop outlives a model swap (Rows.kt LiveElapsed)
+  val clock by rememberUpdatedState(LocalClock.current)
   val live = node.state == SubagentState.running && node.endedAt == null
   var now by remember { mutableLongStateOf(clock()) }
   if (live) LaunchedEffect(node.id) {

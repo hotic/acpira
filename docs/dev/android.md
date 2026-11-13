@@ -53,7 +53,7 @@
 
 ## Paired remote access
 
-- Ported from the iOS app's `AcpiraRemote` / `Pairing/` (ios.md "Pairing"): `PairingService` and the models in `:sync`, `store/PairingModel.kt` (dials, redials, presence), `MainActivity.adopt` (one `AppModel` per wire, `resume` keeps the screens on a new wire to the same computer and replays `EngineClient.unsent()`).
+- Ported from the iOS app's `AcpiraRemote` / `Pairing/` (ios.md "Pairing"): `PairingService` and the models in `:sync`, `store/PairingModel.kt` (dials, redials, presence), `MainActivity.adopt` (one `AppModel` per wire, `resume` keeps the screens on a new wire to the same computer and replays `EngineClient.unsent()`). The composition outlives the model: an effect loop reading it (the running clocks) goes through `rememberUpdatedState`, or it keeps ticking on the closed wire's model, whose clock stays held.
 - `scripts/uniffi.toml` renames acpira-mobile's `close` methods and `message` fields for Kotlin only (they clash with `AutoCloseable` / `Throwable`); the Swift bindings keep the Rust names.
 - The bindings are generated from the unstripped library (`strip` removes UniFFI's metadata symbols); the copies that ship are stripped afterwards.
 - `onStart` runs on launch too: the service treats a foreground notice with no background trip before it as nothing, or it would drop the node the first dial is starting.

@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -214,8 +215,9 @@ private fun AccountRow(
  */
 @Composable
 fun QuotaBars(quota: AccountQuota, now: () -> Instant, size: TextUnit = Type.text3, ink: Color = Palette.fg2) {
-  // The countdowns move on by the minute
-  val clock by produceState(now()) { while (true) { delay(MINUTE_MS); value = now() } }
+  // The countdowns move on by the minute, on the latest clock: the loop outlives a model swap (Rows.kt LiveElapsed)
+  val latest by rememberUpdatedState(now)
+  val clock by produceState(now()) { while (true) { delay(MINUTE_MS); value = latest() } }
   Column(Modifier.padding(top = Metrics.s2), verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
     for (w in quota.windows) QuotaBar(w, clock, size, ink)
     quota.onDemandBalanceUsd?.takeIf { it.isFinite() }?.let { balance ->
