@@ -112,8 +112,10 @@ struct InlineText: View {
     #if canImport(UIKit)
     .accessibilityHidden(true)
     .overlay {
-      TextSelectionSurface(text: InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent)
-        .selectionParagraph(inlines, weight: weight))
+      LiveOnly {
+        TextSelectionSurface(text: InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent)
+          .selectionParagraph(inlines, weight: weight))
+      }
     }
     #else
     .textSelection(.enabled)

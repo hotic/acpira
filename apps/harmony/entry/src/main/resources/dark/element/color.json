@@ -37,6 +37,22 @@
       "value": "#FF1F1F1F"
     },
     {
+      "name": "share_frame",
+      "value": "#FF101010"
+    },
+    {
+      "name": "share_sheet",
+      "value": "#FF131313"
+    },
+    {
+      "name": "share_sheet_line",
+      "value": "#12FFFFFF"
+    },
+    {
+      "name": "share_lift",
+      "value": "#00000000"
+    },
+    {
       "name": "line",
       "value": "#0FFFFFFF"
     },

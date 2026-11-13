@@ -6,6 +6,7 @@
     "pages/PreviewForms",
     "pages/PreviewSplit",
     "pages/PreviewComposer",
-    "pages/PreviewPair"
+    "pages/PreviewPair",
+    "pages/PreviewShare"
   ]
 }

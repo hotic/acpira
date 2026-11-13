@@ -338,11 +338,22 @@ extension InlineBuilder {
 }
 #endif
 
+/// Content left out of a still render: ImageRenderer draws a native view as a yellow no-entry placeholder, which a
+/// selection surface laid over its text would cover it with
+struct LiveOnly<Content: View>: View {
+  @ViewBuilder var content: Content
+  @Environment(\.snapshot) private var snapshot
+
+  var body: some View {
+    if !snapshot { content }
+  }
+}
+
 extension View {
   /// The native view is an overlay, so enabling selection never changes the existing text's size or streaming.
   @ViewBuilder func selectableText(_ text: String, style: TextStyle) -> some View {
     #if canImport(UIKit)
-    accessibilityHidden(true).overlay { TextSelectionSurface(text: selectionContent(text, style: style)) }
+    accessibilityHidden(true).overlay { LiveOnly { TextSelectionSurface(text: selectionContent(text, style: style)) } }
     #else
     textSelection(.enabled)
     #endif
