@@ -49,6 +49,7 @@ struct PairSheet: View {
   @State private var browsing = true
   /// The code being paired with and its link: the very modules a scan read, else made from the link
   @State private var code: (link: String, rows: [String])?
+  @Environment(\.horizontalSizeClass) private var widthClass
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -56,6 +57,10 @@ struct PairSheet: View {
         if phase == .choose {
           PairAddForm(nearby: nearby, browsing: browsing, scanning: path.isEmpty,
                       lead: inline == nil ? nil : t("mobile.pair.connectHint"), onLink: { pair($0, scanned: $1) })
+            // In place on a wide page the bar spans the window and the form keeps a column under it
+            .frame(maxWidth: inline == nil ? .infinity : Metrics.pairColumn)
+            .frame(maxWidth: .infinity)
+            .background(Palette.formPage)
             .transition(.opacity)
         } else {
           PairStage(phase: phase, code: code?.rows, finish: finish, onConnect: connectConfirmed, onRetry: retry, onRescan: rescan)
@@ -64,7 +69,8 @@ struct PairSheet: View {
       }
       .animation(motion ? Motion.ease : nil, value: phase)
       .navigationTitle(phase == .choose ? t(inline == nil ? "mobile.pair.add" : "mobile.pair.connectTitle") : "")
-      .modifier(PairTitleMode(large: inline != nil))
+      // Large only over a phone's page: beside a centred column it stood off at the window's edge
+      .modifier(PairTitleMode(large: inline != nil && widthClass == .compact))
       .navigationDestination(for: NearbyComputer.self) { computer in
         PairCodePage(computer: computer, finish: finish, closes: inline == nil)
       }

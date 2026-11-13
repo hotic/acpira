@@ -452,9 +452,7 @@ fun WelcomeFlow(pairing: PairingModel, start: String?, motion: Boolean, onDone: 
       exit = fadeOut(tween(swap, easing = WL.swapCurve)) + slideOutVertically(tween(swap, easing = WL.swapCurve)) { drop },
     ) {
       Box(Modifier.fillMaxSize().background(Palette.formPage).statusBarsPadding(), contentAlignment = Alignment.TopCenter) {
-        Box(Modifier.widthIn(max = WelcomeMetrics.column).fillMaxHeight()) {
-          PairFlow(pairing, PairInline(onBack = { step = WelcomeStep.Intro }, onDone = paired))
-        }
+        PairFlow(pairing, PairInline(onBack = { step = WelcomeStep.Intro }, onDone = paired))
       }
     }
     AnimatedVisibility(

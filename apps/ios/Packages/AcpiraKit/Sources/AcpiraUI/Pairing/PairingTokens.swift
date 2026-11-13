@@ -16,6 +16,10 @@ nonisolated extension Metrics {
   static var pairLineSlot: CGFloat { 2 * TypeScale.pairLine.lineHeight }
   /// The camera card, its viewfinder and the finder's corners
   static let pairScanCard: CGFloat = 340
+  /// In a wide column (iPad) the card grows with its width at this height-to-width share, never under `pairScanCard`
+  static let pairScanAspect: CGFloat = 0.7
+  /// The form's column on a wide page, in place of a sheet (the first-run flow on iPad)
+  static let pairColumn: CGFloat = 640
   static let pairFinder: CGFloat = 176
   static let pairFinderCorner: CGFloat = 30
   static let pairFinderRadius: CGFloat = 22

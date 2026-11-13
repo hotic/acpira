@@ -52,7 +52,7 @@ private enum WL {
   static let actionsGap: CGFloat = 40
   /// The vendors the intro names, as the desktop's welcome lists the agents it found
   static let vendors = ["claude", "codex", "gemini", "grok", "devin", "kimi", "opencode"]
-  /// The pairing and notification pages keep to a phone's column on a wide screen
+  /// The notification page keeps to a phone's column on a wide screen (the pairing form: `Metrics.pairColumn`)
   static let column: CGFloat = 480
   /// The notification page: the bell's ring and glyph, its title
   static let bellRing: CGFloat = 112
@@ -557,8 +557,6 @@ struct WelcomeFlow: View {
   /// The add-computer sheet's form and stages in place, back to the intro from its bar
   private var pair: some View {
     PairSheet(inline: PairInline(onBack: { step = .intro }, onDone: paired))
-      .frame(maxWidth: WL.column)
-      .frame(maxWidth: .infinity)
       .background(Palette.formPage.ignoresSafeArea())
   }
 

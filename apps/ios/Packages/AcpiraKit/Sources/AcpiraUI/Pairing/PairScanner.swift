@@ -19,6 +19,7 @@ struct PairCameraCard: View {
   @Environment(\.pairing) private var pairing
   @Environment(\.scenePhase) private var scenePhase
   @State private var source: Source?
+  @State private var width: CGFloat = 0
 
   private enum Source { case live, unavailable, denied }
 
@@ -58,8 +59,9 @@ struct PairCameraCard: View {
       }
     }
     .frame(maxWidth: .infinity)
-    .frame(height: Metrics.pairScanCard)
+    .frame(height: max(Metrics.pairScanCard, (width * Metrics.pairScanAspect).rounded()))
     .clipped()
+    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     .task { source = await resolve() }
     // Access granted in Settings meanwhile: the card comes back to life on return
     .onChange(of: scenePhase) { _, phase in
