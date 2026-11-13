@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -433,7 +434,8 @@ private const val SHORTEST_MS = 50.0
 /** A running command's whole seconds */
 @Composable
 private fun CommandSeconds(since: Double) {
-  val now = LocalClock.current
+  // Read through the latest clock: the loop outlives a model swap (Rows.kt LiveElapsed)
+  val now by rememberUpdatedState(LocalClock.current)
   var tick by remember { mutableLongStateOf(now()) }
   LaunchedEffect(since) {
     while (true) {
@@ -477,7 +479,7 @@ fun RetryRow(id: String, log: RetryLog) {
 /** "Attempt 5/10, in 12s" while the next attempt waits, the bare attempt once it is under way */
 @Composable
 private fun RetryMeta(attempt: Int?, max: Int?, nextAt: Double?) {
-  val now = LocalClock.current
+  val now by rememberUpdatedState(LocalClock.current)
   var tick by remember { mutableLongStateOf(now()) }
   LaunchedEffect(nextAt) {
     while (nextAt != null && nextAt > tick) {

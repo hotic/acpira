@@ -47,6 +47,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -715,10 +716,12 @@ private object OrbRing {
 /** The live turn's clock beside its label: hidden for its first second (and then no gap), then whole seconds in tabular digits */
 @Composable
 fun RowScope.LiveElapsed(since: Double, now: () -> Long) {
+  // The loop outlives the lambda it started with: a new wire brings a new model, and the old one's clock stays held
+  val clock by rememberUpdatedState(now)
   var tick by remember { mutableLongStateOf(now()) }
   LaunchedEffect(since) {
     while (true) {
-      tick = now()
+      tick = clock()
       kotlinx.coroutines.delay(RowMotion.clockTick)
     }
   }
