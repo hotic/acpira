@@ -35,6 +35,9 @@ pub(crate) struct PromptQueue {
   /// The running turn's injected steers with their staged payloads, so a stop can queue the unanswered ones again
   /// (`requeue_unanswered_steers`); the turn's settle clears them
   pub steered: Vec<QueuedEntry>,
+  /// A composer steer's entry while its steer is decided (`steer_prompt`): left out of the queue rows, so a steer that
+  /// lands never flashes up as a queued follow-up first. It shows as one only when it stays in the queue
+  pub hidden_id: Option<String>,
 }
 
 impl PromptQueue {
@@ -101,6 +104,12 @@ impl AcpSession {
   /// Queue a prompt behind the running turn (or while starting); staged now so the row can show attachments.
   /// Returns the new entry's id, or None when nothing was queued
   pub(crate) async fn enqueue(self: &Arc<Self>, text: String, drafts: Vec<Draft>, staged: Option<PreparedPrompt>) -> Option<String> {
+    self.enqueue_as(text, drafts, staged, false).await
+  }
+
+  /// hidden: the entry stays out of the published rows (`PromptQueue::hidden_id`), set under the same lock as the push so
+  /// no view carries it as a plain queued row
+  async fn enqueue_as(self: &Arc<Self>, text: String, drafts: Vec<Draft>, staged: Option<PreparedPrompt>, hidden: bool) -> Option<String> {
     let prepared = match staged {
       Some(p) => p,
       None => self.stage(&text, &drafts).await,
@@ -112,6 +121,9 @@ impl AcpSession {
         return None;
       }
       c.queue.entries.push(QueuedEntry { id: id.clone(), text, prepared });
+      if hidden {
+        c.queue.hidden_id = Some(id.clone());
+      }
       self.bump(&mut c);
       !(c.phase.running || c.pending_prompt.is_some() || c.hooks.gating)
     };
@@ -134,10 +146,17 @@ impl AcpSession {
       self.prompt(text, drafts, false, None, None).await;
       return Ok(());
     }
-    match self.enqueue(text, drafts, None).await {
-      Some(id) => self.steer_entry(&id, false).await,
-      None => Ok(()),
+    let Some(id) = self.enqueue_as(text, drafts, None, true).await else { return Ok(()) };
+    let res = self.steer_entry(&id, false).await;
+    // Decided: injected or sent it is gone, otherwise it waits in the queue as an ordinary follow-up and shows as one
+    let mut c = self.core.lock();
+    if c.queue.hidden_id.as_deref() == Some(id.as_str()) {
+      c.queue.hidden_id = None;
+      if c.queue.entries.iter().any(|q| q.id == id) {
+        self.touch(&mut c);
+      }
     }
+    res
   }
 
   /// Send the first queued prompt, if any; nobody awaits it
@@ -513,12 +532,10 @@ impl AcpSession {
 }
 
 pub(crate) fn queue_snapshot(c: &Core) -> Option<Vec<QueuedPrompt>> {
-  if c.queue.entries.is_empty() {
-    return None;
-  }
+  let mut shown = c.queue.entries.iter().filter(|q| c.queue.hidden_id.as_ref() != Some(&q.id)).peekable();
+  shown.peek()?;
   Some(
-    c.queue.entries
-      .iter()
+    shown
       .map(|q| QueuedPrompt {
         id: q.id.clone(),
         text: q.text.clone(),
