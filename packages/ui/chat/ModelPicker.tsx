@@ -83,9 +83,12 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const skPicked = sidekick?.options.find(o => o.id === sidekick.value && o.id !== NO_SIDEKICK);
   const skLevel = skPicked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined;
   const skLabel = skPicked && [skPicked.name, skLevel, sidekickFast && fastOn(sidekickFast) ? 'Fast' : undefined].filter(Boolean).join(' ');
+  const lead = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
+  const title = skLabel ? `${lead} + ${skLabel}` : lead;
   // A single model steps down too (its level to the short form first), not only a pair: it used to keep its full width and
   // run past the send button in a narrow window. Below the compact form the toolbar folds its other chips first (onSqueeze)
-  const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(true, onSqueeze && { stage: 1, set: onSqueeze });
+  // The title spells every form's text: a pick that changes it fits the chip again before it paints
+  const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(true, onSqueeze && { stage: 1, set: onSqueeze }, title);
   // Keep the last picked sidekick, its level and its fit stage while the chip's trail folds back for None
   const [lastSk, setLastSk] = useState(skPicked);
   const [lastSkLevel, setLastSkLevel] = useState(skLevel);
@@ -96,8 +99,6 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   if (skPicked && fit.stage !== lastStage) setLastStage(fit.stage);
   const shownSk = skPicked ?? lastSk;
   const shownSkLevel = skPicked ? skLevel : lastSkLevel;
-  const lead = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
-  const title = skLabel ? `${lead} + ${skLabel}` : lead;
   // The chip follows every pick at once, also while the panel is open (effort / Fast keep it open): it used to hold its
   // content until close, which read as a pick that had not landed (reported 2026-10-16). The panel is end-aligned to the
   // chip's right edge, so a chip resizing leftwards does not move the panel
@@ -106,9 +107,10 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
     const on = CHIP_STAGES[stage]!;
     const skOn = CHIP_STAGES[skPicked ? stage : lastStage]!;
     return <Chip ref={ref} data-land="models" data-part={ref ? 'composer-model' : undefined} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
-      trail={sidekick && <SidekickTail open={!!skPicked} live={!!skPicked && !!sidekickLive} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} level={skOn.levels ? shownSkLevel : undefined} fast={skOn.levels && skFast} animate={!!ref} />}
+      trail={sidekick && <SidekickTail open={!!skPicked} live={!!skPicked && !!sidekickLive} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} compact={skOn.compact} level={skOn.levels ? shownSkLevel : undefined} fast={skOn.levels && skFast} animate={!!ref} />}
       tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}
-      tagsKey={ref ? (on.levels ? chip.tags.map(tag => tag.label).join(' ') : '') : undefined}>
+      // The short form is part of the key, so a stage step glides the badges like a new level does
+      tagsKey={ref ? (on.levels ? chip.tags.map(tag => tag.label).join(' ') + (on.compact ? ' (short)' : '') : '') : undefined}>
       {on.names ? chip.name : null}
     </Chip>;
   };
@@ -151,14 +153,16 @@ const CHIP_STAGES = [
 // Unfolds when a sidekick is picked and folds back for None (matching the panel's effort section); switching between
 // two sidekicks or levels while open glides the width and fades the new model in place
 // While it works a round its mark takes its vendor's colour with a breathing dot and its name the chip's strong text
-function SidekickTail({ open, live, name, brand, named, level, fast, animate }: {
-  open: boolean; live: boolean; name?: string; brand?: string; named: boolean; level?: string; fast?: boolean; animate?: boolean;
+// A stage step to or from the short level (`compact`) glides too, from wherever a glide begun in the same commit stands
+function SidekickTail({ open, live, name, brand, named, compact, level, fast, animate }: {
+  open: boolean; live: boolean; name?: string; brand?: string; named: boolean; compact: boolean; level?: string; fast?: boolean; animate?: boolean;
 }) {
   const body = useRef<HTMLSpanElement>(null);
   const id = useRef<HTMLSpanElement>(null);
   const width = useRef(0);
   const run = useRef<Animation | null>(null);
-  const prev = useRef({ open, name, level, fast, named });
+  const runFrom = useRef(0);
+  const prev = useRef({ open, name, level, fast, named, compact });
   useLayoutEffect(() => {
     const el = body.current;
     if (!el || !animate) return;
@@ -170,7 +174,7 @@ function SidekickTail({ open, live, name, brand, named, level, fast, animate }: 
   }, [animate]);
   useLayoutEffect(() => {
     const was = prev.current;
-    prev.current = { open, name, level, fast, named };
+    prev.current = { open, name, level, fast, named, compact };
     const el = body.current;
     if (!el || !animate) return;
     if (!open) {
@@ -179,22 +183,24 @@ function SidekickTail({ open, live, name, brand, named, level, fast, animate }: 
       width.current = 0;
       return;
     }
-    const from = run.current ? el.getBoundingClientRect().width : width.current;
+    // A glide that has not started yet (begun earlier in this commit) still stands at its own start
+    const from = run.current ? (run.current.pending ? runFrom.current : el.getBoundingClientRect().width) : width.current;
     run.current?.cancel();
     run.current = null;
     const to = el.scrollWidth;
     width.current = to;
-    if (!was.open || was.named !== named || (was.name === name && was.level === level && was.fast === fast)) return;
+    if (!was.open || was.named !== named || (was.name === name && was.level === level && was.fast === fast && was.compact === compact)) return;
     if (el.closest('[data-motion="none"]') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
     if (from > 0 && to > 0 && Math.abs(to - from) > 0.5) {
       const anim = el.animate([{ width: `${from}px` }, { width: `${to}px` }], { duration: cssTimeVar(el, '--dur-open', 220), easing: 'ease-out' });
       run.current = anim;
+      runFrom.current = from;
       anim.onfinish = () => { if (run.current === anim) run.current = null; };
     }
     if (was.name !== name && id.current) {
       id.current.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: cssTimeVar(el, '--dur', 150), easing: 'ease-out' });
     }
-  }, [open, name, level, fast, named, animate]);
+  }, [open, name, level, fast, named, compact, animate]);
   return (
     <span className="chip-trail sidekick-tail" style={brandStyle(brand)} data-open={open ? '' : undefined} data-live={live ? '' : undefined} aria-hidden={!open || undefined}>
       <span ref={body}>

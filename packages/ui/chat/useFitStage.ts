@@ -17,8 +17,10 @@ export interface FitSqueeze {
 // measuring box (`box`, one child per form, fullest first, inside the same container so the container queries match); the
 // room is the row's width less its other in-flow items, so it never depends on the form shown and a stage change cannot
 // feed back into the next measure. Flexible items (the toolbar's spacer) count as free room. Shrunk siblings are counted at
-// their content width. Without a box the stage stays 0
-export function useFitStage<I extends HTMLElement, B extends HTMLElement>(enabled: boolean, squeeze?: FitSqueeze) {
+// their content width. Without a box the stage stays 0. `content` keys what the forms show: a change measures again in the
+// same commit, since the resize observer only reports after a paint and the item would show one frame at the old stage
+// (a picked level that no longer fits drew the full form, then snapped to the short one)
+export function useFitStage<I extends HTMLElement, B extends HTMLElement>(enabled: boolean, squeeze?: FitSqueeze, content?: string) {
   const item = useRef<I | null>(null);
   const box = useRef<B | null>(null);
   const [stage, setStage] = useState(0);
@@ -32,7 +34,7 @@ export function useFitStage<I extends HTMLElement, B extends HTMLElement>(enable
   // send button; the commit that carries the level measures again instead
   const [level, setLevel] = useState<SqueezeLevel>(0);
   const measure = useRef<(() => void) | undefined>(undefined);
-  useLayoutEffect(() => { measure.current?.(); }, [level]);
+  useLayoutEffect(() => { measure.current?.(); }, [level, content]);
   useLayoutEffect(() => {
     const ask = (next: SqueezeLevel) => { squeezeRef.current?.set(next); setLevel(next); };
     const unfold = () => {
