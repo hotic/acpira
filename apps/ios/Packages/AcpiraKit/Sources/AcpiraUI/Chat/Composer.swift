@@ -435,7 +435,7 @@ struct Composer: View {
   /// the caret, and iOS 18's vertical text field traps converting a stale or past-end range to an NSRange
   private var fieldSelection: Binding<TextSelection?> {
     Binding(get: {
-      ComposerSelection.clamp(selection, to: text, typed: typed)
+      ComposerSelection.forField(selection, text: text, typed: typed)
     }, set: { selection = $0 })
   }
 
@@ -1060,6 +1060,14 @@ struct FieldHeight: Layout {
 /// Validates a SwiftUI `TextSelection` against the string it is about to be paired with, so iOS 18's vertical text
 /// field never receives an index past the end, from another string, or inside a multi-byte scalar
 enum ComposerSelection {
+  /// What the field reads back. While nothing changed the text behind the field's back, its own report returns
+  /// untouched: an IME composing pinyin counts its marked text, which the bound text does not hold yet, so clamping
+  /// that caret to the text's end put it before the characters being typed
+  static func forField(_ selection: TextSelection?, text: String, typed: String?) -> TextSelection? {
+    if let typed, text == typed { return selection }
+    return clamp(selection, to: text, typed: typed)
+  }
+
   static func clamp(_ selection: TextSelection?, to text: String, typed: String?) -> TextSelection? {
     guard let selection else { return nil }
     if let typed, text != typed { return TextSelection(insertionPoint: text.endIndex) }

@@ -378,6 +378,18 @@ private let commands: [SlashCommand] = decode(#"""
     }
   }
 
+  @Test func fieldKeepsItsOwnCaretPastTheBoundText() {
+    // Pinyin still marked: the field's caret sits after "ni", the bound text holds only the committed "你"
+    let composing = "你ni"
+    let at = composing.endIndex
+    let field = ComposerSelection.forField(TextSelection(insertionPoint: at), text: "你", typed: "你")
+    if case .selection(let r) = field?.indices {
+      #expect(r == at..<at)
+    } else {
+      Issue.record("expected the field's own selection")
+    }
+  }
+
   @Test func resetsStaleSelectionWhenTextChangesFromOutside() {
     let oldText = "你好世界"
     let staleAt = oldText.index(oldText.startIndex, offsetBy: 1)
