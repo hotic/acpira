@@ -34,7 +34,18 @@ export interface Config {
   // The built-in agent's sidekick: a MODELS key, listed by a provider of its own and picked as the session's
   // `sidekick` option (P1)
   sidekick?: string;
+  // The session mode set once the session starts (the built-in agent's `team`)
+  mode?: string;
+  // A line put before the task's prompt, on its own line: how a user starts this configuration's orchestration
+  trigger?: string;
 }
+
+// The worker of the Ledger build (docs/dev/evals.md, Ledger build): the built-in agent on one model at high effort
+const ledgerWorker = (model: string): Helper => ({
+  id: 'worker', name: 'Worker', agent: 'acpira', model, effort: 'high', duty: 'executor', mode: 'bypass',
+  when: 'One whole work item of its own (implement, test, commit); several threads of it can run at once.',
+});
+const LEDGER_TRIGGER = 'Use @Worker for the work items: one new Worker thread per item, all four at once.';
 
 const REVIEW_WHEN = 'An independent review of a change before you call the task done: give it the requirement and where the change is, not your account of it.';
 
@@ -76,6 +87,19 @@ export const CONFIGS: Record<string, Config> = {
     harness: 'acpira', model: 'gpt-6-astra',
     helpers: [{ id: 'opus', name: 'Opus', agent: 'claude', model: 'claude-opus-5.5', select: 'opus', effort: 'xhigh', duty: 'reviewer', mode: 'consult', when: REVIEW_WHEN }],
   },
+  // The Ledger build on Opus 5.5 at high effort: Claude Code on the gateway alone, the built-in agent alone, its Team
+  // mode with workers of its own, and Claude Code summoning the same workers
+  'claude-gw-opus': { harness: 'claude', model: 'claude-opus-5.5', pick: { effort: 'high' } },
+  'acpira-opus-high': { harness: 'acpira-high', model: 'claude-opus-5.5' },
+  'acpira-team-opus': { harness: 'acpira-high', model: 'claude-opus-5.5', mode: 'team', helpers: [ledgerWorker('claude-opus-5.5')] },
+  'claude-orch-opus': { harness: 'claude', model: 'claude-opus-5.5', pick: { effort: 'high' }, helpers: [ledgerWorker('claude-opus-5.5')], trigger: LEDGER_TRIGGER },
+  // The same four on GPT-6.1 Sol, with Codex as the vendor CLI
+  'codex-sol': { harness: 'codex', model: 'gpt-6.1-sol' },
+  'acpira-sol': { harness: 'acpira-high', model: 'gpt-6.1-sol' },
+  'acpira-team-sol': { harness: 'acpira-high', model: 'gpt-6.1-sol', mode: 'team', helpers: [ledgerWorker('gpt-6.1-sol')] },
+  'codex-orch-sol': { harness: 'codex', model: 'gpt-6.1-sol', helpers: [ledgerWorker('gpt-6.1-sol')], trigger: LEDGER_TRIGGER },
+  // Claude Code on its own login leading the built-in agent's workers on Sol
+  'claude-max-orch-sol': { harness: 'claude-max', model: 'claude-opus-5.5', pick: { model: 'opus', effort: 'high' }, helpers: [ledgerWorker('gpt-6.1-sol')], trigger: LEDGER_TRIGGER },
 };
 
 // The configuration's helpers that run on a CLI's own login, so the metering proxy sees none of their calls
