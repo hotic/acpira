@@ -1,7 +1,7 @@
 import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings, TurnUsage } from '@acpira/shared/transcript';
 import { launchable } from '@acpira/shared/agentOrder';
 import { FUSION, modelBrand, optionBrand, parseModelName } from '@acpira/shared/models';
-import { isModelControl, type ModelShapes } from '@acpira/shared/modelShapes';
+import { isModelControl, offeredModel, type ModelShapes } from '@acpira/shared/modelShapes';
 import { openTurnControls } from '@acpira/shared/turnSettings';
 import { commandDuration } from './commandDuration';
 import { splitCodexBlocks } from './folding';
@@ -154,7 +154,9 @@ export function turnShareMeta(opts: {
   const resolved = openTurnControls(controls, settings, shapes);
   const modelControl = resolved.options.find(isModelControl);
   const modelId = usage?.model ?? (modelControl ? (settings?.config[modelControl.id] ?? modelControl.value) : undefined);
-  const option = modelId ? modelControl?.options.find(o => o.id === modelId) : undefined;
+  // The reported id may spell the option differently (`fable[1m]` for the offered `fable`): match it like the chip does
+  const optionId = modelControl ? offeredModel(modelControl, modelId) : undefined;
+  const option = optionId ? modelControl?.options.find(o => o.id === optionId) : undefined;
 
   let model: string | undefined;
   let brand: string | undefined;

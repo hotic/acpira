@@ -276,6 +276,8 @@ function removeWithEmptyWrappers(node: Element, root: HTMLElement) {
 
 function cleanShareSubtree(root: HTMLElement, stripRootPad: boolean) {
   root.querySelectorAll('[data-turn-actions], .code-copy, .sr-only').forEach(n => n.remove());
+  // Chunks of a long process that have no rows yet (chat/ProcessChunks.tsx) would show as blank bands
+  root.querySelectorAll('[data-chunk]:empty').forEach(n => n.remove());
   // A whole reply is the agent's answer: the reader's own steered prompts and the reasoning stay out, folded or not.
   // A process fold's head goes too, unless the reader opened it and tool rows are still left under it
   if (stripRootPad) {
@@ -333,11 +335,15 @@ function pruneEmptyEdges(root: HTMLElement) {
 export async function renderShareCardToPng(cardEl: HTMLElement): Promise<Blob> {
   await Promise.all([...cardEl.querySelectorAll('img')].map(img => pendingMedia.get(img)));
   const rect = cardEl.getBoundingClientRect();
-  const width = Math.max(1, cardEl.offsetWidth || Math.ceil(rect.width));
-  const height = Math.max(1, cardEl.offsetHeight || Math.ceil(rect.height));
+  // Rounded up: offsetHeight rounds to the nearest pixel, so a fractional card would lose its bottom border row
+  const width = Math.max(1, Math.ceil(rect.width) || cardEl.offsetWidth);
+  const height = Math.max(1, Math.ceil(rect.height) || cardEl.offsetHeight);
   const dpr = Math.max(1, Math.min(TARGET_DPR, Math.sqrt(MAX_CANVAS_PIXELS / (width * height))));
 
   const clonedCard = cloneWithPaintedMedia(cardEl);
+  // Pinned to the measured box: WebKit lays a foreignObject's text out a pixel taller than the live card, which pushed
+  // the bottom border past the canvas; pinned, the card (overflow hidden) absorbs that under its watermark instead
+  clonedCard.style.height = `${height}px`;
   await inlineImages(clonedCard);
   // Kept alive until the draw below: WebKit only starts decoding an SVG's nested images on its first draw and paints
   // them blank there, unless the same data URLs are already decoded

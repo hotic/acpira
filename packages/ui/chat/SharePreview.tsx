@@ -4,10 +4,12 @@ import { Copy, Download } from 'lucide-react';
 import { brandColor } from '@acpira/shared/models';
 import { t, useLocale } from '../i18n';
 import { Dialog } from '../ui/Dialog';
+import { cn } from '../ui/cn';
 import { optionClass } from '../ui/DropdownMenu';
 import { ShellLayerContext, popupClass } from '../ui/Overlay';
 import { hostImageSave } from '../vscodeApi';
 import { AgentMark } from './AgentMark';
+import { useImageZoom } from './Lightbox';
 import { ModelMark } from './ModelMark';
 import { MarkSvg } from './marks';
 import { blobToDataUrl, renderShareCardToPng, shareFileName } from './shareCapture';
@@ -22,7 +24,7 @@ export interface SharePayload {
 }
 
 // Screenshot card in two layers: the reply is a raised sheet on a darker frame, and the frame carries a minimal one-line
-// watermark footer naming the session on the left and the model on the right (plus a subtle vendor-tinted corner glow).
+// watermark footer naming Acpira on the left and the model on the right (plus a subtle vendor-tinted corner glow).
 export function ShareCard({ ref, meta, node, children }: {
   ref?: Ref<HTMLDivElement>;
   meta: ShareMeta;
@@ -45,7 +47,7 @@ export function ShareCard({ ref, meta, node, children }: {
       ref={ref}
       data-share-card
       style={vendorColor ? ({ '--share-tint': vendorColor } as CSSProperties) : undefined}
-      className="acp-share-card flex w-full min-w-0 flex-col overflow-hidden rounded-lg border border-conversation-line p-gap-half text-fg-1"
+      className="acp-share-card flex w-full min-w-0 flex-col overflow-hidden rounded-lg border border-conversation-line px-share-frame pt-share-frame pb-gap-half text-fg-1"
     >
       <div
         data-share-body
@@ -55,19 +57,19 @@ export function ShareCard({ ref, meta, node, children }: {
       </div>
       <div
         data-share-watermark
-        className="flex min-w-0 items-center justify-between gap-gap px-pad pt-pad pb-gap text-4 text-fg-2 opacity-85 select-none"
+        className="flex min-w-0 items-center justify-between gap-gap pt-pad pb-gap text-4 text-fg-2 opacity-85 select-none"
       >
         <div className="flex min-w-0 items-center gap-chip-gap">
-          <MarkSvg id="acpira" name="Acpira" className="size-icon shrink-0 translate-y-px text-fg-3" />
-          <span className="truncate font-medium text-fg-2">{meta.sessionTitle}</span>
+          <MarkSvg id="acpira" name="Acpira" className="size-icon shrink-0 text-fg-3" />
+          <span className="truncate font-medium text-fg-2">Acpira</span>
         </div>
         <div className="flex shrink-0 items-center gap-chip-gap">
           {meta.model ? (
-            <span className="inline-flex shrink-0 translate-y-px items-center text-fg-2" style={vendorColor ? { color: vendorColor } : undefined}>
+            <span className="inline-flex shrink-0 items-center text-fg-2" style={vendorColor ? { color: vendorColor } : undefined}>
               <ModelMark family={meta.model} brand={meta.brand} colored className="size-icon shrink-0" />
             </span>
           ) : (
-            <AgentMark id={meta.agentId} name={meta.agentName} className="size-icon shrink-0 translate-y-px text-fg-3" />
+            <AgentMark id={meta.agentId} name={meta.agentName} className="size-icon shrink-0 text-fg-3" />
           )}
           <span className="font-medium text-fg-2">{meta.model ?? meta.agentName}</span>
         </div>
@@ -77,7 +79,7 @@ export function ShareCard({ ref, meta, node, children }: {
 }
 
 // Frameless screenshot overlay: only the rendered PNG itself floats over the scrim, scaled to fit whole;
-// right-clicking opens the shell's context menu with Copy image and Save image.
+// wheel zooms (drag to pan while zoomed, double-click to reset), right-clicking opens Copy image and Save image.
 export function SharePreviewDialog({ payload, onClose }: {
   payload: SharePayload;
   onClose: () => void;
@@ -87,6 +89,7 @@ export function SharePreviewDialog({ payload, onClose }: {
   const cardRef = useRef<HTMLDivElement>(null);
   const pngCache = useRef<Promise<Blob> | undefined>(undefined);
   const [renderedImg, setRenderedImg] = useState<{ src: string; width: number; height: number }>();
+  const zoom = useImageZoom(renderedImg?.src);
 
   const ensurePng = useCallback((): Promise<Blob> => {
     if (pngCache.current) return pngCache.current;
@@ -117,7 +120,7 @@ export function SharePreviewDialog({ payload, onClose }: {
           const el = cardRef.current;
           if (cancelled || !el) return;
           const rect = el.getBoundingClientRect();
-          setRenderedImg({ src, width: Math.max(1, el.offsetWidth || Math.ceil(rect.width)), height: Math.max(1, el.offsetHeight || Math.ceil(rect.height)) });
+          setRenderedImg({ src, width: Math.max(1, Math.ceil(rect.width) || el.offsetWidth), height: Math.max(1, Math.ceil(rect.height) || el.offsetHeight) });
         })
         .catch(() => {});
     });
@@ -156,7 +159,8 @@ export function SharePreviewDialog({ payload, onClose }: {
       <Dialog.Portal>
         <Dialog.Popup
           aria-label={t('share.title')}
-          onClick={onClose}
+          onClick={zoom.onBackdropClick(onClose)}
+          onWheel={zoom.onWheel}
           className="absolute inset-0 z-40 flex items-center justify-center overflow-hidden bg-scrim p-page backdrop-blur-xs"
         >
           {/* Capture source: laid out at the chat column width but never painted */}
@@ -170,6 +174,7 @@ export function SharePreviewDialog({ payload, onClose }: {
               <ContextMenu.Trigger
                 render={
                   <img
+                    ref={zoom.imgRef}
                     data-share-dialog
                     data-share-image
                     src={renderedImg.src}
@@ -178,9 +183,17 @@ export function SharePreviewDialog({ payload, onClose }: {
                     alt={payload.meta.sessionTitle}
                     draggable={false}
                     onClick={e => e.stopPropagation()}
+                    onDoubleClick={e => { e.stopPropagation(); zoom.reset(); }}
+                    onPointerDown={zoom.onPointerDown}
                     // Shown whole: at most the card's own width, scaled down (ratio kept) when taller than the stage
-                    style={{ maxWidth: `min(100%, ${renderedImg.width}px)` }}
-                    className="acp-share-stage block h-auto max-h-full w-auto shrink-0 rounded-lg shadow-pop select-none"
+                    style={{
+                      maxWidth: `min(100%, ${renderedImg.width}px)`,
+                      ...(zoom.transform ? { transform: zoom.transform } : undefined),
+                    }}
+                    className={cn(
+                      'acp-share-stage block h-auto max-h-full w-auto shrink-0 rounded-lg shadow-pop select-none',
+                      zoom.scale > 1 && (zoom.dragging ? 'cursor-grabbing' : 'cursor-grab'),
+                    )}
                   />
                 }
               />
