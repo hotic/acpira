@@ -11,6 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.1] - 2026-11-13
+
+### Added
+
+- The phone apps (iOS, Android and HarmonyOS) take reply screenshots: the action on a turn row draws the reply as a watermarked card and opens it in the chat's image viewer, from where it can be saved or shared.
+- The reply screenshot preview zooms with the wheel, pans by dragging and resets on a double click, like the image viewer. The card frames its sheet and names Acpira in the watermark instead of the session, and the screenshot action sits ahead of fork.
+- Picking a session in the list selects it at once while its transcript loads, instead of waiting with the old thread selected.
+
+### Changed
+
+- On wide phone and tablet windows, the sidebar and thread are laid out like the desktop column, the filter leads the sidebar's bar, and the pairing form gets a wide column with a growing camera card.
+- On short or wide phone windows, pages leave out their less important pieces and then scroll instead of squashing them; the new-session ring scales down and the pairing code page stays usable with the keyboard up.
+- Android and HarmonyOS fade scrolled content under the top and bottom bars.
+
+### Fixed
+
+- Reading back through a long session no longer jumps: history slices wait while the transcript is scrolled and keep the reading position when they land, a re-wrap after a width change keeps the block being read in place, and a long process fold renders in parts.
+- A steer sent from the composer no longer flashes up as a queued follow-up while it is being injected; it shows in the queue only when it stays there.
+- The model chip no longer flashes its full label for a frame after a pick that no longer fits.
+- The narrow header's title and subtitle fit the 40 px bar.
+- The reply screenshot keeps its bottom border in WebKit (the desktop app and Safari).
+- On Windows, allowing remote access on the local network writes the firewall rules directly instead of through an encoded PowerShell command, which some security software blocks.
+- On iOS, typing Chinese (or any input method with marked text) in the composer no longer moves the caret before the characters being composed, and an edited queue item or a longer multi-byte replacement no longer crashes the app on iOS 18.
+- On iOS, a transcript row laid out before the app theme applied no longer draws a light bubble in a dark chat, and pages opened from a sliding sidebar fold it away.
+- On Android, running clocks keep ticking after a reconnect.
+- On HarmonyOS, scanning a pairing code shown on a dark-themed desktop works.
+
 ## [2.1.0] - 2026-11-12
 
 ### Added
