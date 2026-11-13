@@ -666,7 +666,9 @@ struct ListTopBar: ViewModifier {
       #endif
       .toolbar {
         #if os(iOS)
-        if let filter { ToolbarItem(placement: .topBarLeading) { filter } }
+        // In the sidebar the system's toggle stands at the column's trailing end: the filter joins it there rather
+        // than sit alone at the far end
+        if let filter { ToolbarItem(placement: inSidebar ? .topBarTrailing : .topBarLeading) { filter } }
         if !inSidebar {
           ToolbarItem(placement: .topBarTrailing) {
             Button(action: onSettings) { Image(systemName: "gearshape") }
@@ -1042,12 +1044,21 @@ struct PinRule: View {
   }
 }
 
-/// The pressed fill only; rows run edge to edge, so no radius
+/// The pressed fill only. On the phone rows run edge to edge, so no radius; in the sidebar the fill is the desktop
+/// column's: rounded and held in from both edges, where a square one ran into the column's edge
 struct ListRowStyle: ButtonStyle {
   var active: Bool
+  @Environment(\.listInSidebar) private var inSidebar
   func makeBody(configuration: Configuration) -> some View {
+    let fill = active ? Palette.active : configuration.isPressed ? Palette.hover : .clear
     configuration.label
-      .background(Rectangle().fill(active ? Palette.active : configuration.isPressed ? Palette.hover : .clear))
+      .background {
+        if inSidebar {
+          RoundedRectangle(cornerRadius: Metrics.rLg, style: .continuous).fill(fill).padding(.horizontal, Metrics.s2)
+        } else {
+          Rectangle().fill(fill)
+        }
+      }
   }
 }
 

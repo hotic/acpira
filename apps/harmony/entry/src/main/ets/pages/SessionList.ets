@@ -386,12 +386,18 @@ export struct SessionList {
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.fg_strong'))
       }
-      Row() {
+      Row({ space: Metrics.s2 }) {
+        // In the sidebar the filter joins the hide button at the bar's end rather than sit alone at the far end
+        if (this.sidebar) {
+          Blank()
+        }
         if (this.showsFilter()) {
           GlassButton({ icon: 'listFilter', tag: 'list.view', onTap: () => { this.viewMenu = true; } })
-            .bindMenu(this.viewMenu, this.viewMenuCard(), menuOptions(() => { this.viewMenu = false; }, Placement.BottomLeft))
+            .bindMenu(this.viewMenu, this.viewMenuCard(), menuOptions(() => { this.viewMenu = false; }, this.sidebar ? Placement.BottomRight : Placement.BottomLeft))
         }
-        Blank()
+        if (!this.sidebar) {
+          Blank()
+        }
         if (this.sidebar) {
           GlassButton({ icon: 'panelLeft', tag: 'split.hide', onTap: () => this.onHide() })
         } else {
@@ -684,6 +690,17 @@ struct SessionRowItem {
   @Param divider: boolean = false;
   @Param nested: boolean = false;
   @Param active: boolean = false;
+
+  /** The sidebar's open chat: the desktop column's fill, rounded and held in from both edges */
+  @Builder
+  activeFill() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .margin({ left: Metrics.s2, right: Metrics.s2 })
+      .borderRadius(Metrics.rLg)
+      .backgroundColor(this.active ? $r('app.color.active') : Color.Transparent)
+  }
   @Event onOpen: (id: string) => void = () => {};
 
   @Builder
@@ -753,7 +770,8 @@ struct SessionRowItem {
       top: this.snippet === undefined ? 0 : Metrics.s2, bottom: this.snippet === undefined ? 0 : Metrics.s2
     })
     .width('100%')
-    .backgroundColor(this.active ? $r('app.color.active') : $r('app.color.bg0'))
+    .backgroundColor($r('app.color.bg0'))
+    .background(this.activeFill())
     .border({
       width: { bottom: this.divider ? Metrics.hairline : 0 },
       color: { bottom: $r('app.color.line') }
