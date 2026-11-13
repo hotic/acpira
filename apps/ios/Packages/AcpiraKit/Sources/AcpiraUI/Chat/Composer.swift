@@ -343,7 +343,10 @@ struct Composer: View {
         // It lifts only as the pieces get home, so the last drop never crosses the bare transcript
         .animation(motion ? goo == nil ? Motion.gooDimOut : Motion.gooSpring : nil, value: goo)
     }
-    .onAppear(perform: startPopup)
+    .onAppear {
+      if typed == nil { typed = text }
+      startPopup()
+    }
     // Collapsing gives the card its focus back; leaving for a file page does not, or the keyboard rose over that page
     .modifier(FullEditorCover(open: $fullEditor, onDismiss: { if leftEditor { leftEditor = false } else { focused = true } }) {
       ExpandedComposer(text: $text, staged: $staged, filled: filled, commands: markCommands, summons: markSummons, onSend: {
@@ -427,15 +430,12 @@ struct Composer: View {
     Binding(get: { text }, set: { typed = $0; text = $0 })
   }
 
-  /// The selection as the field reads it, never past the end of the text. An outside change (a send clearing the
-  /// field, a restored draft) reaches the field one update before `onChange(of: text)` moves the caret, and iOS 18's
-  /// vertical text field traps converting a range past the end to an NSRange
+  /// The selection as the field reads it, never stale or out of bounds. An outside change (a send clearing the
+  /// field, a restored draft, an edited queue item) reaches the field one update before `onChange(of: text)` moves
+  /// the caret, and iOS 18's vertical text field traps converting a stale or past-end range to an NSRange
   private var fieldSelection: Binding<TextSelection?> {
     Binding(get: {
-      guard let selection, case .selection(let range) = selection.indices, range.upperBound > text.endIndex else {
-        return selection
-      }
-      return TextSelection(insertionPoint: text.endIndex)
+      ComposerSelection.clamp(selection, to: text, typed: typed)
     }, set: { selection = $0 })
   }
 
@@ -458,9 +458,9 @@ struct Composer: View {
 
   /// The caret as a character offset (the end until the field reports a selection), and whether nothing is selected
   private var caret: (at: Int, collapsed: Bool) {
-    guard let selection, case .selection(let range) = selection.indices else { return (text.count, true) }
-    let end = min(range.upperBound, text.endIndex)
-    return (text.distance(from: text.startIndex, to: end), range.isEmpty)
+    guard let selection = ComposerSelection.clamp(selection, to: text, typed: typed),
+          case .selection(let range) = selection.indices else { return (text.count, true) }
+    return (text.distance(from: text.startIndex, to: range.upperBound), range.isEmpty)
   }
 
   private var slashSpan: SigilSpan? {
@@ -533,7 +533,10 @@ struct Composer: View {
     text = edit.text
     let at = min(edit.caret, text.count)
     selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: at))
-    Task { selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: min(at, text.count))) }
+    Task {
+      guard text == edit.text else { return }
+      selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: min(at, text.count)))
+    }
   }
 
   /// The pasteboard's image, staged as a picked photo is (reading it asks the system's paste permission)
@@ -1051,5 +1054,30 @@ struct FieldHeight: Layout {
 
   func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
     subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+  }
+}
+
+/// Validates a SwiftUI `TextSelection` against the string it is about to be paired with, so iOS 18's vertical text
+/// field never receives an index past the end, from another string, or inside a multi-byte scalar
+enum ComposerSelection {
+  static func clamp(_ selection: TextSelection?, to text: String, typed: String?) -> TextSelection? {
+    guard let selection else { return nil }
+    if let typed, text != typed { return TextSelection(insertionPoint: text.endIndex) }
+    switch selection.indices {
+    case .selection(let range):
+      return valid(range, in: text) ? selection : TextSelection(insertionPoint: text.endIndex)
+    case .multiSelection(let ranges):
+      return ranges.ranges.allSatisfy { valid($0, in: text) } ? selection : TextSelection(insertionPoint: text.endIndex)
+    @unknown default:
+      return TextSelection(insertionPoint: text.endIndex)
+    }
+  }
+
+  private static func valid(_ range: Range<String.Index>, in text: String) -> Bool {
+    range.lowerBound >= text.startIndex
+      && range.upperBound <= text.endIndex
+      && range.lowerBound <= range.upperBound
+      && range.lowerBound.samePosition(in: text.unicodeScalars) != nil
+      && range.upperBound.samePosition(in: text.unicodeScalars) != nil
   }
 }

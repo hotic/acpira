@@ -1,5 +1,6 @@
 import AcpiraModels
 import Foundation
+import SwiftUI
 import Testing
 @testable import AcpiraUI
 
@@ -361,5 +362,64 @@ private let commands: [SlashCommand] = decode(#"""
     #expect(c.sidekick?.value == ComposerControls.noSidekick && c.sidekickEffort?.id == "sidekick_effort")
     // The sidekick's level is never the lead's
     #expect(c.effort == nil)
+  }
+}
+
+@MainActor struct ComposerSelectionTests {
+  @Test func keepsValidSelectionWhenTextMatchesTyped() {
+    let text = "hello /review"
+    let at = text.index(text.startIndex, offsetBy: 6)
+    let sel = TextSelection(insertionPoint: at)
+    let clamped = ComposerSelection.clamp(sel, to: text, typed: text)
+    if case .selection(let r) = clamped?.indices {
+      #expect(r == at..<at)
+    } else {
+      Issue.record("expected selection")
+    }
+  }
+
+  @Test func resetsStaleSelectionWhenTextChangesFromOutside() {
+    let oldText = "你好世界"
+    let staleAt = oldText.index(oldText.startIndex, offsetBy: 1)
+    let stale = TextSelection(insertionPoint: staleAt)
+    // Clearing on send, or replacing with a longer multi-byte string before `onChange` updates `typed`
+    for next in ["", "😀hello", "longer draft text"] {
+      let clamped = ComposerSelection.clamp(stale, to: next, typed: oldText)
+      if case .selection(let r) = clamped?.indices {
+        #expect(r == next.endIndex..<next.endIndex)
+      } else {
+        Issue.record("expected clamped insertionPoint at endIndex for \(next)")
+      }
+    }
+  }
+
+  @Test func resetsMisalignedOrOutOfBoundsIndexEvenWithoutTyped() {
+    let source = "你好世界"
+    // UTF-8 offset 3 lies inside the 4-byte emoji of "😀abc"
+    let midScalar = source.index(source.startIndex, offsetBy: 1)
+    let target = "😀abc"
+    let clamped = ComposerSelection.clamp(TextSelection(insertionPoint: midScalar), to: target, typed: nil)
+    if case .selection(let r) = clamped?.indices {
+      #expect(r == target.endIndex..<target.endIndex)
+    } else {
+      Issue.record("expected clamped insertionPoint at endIndex")
+    }
+
+    let pastEnd = source.endIndex
+    let shorter = "hi"
+    let clampedPast = ComposerSelection.clamp(TextSelection(insertionPoint: pastEnd), to: shorter, typed: nil)
+    if case .selection(let r) = clampedPast?.indices {
+      #expect(r == shorter.endIndex..<shorter.endIndex)
+    } else {
+      Issue.record("expected clamped insertionPoint at endIndex")
+    }
+
+    let multi = TextSelection(ranges: RangeSet([midScalar..<source.endIndex]))
+    let clampedMulti = ComposerSelection.clamp(multi, to: target, typed: nil)
+    if case .selection(let r) = clampedMulti?.indices {
+      #expect(r == target.endIndex..<target.endIndex)
+    } else {
+      Issue.record("expected clamped multiSelection to endIndex")
+    }
   }
 }
