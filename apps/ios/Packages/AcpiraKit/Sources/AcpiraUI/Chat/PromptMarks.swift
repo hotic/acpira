@@ -167,8 +167,9 @@ final class PromptMarkPainter {
       guard let from = view.position(from: view.beginningOfDocument, offset: range.location),
             let to = view.position(from: from, offset: length),
             let run = view.textRange(from: from, to: to) else { continue }
-      let font = view.textStorage.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont
-        ?? view.font ?? UIFont.systemFont(ofSize: TypeScale.field.size)
+      let font = (range.location < view.textStorage.length
+        ? view.textStorage.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont
+        : nil) ?? view.font ?? UIFont.systemFont(ofSize: TypeScale.field.size)
       let reach = SlashCommands.markReach(found.plain, marks: found.marks, at: i, overhang: Self.overhang,
                                           space: font.pointSize * 0.25, clear: Self.clear)
       // One rect per line the token runs over (a long name can wrap), each its own pill
