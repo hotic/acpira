@@ -152,6 +152,9 @@ function syncPanelScope(incoming: SettingsView): SettingsView {
 
 // Root of the real webview: consumes the whole state pushed by the host, posts actions back via postMessage unchanged.
 // The settings page is a local view swap over the chat (Codex-style), not a separate webview
+// How long a picked session's row stays selected with no view of it landing
+const PENDING_MS = 20_000;
+
 export function App() {
   // Only the environment fields of `init` are kept: holding the whole message would pin its `active` session view (and
   // every other list in it) for the page's lifetime, after the session has been switched away and the lists replaced
@@ -170,6 +173,16 @@ export function App() {
   const [session, setSession] = useState<SessionView>();
   // A project shell (the desktop app) with no project to show a session of: init came without one, or noSession
   const [noProject, setNoProject] = useState(false);
+  // The session picked while its view is on the way: the page holds no copy of it, and a long one read from disk (or
+  // sent whole from an SSH host) takes a moment. Its row is selected at once; any session landing ends the wait, and so
+  // does PENDING_MS, since a pick the host turns down (a record it cannot read) answers with a toast only
+  const [pending, setPending] = useState<string>();
+  useEffect(() => setPending(undefined), [session?.id]);
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(() => setPending(undefined), PENDING_MS);
+    return () => clearTimeout(timer);
+  }, [pending]);
   // The desktop shell's folder dialog under way, settled by pickedFolder (a newer request settles the older one empty)
   const folderPick = useRef<(path?: string) => void>(undefined);
   // Observed subagent transcripts keyed `${sessionId}:${subagentId}`; the inspector subscribes to one at a time
@@ -500,6 +513,7 @@ export function App() {
     selectSession: id => {
       const kept = views.select(id);
       if (kept) { setNoProject(false); setSession(kept); }
+      setPending(kept ? undefined : id);
       post({ type: 'selectSession', id });
     },
     newSession: (agent, category, cwd, chat) => post({ type: 'newSession', ...(agent ? { agent } : {}), ...(category ? { category } : {}), ...(cwd ? { cwd } : {}), ...(chat ? { chat } : {}) }),
@@ -743,6 +757,7 @@ export function App() {
       sessions={sessions}
       categories={categories}
       activeSessionId={session?.id}
+      pendingSessionId={pending}
       cwd={session?.cwd}
       workspace={init.cwd}
       sessionScope={settings.sessionScope}
