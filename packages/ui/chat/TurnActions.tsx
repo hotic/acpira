@@ -53,6 +53,20 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
           <span className="sr-only" role="status">{copyState.state === 'idle' ? '' : copyLabel}</span>
         </>
       )}
+      {canShare && (
+        <IconButton
+          size="sm"
+          data-part="turn-share"
+          title={t('turn.share')}
+          aria-label={t('turn.share')}
+          onClick={e => {
+            const msg = e.currentTarget.closest<HTMLElement>('[data-part="agent-message"]');
+            if (msg) ctx?.share?.(turnIndex, msg);
+          }}
+        >
+          <ImageIcon strokeWidth={1.5} />
+        </IconButton>
+      )}
       {ctx?.fork && ctx.agentId && (
         <DropdownMenu.Root open={forkOpen} onOpenChange={setForkOpen}>
           <DropdownMenu.Trigger render={
@@ -73,20 +87,6 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
             )}
           </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
         </DropdownMenu.Root>
-      )}
-      {canShare && (
-        <IconButton
-          size="sm"
-          data-part="turn-share"
-          title={t('turn.share')}
-          aria-label={t('turn.share')}
-          onClick={e => {
-            const msg = e.currentTarget.closest<HTMLElement>('[data-part="agent-message"]');
-            if (msg) ctx?.share?.(turnIndex, msg);
-          }}
-        >
-          <ImageIcon strokeWidth={1.5} />
-        </IconButton>
       )}
       {stats && <Popover.Root open={statsOpen} onOpenChange={setStatsOpen}>
         <Popover.Trigger render={

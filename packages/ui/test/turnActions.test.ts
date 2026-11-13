@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentInfo, AgentTurn, SessionControls, ToolCallBlock } from '@acpira/shared/transcript';
+import type { AgentInfo, AgentTurn, SessionControls, ToolCallBlock, TurnUsage } from '@acpira/shared/transcript';
 import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnShareMeta, turnTtft } from '../chat/turnActionHelpers';
 
 const text = (markdown: string) => ({ type: 'text' as const, markdown });
@@ -220,6 +220,15 @@ describe('turnShareMeta', () => {
       model: 'Claude Opus 4.7',
       brand: 'claude',
     });
+  });
+
+  it('names a reported id by the option it differs from only by a [1m] hint', () => {
+    const controls: SessionControls = {
+      modes: [],
+      options: [{ id: 'model', name: 'Model', category: 'model', value: 'fable', options: [{ id: 'fable', name: 'Fable 5.2' }] }],
+    };
+    const meta = turnShareMeta({ sessionTitle: 't', agent: { id: 'claude', name: 'Claude' }, controls, usage: { model: 'fable[1m]' } as TurnUsage });
+    expect(meta.model).toBe('Fable 5.2');
   });
 
   it('strips embedded effort and Fast suffixes from compound model names and falls back to live controls', () => {

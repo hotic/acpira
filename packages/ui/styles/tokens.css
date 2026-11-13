@@ -589,6 +589,8 @@
   --spacing-gap-half: calc(var(--gap) / 2);
   /* Between attachment chips in a row: a little tighter than --gap, so a row of files reads as one group */
   --spacing-chip-gap: calc(var(--gap) * 2 / 3);
+  /* The share card's frame around its sheet (sides and top): thick enough to read as a base holding the sheet, not as an outline */
+  --spacing-share-frame: calc(var(--gap) * 5 / 4);
   /* A docked list's right padding beside its stable thin gutter: padding and gutter together match the left padding (gap-half) */
   --spacing-list-gutter: max(0px, calc(var(--gap) / 2 - var(--scrollbar-thin)));
   /* A dialog body's right padding beside its stable thin gutter: padding and gutter together match the left padding (pad) */
