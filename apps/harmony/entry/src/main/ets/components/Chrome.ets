@@ -135,6 +135,17 @@ export struct ToastLayer {
 }
 
 /** An undo action takes taps on the capsule; a plain toast lets every touch through. The call site sets it too */
+/**
+ * The page colour fading down into scrolled content under a bar (apps/ios Design/TopFade.swift). The page shows the
+ * strip only once its content has moved, so nothing is dimmed at rest
+ */
+export function topFade(): LinearGradientOptions {
+  return {
+    direction: GradientDirection.Bottom,
+    colors: [[$r('app.color.bg0'), 0], [$r('app.color.bg0_half'), 0.4], [$r('app.color.bg0_clear'), 1]]
+  };
+}
+
 export function toastHitTest(model: AppModel): HitTestMode {
   return model.toast !== undefined && model.lists.toastAction !== undefined ? HitTestMode.Default : HitTestMode.Transparent;
 }

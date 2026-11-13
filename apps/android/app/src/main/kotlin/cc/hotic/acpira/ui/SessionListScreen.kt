@@ -29,8 +29,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.BoxWithConstraints
+import cc.hotic.acpira.design.footFade
 import cc.hotic.acpira.design.readablePadding
 import cc.hotic.acpira.design.readableWidth
+import cc.hotic.acpira.design.topFade
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -48,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -174,11 +177,10 @@ fun SessionListScreen(model: AppModel) {
           else if (pairing != null) ListBarTitle(pairing)
           else Text(t("mobile.home"), fontWeight = FontWeight.SemiBold, fontSize = Type.barTitle)
         },
-        // In the sidebar the filter joins the hide button at the bar's end rather than sit alone at the far end
-        navigationIcon = { if (filter && !inSidebar) listMenu() },
+        // The filter leads the bar on the phone and in the sidebar alike
+        navigationIcon = { if (filter) listMenu() },
         actions = {
-          if (filter && inSidebar) listMenu()
-          // In the sidebar settings sit in the foot, and the bar's end puts the sidebar away
+          // In the sidebar settings sit in the foot, and the bar's end holds the hide button alone
           if (hide != null) {
             IconButton(onClick = hide, modifier = Modifier.testTag("split.hide")) {
               Lucide("panelLeft", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("desktop.hideSidebar"))
@@ -191,9 +193,12 @@ fun SessionListScreen(model: AppModel) {
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Palette.bg0, scrolledContainerColor = Palette.bg0),
       )
-      // In the sidebar the search stands under the bar, as the desktop's column has it (apps/ios SystemListBar)
+      // In the sidebar the search stands under the bar, as the desktop's column has it (apps/ios SystemListBar), on
+      // the page's colour as the bar is: rows leave under it through the top fade, not beside the field
       if (inSidebar && !covered) {
-        SearchPill(query, { query = it }, Modifier.padding(horizontal = Metrics.pad).padding(bottom = Metrics.s2))
+        Box(Modifier.fillMaxWidth().background(Palette.bg0).padding(horizontal = Metrics.pad).padding(bottom = Metrics.s2)) {
+          SearchPill(query, { query = it })
+        }
       }
       }
     },
@@ -215,11 +220,13 @@ fun SessionListScreen(model: AppModel) {
       onSwiped = { swiped = it }, onMore = { cwd, n -> moreShown = if (n == null) moreShown - cwd else moreShown + (cwd to n) },
       onRename = { renaming = it }, onAddFolder = { movingTo = it },
     )
+    // Rows leave under the bar through a fade, once the list has moved off its top
+    val scrolled by remember(listState) { derivedStateOf { listState.canScrollBackward } }
     // A phone held sideways reads the list in the centred column, its bounds still full width so a drag anywhere scrolls
     BoxWithConstraints(Modifier.fillMaxSize()) {
       LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().testTag("list.sessions")
+        modifier = Modifier.fillMaxSize().topFade(scrolled, padding.calculateTopPadding()).testTag("list.sessions")
           // A drag held near the top or bottom scrolls the list under it
           .listDragAutoScroll(drag, listState, padding.calculateTopPadding(), padding.calculateBottomPadding()),
         contentPadding = readablePadding(maxWidth, top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + Metrics.msgGap),
@@ -1045,20 +1052,24 @@ private fun orbitTop(ring: Dp, dot: Dp): Dp = ring / 2 - ring * ORBIT_R / LUCIDE
 /** The search field and the new-session button the list keeps at the bottom */
 @Composable
 private fun ListBottomBar(query: String, onQuery: (String) -> Unit, onNew: () -> Unit) {
-  Row(
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
-    // Handed over to a composer across a push or pop (ui/BarHandoff.kt)
-    modifier = Modifier.handoffList(empty = query.isEmpty()).readableWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2),
-  ) {
-    SearchPill(query, onQuery, Modifier.weight(1f).handoffPiece(HandoffPart.Search), face = Modifier.handoffFace(HandoffPart.Search))
-    FloatingActionButton(
-      onClick = onNew,
-      containerColor = Palette.bg1, contentColor = Palette.fg1, shape = CircleShape,
-      elevation = FloatingActionButtonDefaults.elevation(defaultElevation = Metrics.barShadow),
-      modifier = Modifier.size(Metrics.barCtl).handoffPiece(HandoffPart.New).testTag("list.new"),
+  // The page colour fades up under the bar, the gesture bar's strip included, so no row shows again below it; it stays
+  // outside the handoff, which hides the bar's pieces only
+  Box(Modifier.fillMaxWidth().background(footFade())) {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
+      // Handed over to a composer across a push or pop (ui/BarHandoff.kt)
+      modifier = Modifier.handoffList(empty = query.isEmpty()).readableWidth().navigationBarsPadding().imePadding().padding(horizontal = Metrics.pad, vertical = Metrics.s2),
     ) {
-      Lucide("squarePen", Palette.fg1, Modifier.handoffFace(HandoffPart.New), size = Metrics.iconCtl, contentDescription = t("session.new"))
+      SearchPill(query, onQuery, Modifier.weight(1f).handoffPiece(HandoffPart.Search), face = Modifier.handoffFace(HandoffPart.Search))
+      FloatingActionButton(
+        onClick = onNew,
+        containerColor = Palette.bg1, contentColor = Palette.fg1, shape = CircleShape,
+        elevation = FloatingActionButtonDefaults.elevation(defaultElevation = Metrics.barShadow),
+        modifier = Modifier.size(Metrics.barCtl).handoffPiece(HandoffPart.New).testTag("list.new"),
+      ) {
+        Lucide("squarePen", Palette.fg1, Modifier.handoffFace(HandoffPart.New), size = Metrics.iconCtl, contentDescription = t("session.new"))
+      }
     }
   }
 }
@@ -1102,13 +1113,10 @@ private fun SearchPill(query: String, onQuery: (String) -> Unit, modifier: Modif
  */
 @Composable
 private fun SidebarFoot(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?) {
-  val fade = Brush.verticalGradient(
-    0f to Palette.bg0.copy(alpha = 0f), FOOT_FADE_HALF_AT to Palette.bg0.copy(alpha = FOOT_FADE_HALF), FOOT_FADE_FULL_AT to Palette.bg0, 1f to Palette.bg0,
-  )
   Row(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
-    modifier = Modifier.fillMaxWidth().background(fade).navigationBarsPadding()
+    modifier = Modifier.fillMaxWidth().background(footFade()).navigationBarsPadding()
       .padding(horizontal = Metrics.pad).padding(top = Metrics.s2, bottom = Metrics.s2),
   ) {
     FloatingActionButton(
@@ -1148,10 +1156,6 @@ private fun SidebarFoot(model: AppModel, pairing: cc.hotic.acpira.store.PairingM
 }
 
 private const val SEARCH_DEBOUNCE_MS = 180L
-/** The sidebar foot's fade: half strength this far down, full from here (FootFade's stops) */
-private const val FOOT_FADE_HALF_AT = 0.2f
-private const val FOOT_FADE_HALF = 0.5f
-private const val FOOT_FADE_FULL_AT = 0.5f
 /** The project menu's sections level */
 private const val SECTIONS = "sections"
 private const val MORE_MARKS = 3

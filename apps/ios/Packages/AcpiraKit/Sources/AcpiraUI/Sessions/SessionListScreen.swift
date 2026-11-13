@@ -47,6 +47,7 @@ struct SessionListScreen: View {
   @Environment(\.now) private var now
   /// In a regular width's sidebar: a pick replaces the chat beside the list rather than pushing over it
   @Environment(\.listInSidebar) private var inSidebar
+  @Environment(SidebarPicks.self) private var picks: SidebarPicks?
 
   /// Sessions an open project shows before "N more" (the desktop view menu's default)
   private static let perProject = 5
@@ -69,7 +70,9 @@ struct SessionListScreen: View {
 
   /// Opens a page from the list: pushed over it on the phone, beside it in place of the open one in the sidebar
   private func show(_ route: Route) {
-    if inSidebar { model.path = [route] } else { model.push(route) }
+    guard inSidebar else { return model.push(route) }
+    model.path = [route]
+    picks?.count += 1
   }
 
   @ViewBuilder private var list: some View {
@@ -666,9 +669,8 @@ struct ListTopBar: ViewModifier {
       #endif
       .toolbar {
         #if os(iOS)
-        // In the sidebar the system's toggle stands at the column's trailing end: the filter joins it there rather
-        // than sit alone at the far end
-        if let filter { ToolbarItem(placement: inSidebar ? .topBarTrailing : .topBarLeading) { filter } }
+        // Leading in the sidebar as on the phone: the system's toggle stands alone at the column's trailing end
+        if let filter { ToolbarItem(placement: .topBarLeading) { filter } }
         if !inSidebar {
           ToolbarItem(placement: .topBarTrailing) {
             Button(action: onSettings) { Image(systemName: "gearshape") }

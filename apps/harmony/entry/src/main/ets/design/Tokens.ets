@@ -63,6 +63,11 @@ export class ListMetrics {
   static readonly sessionRow: number = 68;
   static readonly sheetRow: number = 52;
   static readonly groupCaption: number = 36;
+  /** The bottom bar and the sidebar's foot over the list's end: a bar control and its air above and below */
+  static readonly footH: number = Metrics.barCtl + Metrics.s2 * 2;
+  /** How far the page colour fades into a scrolled page under its bar (apps/ios Metrics.topFadeTail), and its ease */
+  static readonly topFadeTail: number = 28;
+  static readonly topFadeMs: number = 160;
   /** A project's rows sit this far in from its folder */
   static readonly nest: number = 16;
   static readonly chevron: number = 14;
