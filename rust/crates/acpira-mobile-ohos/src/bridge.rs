@@ -201,12 +201,19 @@ pub fn key_bytes(hex: &str) -> Option<Vec<u8>> {
 }
 
 /// The text of the first QR code found in a greyscale frame (one byte per pixel, `stride` bytes per row: a camera's Y
-/// plane), or `None`. A frame shorter than its size says is read as none
+/// plane), or `None`. A frame shorter than its size says is read as none. A frame with no code is read again with its
+/// luma turned over: the desktop's dark theme draws the pairing code light on a dark card, which rqrr finds no grid in
+/// (the Android scanner inverts its source the same way)
 pub fn decode_qr(grey: &[u8], width: usize, height: usize, stride: usize) -> Option<String> {
   if width == 0 || height == 0 || stride < width || grey.len() < stride * (height - 1) + width {
     return None;
   }
-  let mut img = rqrr::PreparedImage::prepare_from_greyscale(width, height, |x, y| grey.get(y * stride + x).copied().unwrap_or(u8::MAX));
+  let luma = |x: usize, y: usize| grey.get(y * stride + x).copied().unwrap_or(u8::MAX);
+  read_qr(width, height, luma).or_else(|| read_qr(width, height, |x, y| u8::MAX - luma(x, y)))
+}
+
+fn read_qr(width: usize, height: usize, luma: impl FnMut(usize, usize) -> u8) -> Option<String> {
+  let mut img = rqrr::PreparedImage::prepare_from_greyscale(width, height, luma);
   img.detect_grids().iter().find_map(|g| g.decode().ok().map(|(_, text)| text))
 }
 
@@ -339,6 +346,9 @@ mod tests {
       }
     }
     assert_eq!(decode_qr(&grey, width, height, stride).as_deref(), Some(link));
+    // The desktop's dark theme draws the code light on a dark card
+    let dark: Vec<u8> = grey.iter().map(|v| u8::MAX - v).collect();
+    assert_eq!(decode_qr(&dark, width, height, stride).as_deref(), Some(link), "a light code on a dark ground");
     assert_eq!(decode_qr(&vec![230u8; stride * height], width, height, stride), None);
     assert_eq!(decode_qr(&grey[..10], width, height, stride), None, "a short frame is no frame");
   }
