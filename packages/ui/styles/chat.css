@@ -263,6 +263,9 @@
   /* The context report pointing at calls (chat/reportLink.ts): their rows lit on a band, the rest of the thread dimmed.
      The dim is important, so a box's own opacity utility (a fold's head holds opacity-100) cannot keep it lit.
      `data-ctx-fade` keeps the transition on an element let go, so it fades back too */
+  /* A session picked while its view is on the way (App `pending`): the last one steps back as the report's dim does,
+     after a beat, so a view that lands at once never flickers */
+  [data-switching] [data-thread-body] { opacity: .35; transition: opacity var(--dur-open) var(--dur-open); }
 
   :is([data-ctx-dim], [data-ctx-lit], [data-ctx-fade]) {
     transition: opacity var(--dur-open), background-color var(--dur-open), box-shadow var(--dur-open);

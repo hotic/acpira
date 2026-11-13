@@ -250,6 +250,8 @@ export interface ShellProps {
   // The session list's user categories (absent: the list shows no categories)
   categories?: SessionCategories;
   activeSessionId?: string;
+  // The session picked while its view is still on the way: the list shows it selected, the last one steps back
+  pendingSessionId?: string;
   // Workspace root of the session; attachments are labeled relative to it
   cwd?: string;
   // This window's workspace folder and the list scope setting: the session list filters by them (the LAB leaves both out and shows everything)
@@ -855,7 +857,7 @@ export function Shell(p: ShellProps) {
       onNew={newFromPanel}
       sessions={p.sessions}
       agents={p.agents}
-      activeId={p.activeSessionId}
+      activeId={p.pendingSessionId ?? p.activeSessionId}
       workspace={p.workspace}
       // A project shell lists every project (the engine reads its scope as `all` too)
       scope={desktop ? 'all' : p.sessionScope}
@@ -1232,7 +1234,7 @@ export function Shell(p: ShellProps) {
             </>
           )}
           {/* Desktop, narrow: out of reach while the list page covers it */}
-          <div ref={mainColumn} data-sheet={desktop || undefined} inert={(desktop && !canDock && drawerOpen) || undefined}
+          <div ref={mainColumn} data-sheet={desktop || undefined} data-switching={p.pendingSessionId !== undefined || undefined} inert={(desktop && !canDock && drawerOpen) || undefined}
             // Files layout: the chat lies on the canvas right of the stage (desktop.css), as wide as the user made it. Beside
             // the docked tool panel its basis is what it keeps there: the panel shrinks first, to its narrowest (panel.css)
             className={cn('relative flex flex-col', desktop && dockedInspect ? 'min-w-(--chat-fit-min)' : files ? 'min-w-(--files-chat-min)' : 'min-w-0', files ? 'order-3 shrink' : cn('flex-1', (panelDocked || dockedInspect) && 'basis-(--tool-main-min)'))}
