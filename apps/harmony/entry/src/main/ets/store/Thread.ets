@@ -36,6 +36,8 @@ export class ThreadContext {
   /** The session's controls (the plan card's execution model), read loosely */
   @Trace controls: Object | undefined = undefined;
   @Trace agent: string = '';
+  /** The session's title: a reply's screenshot names it */
+  @Trace title: string = '';
   /** The agent's advertised command names: the prompt bubbles tint them */
   @Trace commands: string[] = NO_COMMANDS;
   /** The running turn's index, -1 while idle */
@@ -68,6 +70,7 @@ export class ThreadContext {
       this.commands = commands;
     }
     this.agent = view?.agent ?? '';
+    this.title = view?.title ?? '';
     this.live = view !== undefined && view.running ? view.turns.length - 1 : -1;
     this.retry = view !== undefined ? retryableTurn(view) : -1;
   }

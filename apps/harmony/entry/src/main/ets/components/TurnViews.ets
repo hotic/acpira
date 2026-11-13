@@ -182,7 +182,8 @@ export struct AgentMessage {
       }, (section: PlanSection) => sectionSig(section))
       if (showsTurnActions(this.turnX(), this.running)) {
         TurnActions({
-          turn: this.turnX(), retry: this.thread.retry === this.index, actions: this.actions, onRetry: () => this.onRetry(),
+          turn: this.turnX(), retry: this.thread.retry === this.index, actions: this.actions, title: this.thread.title,
+          agent: this.thread.agent, controls: this.thread.controls, onRetry: () => this.onRetry(),
           onFork: () => this.onFork(this.index)
         })
       }

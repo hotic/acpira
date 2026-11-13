@@ -364,6 +364,11 @@ struct ProseQuote: View {
 
 // MARK: - Code
 
+extension EnvironmentValues {
+  /// A code block's fill where the stock one clashes with its ground (a screenshot card's sheet); nil keeps --bg-code
+  @Entry var codeFill: Color? = nil
+}
+
 /// CodeSurface: fenced code on the code background inside the conversation ring, scrolling sideways; coloured when the
 /// fence names a known grammar (CodeBlock.tsx)
 struct CodeSurface: View {
@@ -371,6 +376,7 @@ struct CodeSurface: View {
   var lang: String?
   @Environment(\.snapshot) private var snapshot
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.codeFill) private var fill
   @State private var colored: Colored?
   @State private var running = Running()
 
@@ -403,7 +409,7 @@ struct CodeSurface: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     // The CSS border takes room inside the card; the stroke below does not
     .padding(Metrics.hairline)
-    .background(Palette.bgCode, in: RoundedRectangle(cornerRadius: Metrics.rLg))
+    .background(fill ?? Palette.bgCode, in: RoundedRectangle(cornerRadius: Metrics.rLg))
     .overlay(RoundedRectangle(cornerRadius: Metrics.rLg).strokeBorder(Palette.conversationLine))
     // One pass at a time, off the main actor. A pass for a text the fence has since extended still lands (its lines
     // colour the text it covers), and its landing asks again for the text then: dropped by every chunk, a pass of a

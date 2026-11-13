@@ -9,6 +9,8 @@ import { t } from '../store/L10n';
 import { copyText } from './Copy';
 import { AgentMark, Lucide } from './Glyphs';
 import { Prose } from './Prose';
+import { captureShare, shareBlocks, shareMeta, SharePayload, SharePreview } from './ShareCard';
+import { image } from '@kit.ImageKit';
 
 // The transcript's cards (apps/ios Transcript/Cards.swift PermissionCard + TurnActions, PlanDocumentCard.swift; apps/android
 // ui/Transcript.kt PermissionCard / TurnActions, ui/Cards.kt PlanDocumentCard): a permission request with every option,
@@ -552,7 +554,7 @@ struct ActionGlyph {
 
 /**
  * The reply's actions under it (Cards.swift TurnActions), hugging the reply: retry (the newest reply, failed in a way
- * Retry answers), copy, fork from this turn, the statistics
+ * Retry answers), copy, its screenshot (components/ShareCard.ets), fork from this turn, the statistics
  */
 @ComponentV2
 export struct TurnActions {
@@ -560,10 +562,44 @@ export struct TurnActions {
   @Param retry: boolean = false;
   /** Fork and retry are offered only when the chat wires them */
   @Param actions: boolean = false;
+  /** The screenshot's watermark: the session's title, agent and controls (the model control), read loosely */
+  @Param title: string = '';
+  @Param agent: string = '';
+  @Param controls: Object | undefined = undefined;
   @Event onRetry: () => void = () => {};
   @Event onFork: () => void = () => {};
   @Local copied: boolean = false;
   @Local stats: boolean = false;
+  /** The reply's screenshot while its preview is up */
+  @Local shot: image.PixelMap | undefined = undefined;
+  /** A screenshot is being drawn: a second tap waits for it */
+  private sharing: boolean = false;
+  /** The row's width, which with the message's sides is the thread's; read on a tap */
+  private rowWidth: number = 0;
+
+  private share(): void {
+    if (this.sharing || this.rowWidth <= 0) {
+      return;
+    }
+    const payload = new SharePayload();
+    payload.meta = shareMeta(this.title, this.agent, this.controls, this.turn);
+    payload.blocks = shareBlocks(this.turn);
+    payload.cardWidth = Math.min(this.rowWidth + Metrics.pad * 2, Metrics.contentW);
+    this.sharing = true;
+    captureShare(this.getUIContext(), payload).then((picture: image.PixelMap | undefined) => {
+      this.sharing = false;
+      this.shot = picture;
+    });
+  }
+
+  @Builder
+  sharePreview() {
+    SharePreview({
+      picture: this.shot, onClose: () => {
+        this.shot = undefined;
+      }
+    })
+  }
 
   @Builder
   statsCard() {
@@ -652,6 +688,9 @@ export struct TurnActions {
           }
         })
       }
+      if (shareBlocks(this.turn).length > 0) {
+        ActionGlyph({ icon: 'image', label: t('turn.share'), onTap: () => this.share() })
+      }
       if (this.actions) {
         ActionGlyph({ icon: 'gitBranch', label: t('turn.fork'), onTap: () => this.onFork() })
       }
@@ -675,6 +714,16 @@ export struct TurnActions {
     // Hugs the reply: gives a gap back to the message's spacing
     .margin({ top: -Metrics.gap })
     .width('100%')
+    .onAreaChange((_: Area, area: Area) => {
+      this.rowWidth = Number(area.width);
+    })
+    .bindContentCover(this.shot !== undefined, this.sharePreview(), {
+      modalTransition: ModalTransition.ALPHA,
+      backgroundColor: Color.Black,
+      onDisappear: () => {
+        this.shot = undefined;
+      }
+    })
   }
 }
 

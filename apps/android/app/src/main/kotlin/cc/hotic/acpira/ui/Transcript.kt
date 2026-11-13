@@ -58,6 +58,8 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.material3.IconButton
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -423,9 +425,10 @@ private fun seedEntrances(turn: AgentTurn, process: List<AgentBlock>, scope: Str
 class TurnHandlers(val retry: () -> Unit, val fork: (turnIndex: Int) -> Unit, val toast: (String) -> Unit)
 
 /**
- * The reply's actions under it (Cards.swift TurnActions), hugging the reply: retry, copy, fork from this turn, the
- * statistics. Retry shows only on the newest reply when it failed in a way Retry answers; a reply with nothing in it
- * offers no copy or statistics. Android 13+ confirms a copy itself, so the glyph only turns into a tick for a moment
+ * The reply's actions under it (Cards.swift TurnActions), hugging the reply: retry, copy, its screenshot, fork from
+ * this turn, the statistics. Retry shows only on the newest reply when it failed in a way Retry answers; a reply with
+ * nothing in it offers no copy, screenshot or statistics. Android 13+ confirms a copy itself, so the glyph only turns
+ * into a tick for a moment
  */
 @Composable
 private fun TurnActions(
@@ -446,10 +449,20 @@ private fun TurnActions(
   LaunchedEffect(copied) {
     if (copied) { delay(COPIED_MS); copied = false }
   }
+  val media = LocalMedia.current
+  val scope = rememberCoroutineScope()
+  val shareable = remember(turn) { ShareContent(turn) }
+  // The screenshot being drawn: its watermark and the card's width
+  var sharing by remember { mutableStateOf<Pair<ShareMeta, Int>?>(null) }
+  // The row's width, which with the message's sides is the thread's; read on a tap, so measuring redraws nothing
+  val rowWidth = remember { intArrayOf(0) }
+  val sides = with(LocalDensity.current) { (Metrics.pad * 2).roundToPx() }
+  val widest = with(LocalDensity.current) { Metrics.contentW.roundToPx() }
   // Hugs the reply (-mt-gap): the row gives a gap of its height back to the column's spacing
   Row(
     Modifier.fillMaxWidth().layout { measurable, constraints ->
       val row = measurable.measure(constraints)
+      rowWidth[0] = row.width
       val pull = Metrics.gap.roundToPx()
       layout(row.width, maxOf(row.height - pull, 0)) { row.place(0, -pull) }
     },
@@ -461,6 +474,31 @@ private fun TurnActions(
         if (copyText(context, reply)) actions?.toast?.invoke(t("code.copied"))
         haptics.play(Haptic.Copy)
         copied = true
+      }
+    }
+    // Where the picture can open: a chat with a Lightbox (a child's transcript shows no action row at all)
+    val lightbox = media.lightbox
+    if (lightbox != null && !shareable.isEmpty) {
+      Box {
+        ActionButton("image", t("turn.share"), "turn.share") {
+          if (sharing != null || rowWidth[0] <= 0) return@ActionButton
+          haptics.play(Haptic.Copy)
+          val view = media.session?.let { media.model?.views?.get(it) }
+          val agent = view?.agent.orEmpty()
+          val meta = shareMeta(context, view?.title.orEmpty(), agent, media.model?.agent(agent)?.name ?: agent, turn.usage, settings, controls)
+          val width = minOf(rowWidth[0] + sides, widest)
+          scope.launch {
+            // The turn's images at hand before the card is drawn, so it settles in its first frames
+            view?.let { media.loader.preload(it.copy(turns = listOf(turn))) }
+            sharing = meta to width
+          }
+        }
+        sharing?.let { (meta, width) ->
+          ShareCapture(width, onDone = { picture ->
+            sharing = null
+            if (picture != null) lightbox.open(LightboxItem(picture, meta.title.ifBlank { null }, null))
+          }) { ShareCard(meta, shareable) }
+        }
       }
     }
     if (actions != null) ActionButton("gitBranch", t("turn.fork"), "turn.fork") { actions.fork(index) }

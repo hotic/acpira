@@ -29,6 +29,8 @@ object WebType {
   val text2 = style(17, 22)
   /** --text-3: captions, trailing meta */
   val text3 = style(16, 20)
+  /** --text-4: a screenshot card's watermark line */
+  val text4 = style(15, 19)
   /** --text-mono */
   val mono = style(15, 21, mono = true)
   /** Code output lines: mono at --code-output-line-height */

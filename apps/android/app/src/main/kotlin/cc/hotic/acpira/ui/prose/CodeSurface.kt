@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +75,9 @@ fun codeSource(text: String, tokenized: String?, lines: List<List<CodeToken>>?):
 /** A pass's tokens and the text they were made for */
 private class Colored(val text: String, val language: String, val theme: CodeTheme, val lines: List<List<CodeToken>>, val at: Long)
 
+/** A code block's fill where the stock one clashes with its ground (a screenshot card's sheet); null keeps --bg-code */
+val LocalCodeFill = compositionLocalOf<Color?> { null }
+
 /** CodeSurface: one fence, coloured once a pass for its text (or a prefix of it) lands */
 @Composable
 fun CodeSurface(text: String, lang: String?, modifier: Modifier = Modifier) {
@@ -90,7 +94,7 @@ fun CodeSurface(text: String, lang: String?, modifier: Modifier = Modifier) {
   val shape = RoundedCornerShape(Metrics.rLg)
   Box(
     modifier.fillMaxWidth()
-      .background(Palette.bgCode, shape)
+      .background(LocalCodeFill.current ?: Palette.bgCode, shape)
       .border(Metrics.hairline, Palette.conversationLine, shape)
       // The CSS border takes room inside the card
       .padding(Metrics.hairline)

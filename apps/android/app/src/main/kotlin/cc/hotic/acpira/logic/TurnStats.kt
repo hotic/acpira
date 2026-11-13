@@ -160,4 +160,4 @@ fun turnStatsContent(turn: AgentTurn): TurnStatsContent {
 /** A Fusion pair's name ("Fusion (A High + B)"), which the label keeps whole; `ModelCatalog.parse` leaves pairs out */
 private val fusionName = Regex("""^Fusion\s*\((.+?)\s+\+\s+(.+)\)$""", RegexOption.IGNORE_CASE)
 
-private fun isFusion(name: String) = fusionName.matches(name.trim())
+fun isFusion(name: String) = fusionName.matches(name.trim())
