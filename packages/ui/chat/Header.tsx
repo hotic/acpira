@@ -152,14 +152,16 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
       )}
       {narrowDesk
         // A narrow window, the phone's header (docs/dev/ios.md): the title centred over a line naming the agent and the
-        // project, spaced apart rather than dotted. It centres in the room between the pinned title row and the buttons
+        // project, spaced apart rather than dotted. It centres in the room between the pinned title row and the buttons.
+        // Both lines share the 40 px bar, so the title takes the caption's leading and the line under it the micro size
+        // (macOS's own window subtitle), leaving a breath above and below
         ? <span className="flex min-w-0 flex-1 flex-col items-center">
-          <span className="max-w-full truncate text-2 font-medium text-fg-strong">{title}</span>
-          {cwd && <span data-header-sub className="flex max-w-full min-w-0 items-center text-3 text-fg-3">
-            <AgentMark id={agent.id} name={agent.name} className="size-3 shrink-0" />
+          <span className="max-w-full truncate text-2 leading-(--text-3-lh) font-medium text-fg-strong">{title}</span>
+          {cwd && <span data-header-sub className="flex max-w-full min-w-0 items-center text-4 text-fg-3">
+            <AgentMark id={agent.id} name={agent.name} className="size-2.5 shrink-0" />
             <span className="ml-1 min-w-0 truncate">{agent.name}</span>
-            {/* The start page's project dropdown takes the caption's size on this line */}
-            <span className="ml-3 flex shrink-0 items-center [&_button]:h-auto [&_button]:text-3">
+            {/* The start page's project dropdown takes the line's size */}
+            <span className="ml-3 flex shrink-0 items-center [&_button]:h-auto [&_button]:text-4">
               {projectPick ?? <span key={cwd} className="swap-in" title={cwd}>{placeName ?? projectName(cwd)}</span>}
             </span>
           </span>}
