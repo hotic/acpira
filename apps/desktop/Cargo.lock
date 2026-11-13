@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acpira-agent"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "acpira-rpc",
  "acpira-shared",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-desktop"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "acpira-shared",
  "libc",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-desktop-tauri"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "acpira-desktop",
  "acpira-host",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-gateway"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "acpira-desktop",
  "acpira-net",
@@ -91,12 +91,13 @@ dependencies = [
  "serde_json",
  "tokio",
  "webpki-roots",
+ "windows",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "acpira-host"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "acpira-agent",
  "acpira-desktop",
@@ -143,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-net"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "acpira-shared",
  "anyhow",
@@ -163,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-rpc"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "parking_lot",
  "serde_json",
@@ -172,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-shared"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "miniz_oxide 0.8.9",
  "regex",
