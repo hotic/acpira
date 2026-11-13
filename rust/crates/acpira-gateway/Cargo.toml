@@ -36,6 +36,8 @@ if-addrs = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
+# The firewall's COM interfaces (firewall.rs), which windows-sys leaves out; the crate is in the tree through iroh
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_NetworkManagement_WindowsFirewall", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant"] }
 
 [dev-dependencies]
 acpira-host = { path = "../acpira-host" }

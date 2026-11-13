@@ -4,6 +4,7 @@
 //! acpira gateway stop [--home DIR]                                     stop the gateway (its engine keeps running)
 //! acpira gateway try LINK [--home DIR]                                 act as a device: pair, connect, list sessions
 //! acpira gateway push-check TEAM [--topic ID] [--sandbox] [--home DIR]  whether APNs takes the key in <home>/apns/
+//! acpira gateway allow-lan                                             Windows, elevated: the firewall rule (firewall.rs)
 //!
 //! The gateway itself runs inside the engine (acpira-host `devices/host.rs`); these talk to it over its control channel.
 
@@ -60,6 +61,8 @@ async fn dispatch(args: Vec<String>) -> i32 {
     Some("stop") => control::request(&Paths::new(&home(&args)).socket, &Request::Stop).await.map(|_| ()),
     Some("try") => try_cmd(&args).await,
     Some("push-check") => push_check(&args).await,
+    // Not for the command line: the gateway starts this copy elevated (firewall.rs `allow`)
+    Some("allow-lan") => crate::firewall::write_rules(),
     // The login service of builds up to 2.0.6 ran `gateway run`: the engine runs the gateway now
     Some("run") => Err(anyhow!("the gateway runs inside the engine now (`acpira serve`); turn remote access on in the settings")),
     _ => {
