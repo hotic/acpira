@@ -103,7 +103,7 @@ What the engine (`rust/`) and its shells cannot give back from a quick look. Age
 - Push: the APNs key is the user's own file under `<ACPIRA_HOME>/apns/`, never in the repo. Unverified: KDE idle time units (`presence.rs`); whether GNOME's automatic suspend honours an `idle` inhibitor alone (`awake.rs`).
 - Device addresses drop virtual adapters by name (`virtual_ips`), else WSL / VM bridges or a TUN crowd out the Wi-Fi. A Windows Bonjour entry outlives a killed gateway: `<name>(1)` on a dead port.
 - Proxy TUN (`acpira_net::tun`; VPNs left alone): a macOS / Windows gateway binds IPv4 past it on the physical interface and resolves over DoT — its DNS fakes addresses. Bound sockets never follow the network: changed detection restarts the gateway. Not on Linux (why there).
-- Windows Firewall (`firewall.rs`): a missed first-listen prompt leaves block rules that beat allow rules; the default answer covers private networks only, a new Wi-Fi is public — just the relay gets in. `allowLan` fixes it through UAC. Unverified on Windows (UAC focus too).
+- Windows Firewall (`firewall.rs`): a missed first-listen prompt leaves block rules that beat allow rules; the default answer covers private networks only, a new Wi-Fi is public — just the relay gets in. `allowLan` fixes it through UAC (an elevated `acpira gateway allow-lan`). Rules go over the firewall's COM API, never PowerShell: Huorong blocks `-EncodedCommand` from a background program. Unverified: the UAC prompt and its focus (checked only where UAC never prompts), Huorong on the write.
 
 ## Host probes
 
