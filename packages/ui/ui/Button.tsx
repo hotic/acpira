@@ -140,6 +140,7 @@ function TagTrail({ tagsKey, children }: { tagsKey: string; children?: ReactNode
   const inner = useRef<HTMLSpanElement>(null);
   const width = useRef(0);
   const run = useRef<Animation | null>(null);
+  const runFrom = useRef(0);
   const prev = useRef({ open, tagsKey });
   // The settled width, kept current while nothing runs: a glide starts from it, since by the layout effect the new badges are in
   useLayoutEffect(() => {
@@ -162,7 +163,8 @@ function TagTrail({ tagsKey, children }: { tagsKey: string; children?: ReactNode
       width.current = 0;
       return;
     }
-    const from = run.current ? el.getBoundingClientRect().width : width.current;
+    // A glide that has not started yet (begun earlier in this commit, then retargeted by a stage step) stands at its own start
+    const from = run.current ? (run.current.pending ? runFrom.current : el.getBoundingClientRect().width) : width.current;
     run.current?.cancel();
     run.current = null;
     const to = el.scrollWidth;
@@ -173,6 +175,7 @@ function TagTrail({ tagsKey, children }: { tagsKey: string; children?: ReactNode
     if (from > 0 && to > 0 && Math.abs(to - from) > 0.5) {
       const anim = el.animate([{ width: `${from}px` }, { width: `${to}px` }], { duration: cssTimeVar(el, '--dur-open', 220), easing: 'ease-out' });
       run.current = anim;
+      runFrom.current = from;
       anim.onfinish = () => { if (run.current === anim) run.current = null; };
     }
     inner.current?.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: cssTimeVar(el, '--dur', 150), easing: 'ease-out' });
