@@ -265,6 +265,8 @@ public struct RootView: View {
     if widthClass == .regular && !covered {
       NavigationSplitView(columnVisibility: $columns) {
         NavigationStack { SessionListScreen() }
+          // The keyboard belongs to the chat or terminal beside the sidebar: its foot stays at the window's bottom
+          .ignoresSafeArea(.keyboard)
           .environment(\.listInSidebar, true)
           .navigationSplitViewColumnWidth(Metrics.sidebarW)
       } detail: {

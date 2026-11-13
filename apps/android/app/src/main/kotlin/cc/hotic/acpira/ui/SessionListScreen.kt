@@ -154,6 +154,15 @@ fun SessionListScreen(model: AppModel) {
   // A scroll puts a swiped row back, as in the system's lists
   LaunchedEffect(listState.isScrollInProgress) { if (listState.isScrollInProgress) swiped = null }
 
+  val listMenu = @Composable {
+    ListViewMenu(
+      view = lists.view, onView = lists::pickView,
+      pinPlace = lists.pinPlace, onPinPlace = lists::pickPinPlace,
+      archived = archivedOnly, onArchived = { archivedOnly = it },
+      unread = model.summaries.any { it.unread == true || it.state == SessionState.unread },
+      onMarkAllRead = lists::markAllRead,
+    )
+  }
   Scaffold(
     containerColor = Palette.bg0,
     topBar = {
@@ -165,18 +174,10 @@ fun SessionListScreen(model: AppModel) {
           else if (pairing != null) ListBarTitle(pairing)
           else Text(t("mobile.home"), fontWeight = FontWeight.SemiBold, fontSize = Type.barTitle)
         },
-        navigationIcon = {
-          if (filter) {
-            ListViewMenu(
-              view = lists.view, onView = lists::pickView,
-              pinPlace = lists.pinPlace, onPinPlace = lists::pickPinPlace,
-              archived = archivedOnly, onArchived = { archivedOnly = it },
-              unread = model.summaries.any { it.unread == true || it.state == SessionState.unread },
-              onMarkAllRead = lists::markAllRead,
-            )
-          }
-        },
+        // In the sidebar the filter joins the hide button at the bar's end rather than sit alone at the far end
+        navigationIcon = { if (filter && !inSidebar) listMenu() },
         actions = {
+          if (filter && inSidebar) listMenu()
           // In the sidebar settings sit in the foot, and the bar's end puts the sidebar away
           if (hide != null) {
             IconButton(onClick = hide, modifier = Modifier.testTag("split.hide")) {
@@ -668,6 +669,7 @@ private fun SessionRow(
   press: Modifier,
 ) {
   val line = Palette.line
+  val fill = Palette.active
   val density = LocalDensity.current
   val ruleStart = with(density) { (Metrics.pad + (if (nested) Metrics.nest else Metrics.s0) + Metrics.lead + Metrics.gap).toPx() }
   val hair = with(density) { Metrics.hairline.toPx() }
@@ -678,7 +680,16 @@ private fun SessionRow(
       .fillMaxWidth()
       // One line stands as tall as a project's header
       .heightIn(min = if (place == null && snippet == null) Metrics.sheetRow else Metrics.sessionRow)
-      .background(if (active) Palette.active else Palette.bg0)
+      .background(Palette.bg0)
+      // The sidebar's open chat: the desktop column's fill, rounded and held in from both edges (a square one ran into
+      // the column's edge)
+      .drawBehind {
+        if (active) {
+          val inset = Metrics.s2.toPx()
+          val r = Metrics.rLg.toPx()
+          drawRoundRect(fill, Offset(inset, 0f), androidx.compose.ui.geometry.Size(size.width - inset * 2, size.height), androidx.compose.ui.geometry.CornerRadius(r, r))
+        }
+      }
       .drawBehind { if (divider) drawRect(line, Offset(ruleStart, size.height - hair), androidx.compose.ui.geometry.Size(size.width - ruleStart, hair)) }
       .clickable(onClick = onSelect)
       .then(press)

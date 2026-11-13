@@ -359,7 +359,9 @@ struct Thread: View {
         values.foldMemory = control.folds
       }
       // Keep drawing behind the bars and docks; their clearance is a content inset, not a smaller collection frame.
-      .ignoresSafeArea(.container)
+      // Top and bottom only: an open sidebar is the detail column's leading safe area, and a collection reaching
+      // under it centred the reading column in the window while the composer stood centred in the column
+      .ignoresSafeArea(.container, edges: .vertical)
     }
     // Another session is another thread: its rows, offset and follow start afresh
     .id(session.id)
