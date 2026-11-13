@@ -159,7 +159,7 @@ struct TranscriptCollection: UIViewRepresentable {
           let environment = self.environment
           // `.id`: a cell reused for another row starts that row's state afresh; reconfiguring the same row keeps it
           cell.contentConfiguration = UIHostingConfiguration {
-            ThreadItemView(item: item).environment(\.self, environment).id(id)
+            HostedRow(item: item, environment: environment).id(id)
           }
           .margins(.all, 0)
           cell.backgroundConfiguration = .clear()
@@ -330,6 +330,20 @@ struct TranscriptViewportGeometry: Equatable {
     let nextVelocity = (velocity - omega * (velocity + omega * delta) * dt) * decay
     if abs(nextDelta) <= 0.5, abs(nextVelocity) <= 20 { return (target, 0) }
     return (target + nextDelta, nextVelocity)
+  }
+}
+
+/// A row under the thread's copied environment, except the colour scheme, which it takes from its own cell. A copy
+/// is only as new as the pass that configured the cell, and a pass reconfigures the rows on screen alone: a row laid
+/// out ahead of the viewport before the app's theme had replaced the system's at launch kept the system's scheme,
+/// and drew a light bubble in a dark chat. The cell's traits follow the window, so they are never behind
+private struct HostedRow: View {
+  let item: ThreadItem
+  let environment: EnvironmentValues
+  @Environment(\.colorScheme) private var scheme
+
+  var body: some View {
+    ThreadItemView(item: item).environment(\.colorScheme, scheme).environment(\.self, environment)
   }
 }
 
