@@ -68,3 +68,67 @@ export function anchorOffset(
   if (!node.isConnected || node.getClientRects().length === 0) return undefined;
   return node.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
 }
+
+// Child counts above this are bisected rather than scanned (a transcript's exchanges, a fence's lines)
+const BISECT_FROM = 32;
+
+export interface ReadingAnchor {
+  node: Element;
+  // How far down the node the view's edge falls, 0 to 1
+  part: number;
+  // Where that point shows, from the scroller's top
+  at: number;
+}
+
+// What a reader parked above the tail has at the top of the view, under a stuck prompt: the box that stays put while the
+// transcript re-wraps (useBottomFollow.ts). Descends through the first child reaching below the edge, down to one that
+// starts in view, scrolls on its own (its rows move without the thread) or has nothing below the edge inside it.
+// Children are taken to run top to bottom; a long run of them is bisected
+export function readingAnchor(
+  content: Element,
+  scroller: Element,
+  overflowYOf: (el: Element) => string = el => getComputedStyle(el).overflowY,
+): ReadingAnchor | undefined {
+  const top = scroller.getBoundingClientRect().top;
+  let edge = top + scroller.clientTop;
+  let found: { node: Element; top: number; height: number } | undefined;
+  for (let node = content; ;) {
+    const kids = node.children;
+    let from = 0;
+    if (kids.length > BISECT_FROM) {
+      let to = kids.length;
+      while (from < to) {
+        const mid = (from + to) >> 1;
+        if (kids[mid]!.getBoundingClientRect().bottom > edge) to = mid;
+        else from = mid + 1;
+      }
+    }
+    let next: Element | undefined;
+    for (let i = from; i < kids.length && !next; i++) {
+      const kid = kids[i]!;
+      const rect = kid.getBoundingClientRect();
+      if (rect.height <= 0 || rect.bottom <= edge) continue;
+      // A stuck prompt covers the top of the view; one still in its place moves to stick, so neither is the anchor
+      if (kid.hasAttribute('data-sticky-prompt')) {
+        if (rect.top <= edge + 1) edge = rect.bottom;
+        continue;
+      }
+      next = kid;
+      found = { node: kid, top: rect.top, height: rect.height };
+    }
+    if (!next || found!.top >= edge) break;
+    const overflowY = overflowYOf(next);
+    if (overflowY === 'auto' || overflowY === 'scroll') break;
+    node = next;
+  }
+  if (!found) return undefined;
+  const part = Math.min(1, Math.max(0, (edge - found.top) / found.height));
+  return { node: found.node, part, at: found.top + part * found.height - top };
+}
+
+// Where a reading anchor's point shows now, from the scroller's top; undefined once the node is detached or hidden
+export function readingOffset(anchor: ReadingAnchor, scroller: Element): number | undefined {
+  if (!anchor.node.isConnected || anchor.node.getClientRects().length === 0) return undefined;
+  const rect = anchor.node.getBoundingClientRect();
+  return rect.top + anchor.part * rect.height - scroller.getBoundingClientRect().top;
+}

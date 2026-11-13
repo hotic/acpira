@@ -26,13 +26,30 @@ function render(blocks: AgentTurn['blocks'], running: boolean, fold: 'codex' | '
 const target = (i: number) => `command-${String(i).padStart(4, '0')}`;
 
 describe('tail window of a live turn', () => {
-  it.each(['codex', 'cursor'] as const)('first renders only the tail of a long live turn (%s)', fold => {
+  it('first renders only the tail of a long live turn', () => {
     const n = TAIL_THRESHOLD + 90;
-    const markup = render(commands(n), true, fold);
+    const markup = render(commands(n), true, 'cursor');
     expect(markup).toContain(target(n - 1));
     expect(markup).toContain(target(n - TAIL_SIZE));
     expect(markup).not.toContain(target(n - TAIL_SIZE - 1));
     expect(markup).not.toContain(target(0));
+  });
+
+  // The process fold cuts its rows into chunks instead (ProcessChunks.tsx): where a page can tell what is near, a
+  // working turn first has the rows at both ends and sized boxes between them
+  it('first renders the ends of a long live process, the middle as empty boxes', () => {
+    vi.stubGlobal('IntersectionObserver', class {});
+    vi.stubGlobal('window', { innerHeight: 800 });
+    try {
+      const n = TAIL_THRESHOLD + 90;
+      const markup = render(commands(n), true, 'codex');
+      expect(markup).toContain(target(0));
+      expect(markup).toContain(target(n - 1));
+      expect(markup).not.toContain(target(n >> 1));
+      expect(markup).toMatch(/data-chunk="[^"]+" data-calls="[^"]*call-\d+[^"]*" class="shrink-0" style="height:calc\(24 \* /);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it.each(['codex', 'cursor'] as const)('renders a live turn under the threshold whole (%s)', fold => {

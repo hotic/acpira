@@ -7,11 +7,12 @@ type Anchor = { x: number; top: number; bottom: number };
 // `step`: the list entrance step (`--row-enter-step`, set by Row) of the row a new segment leads to, so motion.css
 // draws the segment down to that row just before it fades in; the terminal segment counts as one step after its row
 type Segment = Anchor & { terminal: boolean; step?: number };
-type CachedAnchor = { signature: string; anchor: Anchor };
 
-// Cache by mounted SVG, so streamed text does not repeatedly scan icon paths and
-// discarded conversations do not leave a growing catalog of icon markup behind.
-const iconCache = new WeakMap<SVGSVGElement, CachedAnchor>();
+// Where an icon's painted centerline starts and ends, in its own viewBox units, by what decides it (its shapes and
+// stroke): the scan is hundreds of hit tests per icon, and a long process opened by hand mounts hundreds of rows that
+// share a handful of icons. Emptied past ICON_CACHE_MAX, so no catalog of icon markup can grow without bound
+const iconCache = new Map<string, Anchor>();
+const ICON_CACHE_MAX = 256;
 const GEOMETRY_STEP = 0.125;
 const COORDINATE_PRECISION = 100;
 
@@ -26,9 +27,9 @@ function iconAnchor(svg: SVGSVGElement): Anchor | null {
     const box = svg.viewBox.baseVal;
     if (!box.width || !box.height) return fallback;
     const style = getComputedStyle(svg);
-    const signature = `${svg.innerHTML}|${svg.getAttribute('viewBox')}|${style.strokeWidth}|${style.stroke}|${style.fill}`;
-    let cached = iconCache.get(svg);
-    if (cached?.signature !== signature) {
+    const signature = `${svg.innerHTML}|${svg.getAttribute('viewBox')}|${style.strokeWidth}|${style.strokeLinecap}|${style.strokeLinejoin}|${style.stroke === 'none'}|${style.fill === 'none'}`;
+    let cached = iconCache.get(signature);
+    if (!cached) {
       const x = box.x + box.width / 2;
       const svgMatrix = svg.getCTM();
       const shapes = [...svg.querySelectorAll('*')]
@@ -54,13 +55,14 @@ function iconAnchor(svg: SVGSVGElement): Anchor | null {
         top ??= y;
         bottom = y;
       }
-      cached = { signature, anchor: { x, top: top ?? box.y, bottom: bottom ?? box.y + box.height } };
-      iconCache.set(svg, cached);
+      cached = { x, top: top ?? box.y, bottom: bottom ?? box.y + box.height };
+      if (iconCache.size >= ICON_CACHE_MAX) iconCache.clear();
+      iconCache.set(signature, cached);
     }
     const matrix = svg.getScreenCTM();
     if (!matrix) return fallback;
-    const top = new DOMPoint(cached.anchor.x, cached.anchor.top).matrixTransform(matrix);
-    const bottom = new DOMPoint(cached.anchor.x, cached.anchor.bottom).matrixTransform(matrix);
+    const top = new DOMPoint(cached.x, cached.top).matrixTransform(matrix);
+    const bottom = new DOMPoint(cached.x, cached.bottom).matrixTransform(matrix);
     return { x: bottom.x, top: top.y, bottom: bottom.y };
   } catch {
     // Detached SVGs and DOM-only test renderers may expose incomplete geometry APIs.

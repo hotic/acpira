@@ -240,3 +240,50 @@ export function diffStatOf(blocks: ToolCallBlock[]): { add: number; del: number 
   if (!blocks.some(b => b.diffStat)) return;
   return blocks.reduce((s, b) => ({ add: s.add + (b.diffStat?.add ?? 0), del: s.del + (b.diffStat?.del ?? 0) }), { add: 0, del: 0 });
 }
+
+// The rows an item takes in an open process fold: its own row, the entries of an open group or search, the files a
+// lone read of several lists under its row. It sizes rows that are not mounted (`ProcessChunks`);
+// what it cannot know (an open output, a wrapped line, an image) is corrected when the rows mount
+export function itemRows(item: ProcessItem, open: boolean): number {
+  if (item.type === 'group') {
+    if (!open || item.kind === 'wait') return 1;
+    return 1 + (item.kind === 'read' ? item.blocks.reduce((n, block) => n + Math.max(1, toolFiles(block).length), 0)
+      : item.kind === 'session' ? sessionEntries(item.blocks).entries.length
+        : editEntries(item.blocks).length);
+  }
+  const block = item.block;
+  if (block.type !== 'tool_call' || (block.kind !== 'read' && block.kind !== 'search')) return 1;
+  // A search lists its hits only while open; a read of one file names it on its own row
+  const files = toolFiles(block).length;
+  return block.kind === 'search' ? (open ? 1 + files : 1) : files > 1 ? 1 + files : 1;
+}
+
+// The tool calls of an item, for the context report to find a row that is not mounted (chat/reportLink.ts)
+export function itemCalls(item: ProcessItem): string[] {
+  return item.type === 'group' ? item.blocks.map(block => block.id) : item.block.type === 'tool_call' ? [item.block.id] : [];
+}
+
+// Whether `itemRows` can tell an item's height: rows can be counted, narrative text and cards cannot
+export function itemExact(item: ProcessItem): boolean {
+  return item.type === 'group' || item.block.type === 'tool_call' || item.block.type === 'thought' || item.block.type === 'compaction';
+}
+
+export const isText = (item: ProcessItem | undefined) => item?.type === 'block' && item.block.type === 'text';
+
+// `afterText`: the chunk before it ends in narrative text, which spaces what follows it (chat.css)
+export interface ItemChunk { id: string; items: ProcessItem[]; afterText: boolean }
+
+// Runs of items of about `size` rows each (groups counted open), cut from the start: a chunk keeps its items while the
+// process grows at its end. Narrative text stays with the item before it, so it never opens a chunk: its own spacing
+// rule tells the first of a list from the rest
+export function chunkItems(items: ProcessItem[], size: number): ItemChunk[] {
+  const out: ItemChunk[] = [];
+  let rows = 0;
+  items.forEach((item, at) => {
+    const last = out[out.length - 1];
+    if (last && (rows < size || isText(item))) last.items.push(item);
+    else { out.push({ id: item.id, items: [item], afterText: isText(items[at - 1]) }); rows = 0; }
+    rows += itemRows(item, true);
+  });
+  return out;
+}

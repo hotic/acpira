@@ -32,6 +32,16 @@
   & > .row-lead { margin-top: calc((var(--text-2-lh) - var(--lead)) / 2); }
 }
 
+/* Bottom follow's sub-pixel pad (useBottomFollow.ts writes it on a transcript's content element), read only there.
+   Non-inherited like the fades' below: unregistered, each change restyled every element of the transcript. An engine
+   without @property still gets the pad, at that cost */
+@property --follow-lead { syntax: '<length>'; inherits: false; initial-value: 0px; }
+/* A following transcript's content: its top padding (pt-pad-y; --pad-y itself, the --spacing- alias reads the root
+   density) plus the pad */
+@utility follow-pad {
+  padding-top: calc(var(--pad-y) + var(--follow-lead, 0px));
+}
+
 /* The fades' edge sizes are read only by the scroller that sets them. Non-inherited, so an edge flag flipping (the session
    list leaving its top, the transcript its bottom) restyles that one element instead of every row inside it */
 @property --fade-top { syntax: '<length>'; inherits: false; initial-value: 0px; }
@@ -160,7 +170,7 @@
   /* Session list rows (SessionList's Item): a store lists hundreds of them, and the ones out of sight skip layout and
      paint (a mark's 3D flip card is a compositor layer each) until they near the viewport. One row tall until laid out once */
   [data-session] { content-visibility: auto; contain-intrinsic-block-size: auto var(--row); }
-  /* Transcript exchanges: one marked as laid out at its real size (chat/exchangeSkip.ts, never in WebKit) skips style,
+  /* Transcript exchanges: one marked as laid out at its real size (chat/exchangeSkip.ts) skips style,
      layout and paint out of sight and keeps that size, so the thread's height does not move when it comes back */
   [data-exchange] { contain-intrinsic-block-size: auto var(--row); }
   [data-exchange][data-seen] { content-visibility: auto; }
@@ -243,13 +253,17 @@
   /* A tool's row sits in a box-less `[data-calls]` wrapper (ToolCall / ToolGroup), which takes no margin: its row does */
   .process-content > :is(.acp-prose, .steered-message):not(:first-child),
   .process-content > :is(.acp-prose, .steered-message) + :not([data-calls]),
-  .process-content > :is(.acp-prose, .steered-message) + [data-calls] > * {
+  .process-content > :is(.acp-prose, .steered-message) + [data-calls] > *,
+  /* A long process is cut into chunks (chat/ProcessChunks.tsx): the row that follows text across a cut */
+  .process-content > [data-after-text] > :first-child:not([data-calls]),
+  .process-content > [data-after-text] > [data-calls]:first-child > * {
     margin-block-start: calc(var(--process-prose-gap) - var(--process-row-gap));
   }
 
   /* The context report pointing at calls (chat/reportLink.ts): their rows lit on a band, the rest of the thread dimmed.
      The dim is important, so a box's own opacity utility (a fold's head holds opacity-100) cannot keep it lit.
      `data-ctx-fade` keeps the transition on an element let go, so it fades back too */
+
   :is([data-ctx-dim], [data-ctx-lit], [data-ctx-fade]) {
     transition: opacity var(--dur-open), background-color var(--dur-open), box-shadow var(--dur-open);
   }

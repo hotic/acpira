@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorOffset, followsBottom, pressAnchorNode, scrollerUsable } from '../chat/promptStuck';
+import { anchorOffset, followsBottom, pressAnchorNode, readingAnchor, readingOffset, scrollerUsable } from '../chat/promptStuck';
 
 describe('followsBottom', () => {
   it('keeps following when a late scroll event reads a gap left by a second viewport shrink', () => {
@@ -155,5 +155,55 @@ describe('anchorOffset', () => {
     expect(anchorOffset({ isConnected: true, getClientRects: () => ({ length: 1 }), getBoundingClientRect: () => ({ top: 348 }) }, scroller)).toBe(300);
     expect(anchorOffset({ isConnected: false, getClientRects: () => ({ length: 1 }), getBoundingClientRect: () => ({ top: 348 }) }, scroller)).toBeUndefined();
     expect(anchorOffset({ isConnected: true, getClientRects: () => ({ length: 0 }), getBoundingClientRect: () => ({ top: 0 }) }, scroller)).toBeUndefined();
+  });
+});
+
+describe('readingAnchor', () => {
+  // A box at `top` (viewport coordinates), `height` tall
+  interface Box { top: number; height: number; kids?: Box[]; sticky?: boolean; overflowY?: string; isConnected?: boolean }
+  const box = (b: Box) => ({
+    ...b,
+    isConnected: b.isConnected ?? true,
+    children: b.kids ?? [],
+    clientTop: 0,
+    hasAttribute: (name: string) => name === 'data-sticky-prompt' && !!b.sticky,
+    getClientRects: () => ({ length: 1 }),
+    getBoundingClientRect: () => ({ top: b.top, height: b.height, bottom: b.top + b.height }),
+  }) as unknown as Element;
+  const wrap = (kids: Box[]): Box => ({ top: kids[0]!.top, height: kids.at(-1)!.top + kids.at(-1)!.height - kids[0]!.top, kids: kids.map(k => box(k) as unknown as Box) });
+  const overflow = (node: Element) => (node as unknown as Box).overflowY ?? 'visible';
+  const scroller = box({ top: 100, height: 600 });
+
+  it('descends to the block the top edge cuts and says how far down it the edge falls', () => {
+    const cut = { top: 60, height: 80 };
+    const content = box(wrap([{ top: -400, height: 300 }, wrap([{ top: -100, height: 160 }, cut, { top: 140, height: 50 }])]));
+    const anchor = readingAnchor(content, scroller, overflow)!;
+    expect(anchor.node.getBoundingClientRect()).toMatchObject(cut);
+    expect(anchor.part).toBe(0.5);
+    expect(anchor.at).toBe(0);
+    // Pushed down by a re-wrap above and a line taller itself: where the same point of the block shows now
+    expect(readingOffset({ ...anchor, node: box({ top: 150, height: 100 }) }, scroller)).toBe(100);
+    expect(readingOffset({ ...anchor, node: box({ top: 150, height: 100, isConnected: false }) }, scroller)).toBeUndefined();
+  });
+
+  it('reads under a stuck prompt and never anchors on a prompt', () => {
+    const below = { top: 150, height: 40 };
+    const stuck = box(wrap([{ top: 100, height: 60, sticky: true }, { top: 120, height: 20 }, below]));
+    const hit = readingAnchor(stuck, scroller, overflow)!;
+    expect(hit.node.getBoundingClientRect()).toMatchObject(below);
+    expect(hit.at).toBe(60);
+    const inPlace = box(wrap([{ top: 130, height: 60, sticky: true }, { top: 200, height: 40 }]));
+    expect(readingAnchor(inPlace, scroller, overflow)!.node.getBoundingClientRect()).toMatchObject({ top: 200 });
+  });
+
+  it('stops at a box that scrolls on its own and at one starting in view', () => {
+    const inner = wrap([{ top: 0, height: 150 }, { top: 150, height: 150 }]);
+    const content = box(wrap([{ ...inner, overflowY: 'auto' }]));
+    const anchor = readingAnchor(content, scroller, overflow)!;
+    expect(anchor.node.getBoundingClientRect()).toMatchObject({ top: 0, height: 300 });
+    expect(anchor.part).toBeCloseTo(1 / 3);
+    const whole = box(wrap([wrap([{ top: 130, height: 40 }, { top: 170, height: 40 }])]));
+    expect(readingAnchor(whole, scroller, overflow)!.node.getBoundingClientRect()).toMatchObject({ top: 130, height: 80 });
+    expect(readingAnchor(box({ top: 0, height: 50, kids: [] }), scroller, overflow)).toBeUndefined();
   });
 });

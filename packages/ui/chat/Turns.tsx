@@ -24,7 +24,8 @@ import { ToolCall } from './ToolCall';
 import { RetryRow } from './RetryRow';
 import { ToolGroup } from './ToolGroup';
 import { blockItemId, blockSettled, continuingToolItem, foldStates, groupProcess, isDelegation, itemEntrance, itemSettled, processParts, type FoldPart, type ProcessItem } from './processGroups';
-import { useHeadWindow, useTailWindow } from './tailWindow';
+import { useTailWindow } from './tailWindow';
+import { ProcessChunks } from './ProcessChunks';
 import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
 import { useFollowing } from './useBottomFollow';
 import { Prose } from './Prose';
@@ -679,12 +680,8 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   const parts = useMemo(() => activeProcess ? processParts(items) : EMPTY_PARTS, [activeProcess, items]);
   // Only items fold; a process of nothing but delegations has no chevron
   const foldable = activeProcess ? parts.some(part => part.type === 'items') : blocks.length > 0;
-  const root = useRef<HTMLDivElement>(null);
-  const tail = useTailWindow(items.length, running, root);
-  // Opened by hand, a long settled process mounts its head first and the rest once the panel has opened
-  const headEnd = useHeadWindow(items.length, open, running, root);
-  const skips = useMemo(() => partSkips(parts, tail.start), [parts, tail.start]);
-  const takes = useMemo(() => partTakes(parts, headEnd), [parts, headEnd]);
+  // A fold opened by hand is read from its head; a working turn's, or one that mounts open, from its end too
+  const bornOpen = useRef(open).current;
   const mounted = useRef(!retired);
   if (!retired) mounted.current = true;
   if (!mounted.current && blocks.length === 0) return null;
@@ -698,7 +695,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
     </Collapsible.Trigger>
   );
   return (
-    <Collapsible.Root ref={root} open={open} onOpenChange={toggle} className={cn(
+    <Collapsible.Root open={open} onOpenChange={toggle} className={cn(
       'group flex min-w-0 flex-col transition-[margin-bottom] duration-(--dur-open) ease-out',
       // The root is the reply stack's flex item; an inner margin cannot cancel its sibling gap.
       retired && blocks.length === 0 && '-mb-gap [transition-delay:var(--dur-open)]',
@@ -712,24 +709,26 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
       )}
       {blocks.length > 0 && (
         <ImageInFoldContext.Provider value={open}>
-          <AutoFoldContext.Provider value={store}><QuietEntranceContext.Provider value={tail.quiet}>
+          <AutoFoldContext.Provider value={store}>
             {activeProcess ? parts.map((part, i) => {
               // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
               // the head (or the previous card) once they have folded away
-              if (part.type === 'steer') return skips[i] ? null : (
+              if (part.type === 'steer') return (
                 <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)">
                   <EntranceOnce id={itemEntrance(part.id)}><SteeredMessage block={part.block} /></EntranceOnce>
                 </div>
               );
               // The subagent rows of a delegation sit the same way: in the stream while the parts show, under the head
               // once they have folded away, and never as a fold of their own (each row enters by itself, as before)
-              if (part.type === 'subagents') return skips[i] ? null : (
+              if (part.type === 'subagents') return (
                 <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)"><DelegatedSubagents ids={part.ids} /></div>
               );
               // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
               const body = (
                 <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
-                  <ProcessHistory><ProcessBlocks blocks={blocks} items={skips[i] || takes[i]! < part.items.length ? part.items.slice(skips[i], takes[i]) : part.items} continuing={continuing} /></ProcessHistory>
+                  <ProcessHistory>
+                    <ProcessChunks items={part.items} open={open} tail={running || bornOpen}>{rows => <ProcessBlocks blocks={blocks} items={rows} continuing={continuing} />}</ProcessChunks>
+                  </ProcessHistory>
                 </div>
               );
               // Nested rows extend their hit area beyond the text column; the clip reserves the turn padding (wider than
@@ -738,7 +737,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
                 ? <Collapsible.Panel key={part.id} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Panel>
                 : <Collapsible.Section key={part.id} open={open} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Section>;
             }) : <Collapsible.Panel key={blockItemId(blocks[0]!, 0)} className="-mx-pad [&>div]:px-pad">{null}</Collapsible.Panel>}
-          </QuietEntranceContext.Provider></AutoFoldContext.Provider>
+          </AutoFoldContext.Provider>
         </ImageInFoldContext.Provider>
       )}
       {!open && imageResults.length > 0 && (
@@ -763,31 +762,6 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   && prev.turn.retry === next.turn.retry
   && prev.turn.error === next.turn.error
   && waitState(prev.turn) === waitState(next.turn));
-
-// Per part, what the tail window leaves out of it: the leading items of an items part, all of a hidden steered prompt or
-// delegation point. Parts stay in place (an emptied first part still holds the root's panel), so nothing remounts as
-// the window grows
-function partSkips(parts: FoldPart[], start: number): number[] {
-  let at = 0;
-  return parts.map(part => {
-    const size = part.type === 'steer' ? 1 : part.type === 'subagents' ? part.ids.length : part.items.length;
-    const skip = Math.min(size, Math.max(0, start - at));
-    at += size;
-    return skip;
-  });
-}
-
-// Per part, how much of it the head window covers, counted from the part's start. Only an items part is cut to it: a
-// steered prompt or delegation point shows while the fold is closed, so it stays whatever the window has reached
-function partTakes(parts: FoldPart[], end: number): number[] {
-  let at = 0;
-  return parts.map(part => {
-    const size = part.type === 'steer' ? 1 : part.type === 'subagents' ? part.ids.length : part.items.length;
-    const take = Math.min(size, Math.max(0, end - at));
-    at += size;
-    return take;
-  });
-}
 
 // The outer fold's close (--dur-close) and a frame or two: rows inside hold still until it has finished
 const SETTLE_MS = 400;

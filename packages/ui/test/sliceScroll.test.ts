@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { captureSliceScroll, restoreSliceScroll } from '../chat/sliceScroll';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { captureSliceScroll, overriddenBy, readerScrolling, restoreSliceScroll } from '../chat/sliceScroll';
 
 // Model the browser's rounded scrollHeight separately from its fractional layout and scroll offset.
 function transcript(step: number, bottom: boolean, initialHeight = 1000.25) {
@@ -72,5 +72,59 @@ describe('history slice scroll anchoring', () => {
 
   it('does not capture a scroller without transcript content', () => {
     expect(captureSliceScroll({ firstElementChild: null } as HTMLElement)).toBeUndefined();
+  });
+});
+
+describe('history slices and the reader\'s own scroll', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function reader(scrollTop = 500) {
+    const handlers = new Map<string, () => void>();
+    const scroller = { scrollTop, addEventListener: (type: string, handler: () => void) => { handlers.set(type, handler); } } as unknown as HTMLElement;
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    return { scroller, fire: (type: string) => handlers.get(type)!(), wait: (ms: number) => { now += ms; } };
+  }
+
+  it('holds a slice from the wheel until its scroll events have stopped', () => {
+    const view = reader();
+    expect(readerScrolling(view.scroller)).toBe(false);
+    view.fire('wheel');
+    expect(readerScrolling(view.scroller)).toBe(true);
+    // The animation the notch started keeps scrolling with no further input
+    for (let i = 0; i < 20; i++) {
+      view.wait(16);
+      view.fire('scroll');
+    }
+    expect(readerScrolling(view.scroller)).toBe(true);
+    view.wait(200);
+    expect(readerScrolling(view.scroller)).toBe(false);
+  });
+
+  it('does not take the page\'s own scroll for the reader\'s', () => {
+    const view = reader();
+    readerScrolling(view.scroller);
+    view.fire('scroll');
+    expect(readerScrolling(view.scroller)).toBe(false);
+  });
+
+  it('lets a slice land for a reader stopped at the top of what is mounted', () => {
+    const view = reader(0);
+    readerScrolling(view.scroller);
+    view.fire('wheel');
+    expect(readerScrolling(view.scroller)).toBe(false);
+  });
+
+  it('tells a drop by a landed slice\'s height from the reader\'s scroll', () => {
+    const heights = [3957, 4427, 6778];
+    expect(overriddenBy(heights, 40)).toBe(0);
+    expect(overriddenBy(heights, 3000)).toBe(0);
+    // One slice, with a few pixels the reader scrolled in that frame; it is undone once
+    expect(overriddenBy(heights, 4436)).toBe(4427);
+    expect(heights).toEqual([3957, 6778]);
+    expect(overriddenBy(heights, 4436)).toBe(0);
+    // Two slices whose commits were overridden in the same frame
+    expect(overriddenBy(heights, 3957 + 6778 + 3)).toBe(3957 + 6778);
+    expect(heights).toEqual([]);
   });
 });
