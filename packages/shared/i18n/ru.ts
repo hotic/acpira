@@ -225,6 +225,7 @@ export const ru = {
   'session.add': 'Создать',
   'desktop.hideSidebar': 'Скрыть боковую панель',
   'desktop.showSidebar': 'Показать боковую панель',
+  'desktop.sidebar': 'Боковая панель',
   'desktop.hideSessions': 'Скрыть список сессий',
   'desktop.showSessions': 'Показать список сессий',
   'desktop.sessionList': 'Список сессий',

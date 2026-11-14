@@ -217,6 +217,7 @@
   "session.add": "Nuevo",
   "desktop.hideSidebar": "Ocultar barra lateral",
   "desktop.showSidebar": "Mostrar barra lateral",
+  "desktop.sidebar": "Barra lateral",
   "desktop.hideSessions": "Ocultar lista de sesiones",
   "desktop.showSessions": "Mostrar lista de sesiones",
   "desktop.sessionList": "Lista de sesiones",

@@ -762,12 +762,14 @@ export function Shell(p: ShellProps) {
     else if (columnHidden) { hideColumn(false); requestAnimationFrame(focus); }
     else focus();
   };
-  // ⌘N new session, ⌘K search, ⌘O open a folder, ⌘, settings, ⌘[ / ⌘] back and forward (Ctrl elsewhere); the latest
+  // ⌘N new session, ⌘K search, ⌘B the left column, ⌘O open a folder, ⌘, settings, ⌘[ / ⌘] back and forward (Ctrl elsewhere); the latest
   // closures through a ref. A narrow window's title row has no back and forward buttons, so the keys are their way there
   // ⌥⌘B: the tool panel, or the session column at the right edge in the files layout
   const rightSide = files ? toggleSessions : () => panel.toggle();
-  const keys = useRef({ newIn, addProject, focusSearch, rightSide, back: trail.back, forward: trail.forward });
-  keys.current = { newIn, addProject, focusSearch, rightSide, back: trail.back, forward: trail.forward };
+  // ⌘B: the column at the left edge. The explorer in the files layout, else the session column (a narrow window's drawer)
+  const leftSide = files ? () => panel.toggleExplorer() : () => (canDock ? hideColumn(!columnHidden) : drawerOpen ? closeDrawer() : openDrawer());
+  const keys = useRef({ newIn, addProject, focusSearch, leftSide, rightSide, back: trail.back, forward: trail.forward });
+  keys.current = { newIn, addProject, focusSearch, leftSide, rightSide, back: trail.back, forward: trail.forward };
   const openSettings = p.onOpenSettings;
   useEffect(() => {
     if (!desktop) return;
@@ -777,6 +779,7 @@ export function Shell(p: ShellProps) {
       const step = key === '[' ? keys.current.back : key === ']' ? keys.current.forward : undefined;
       if (key === 'n') keys.current.newIn();
       else if (key === 'k') keys.current.focusSearch();
+      else if (key === 'b') keys.current.leftSide();
       else if (key === 'o' && on.pickFolder) keys.current.addProject();
       else if (key === ',' && openSettings) openSettings();
       else if (step) step();
@@ -791,6 +794,7 @@ export function Shell(p: ShellProps) {
     if (command === 'newSession') keys.current.newIn();
     else if (command === 'search') keys.current.focusSearch();
     else if (command === 'openFolder') keys.current.addProject();
+    else if (command === 'sidebar') keys.current.leftSide();
     else if (command === 'toolPanel') keys.current.rightSide();
     else if (command === 'browser') panel.openBrowser();
   }, []);
@@ -1429,8 +1433,8 @@ export function Shell(p: ShellProps) {
           {/* Last, so it stays over the drawer of a narrow window. The files layout's left column is the explorer */}
           {desktop && <TitleRow onBack={trail.back} onForward={trail.forward}
             column={files
-              ? { open: !explorerHidden, drawer: false, onToggle: () => panel.toggleExplorer() }
-              : { open: canDock ? !columnHidden : drawerOpen, drawer: !canDock, onToggle: () => canDock ? hideColumn(!columnHidden) : drawerOpen ? closeDrawer() : openDrawer() }} />}
+              ? { open: !explorerHidden, drawer: false, onToggle: leftSide }
+              : { open: canDock ? !columnHidden : drawerOpen, drawer: !canDock, onToggle: leftSide }} />}
         </div>
         <SubagentGraph nodes={summoned} sessionTitle={p.title} open={graphOpen && helpers > 0} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
         {filePreview && (

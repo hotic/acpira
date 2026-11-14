@@ -227,6 +227,7 @@ export const zhTW = {
   'session.add': '新增',
   'desktop.hideSidebar': '隱藏側欄',
   'desktop.showSidebar': '顯示側欄',
+  'desktop.sidebar': '側欄',
   'desktop.hideSessions': '隱藏工作階段列表',
   'desktop.showSessions': '顯示工作階段列表',
   'desktop.sessionList': '工作階段列表',

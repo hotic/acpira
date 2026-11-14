@@ -221,6 +221,7 @@
   "session.add": "新規",
   "desktop.hideSidebar": "サイドバーを隠す",
   "desktop.showSidebar": "サイドバーを表示",
+  "desktop.sidebar": "サイドバー",
   "desktop.hideSessions": "セッション一覧を隠す",
   "desktop.showSessions": "セッション一覧を表示",
   "desktop.sessionList": "セッション一覧",

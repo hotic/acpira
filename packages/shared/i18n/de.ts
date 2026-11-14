@@ -223,6 +223,7 @@ export const de = {
   'session.add': 'Neu',
   'desktop.hideSidebar': 'Seitenleiste ausblenden',
   'desktop.showSidebar': 'Seitenleiste einblenden',
+  'desktop.sidebar': 'Seitenleiste',
   'desktop.hideSessions': 'Sitzungsliste ausblenden',
   'desktop.showSessions': 'Sitzungsliste einblenden',
   'desktop.sessionList': 'Sitzungsliste',

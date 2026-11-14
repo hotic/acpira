@@ -221,6 +221,7 @@ export const fr = {
   'session.add': 'Nouveau',
   'desktop.hideSidebar': 'Masquer la barre latérale',
   'desktop.showSidebar': 'Afficher la barre latérale',
+  'desktop.sidebar': 'Barre latérale',
   'desktop.hideSessions': 'Masquer la liste des sessions',
   'desktop.showSessions': 'Afficher la liste des sessions',
   'desktop.sessionList': 'Liste des sessions',

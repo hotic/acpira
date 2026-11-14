@@ -33,7 +33,7 @@ export type WebviewHost = 'sidebar' | 'editor';
 
 // The desktop app's menu bar commands the page carries out (HostMsg shellCommand), each what its shortcut does there; the
 // layout picks write acpira.desktopLayout as the gear menu does; `about` opens settings on About (the updater's check)
-export type ShellCommand = 'newSession' | 'search' | 'openFolder' | 'settings' | 'about' | 'toolPanel' | 'browser' | 'layoutChat' | 'layoutFiles';
+export type ShellCommand = 'newSession' | 'search' | 'openFolder' | 'settings' | 'about' | 'sidebar' | 'toolPanel' | 'browser' | 'layoutChat' | 'layoutFiles';
 
 // The desktop app updating itself (rust/crates/acpira-desktop/src/update/state.rs UpdateState, docs/dev/desktop.md
 // "Updates"): made by the shell, never by the sidecar. `manual` says why this install only links to the release page

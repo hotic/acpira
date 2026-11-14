@@ -221,6 +221,7 @@
   "session.add": "新建",
   "desktop.hideSidebar": "收起侧栏",
   "desktop.showSidebar": "展开侧栏",
+  "desktop.sidebar": "侧栏",
   "desktop.hideSessions": "收起会话列表",
   "desktop.showSessions": "展开会话列表",
   "desktop.sessionList": "会话列表",
