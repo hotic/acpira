@@ -1,5 +1,6 @@
 import { curves } from '@kit.ArkUI';
 import { AgentInfo, SessionSummary } from '../wire/Wire';
+import { GLASS_BARE } from '../design/Glass';
 import { ListMetrics, Metrics, RingMetrics, Type } from '../design/Tokens';
 import { AppModel } from '../store/AppModel';
 import { t } from '../store/L10n';
@@ -200,7 +201,7 @@ export struct NewSession {
           .id('new.folder')
           .padding({ left: Metrics.pad, right: Metrics.pad, top: Metrics.s2, bottom: Metrics.s2 })
           .borderRadius(Metrics.barCtl / 2)
-          .backgroundColor($r('app.color.glass_bg'))
+          .attributeModifier(GLASS_BARE)
           .border({ width: Metrics.hairline, color: $r('app.color.conversation_line') })
           .opacity(this.ring ? 0 : 1)
           .translate({ y: this.ring ? -Metrics.s3 : 0 })
@@ -406,7 +407,7 @@ struct AgentRing {
           .width(RingMetrics.bubble)
           .height(RingMetrics.bubble)
           .borderRadius(RingMetrics.bubble / 2)
-          .backgroundColor($r('app.color.glass_bg'))
+          .attributeModifier(GLASS_BARE)
           .border({ width: Metrics.hairline, color: $r('app.color.conversation_line') })
           .id(`ring:${a.id}`)
           .translate({ x: this.out ? this.spotX(i) : 0, y: this.out ? this.spotY(i) : 0 })
@@ -428,7 +429,7 @@ struct AgentRing {
       .width(RingMetrics.heroTile)
       .height(RingMetrics.heroTile)
       .borderRadius(RingMetrics.heroTile / 2)
-      .backgroundColor($r('app.color.glass_bg'))
+      .attributeModifier(GLASS_BARE)
       .border({ width: Metrics.hairline, color: $r('app.color.conversation_line') })
       .shadow({ radius: ListMetrics.barShadow, color: $r('app.color.line'), offsetY: Metrics.s1 / 2 })
       .onClick(() => this.onOpen(!this.open))

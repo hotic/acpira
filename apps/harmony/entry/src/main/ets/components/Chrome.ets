@@ -1,3 +1,4 @@
+import { GLASS_BAR, GLASS_CONTROL } from '../design/Glass';
 import { ListMetrics, Metrics, Type } from '../design/Tokens';
 import { AppModel, Connection } from '../store/AppModel';
 import { t } from '../store/L10n';
@@ -21,9 +22,7 @@ export struct GlassButton {
     .width(Metrics.barCtl)
     .height(Metrics.barCtl)
     .borderRadius(Metrics.barCtl / 2)
-    .backgroundColor($r('app.color.glass_bg'))
-    .border({ width: Metrics.hairline, color: $r('app.color.glass_line') })
-    .shadow({ radius: ListMetrics.barShadow, color: $r('app.color.line'), offsetY: Metrics.s1 / 2 })
+    .attributeModifier(GLASS_CONTROL)
     .onClick(() => this.onTap())
   }
 }
@@ -39,9 +38,7 @@ export struct GlassCapsule {
     }
     .height(Metrics.barCtl)
     .borderRadius(Metrics.barCtl / 2)
-    .backgroundColor($r('app.color.glass_bg'))
-    .border({ width: Metrics.hairline, color: $r('app.color.glass_line') })
-    .shadow({ radius: ListMetrics.barShadow, color: $r('app.color.line'), offsetY: Metrics.s1 / 2 })
+    .attributeModifier(GLASS_BAR)
   }
 }
 
