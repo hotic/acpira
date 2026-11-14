@@ -3,6 +3,7 @@ import { ArrowUpRight, Check, ChevronRight, ChevronsUpDown, Search, Trash2, X } 
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import { cn } from '../ui/cn';
+import { useRoving } from '../ui/roving';
 import { Card } from '../ui/Card';
 import { IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
@@ -228,21 +229,14 @@ export function Tabs<V extends string>({ items, value, onChange, label }: {
   onChange: (v: V) => void;
   label: string;
 }) {
-  const move = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
-    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-    if (!step) return;
-    e.preventDefault();
-    const next = items[(i + step + items.length) % items.length]!;
-    onChange(next.value);
-    (e.currentTarget.parentElement?.children[items.indexOf(next)] as HTMLElement | undefined)?.focus();
-  };
+  const roving = useRoving<HTMLDivElement>({ select: true });
   // The strip takes the cards' fill, on a page and in a dialog
   return (
-    <div role="tablist" aria-label={label} className="flex h-ctl shrink-0 [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-lg bg-(--settings-card) p-0.5">
-      {items.map((it, i) => {
+    <div {...roving} role="tablist" aria-label={label} className="flex h-ctl shrink-0 [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-lg bg-(--settings-card) p-0.5">
+      {items.map(it => {
         const on = it.value === value;
         return (
-          <button key={it.value} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1} onClick={() => onChange(it.value)} onKeyDown={e => move(e, i)}
+          <button key={it.value} type="button" role="tab" aria-selected={on} onClick={() => onChange(it.value)}
             className={cn('flex h-full min-w-max flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-2 whitespace-nowrap outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
               on ? 'bg-hover text-fg-1' : 'text-fg-2 hover:text-fg-1')}>
             {it.label}

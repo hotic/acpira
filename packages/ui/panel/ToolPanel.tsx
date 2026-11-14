@@ -5,6 +5,7 @@ import { parseRemoteFolder } from '@acpira/shared/remote';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
+import { revealInline, useRoving } from '../ui/roving';
 import { macOS } from '../desktop';
 import { vscodeApi } from '../vscodeApi';
 import { fileUriOf } from '../chat/drafts';
@@ -251,7 +252,8 @@ const TAB = 'group/tab inline-flex h-ctl max-w-[min(var(--panel-tab-max),100%)] 
 // Both desktop layouts shrink tab titles before scrolling. Keep the selected tab whole when
 // its container resizes, without scrollIntoView moving any of the shell's ancestor scrollports.
 export function PanelTabList({ children }: { children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
+  // Arrows move the focus only: a tab here can hold a terminal or a page, so Enter / Space opens it
+  const { ref, onKeyDown } = useRoving<HTMLDivElement>();
   const reveal = useCallback(() => {
     const list = ref.current;
     if (!list) return;
@@ -261,12 +263,8 @@ export function PanelTabList({ children }: { children: ReactNode }) {
       label.style.opacity = label.clientWidth < 2 * parseFloat(getComputedStyle(label).fontSize) ? '0' : '';
     }
     const active = list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-    if (!active) return;
-    const box = list.getBoundingClientRect();
-    const tab = active.getBoundingClientRect();
-    if (tab.left < box.left) list.scrollLeft -= box.left - tab.left;
-    else if (tab.right > box.right) list.scrollLeft += tab.right - box.right;
-  }, []);
+    if (active) revealInline(list, active);
+  }, [ref]);
   useLayoutEffect(reveal);
   useLayoutEffect(() => {
     const list = ref.current;
@@ -275,7 +273,7 @@ export function PanelTabList({ children }: { children: ReactNode }) {
     observer.observe(list);
     return () => observer.disconnect();
   }, [reveal]);
-  return <div ref={ref} role="tablist" aria-label={t('panel.label')} className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">{children}</div>;
+  return <div ref={ref} role="tablist" aria-label={t('panel.label')} onKeyDown={onKeyDown} className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">{children}</div>;
 }
 
 // A tab "+" just made sits under the pointer, its icon where the close button would show: it keeps the icon until the

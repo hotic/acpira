@@ -8,6 +8,7 @@ import { t, useLocale } from '../i18n';
 import { ChipTag } from '../ui/Button';
 import { Row } from '../ui/Row';
 import { cn } from '../ui/cn';
+import { useRoving } from '../ui/roving';
 import { SHADES, shadeLabel, shadeOf } from './categories';
 import { setReportLink } from './link';
 import { Parts } from './Parts';
@@ -62,8 +63,9 @@ function useMeasure(probe: RefObject<HTMLSpanElement | null>, small: RefObject<H
 
 // A quiet segmented control (the tree's order)
 function Segmented<T extends string>({ value, options, onChange, name }: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void; name: string }) {
+  const roving = useRoving<HTMLSpanElement>({ select: true });
   return (
-    <span role="radiogroup" aria-label={name} className="flex items-center gap-px rounded-md bg-active/50 p-px">
+    <span {...roving} role="radiogroup" aria-label={name} className="flex items-center gap-px rounded-md bg-active/50 p-px">
       {options.map(o => (
         <button key={o.id} type="button" role="radio" aria-checked={value === o.id} onClick={() => onChange(o.id)}
           className={cn('h-ctl-sm cursor-pointer rounded-sm px-2 text-3 whitespace-nowrap transition-colors', value === o.id ? 'bg-bg-1 text-fg-1 shadow-xs' : 'text-fg-3 hover:text-fg-1')}>
