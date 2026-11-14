@@ -5,6 +5,7 @@ import { launchable } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder } from '@acpira/shared/remote';
 import { RemoteFolderIcon } from '../remote/RemoteFolderIcon';
 import { cn } from '../ui/cn';
+import { useRoving } from '../ui/roving';
 import { Popover } from '../ui/Popover';
 import { t } from '../i18n';
 import { shortcutLabel } from '../desktop';
@@ -44,6 +45,8 @@ export function StartPicker({ open, agents, current, onPick }: { open: boolean; 
   const [want, setWant] = useState<AgentId>();
   // A pick slides the segments under a still pointer: whichever lands beneath it stays unlit until the pointer moves
   const [settling, setSettling] = useState(false);
+  // Arrows move the focus only: a pick starts that agent's session, so Enter / Space makes it
+  const roving = useRoving<HTMLDivElement>();
   useEffect(() => { if (want === current) setWant(undefined); }, [want, current]);
   const pick = want ?? current;
   const offered = launchable(agents);
@@ -51,7 +54,7 @@ export function StartPicker({ open, agents, current, onPick }: { open: boolean; 
     <div data-start-top data-closed={!open || undefined}>
       <div>
         <div data-picker className="flex">
-          <div role="radiogroup" aria-label={t('common.agent')} className="flex min-w-0 items-center gap-0.5 rounded-lg border border-line p-1"
+          <div {...roving} role="radiogroup" aria-label={t('common.agent')} className="flex min-w-0 items-center gap-0.5 rounded-lg border border-line p-1"
             onPointerMove={() => { if (settling) setSettling(false); }}>
             {offered.map(a => {
               const sel = a.id === pick;
