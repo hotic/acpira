@@ -27,6 +27,10 @@ use crate::terminal::TerminalHub;
 /// Manager events within this window collapse to one post per message type
 pub const BATCH_WINDOW: Duration = Duration::from_millis(30);
 
+/// How long `init` waits for a host session's first view (one SSH round trip plus the host's record read); past it the
+/// page gets init without the session and its view follows as a push
+const HOST_VIEW_WAIT: Duration = Duration::from_secs(2);
+
 pub type Post = Arc<dyn Fn(HostMsg) + Send + Sync>;
 
 /// Streaming updates are dense: within one batch window only the latest message per key survives, and an idle session edge
@@ -281,6 +285,13 @@ impl BridgeCore {
         tokio::select! {
           _ = ensure => {}
           _ = self.view_shown.notified() => {}
+        }
+        // A host session (remote run) is opened by asking its host for a view, and `ensure` returns before that view comes
+        // back: init without it reads as "no project" on a project shell (the desktop's empty sheet flashes), so it waits
+        // for the view, bounded. Looped because `view_shown` may hold a stale wake-up from an earlier push
+        if let Some(id) = self.viewer.active_id() {
+          let until = tokio::time::Instant::now() + HOST_VIEW_WAIT;
+          while manager.awaits_host_view(&id) && tokio::time::timeout_at(until, self.view_shown.notified()).await.is_ok() {}
         }
         // A session another engine runs: its live view, not the read-only record copy shown until the first push lands
         manager.first_view_settled(self.viewer.active_id().as_deref()).await;

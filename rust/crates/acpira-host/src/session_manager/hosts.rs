@@ -688,6 +688,11 @@ impl SessionManager {
     run.shown.lock().get(id).and_then(|s| s.msg.clone())
   }
 
+  /// A host session whose view was asked of its host and has not come back yet
+  pub fn awaits_host_view(&self, id: &str) -> bool {
+    self.host_of(id).is_some_and(|run| run.shown.lock().get(id).is_some_and(|s| s.msg.is_none()))
+  }
+
   pub(super) fn host_cwd(&self, id: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
     struct Head { cwd: String }
