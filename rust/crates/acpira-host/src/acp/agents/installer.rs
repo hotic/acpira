@@ -10,6 +10,9 @@
 //! - Windows runs the PowerShell source with UTF-8 output, TLS 1.2, no progress bars and the proxy on .NET's default
 //!   web proxy (Windows PowerShell 5.1 ignores HTTPS_PROXY)
 //!
+//! - an npm install that fails on the backup folder an interrupted earlier install left behind (`ENOTEMPTY` renaming
+//!   `<pkg>` to `.<pkg>-<hash>`) has that folder removed and runs once more
+//!
 //! Cancelling ends the whole process tree: a POSIX process group, a Windows job object.
 
 use std::collections::{HashMap, VecDeque};
@@ -576,7 +579,23 @@ impl Installs {
         let me = me.clone();
         move || me.push()
       };
-      let outcome = if cancel.is_cancelled() { Outcome::Cancelled } else { run(&plan, cancel, log, push).await };
+      let mut outcome = if cancel.is_cancelled() { Outcome::Cancelled } else { run(&plan, cancel.clone(), log.clone(), push.clone()).await };
+      // An earlier install cut short left npm's backup folder in the way: clear it and try once more
+      // (Known by npm's own error lines, so a vendor script that runs npm inside gets it too)
+      if matches!(outcome, Outcome::Failed(_)) && !cancel.is_cancelled() {
+        let stale = stale_npm_backup(&log.lock().lines()).filter(|p| p.is_dir());
+        if let Some(dir) = stale {
+          match tokio::fs::remove_dir_all(&dir).await {
+            Ok(()) => {
+              log.lock().push(format!("Removed {}, left by an interrupted npm install; retrying", dir.display()));
+              log.lock().push(format!("$ {}", first_line(&line)));
+              push();
+              outcome = run(&plan, cancel, log, push).await;
+            }
+            Err(e) => log.lock().push(format!("Could not remove {}: {e}", dir.display())),
+          }
+        }
+      }
       let ok = outcome == Outcome::Success;
       me.set(&agent, |e| {
         e.cancel = None;
@@ -610,6 +629,31 @@ impl Installs {
       c.cancel();
     }
   }
+}
+
+/// The backup folder npm names in a failed upgrade's log, when that is why it failed. Upgrading `<dir>/<pkg>`, npm
+/// first renames it to `<dir>/.<pkg>-<hash>` (arborist `retire-path.js`: 8 characters of a hash of the path, so the same
+/// every time) and deletes that after the new copy is in place. An install killed in between leaves the backup behind,
+/// and every later install fails renaming onto it with ENOTEMPTY / EEXIST / EPERM. Only a destination of exactly that
+/// shape, next to the package and inside `node_modules`, is returned, so nothing but npm's own leftover is ever removed.
+fn stale_npm_backup(log: &[String]) -> Option<std::path::PathBuf> {
+  // npm 7+ prints `npm error …`, older ones `npm ERR! …`
+  let field = |name: &str| {
+    log.iter().rev().find_map(|l| {
+      let rest = l.strip_prefix("npm error ").or_else(|| l.strip_prefix("npm ERR! "))?;
+      rest.strip_prefix(name)?.strip_prefix(' ').map(str::trim)
+    })
+  };
+  if !matches!(field("code")?, "ENOTEMPTY" | "EEXIST" | "EPERM") || field("syscall")? != "rename" {
+    return None;
+  }
+  let (from, dest) = (Path::new(field("path")?), Path::new(field("dest")?));
+  let name = from.file_name()?.to_str()?;
+  let backup = dest.file_name()?.to_str()?;
+  let hash = backup.strip_prefix('.')?.strip_prefix(name)?.strip_prefix('-')?;
+  let in_node_modules = from.ancestors().any(|a| a.file_name().is_some_and(|n| n == "node_modules"));
+  (dest.parent()? == from.parent()? && in_node_modules && hash.len() == 8 && hash.chars().all(|c| c.is_ascii_alphanumeric()))
+    .then(|| dest.to_path_buf())
 }
 
 /// The first line of a multi-line PowerShell block, for the log's command echo
@@ -751,6 +795,60 @@ mod tests {
     // SAFETY: signal 0 only checks whether the pid exists
     let alive = unsafe { libc::kill(pid, 0) } == 0;
     assert!(!alive, "grandchild {pid} survived the cancel");
+  }
+
+  #[test]
+  fn only_npms_own_backup_folder_is_named_as_stale() {
+    let log = |code: &str, path: &str, dest: &str| -> Vec<String> {
+      [format!("npm error code {code}"), "npm error syscall rename".into(), format!("npm error path {path}"), format!("npm error dest {dest}"), "npm error errno -66".into()].into()
+    };
+    let pkg = "/u/.local/lib/node_modules/@agentclientprotocol/claude-agent-acp";
+    let backup = "/u/.local/lib/node_modules/@agentclientprotocol/.claude-agent-acp-dcSYAPpJ";
+    assert_eq!(stale_npm_backup(&log("ENOTEMPTY", pkg, backup)), Some(backup.into()));
+    // The old prefix of npm 6
+    let old: Vec<String> = log("ENOTEMPTY", pkg, backup).iter().map(|l| l.replace("npm error ", "npm ERR! ")).collect();
+    assert_eq!(stale_npm_backup(&old), Some(backup.into()));
+    // Another failure, another folder, or one outside node_modules is left alone
+    assert_eq!(stale_npm_backup(&log("EACCES", pkg, backup)), None);
+    assert_eq!(stale_npm_backup(&log("ENOTEMPTY", pkg, "/u/.local/lib/node_modules/@agentclientprotocol/codex-acp")), None);
+    assert_eq!(stale_npm_backup(&log("ENOTEMPTY", pkg, "/u/elsewhere/.claude-agent-acp-dcSYAPpJ")), None);
+    assert_eq!(stale_npm_backup(&log("ENOTEMPTY", "/u/x/claude-agent-acp", "/u/x/.claude-agent-acp-dcSYAPpJ")), None);
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn an_npm_backup_left_in_the_way_is_cleared_and_the_install_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let scope = dir.path().join("lib/node_modules/@scope");
+    let pkg = scope.join("pkg");
+    let backup = scope.join(".pkg-AbCd1234");
+    std::fs::create_dir_all(backup.join("dist")).unwrap();
+    // A stand-in for npm: fails like it while the backup exists, succeeds once it is gone
+    let script = dir.path().join("npm");
+    std::fs::write(
+      &script,
+      format!(
+        "#!/bin/sh\nif [ -d '{b}' ]; then printf 'npm error code ENOTEMPTY\\nnpm error syscall rename\\nnpm error path {p}\\nnpm error dest {b}\\n' >&2; exit 190; fi\necho installed\n",
+        b = backup.display(),
+        p = pkg.display()
+      ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let installs = Installs::new(Arc::new(|_| {}));
+    let messages = Messages { node_missing: "node".into(), failed: Box::new(|c| format!("failed {c:?}")), spawn: Box::new(|w| w.to_owned()) };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    // The PATH entry makes `npm` the stand-in (and keeps the plan from probing the real npm)
+    let line = format!("PATH='{}':$PATH npm install -g @scope/pkg", dir.path().display());
+    installs.start("mine", line, Os::Posix, messages, move |ok| {
+      let _ = tx.send(ok);
+    });
+    let ok = rx.await.unwrap();
+    let last = installs.list().pop().unwrap();
+    assert!(ok, "{:?}", last.log);
+    assert!(!backup.exists());
+    assert!(last.log.iter().any(|l| l == "installed"), "{:?}", last.log);
   }
 
   #[tokio::test]
