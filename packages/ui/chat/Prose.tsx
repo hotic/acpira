@@ -8,7 +8,8 @@ import { applyGlyphRuns, createGlyphRuns, seedGlyphRuns, type GlyphRunState } fr
 import { CodeBlock } from './CodeBlock';
 import { scrollbarRoom } from '../ui/scrollbarRoom';
 import { InlineFileCode, Link } from './Link';
-import { decodeLocalImageSrc, rewriteFileHrefs, sameImageSource } from './fileLinks';
+import { decodeLocalImageSrc, parseFileLink, rewriteFileHrefs, sameImageSource } from './fileLinks';
+import { imageMimeOf } from '@acpira/shared/attachments';
 import { AgentImage } from './AgentImage';
 import { mermaidDiagram } from './mermaidPlugin';
 import { useTheme } from '../look';
@@ -219,7 +220,9 @@ function MarkdownImage({ src, alt }: ComponentProps<'img'> & ExtraProps) {
   const written = typeof src === 'string' ? decodeLocalImageSrc(src) : undefined;
   if (written !== undefined) {
     const hit = images?.find(i => i.uri !== undefined && sameImageSource(i.uri, written));
-    return <AgentImage image={hit ?? { mimeType: 'image/png', uri: written }} />;
+    // Until the host's read lands, the type comes from the file name: a GIF declared as PNG would copy as one frame
+    const mimeType = imageMimeOf(parseFileLink(written)?.path ?? written) ?? 'image/png';
+    return <AgentImage image={hit ?? { mimeType, uri: written }} />;
   }
   return typeof src === 'string' ? <img src={src} alt={alt ?? ''} className="max-h-agent-image max-w-full rounded-md" /> : null;
 }
