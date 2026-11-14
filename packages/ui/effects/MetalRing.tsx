@@ -96,7 +96,10 @@ const SVG_STYLE: Record<MetalTheme, CSSProperties> = {
   light: { inset: -1, width: 'calc(100% + 2px)', height: 'calc(100% + 2px)', opacity: 0.2746, mixBlendMode: 'multiply', filter: 'saturate(5.355) brightness(0.78)' },
 };
 const MOVE: CSSProperties = { transformOrigin: '0 0', willChange: 'transform', transition: 'transform 100ms linear' };
-const FADE: CSSProperties = { willChange: 'opacity', transition: 'opacity 100ms linear' };
+// The glow relocates every few seconds, so one of its fades is running most of the time, and each frame of a fade
+// repaints the svg with its masks and blurs. Sixty steps a second read as continuous for a change of brightness; a
+// faster display no longer pays for the frames between
+const FADE: CSSProperties = { willChange: 'opacity', transition: 'opacity 100ms steps(6)' };
 
 interface GlowNodes { halo?: SVGGElement | null; haloInner?: SVGGElement | null; extra?: SVGGElement | null; extraInner?: SVGGElement | null; fade?: SVGCircleElement | null }
 
@@ -104,19 +107,32 @@ function GlowSvg({ id, geo, scale, theme, nodes }: { id: string; geo: RingGeomet
   const { w, h, r } = geo;
   const s = perimeter(w, h, r) / REF_PERIM;
   const line = (half: number) => `M ${-half} 0 L ${half} 0`;
-  const halo = line(Math.max(1, 7.8 * s)), streak = line(Math.max(0.6, (9.13952 / 3) * s));
-  const box = { x: -200 * scale, y: -200 * scale, width: 540 * scale, height: 440 * scale };
-  const filter = (key: string, blur: number) => (
-    <filter key={key} id={`${id}${key}`} {...box} filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB"><feGaussianBlur stdDeviation={blur * scale} /></filter>
-  );
+  const haloHalf = Math.max(1, 7.8 * s), streakHalf = Math.max(0.6, (9.13952 / 3) * s);
+  const halo = line(haloHalf), streak = line(streakHalf);
+  // Filter and mask regions hug what the strokes can paint: WebKit rasterises each region whole, in software, on every
+  // frame the glow moves, so a generous box around a 28 px button was most of a core in its GPU process.
+  // A blurred stroke paints half its width and under three sigma past its line (the blur is three box passes)
+  const spread = ([width, blur]: readonly [number, number, number]) => (width / 2 + 3 * blur) * scale + 1;
+  const filter = (key: string, half: number, v: readonly [number, number, number]) => {
+    const pad = spread(v);
+    return (
+      <filter key={key} id={`${id}${key}`} x={-half - pad} y={-pad} width={2 * (half + pad)} height={2 * pad} filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <feGaussianBlur stdDeviation={v[1] * scale} />
+      </filter>
+    );
+  };
+  // The groups sit on the edge (the catch-light up to `s * scale` outside it) at any angle
+  const reach = (half: number, strokes: readonly (readonly [number, number, number])[]) => { const pad = Math.max(...strokes.map(spread)); return Math.hypot(half + pad, pad); };
+  const pad = Math.ceil(Math.max(reach(haloHalf, HALO), reach(streakHalf, CATCH) + s * scale));
+  const box = { x: -pad, y: -pad, width: w + 2 * pad, height: h + 2 * pad };
   const stroke = (key: string, d: string, [width, , opacity]: readonly [number, number, number]) => (
     <path key={key} d={d} strokeWidth={width * scale} strokeLinecap="round" strokeLinejoin="round" fill="none" opacity={opacity} filter={`url(#${id}${key})`} />
   );
   return (
     <svg aria-hidden="true" className="pointer-events-none absolute overflow-visible" style={SVG_STYLE[theme]} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
       <defs>
-        {HALO.map((v, i) => filter(`h${i}`, v[1]))}
-        {CATCH.map((v, i) => filter(`c${i}`, v[1]))}
+        {HALO.map((v, i) => filter(`h${i}`, haloHalf, v))}
+        {CATCH.map((v, i) => filter(`c${i}`, streakHalf, v))}
         <radialGradient id={`${id}fg`} cx="0.5" cy="0.5" r="0.5">
           <stop offset="0" stopColor="white" /><stop offset="0.3" stopColor="white" /><stop offset="0.65" stopColor="#404040" /><stop offset="1" stopColor="black" />
         </radialGradient>
