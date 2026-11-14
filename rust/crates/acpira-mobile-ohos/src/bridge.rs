@@ -202,19 +202,24 @@ pub fn key_bytes(hex: &str) -> Option<Vec<u8>> {
 
 /// The text of the first QR code found in a greyscale frame (one byte per pixel, `stride` bytes per row: a camera's Y
 /// plane), or `None`. A frame shorter than its size says is read as none. A frame with no code is read again with its
-/// luma turned over: the desktop's dark theme draws the pairing code light on a dark card, which rqrr finds no grid in
-/// (the Android scanner inverts its source the same way)
+/// luma turned over: the desktop's dark theme draws the pairing code light on a dark card (the Android scanner inverts
+/// its source the same way). ZXing reads it, as on Android: the card draws round dots that do not touch, rounded
+/// finder eyes and an open centre, and a decoder that flood-fills for its grid (rqrr) finds none in that
 pub fn decode_qr(grey: &[u8], width: usize, height: usize, stride: usize) -> Option<String> {
   if width == 0 || height == 0 || stride < width || grey.len() < stride * (height - 1) + width {
     return None;
   }
-  let luma = |x: usize, y: usize| grey.get(y * stride + x).copied().unwrap_or(u8::MAX);
-  read_qr(width, height, luma).or_else(|| read_qr(width, height, |x, y| u8::MAX - luma(x, y)))
+  // The rows without their padding
+  let mut luma: Vec<u8> = grey.chunks(stride).take(height).flat_map(|row| &row[..width]).copied().collect();
+  read_qr(&luma, width, height).or_else(|| {
+    luma.iter_mut().for_each(|v| *v = u8::MAX - *v);
+    read_qr(&luma, width, height)
+  })
 }
 
-fn read_qr(width: usize, height: usize, luma: impl FnMut(usize, usize) -> u8) -> Option<String> {
-  let mut img = rqrr::PreparedImage::prepare_from_greyscale(width, height, luma);
-  img.detect_grids().iter().find_map(|g| g.decode().ok().map(|(_, text)| text))
+fn read_qr(luma: &[u8], width: usize, height: usize) -> Option<String> {
+  let found = rxing::helpers::detect_in_luma_slice(luma, width as u32, height as u32, Some(rxing::BarcodeFormat::QR_CODE));
+  found.ok().map(|code| code.getText().to_string())
 }
 
 /// The calls the N-API layer makes, one each, with failures already told as text (`napi.rs` only wraps them): the host
@@ -351,6 +356,55 @@ mod tests {
     assert_eq!(decode_qr(&dark, width, height, stride).as_deref(), Some(link), "a light code on a dark ground");
     assert_eq!(decode_qr(&vec![230u8; stride * height], width, height, stride), None);
     assert_eq!(decode_qr(&grey[..10], width, height, stride), None, "a short frame is no frame");
+  }
+
+  /// A frame of the code as the desktop's pairing card draws it (packages/ui/remote/pairGeometry.ts): round dots that
+  /// do not touch, rounded finder eyes, the centre left open for the mark; `light` as its dark theme
+  fn card_frame(link: &str, scale: usize, light: bool) -> (Vec<u8>, usize, usize, usize) {
+    let code = qrcode::QrCode::new(link).unwrap();
+    let (n, quiet) = (code.width(), 4);
+    assert_eq!(n, 57, "a pairing link takes a version 10 code");
+    let colors = code.to_colors();
+    let side = (n + 2 * quiet) * scale;
+    let (width, height, stride) = (side + 30, side + 10, side + 64);
+    // A screen through a camera reaches neither black nor white
+    let (ink, ground) = if light { (215, 38) } else { (30, 225) };
+    let mut grey = vec![ground; stride * height];
+    let rounded = |x: f64, y: f64, at: f64, bt: f64, side: f64, r: f64| {
+      let inside = x >= at && y >= bt && x <= at + side && y <= bt + side;
+      inside && (x - x.clamp(at + r, at + side - r)).hypot(y - y.clamp(bt + r, bt + side - r)) <= r
+    };
+    let hole = (n - 11) / 2..(n + 11) / 2;
+    for py in 0..n * scale {
+      for px in 0..n * scale {
+        let (x, y) = ((px as f64 + 0.5) / scale as f64, (py as f64 + 0.5) / scale as f64);
+        let (mx, my) = (px / scale, py / scale);
+        let eye = [(0, 0), (n - 7, 0), (0, n - 7)].into_iter().find(|(ex, ey)| (*ex..ex + 7).contains(&mx) && (*ey..ey + 7).contains(&my));
+        let on = match eye {
+          Some((ex, ey)) => {
+            let (ex, ey) = (ex as f64, ey as f64);
+            (rounded(x, y, ex, ey, 7.0, 2.3) && !rounded(x, y, ex + 1.0, ey + 1.0, 5.0, 1.5)) || rounded(x, y, ex + 2.0, ey + 2.0, 3.0, 1.05)
+          }
+          None => {
+            let open = hole.contains(&mx) && hole.contains(&my);
+            !open && colors[my * n + mx] == qrcode::Color::Dark && (x - mx as f64 - 0.5).hypot(y - my as f64 - 0.5) <= 0.42
+          }
+        };
+        if on {
+          grey[(py + quiet * scale) * stride + px + quiet * scale + 20] = ink;
+        }
+      }
+    }
+    (grey, width, height, stride)
+  }
+
+  #[test]
+  fn reads_the_code_as_the_desktop_draws_it() {
+    let link = format!("acpira://pair/{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_".repeat(5));
+    for light in [false, true] {
+      let (grey, width, height, stride) = card_frame(&link, 5, light);
+      assert_eq!(decode_qr(&grey, width, height, stride).as_deref(), Some(link.as_str()), "light on dark: {light}");
+    }
   }
 
   #[test]

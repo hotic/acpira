@@ -41,8 +41,8 @@ pub fn decode_link(link: String) -> Result<NamedComputer> {
   told(call::decode_link(link))
 }
 
-/// A frame's luma copied off the camera buffer, read on libuv's thread pool: rqrr takes tens of milliseconds a frame,
-/// too long for the ArkTS thread, and the tokio worker carries the links
+/// A frame's luma copied off the camera buffer, read on libuv's thread pool: decoding takes too long for the ArkTS
+/// thread, and the tokio worker carries the links
 pub struct DecodeQr {
   grey: Vec<u8>,
   width: usize,
