@@ -5,6 +5,8 @@
 ## Toolchain
 
 - SDK: the public OpenHarmony SDK, one folder per API level holding `ets`, `js`, `native`, `previewer`, `toolchains` (the `L2-SDK-MAC-M1-PUBLIC` archive of a release on `repo.huaweicloud.com/openharmony/os/`, same sha256 as the openharmony-rs GitHub mirror). No Huawei account; DevEco Studio is not needed.
+- From API 26 the folder is the platform version (`26.0.0`) and `compileSdkVersion` that string; a `26/` folder gets "The SDK management mode has changed". 7.0's undated archive is labelled Beta (so is the HAP's `apiReleaseType`); the dated one is Release. `compatibleSdkVersion` stays 20; the native library still links with API 23 (`OHOS_API`).
+- Against 26 every shape `fill` / `stroke` warns "supported since SDK version 26.0.0" (redeclared with a wider type; the method is the old one), as does `TextAreaController`'s SysCap: expected. A call that really is new passes the check only inside a `try` block.
 - hvigor and its OHOS plugin come from the Huawei npm registry (`https://repo.harmonyos.com/npm/`, `@ohos/hvigor`, `@ohos/hvigor-ohos-plugin`, same version). `scripts/build.sh` links that install's `node_modules` into the project (`hvigorfile.ts` imports the plugin by name) and writes `local.properties`.
 - From the Mac, both hosts above can crawl at a few KB/s while the PC fetches them fast; a single slow connection is common, ranged parallel requests are not slowed.
 - The public SDK knows no `phone` device type (`ets/api/device-define`): `module.json5` says `default`.
@@ -34,6 +36,11 @@
 - `orientation` is `follow_desktop`: rotation gated on the fold status leaves a tri-fold's three-screen form in portrait, and a setting per form shows the old turn first after an unfold in the background.
 - `bindSheet` defaults to a popup hung off its host from 840 vp (centred from 600), and the add-computer sheet's host has no size: every sheet asks for `SheetType.CENTER`, still the bottom sheet under 600. Open: not seen on a wide device.
 - `displayPriority` tells children apart only above 1 and only among one container's direct children: the first run's intro is one flat column so a short window (a Pura X's 326 vp square cover screen) drops its lines in order. A `Blank` left at 1 goes with the first thing dropped, and what stays bunches up at the top: spacers take a priority of their own.
+
+## System material
+
+- Glass surfaces take a modifier from `design/Glass.ets`: the system's immersive material (`uiMaterial`, API 26) where the device has it, else the flat fill, as `Compat26.swift` on iOS. The material brings its own fill, border and shadow.
+- Without the module the `uiMaterial` import is undefined, not a throw; the Previewer has none even at 26, so it only draws the stand-in. Open: the material not seen on a device; hilog `AcpiraGlass` says which was taken.
 
 ## Engine wire
 

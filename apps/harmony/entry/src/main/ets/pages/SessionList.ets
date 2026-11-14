@@ -1,4 +1,5 @@
 import { SessionSection, SessionSummary } from '../wire/Wire';
+import { GLASS_BAR, GLASS_PILL } from '../design/Glass';
 import { ListMetrics, Metrics, Type } from '../design/Tokens';
 import { AppModel, Connection } from '../store/AppModel';
 import { currentLocale, t } from '../store/L10n';
@@ -47,6 +48,15 @@ function rowKey(s: SessionSummary): string {
 }
 
 const CHATS_KEY: string = ' chats';
+
+/** The sidebar's search field: a flat fill where the phone's bar has glass */
+class SideField implements AttributeModifier<RowAttribute> {
+  applyNormalAttribute(instance: RowAttribute): void {
+    instance.backgroundColor($r('app.color.bg2'));
+  }
+}
+
+const SIDE_FIELD: SideField = new SideField();
 
 @ComponentV2
 export struct SessionList {
@@ -616,10 +626,7 @@ export struct SessionList {
     .padding({ left: Metrics.pad, right: Metrics.pad })
     .height(this.sidebar ? Metrics.ctl : Metrics.barCtl)
     .borderRadius(this.sidebar ? Metrics.ctl / 2 : Metrics.barCtl / 2)
-    .backgroundColor(this.sidebar ? $r('app.color.bg2') : $r('app.color.glass_bg'))
-    .border({ width: this.sidebar ? 0 : Metrics.hairline, color: $r('app.color.glass_line') })
-    .shadow(this.sidebar ? { radius: 0, color: Color.Transparent } :
-      { radius: ListMetrics.barShadow, color: $r('app.color.line'), offsetY: Metrics.s1 / 2 })
+    .attributeModifier(this.sidebar ? SIDE_FIELD : GLASS_BAR)
   }
 
   /** The phone's bottom bar: search, and a new session in the latest project */
@@ -668,8 +675,7 @@ export struct SessionList {
         .height(Metrics.barCtl)
         .layoutWeight(1)
         .borderRadius(Metrics.barCtl / 2)
-        .backgroundColor($r('app.color.glass_bg'))
-        .border({ width: Metrics.hairline, color: $r('app.color.glass_line') })
+        .attributeModifier(GLASS_PILL)
         .onClick(() => this.model.paired ? this.onComputers() : this.onSettings())
       }
     }
