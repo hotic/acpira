@@ -274,13 +274,29 @@ function removeWithEmptyWrappers(node: Element, root: HTMLElement) {
   }
 }
 
+// Body of an agent reply: its prose outside the process (fold, tool rows, steered prompts; reasoning is `.acp-thought`)
+// and the media marked `data-share-keep`, which an open fold or a flat tool row holds under the row. Each is lifted to
+// the message root in reading order, so the shot is the same whether the reader opened anything or not
+function keepReplyBody(root: HTMLElement): boolean {
+  if (!root.matches('[data-part="agent-message"]')) return false;
+  const body = [...root.querySelectorAll<HTMLElement>('.acp-prose:not(.acp-thought), [data-share-keep]')].filter(el =>
+    el.hasAttribute('data-share-keep') || !el.parentElement?.closest('[data-process-fold], [data-calls], .steered-message'));
+  // Nested matches ride with their outermost one (prose inside a kept card)
+  const top = body.filter(el => !body.some(other => other !== el && other.contains(el)));
+  if (!top.some(el => el.textContent?.trim() || el.querySelector('img, video, canvas, svg'))) return false;
+  root.replaceChildren(...top);
+  return true;
+}
+
 function cleanShareSubtree(root: HTMLElement, stripRootPad: boolean) {
   root.querySelectorAll('[data-turn-actions], .code-copy, .sr-only').forEach(n => n.remove());
   // Chunks of a long process that have no rows yet (chat/ProcessChunks.tsx) would show as blank bands
   root.querySelectorAll('[data-chunk]:empty').forEach(n => n.remove());
-  // A whole reply is the agent's answer: the reader's own steered prompts and the reasoning stay out, folded or not.
-  // A process fold's head goes too, unless the reader opened it and tool rows are still left under it
-  if (stripRootPad) {
+  // A whole reply is the agent's answer: only its body text and the media it showed, whatever the reader left open
+  // above it (process fold, thoughts, tool rows, steered prompts). A reply with no body falls back to pruning: steered
+  // prompts and reasoning go, folded or not, and a process fold's head goes too, unless the reader opened it and tool
+  // rows are still left under it
+  if (stripRootPad && !keepReplyBody(root)) {
     root.querySelectorAll('.steered-message, .thought-row').forEach(n => removeWithEmptyWrappers(n, root));
     // Each fold's head is its first trigger, taken before any row is removed
     const folds = [...root.querySelectorAll<HTMLElement>('[data-process-fold]')].map(fold => ({ fold, head: fold.querySelector('button[aria-expanded]') }));

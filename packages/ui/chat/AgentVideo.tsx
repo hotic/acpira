@@ -11,7 +11,8 @@ export const ShownVideos = memo(function ShownVideos({ block }: { block: ToolCal
   useLocale();
   const videos = toolVideos(block);
   if (!videos.length) return null;
-  return <div className="flex min-w-0 flex-col gap-gap">{videos.map(video => <AgentVideo key={video.blob ?? video.uri} video={video} />)}</div>;
+  // `data-share-keep`: a reply screenshot keeps these with the body, wherever the row sits (shareCapture.ts)
+  return <div data-share-keep className="flex min-w-0 flex-col gap-gap">{videos.map(video => <AgentVideo key={video.blob ?? video.uri} video={video} />)}</div>;
 });
 
 function AgentVideo({ video }: { video: ImageRef }) {

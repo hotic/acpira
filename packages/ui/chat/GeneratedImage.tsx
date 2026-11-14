@@ -45,8 +45,9 @@ export const GeneratedImages = memo(function GeneratedImages({ block }: { block:
   const images = toolImages(block);
   const slots: (ImageRef | undefined)[] = open && images.length === 0 ? [undefined] : images;
   if (!slots.length) return null;
+  // `data-share-keep`: a reply screenshot keeps these with the body, wherever the row sits (shareCapture.ts)
   return (
-    <div className="flex min-w-0 flex-wrap gap-gap">
+    <div data-share-keep className="flex min-w-0 flex-wrap gap-gap">
       {slots.map((image, i) => live
         ? <GenerationCard key={i} image={image} />
         : image && <AgentImage key={i} image={image} caption={!shown} />)}

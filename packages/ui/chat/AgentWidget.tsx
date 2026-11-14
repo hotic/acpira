@@ -138,8 +138,8 @@ function AgentWidget({ blob, uri, title }: { blob: string; uri?: string; title?:
   );
   return (
     // `data-share-widget`: a reply screenshot swaps the frame for the snapshot the page draws of itself, or leaves the
-    // widget out when none comes back (shareCapture.ts)
-    <div ref={root} data-share-widget className="relative w-full min-w-0">
+    // widget out when none comes back; `data-share-keep` keeps it with the reply's body (shareCapture.ts)
+    <div ref={root} data-share-widget data-share-keep className="relative w-full min-w-0">
       {!ready && <div aria-hidden data-share-skip className={cn('absolute inset-0 rounded-md bg-chip', appearance.motion !== 'none' && 'animate-pulse')} />}
       {doc ? (
         <iframe
