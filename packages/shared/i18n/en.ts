@@ -224,6 +224,7 @@ export const en = {
   'session.add': 'New',
   'desktop.hideSidebar': 'Hide sidebar',
   'desktop.showSidebar': 'Show sidebar',
+  'desktop.sidebar': 'Sidebar',
   'desktop.hideSessions': 'Hide session list',
   'desktop.showSessions': 'Show session list',
   'desktop.sessionList': 'Session list',

@@ -219,6 +219,7 @@
   "session.add": "새로 만들기",
   "desktop.hideSidebar": "사이드바 숨기기",
   "desktop.showSidebar": "사이드바 표시",
+  "desktop.sidebar": "사이드바",
   "desktop.hideSessions": "세션 목록 숨기기",
   "desktop.showSessions": "세션 목록 표시",
   "desktop.sessionList": "세션 목록",

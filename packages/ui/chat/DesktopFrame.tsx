@@ -82,7 +82,7 @@ export function TitleRow({ onBack, onForward, column }: {
         <IconButton title={`${t('desktop.forward')} ${shortcutLabel(']')}`} aria-label={t('desktop.forward')} disabled={!onForward} onClick={onForward} className={STEP}><ArrowRight strokeWidth={1.5} /></IconButton>
       </>}
       {column && (
-        <IconButton data-session-toggle={column.drawer || undefined} aria-expanded={column.drawer ? column.open : undefined} title={label} aria-label={label} onClick={column.onToggle}
+        <IconButton data-session-toggle={column.drawer || undefined} aria-expanded={column.drawer ? column.open : undefined} title={`${label} ${shortcutLabel('B')}`} aria-label={label} onClick={column.onToggle}
           className="aria-expanded:bg-active aria-expanded:text-fg-1">
           <PanelLeft strokeWidth={1.5} />
         </IconButton>

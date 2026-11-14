@@ -15,6 +15,8 @@ pub enum Command {
   Search,
   Settings,
   Browser,
+  /// The column at the left edge: the session list, or the explorer in the files layout
+  Sidebar,
   ToolPanel,
   /// View › Layout, by its DESKTOP_LAYOUTS value
   Layout(&'static str),
@@ -62,13 +64,14 @@ impl Command {
   }
 }
 
-const ALL: [Command; 21] = [
+const ALL: [Command; 22] = [
   Command::NewSession,
   Command::NewWindow,
   Command::OpenFolder,
   Command::Search,
   Command::Settings,
   Command::Browser,
+  Command::Sidebar,
   Command::ToolPanel,
   Command::ShowLog,
   Command::SafeMode,
@@ -208,6 +211,7 @@ pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool, update: Opti
     role: None,
     items: vec![
       item(Command::Search, "session.search", Some("CmdOrCtrl+K")),
+      item(Command::Sidebar, "desktop.sidebar", Some("CmdOrCtrl+B")),
       item(Command::ToolPanel, if layout == "files" { "desktop.sessionList" } else { "panel.label" }, Some("Alt+CmdOrCtrl+B")),
       item(Command::Browser, "desktop.menu.browser", None),
       sep(),
@@ -254,6 +258,7 @@ pub fn shell_command(c: Command) -> Option<&'static str> {
     Command::Search => "search",
     Command::Settings => "settings",
     Command::Browser => "browser",
+    Command::Sidebar => "sidebar",
     Command::ToolPanel => "toolPanel",
     Command::Layout("files") => "layoutFiles",
     Command::Layout(_) => "layoutChat",
@@ -394,8 +399,9 @@ mod tests {
       items
     };
     let files = view("files");
-    assert!(matches!(&files[1], Entry::Item { label, .. } if label == "desktop.sessionList"));
-    let Entry::Submenu { items, .. } = &files[4] else { panic!() };
+    assert!(matches!(&files[1], Entry::Item { command: Command::Sidebar, .. }));
+    assert!(matches!(&files[2], Entry::Item { label, .. } if label == "desktop.sessionList"));
+    let Entry::Submenu { items, .. } = &files[5] else { panic!() };
     assert_eq!(
       items,
       &[
@@ -403,7 +409,7 @@ mod tests {
         Entry::Radio { command: Command::Layout("files"), label: "settings.desktopLayout.files".into(), checked: true },
       ]
     );
-    assert!(matches!(&view("chat")[1], Entry::Item { label, .. } if label == "panel.label"));
+    assert!(matches!(&view("chat")[2], Entry::Item { label, .. } if label == "panel.label"));
   }
 
   #[test]
