@@ -44,8 +44,10 @@
   .bb-fx, .bb-osc { position: absolute; inset: 0; pointer-events: none; }
   .bb-fx[data-state="on"] { --bb-fade: 1; animation: bb-in 0.6s ease; }
   .bb-fx[data-state="off"] { --bb-fade: 0; animation: bb-out 0.5s ease; }
-  .bb[data-bb="md"] .bb-fx[data-state="on"] { animation: bb-spin 1.96s linear infinite, bb-in 0.6s ease; }
-  .bb[data-bb="md"] .bb-fx[data-state="off"] { animation: bb-spin 1.96s linear infinite, bb-out 0.5s ease; }
+  /* The turn steps sixty times a second: each step repaints three masked layers and has WebKit walk the layer tree, and
+     a faster display would pay for every frame in between for as long as the composer has the focus */
+  .bb[data-bb="md"] .bb-fx[data-state="on"] { animation: bb-spin 1.96s steps(118) infinite, bb-in 0.6s ease; }
+  .bb[data-bb="md"] .bb-fx[data-state="off"] { animation: bb-spin 1.96s steps(118) infinite, bb-out 0.5s ease; }
   .bb[data-bb="line"] .bb-fx[data-state="on"] {
     animation: bb-travel 3.1s linear infinite, bb-edge 3.1s linear infinite, bb-breathe 4s ease-in-out infinite,
       bb-spike 4.1s ease-in-out infinite, bb-spike2 5.3s ease-in-out infinite, bb-in 0.6s ease;

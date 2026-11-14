@@ -1,5 +1,9 @@
 /* Animation: shimmer / enter utilities, streamed graphemes, row entrance, the ConnectedRail growth, keyframes and the reduced-motion kill switch. */
-/* ui/Shimmer: a stationary strong copy is revealed by an animated mask over the muted label. */
+/* ui/Shimmer: a stationary strong copy is revealed by a band sweeping across the muted label. The sweep is two transform
+   animations that cancel out on the text: the band (twice the label wide, its opaque half one label wide: a band, not a
+   wash) carries the mask across, and the copy inside it moves back by as much. Both run on the compositor. Animating
+   mask-position instead restyled a layer on every frame, and WebKit answers any such change by walking the whole layer
+   tree for compositing: over a millisecond a frame beside a long transcript, for as long as anything shimmered. */
 @utility shimmer {
   position: relative;
   display: inline-block;
@@ -8,25 +12,39 @@
 .shimmer-clip {
   position: absolute;
   inset: 0;
-  /* Absolute insets cover the host's padding box; keep both text copies on the same content edge. */
+  /* Absolute insets cover the host's padding box; the padding is handed down so both text copies keep the same content edge. */
   padding: inherit;
   overflow: hidden;
   pointer-events: none;
   color: var(--fg-strong);
-  /* The gradient spans twice the label, so its opaque half is one label wide: a band, not a wash */
+}
+/* Band and copy are the same box (the label's origin, twice its width) moved by the same share of it in opposite
+   directions, so the two transforms cancel to the last fraction: an offset in layout, or a share of two boxes of
+   different widths, is rounded apart for most labels and puts the copy's glyphs between the pixels of the text under them */
+.shimmer-band, .shimmer-copy {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  box-sizing: border-box;
+  padding: inherit;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.shimmer-band {
+  width: 200%;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 35%, #000 65%, transparent);
   mask-image: linear-gradient(90deg, transparent, #000 35%, #000 65%, transparent);
-  -webkit-mask-size: 200% 100%;
-  mask-size: 200% 100%;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  animation: acp-shimmer-mask var(--shimmer-cycle) linear infinite;
+  animation: acp-shimmer-band var(--shimmer-cycle) linear infinite;
 }
+.shimmer-copy { width: 100%; animation: acp-shimmer-copy var(--shimmer-cycle) linear infinite; }
+/* The text itself, in a box the label's size and padding */
+.shimmer-copy > span { position: absolute; inset-block: 0; left: 0; box-sizing: border-box; width: 50%; padding: inherit; }
 /* The strong copy is one colour throughout, even over children that tint the muted text (the goal head's label + objective) */
 .shimmer-clip * { color: inherit; }
 /* A truncated shimmer clips its copy the same way, so the sweep never reveals text hidden behind the ellipsis */
-.shimmer.truncate > .shimmer-clip > span { display: block; overflow: hidden; text-overflow: ellipsis; }
-@keyframes acp-shimmer-mask { from { -webkit-mask-position: 150% 0; mask-position: 150% 0; } to { -webkit-mask-position: -50% 0; mask-position: -50% 0; } }
+.shimmer.truncate .shimmer-copy > span { overflow: hidden; text-overflow: ellipsis; }
+@keyframes acp-shimmer-band { from { transform: translateX(-75%); } to { transform: translateX(25%); } }
+@keyframes acp-shimmer-copy { from { transform: translateX(75%); } to { transform: translateX(-25%); } }
 /* Content that replaces something in place (a prompt card ↔ its inline editor): a plain fade, the container animates its own height.
    Entrances fill backwards (their keyframes only set the start): a forwards fill keeps the finished animation in effect */
 @utility fade-in { animation: acp-fade-in var(--dur-open) ease backwards; }
