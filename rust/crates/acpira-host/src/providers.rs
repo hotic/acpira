@@ -14,6 +14,7 @@ use acpira_agent::llm::discover;
 use acpira_shared::providers::{
   APPROVAL_LEVELS, EFFORTS_FIELD, LocalSource, PROVIDERS_FILE, Thinking, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
   COMPACTION_STRATEGIES, FAST_MODEL_OFF, ProvidersView, WEB_SEARCH_BACKENDS, model_pick, provider_secret_key, web_secret_key,
+  SYNCED_FROM_FIELD,
 };
 
 use crate::accounts::account_store::FileVault;
@@ -160,6 +161,11 @@ impl ProviderStore {
     match action {
       ProviderAction::Save { provider, key } => {
         let id = self.edit(|file| save(file, provider)).await?;
+        // The host's own entry an older helper kept aside is replaced by this save, and its key with it
+        let kept = crate::remote::host_models::kept_secret_key(&id);
+        if self.vault.get(&kept).await?.is_some() {
+          self.vault.delete(&kept).await?;
+        }
         // The key follows the entry: a turn that already sees the new source finds its key a moment later at worst
         match key.as_deref().map(str::trim) {
           Some("") => self.vault.delete(&provider_secret_key(&id)).await?,
@@ -324,6 +330,9 @@ fn normalized(mut p: Provider) -> Provider {
 fn save(file: &mut ProvidersFile, mut p: Provider) -> Result<String> {
   // The page sends back what it was shown, `hasKey` included; that is not part of the file
   p.extra.remove("hasKey");
+  // A source another machine brought here becomes this machine's own once edited here, so that machine's next push
+  // leaves it alone (`remote/host_models.rs`)
+  p.extra.remove(SYNCED_FROM_FIELD);
   p.id = p.id.trim().to_owned();
   p.name = p.name.trim().to_owned();
   p.base_url = p.base_url.trim().trim_end_matches('/').to_owned();
@@ -435,9 +444,12 @@ mod tests {
     // Saving what the page was shown (hasKey included) replaces the entry and keeps the key
     let mut shown = serde_json::to_value(&v.providers[0]).unwrap();
     shown["name"] = json!("DS");
+    // One another machine brought becomes this machine's own once edited here
+    shown["syncedFrom"] = json!({ "machine": "mac", "name": "Mac" });
     save(serde_json::from_value(shown).unwrap(), None).await.unwrap();
     let v = s.view().await;
     assert_eq!((v.providers[0].provider.name.as_str(), v.providers[0].has_key, v.providers.len()), ("DS", true, 2));
+    assert!(!v.providers[0].provider.extra.contains_key(SYNCED_FROM_FIELD));
 
     s.apply(ProviderAction::Delete { id: "deepseek".into() }).await.unwrap();
     assert_eq!(s.view().await.providers.len(), 1);

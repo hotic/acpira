@@ -3,8 +3,8 @@
 //! connected host, when it connects and whenever they change here; the host's built-in agent picks the file up by itself.
 //!
 //! `merge` is the helper's side. A source it writes names the machine that brought it (`SYNCED_FROM_FIELD`), and only
-//! that machine's entries are replaced or taken away again; what the host had under the same id is kept inside the
-//! entry and comes back once this machine no longer carries the source. `ModelMirror` is this engine's side
+//! that machine's entries are replaced or taken away again. The host's own source under the same id wins: a host is
+//! often a machine the user also sits at, and its settings page edits that file. `ModelMirror` is this engine's side
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -61,8 +61,8 @@ fn is_loopback(url: &str) -> bool {
   host == "localhost" || host.ends_with(".localhost") || host == "::1" || host == "0.0.0.0" || host.starts_with("127.")
 }
 
-/// The vault key holding the key of the source a carried one stands in for
-fn kept_secret_key(id: &str) -> String {
+/// The vault key holding the key of the host's own source a carried one stood in for (written by older helpers)
+pub fn kept_secret_key(id: &str) -> String {
   // A source id holds no `/`, so this never meets another source's key
   format!("{}/kept", provider_secret_key(id))
 }
@@ -96,18 +96,24 @@ pub async fn merge(root: &Path, machine: &str, name: &str, carried: Carried) -> 
     let before = shape.clone();
     let incoming: HashSet<&str> = carried.providers.iter().map(|p| p.id.as_str()).collect();
 
-    // Sources this machine brought before and no longer carries: the host's own entry comes back, else the source goes
+    // Entries brought here before: one standing in for the host's own source (an older helper replaced it) gives the
+    // host's entry and key back, whoever brought it; one this machine brought and no longer carries goes
     let mut list = Vec::with_capacity(shape.providers.len());
     for p in std::mem::take(&mut shape.providers) {
-      let mine = brought_by(&p).filter(|(m, _)| *m == machine && !incoming.contains(p.id.as_str())).map(|(_, kept)| kept.cloned());
-      let Some(kept) = mine else {
+      let Some((from, kept)) = brought_by(&p) else {
         list.push(p);
         continue;
       };
-      let own = vault.get(&kept_secret_key(&p.id)).await?;
-      set_secret(&vault, &provider_secret_key(&p.id), own.as_deref()).await?;
+      let own = kept.and_then(|k| serde_json::from_value::<Provider>(k.clone()).ok());
+      let gone = from == machine && !incoming.contains(p.id.as_str());
+      if own.is_none() && !gone {
+        list.push(p);
+        continue;
+      }
+      let own_key = vault.get(&kept_secret_key(&p.id)).await?;
+      set_secret(&vault, &provider_secret_key(&p.id), own_key.as_deref()).await?;
       set_secret(&vault, &kept_secret_key(&p.id), None).await?;
-      match kept.and_then(|k| serde_json::from_value::<Provider>(k).ok()) {
+      match own {
         Some(own) => list.push(own),
         // As a deletion on the settings page: search that went through the source goes back to its default
         None if shape.web_search_via.as_deref() == Some(p.id.as_str()) => shape.web_search_via = None,
@@ -117,24 +123,13 @@ pub async fn merge(root: &Path, machine: &str, name: &str, carried: Carried) -> 
 
     for mut p in carried.providers {
       let slot = list.iter().position(|e| e.id == p.id);
-      let kept = match slot.map(|i| &list[i]) {
-        // Another machine's copy of the source: what it stands in for is handed on
-        Some(e) if e.extra.contains_key(SYNCED_FROM_FIELD) => e.extra.get(SYNCED_FROM_FIELD).and_then(|f| f.get("kept")).cloned(),
-        // The host's own: kept, with its key, until this machine stops carrying the source
-        Some(e) => {
-          let own = vault.get(&provider_secret_key(&p.id)).await?;
-          set_secret(&vault, &kept_secret_key(&p.id), own.as_deref()).await?;
-          Some(serde_json::to_value(e)?)
-        }
-        None => None,
-      };
+      // The host's own source under this id wins: it is never stood in for
+      if slot.is_some_and(|i| !list[i].extra.contains_key(SYNCED_FROM_FIELD)) {
+        continue;
+      }
       // The key first: a turn that already sees the source finds its key with it
       set_secret(&vault, &provider_secret_key(&p.id), carried.keys.get(&p.id).map(String::as_str)).await?;
-      let mut from = json!({ "machine": machine, "name": name });
-      if let Some(k) = kept {
-        from["kept"] = k;
-      }
-      p.extra.insert(SYNCED_FROM_FIELD.into(), from);
+      p.extra.insert(SYNCED_FROM_FIELD.into(), json!({ "machine": machine, "name": name }));
       match slot {
         Some(i) => list[i] = p,
         None => list.push(p),
@@ -323,57 +318,70 @@ mod tests {
     assert!(!travels(&brought), "a source brought here is not carried onwards");
   }
 
-  /// The host's own source under the same id is stood in for and comes back with its key; another machine's sources
-  /// and the host's other entries are never touched
+  /// The host's own source under the same id wins and its key is never touched; another machine's sources and the
+  /// host's other entries are never touched either
   #[tokio::test]
   async fn a_machine_replaces_and_takes_back_only_what_it_brought() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::write(root.join(PROVIDERS_FILE), json!({ "approval": "full", "webSearchVia": "extra", "providers": [
-      { "id": "gw", "baseUrl": "http://127.0.0.1:4000/v1", "models": [{ "id": "old" }] },
+      { "id": "gw", "format": "openai-chat", "baseUrl": "https://gw.test/v1", "models": [{ "id": "old" }] },
       { "id": "own", "baseUrl": "https://own.test/v1" },
     ] }).to_string()).unwrap();
     std::fs::write(root.join("secrets.json"), json!({ "acpira.provider.gw": "host-key", "acpira.provider.own": "own-key" }).to_string()).unwrap();
 
-    let gw = source("gw", "https://gw.test/v1", &["old", "new"]);
+    let mut gw = source("gw", "https://gw.test/v1", &["old", "new"]);
+    gw.format = "anthropic".into();
     let extra = source("extra", "https://extra.test/v1", &["x"]);
     assert!(merge(root, "mac", "Mac", carried(&[(gw.clone(), Some("mac-key")), (extra.clone(), None)])).await.unwrap());
     let file = read(root, PROVIDERS_FILE);
     let ids: Vec<&str> = file["providers"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["gw", "own", "extra"]);
-    assert_eq!(file["providers"][0]["baseUrl"], "https://gw.test/v1");
-    assert_eq!(file["providers"][0]["models"].as_array().unwrap().len(), 2);
-    assert_eq!(file["providers"][0]["syncedFrom"]["name"], "Mac");
+    let gw_now = &file["providers"][0];
+    assert_eq!((gw_now["format"].as_str(), gw_now["models"].as_array().unwrap().len()), (Some("openai-chat"), 1), "the host's own gw stays");
+    assert!(gw_now.get("syncedFrom").is_none());
+    assert_eq!(file["providers"][2]["syncedFrom"]["name"], "Mac");
     assert_eq!(file["approval"], "full", "the host's own settings stay");
     let secrets = read(root, "secrets.json");
-    assert_eq!(secrets["acpira.provider.gw"], "mac-key");
-    assert_eq!(secrets["acpira.provider.gw/kept"], "host-key");
-    assert_eq!(secrets["acpira.provider.own"], "own-key");
-    assert!(secrets.get("acpira.provider.extra").is_none());
+    assert_eq!(secrets, json!({ "acpira.provider.gw": "host-key", "acpira.provider.own": "own-key" }));
 
     // The same again changes nothing
-    assert!(!merge(root, "mac", "Mac", carried(&[(gw.clone(), Some("mac-key")), (extra, None)])).await.unwrap());
+    assert!(!merge(root, "mac", "Mac", carried(&[(gw.clone(), Some("mac-key")), (extra.clone(), None)])).await.unwrap());
 
-    // Another machine brings its own source, then takes over `gw`: what `gw` stood in for is handed on
-    let other = source("other", "https://other.test/v1", &[]);
-    assert!(merge(root, "book", "Book", carried(&[(other, Some("book-key")), (gw.clone(), Some("book-gw"))])).await.unwrap());
-    // The first machine drops everything: only `extra` is still its own to take away
-    assert!(merge(root, "mac", "Mac", Carried::default()).await.unwrap());
+    // Another machine takes over `extra`, then the first drops everything: only its own copies could go, and it has none
+    assert!(merge(root, "book", "Book", carried(&[(extra.clone(), Some("book-key"))])).await.unwrap());
+    assert!(!merge(root, "mac", "Mac", Carried::default()).await.unwrap());
     let file = read(root, PROVIDERS_FILE);
-    let ids: Vec<&str> = file["providers"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["gw", "own", "other"]);
-    assert_eq!(file["providers"][0]["syncedFrom"]["machine"], "book");
-    assert!(file.get("webSearchVia").is_none(), "search through a source that went away falls back");
+    assert_eq!(file["providers"][2]["syncedFrom"]["machine"], "book");
 
     // The second machine drops everything too: the host is as it was
     assert!(merge(root, "book", "Book", Carried::default()).await.unwrap());
     let file = read(root, PROVIDERS_FILE);
     let ids: Vec<&str> = file["providers"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["gw", "own"]);
-    assert_eq!(file["providers"][0]["baseUrl"], "http://127.0.0.1:4000/v1");
-    assert_eq!(file["providers"][0]["models"].as_array().unwrap().len(), 1);
-    assert!(file["providers"][0].get("syncedFrom").is_none());
+    assert!(file.get("webSearchVia").is_none(), "search through a source that went away falls back");
     assert_eq!(read(root, "secrets.json"), json!({ "acpira.provider.gw": "host-key", "acpira.provider.own": "own-key" }));
+  }
+
+  /// An older helper replaced the host's own source and kept it inside the entry: the next push gives it back
+  #[tokio::test]
+  async fn a_stood_in_source_comes_back_on_the_next_push() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let own = json!({ "id": "gw", "format": "openai-chat", "baseUrl": "https://gw.test/v1", "models": [{ "id": "m" }] });
+    std::fs::write(root.join(PROVIDERS_FILE), json!({ "providers": [
+      { "id": "gw", "format": "anthropic", "baseUrl": "https://gw.test/v1", "syncedFrom": { "machine": "mac", "name": "Mac", "kept": own } },
+    ] }).to_string()).unwrap();
+    std::fs::write(root.join("secrets.json"), json!({ "acpira.provider.gw": "mac-key", "acpira.provider.gw/kept": "host-key" }).to_string()).unwrap();
+
+    let mut gw = source("gw", "https://gw.test/v1", &["m"]);
+    gw.format = "anthropic".into();
+    assert!(merge(root, "mac", "Mac", carried(&[(gw, Some("mac-key"))])).await.unwrap());
+    let file = read(root, PROVIDERS_FILE);
+    assert_eq!(file["providers"].as_array().unwrap().len(), 1);
+    assert_eq!(file["providers"][0]["format"], "openai-chat");
+    assert!(file["providers"][0].get("syncedFrom").is_none());
+    assert_eq!(read(root, "secrets.json"), json!({ "acpira.provider.gw": "host-key" }));
   }
 
   #[tokio::test]
