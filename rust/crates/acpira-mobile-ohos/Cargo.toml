@@ -16,8 +16,9 @@ crate-type = ["lib"]
 [dependencies]
 acpira-mobile = { path = "../acpira-mobile" }
 # The pairing QR code read from camera frames: the public OpenHarmony SDK has no barcode scanner (ScanKit is
-# HarmonyOS-only), and the library already ships with the app, so the decoder lives here rather than in ArkTS
-rqrr = { version = "0.11", default-features = false }
+# HarmonyOS-only), and the library already ships with the app, so the decoder lives here rather than in ArkTS. The
+# ZXing port, QR only: rqrr finds no grid in the code as the desktop draws it (dots that do not touch)
+rxing = { version = "0.9", default-features = false, features = ["qrcode", "decoders", "encoding_rs"] }
 
 [target.'cfg(target_env = "ohos")'.dependencies]
 # ohos-rs: napi-rs for ArkTS, linked against the SDK's libace_napi.z.so (build.rs). `async` turns an

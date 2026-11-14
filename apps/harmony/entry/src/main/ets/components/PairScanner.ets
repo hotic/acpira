@@ -11,15 +11,17 @@ import { Lucide } from './Glyphs';
 
 // The camera card that leads the add-computer sheet (apps/ios Pairing/PairScanner.swift, apps/android
 // ui/PairScanner.kt): the back camera under a viewfinder, its frames read for QR codes. The public OpenHarmony SDK has
-// no barcode scanner (ScanKit is HarmonyOS-only), so the frames' luma goes to the pairing library's decoder (rqrr in
-// rust/crates/acpira-mobile-ohos). Where there is no camera or no library the card is a quiet stand-in; where access was
-// refused it says so. Any QR code that is not an `acpira://pair/…` link is ignored.
+// no barcode scanner (ScanKit is HarmonyOS-only), so the frames' luma goes to the pairing library's decoder (the ZXing
+// port in rust/crates/acpira-mobile-ohos). Where there is no camera or no library the card is a quiet stand-in; where
+// access was refused it says so. Any QR code that is not an `acpira://pair/…` link is ignored.
 
 const DOMAIN = 0xacb1;
 const TAG = 'AcpiraPair';
 const CAMERA: Permissions = 'ohos.permission.CAMERA';
-/** The smallest preview size worth decoding, and how often a frame is read */
-const DECODE_MIN_W = 640;
+/** The smallest preview worth showing, the smallest worth decoding (the card's code is small on a monitor: a phone a
+ *  hand away sees it a couple of pixels a module in the smaller one), and how often a frame is read */
+const SHOW_MIN_W = 640;
+const DECODE_MIN_W = 1280;
 const DECODE_EVERY_MS = 250;
 const RECEIVER_CAPACITY = 4;
 
@@ -77,6 +79,8 @@ export struct PairCameraCard {
   private frameW: number = 0;
   private frameH: number = 0;
   private surface: string | undefined = undefined;
+  /** Whether this start's first frame has been logged */
+  private told: boolean = false;
   /** Bumped by every stop: a start still awaiting the camera finds it moved on and lets go of what it opened */
   private run: number = 0;
 
@@ -141,11 +145,20 @@ export struct PairCameraCard {
         const device = cameras.find((c: camera.CameraDevice) => c.cameraPosition === camera.CameraPosition.CAMERA_POSITION_BACK)
           ?? cameras[0];
         const caps = manager.getSupportedOutputCapability(device, camera.SceneMode.NORMAL_PHOTO);
-        // The smallest preview at least DECODE_MIN_W wide: enough for a code held up to it, cheap to read
-        const profiles = caps.previewProfiles.slice().sort((a: camera.Profile, b: camera.Profile) => a.size.width - b.size.width);
-        const profile = profiles.find((p: camera.Profile) => p.size.width >= DECODE_MIN_W) ?? profiles[profiles.length - 1];
+        // The preview to show and decode: NV21 (the luma of an HDR profile's P010 is two bytes a sample, which the
+        // decoder cannot read), and the smallest at least DECODE_MIN_W wide in the shape of the smallest worth showing,
+        // so the picture in the card keeps its proportions
+        const nv21 = caps.previewProfiles.filter((p: camera.Profile) => p.format === camera.CameraFormat.CAMERA_FORMAT_YUV_420_SP);
+        const profiles = (nv21.length > 0 ? nv21 : caps.previewProfiles).slice()
+          .sort((a: camera.Profile, b: camera.Profile) => a.size.width - b.size.width);
+        const shown = profiles.find((p: camera.Profile) => p.size.width >= SHOW_MIN_W) ?? profiles[profiles.length - 1];
+        const profile = profiles.find((p: camera.Profile) => p.size.width >= DECODE_MIN_W &&
+          p.size.width * shown.size.height === p.size.height * shown.size.width) ?? shown;
         this.frameW = profile.size.width;
         this.frameH = profile.size.height;
+        this.told = false;
+        hilog.info(DOMAIN, TAG, 'preview %{public}dx%{public}d format %{public}d', profile.size.width, profile.size.height,
+          profile.format);
         const receiver = image.createImageReceiver(profile.size, image.ImageFormat.JPEG, RECEIVER_CAPACITY);
         receiver.on('imageArrival', () => this.frame(receiver));
         this.receiver = receiver;
@@ -177,6 +190,15 @@ export struct PairCameraCard {
         if (run !== this.run) {
           // The stop ran while it started: stop it again now that it runs
           session.stop().catch((e: BusinessError) => {}).then(() => session.release()).catch((e: BusinessError) => {});
+          return;
+        }
+        // A code held close stays a blur unless the lens follows it; a camera without the mode scans as it is
+        try {
+          if (session.isFocusModeSupported(camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO)) {
+            session.setFocusMode(camera.FocusMode.FOCUS_MODE_CONTINUOUS_AUTO);
+          }
+        } catch (e) {
+          hilog.warn(DOMAIN, TAG, 'no continuous focus: %{public}s', `${e}`);
         }
       } catch (e) {
         hilog.warn(DOMAIN, TAG, 'camera start failed: %{public}s', `${e}`);
@@ -215,8 +237,16 @@ export struct PairCameraCard {
       img.getComponent(image.ComponentType.JPEG).then((c: image.Component) => {
         // A preview frame is NV21 behind the JPEG component: its first plane is the luma, `rowStride` bytes a row. The
         // library copies it before answering and decodes off the UI thread
-        const decoded = net()?.decodeQr(new Uint8Array(c.byteBuffer), this.frameW, this.frameH,
-          c.rowStride > 0 ? c.rowStride : this.frameW) ?? Promise.resolve<string | null>(null);
+        const w = img.size.width > 0 ? img.size.width : this.frameW;
+        const h = img.size.height > 0 ? img.size.height : this.frameH;
+        if (!this.told) {
+          // What a device really hands over, once a start: the one thing no emulator shows
+          this.told = true;
+          hilog.info(DOMAIN, TAG, 'frame %{public}dx%{public}d stride %{public}d bytes %{public}d', w, h, c.rowStride,
+            c.byteBuffer.byteLength);
+        }
+        const decoded = net()?.decodeQr(new Uint8Array(c.byteBuffer), w, h, c.rowStride > 0 ? c.rowStride : w) ??
+          Promise.resolve<string | null>(null);
         released = true;
         img.release();
         return decoded;
