@@ -11,6 +11,7 @@ use acpira_shared::transcript::*;
 use super::{LOGIN_PATH_REFRESH, SessionManager, Viewer};
 use crate::acp::agents::login_path;
 use crate::acp::session::AcpSession;
+use crate::acp::transport::cancel::Cancel;
 use crate::i18n::{t, tp};
 
 impl SessionManager {
@@ -22,9 +23,37 @@ impl SessionManager {
     self.state.lock().account_actions.clone()
   }
 
-  fn set_account_action(&self, action: AccountAction) {
+  fn begin_account_action(&self, agent: &str, via: AccountActionVia) -> Option<Cancel> {
+    let cancel = Cancel::new();
     let actions = {
       let mut st = self.state.lock();
+      let pending = st.account_actions.iter().find(|a| a.agent == agent && a.status == AccountActionStatus::Pending);
+      if pending.is_some_and(|a| matches!(a.via, AccountActionVia::Import | AccountActionVia::Unlock)) {
+        return None;
+      }
+      // A terminal may have been closed without notifying this engine. Never make its wait an exclusive lock.
+      if let Some(old) = st.account_attempts.insert(agent.to_owned(), cancel.clone()) {
+        old.cancel();
+      }
+      let action = AccountAction { agent: agent.to_owned(), via, status: AccountActionStatus::Pending, error: None };
+      match st.account_actions.iter().position(|a| a.agent == agent) {
+        Some(i) => st.account_actions[i] = action,
+        None => st.account_actions.push(action),
+      }
+      st.account_actions.clone()
+    };
+    self.emit(HostMsg::AccountActions { actions });
+    Some(cancel)
+  }
+
+  fn set_account_action(&self, action: AccountAction, cancel: &Cancel) {
+    let actions = {
+      let mut st = self.state.lock();
+      // A superseded collector may finish its cleanup after the replacement has already succeeded.
+      if cancel.is_cancelled() {
+        return;
+      }
+      st.account_attempts.remove(&action.agent);
       match st.account_actions.iter().position(|a| a.agent == action.agent) {
         Some(i) => st.account_actions[i] = action,
         None => st.account_actions.push(action),
@@ -54,22 +83,22 @@ impl SessionManager {
     if !accounts.supports(agent) && via != AddAccountVia::Import && self.cli_login(agent).await {
       return Ok(());
     }
-    if self.state.lock().account_actions.iter().any(|a| a.agent == agent && a.status == AccountActionStatus::Pending) {
-      return Ok(());
-    }
+    let Some(cancel) = self.begin_account_action(agent, via.into()) else { return Ok(()) };
     let action = |status, error| AccountAction { agent: agent.to_owned(), via: via.into(), status, error };
-    self.set_account_action(action(AccountActionStatus::Pending, None));
     let result = match via {
       AddAccountVia::Import => accounts.import(agent).await,
-      AddAccountVia::Login => accounts.login(agent).await,
-      AddAccountVia::Auto => accounts.add(agent).await,
+      AddAccountVia::Login => accounts.login(agent, cancel.clone()).await,
+      AddAccountVia::Auto => accounts.add(agent, cancel.clone()).await,
     };
+    if cancel.is_cancelled() {
+      return Ok(());
+    }
     match result {
       Ok(None) => {
         self.set_account_action(action(
           if via == AddAccountVia::Import { AccountActionStatus::Missing } else { AccountActionStatus::Cancelled },
           None,
-        ));
+        ), &cancel);
         Ok(())
       }
       Ok(Some(acc)) => {
@@ -78,15 +107,15 @@ impl SessionManager {
           && (cur.status() == SessionStatus::AuthRequired || cur.account_id().is_none())
           && let Err(e) = cur.rebind_account(&acc.id).await
         {
-          self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())));
+          self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())), &cancel);
           return Err(e);
         }
         self.pool.invalidate(None);
-        self.set_account_action(action(AccountActionStatus::Success, None));
+        self.set_account_action(action(AccountActionStatus::Success, None), &cancel);
         Ok(())
       }
       Err(e) => {
-        self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())));
+        self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())), &cancel);
         Err(e)
       }
     }
@@ -96,13 +125,10 @@ impl SessionManager {
   /// and every session of the agent that stopped on sign-in reconnects on the same native session
   pub async fn unlock_credentials(&self, agent: &str) -> Result<()> {
     let Some(accounts) = self.deps.accounts.clone() else { return Ok(()) };
-    if self.state.lock().account_actions.iter().any(|a| a.agent == agent && a.status == AccountActionStatus::Pending) {
-      return Ok(());
-    }
+    let Some(cancel) = self.begin_account_action(agent, AccountActionVia::Unlock) else { return Ok(()) };
     let action = |status, error| AccountAction { agent: agent.to_owned(), via: AccountActionVia::Unlock, status, error };
-    self.set_account_action(action(AccountActionStatus::Pending, None));
     match accounts.unlock(agent).await {
-      Ok(false) => self.set_account_action(action(AccountActionStatus::Cancelled, None)),
+      Ok(false) => self.set_account_action(action(AccountActionStatus::Cancelled, None), &cancel),
       Ok(true) => {
         self.pool.invalidate(Some(agent));
         for s in self.live_sessions().into_iter().filter(|s| s.agent == agent && s.status() == SessionStatus::AuthRequired) {
@@ -110,10 +136,10 @@ impl SessionManager {
             let _ = s.reconnect().await;
           });
         }
-        self.set_account_action(action(AccountActionStatus::Success, None));
+        self.set_account_action(action(AccountActionStatus::Success, None), &cancel);
       }
       Err(e) => {
-        self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())));
+        self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())), &cancel);
         return Err(e);
       }
     }

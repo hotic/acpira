@@ -54,7 +54,7 @@ interface Way {
   key: string;
   label: string;
   icon?: ReactNode;
-  // Faint text at the row's end (what the way leaves behind: "this session only"; why it is greyed out)
+  // Faint text at the row's end (who handles sign-in; why it is greyed out)
   hint?: string;
   title?: string;
   disabled?: boolean;
@@ -90,7 +90,7 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
 // and failure feedback replace the text line instead of stacking more lines. Below the notice container tier the
 // actions drop into a footer strip so the title keeps its width.
 // For agents on the account layer, the main login paths are "import the local CLI login / sign in a new account in the terminal" — credentials from these two are saved;
-// the agent's own login methods only authenticate this one process and aren't saved, so their menu rows say so.
+// the agent's own login methods leave credential persistence to the CLI rather than creating a separate Acpira account.
 // Once an import found no local login, signing in in the terminal becomes the primary and import stays greyed out in the menu.
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
@@ -99,9 +99,9 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   const withAccounts = !!agent.accounts;
   const locked = status === 'auth_required' && withAccounts && !!agent.credentialsLocked;
   const action = status === 'auth_required' && accountAction?.agent === agent.id ? accountAction : undefined;
-  // An unlock waits up to 5 minutes on a terminal the user may have finished long ago: the buttons stay usable meanwhile
-  // (a second unlock while one is pending is ignored by the host)
-  const busy = action?.status === 'pending' && action.via !== 'unlock';
+  // Terminal waits outlive a closed terminal and page reloads. Keep the ways out usable: another login or import
+  // supersedes the old login wait; duplicate imports and unlocks are still ignored by the host.
+  const busy = action?.status === 'pending' && action.via === 'import';
   const unlockFeedback = (a: AccountAction) => a.status === 'pending' ? t('notice.unlockWaiting')
     : a.status === 'error' ? t('notice.unlockFailed', { error: a.error ?? t('notice.error.unknown') })
       // Success needs no line: the sessions reconnect and this bar goes away
@@ -135,7 +135,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     groups = [
       (accounts ?? []).filter(a => a.id !== accountId).map(a => ({ key: `account:${a.id}`, label: a.label, icon: rowIcon(UserRound), hint: a.detail && planName(a.detail), title: a.detail, run: () => onSelectAccount(a.id) })),
       [noLocal ? importWay : terminalWay],
-      (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(KeyRound), hint: t('notice.onceTag'), title: m.description ?? methodName(m), run: () => onLogin(m.id) })),
+      (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(KeyRound), hint: t('notice.cliLoginTag'), title: [m.description, t('notice.cliLoginHint')].filter(Boolean).join('\n'), run: () => onLogin(m.id) })),
       runHere,
     ];
     showRetry = true;
@@ -195,7 +195,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
 }
 
 // The other ways behind one secondary button, end-aligned under it: one-line rows with an icon, and the row's consequence
-// (a saved account's plan, "this session only", why import is greyed out) as faint text at its end
+// (a saved account's plan, CLI-managed sign-in, why import is greyed out) as faint text at its end
 function OtherWays({ groups }: { groups: Way[][] }) {
   return (
     <DropdownMenu.Root>

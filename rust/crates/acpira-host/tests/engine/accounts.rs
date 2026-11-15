@@ -299,6 +299,7 @@ struct FakeProvider {
   import_draft: Mutex<Option<AccountDraft>>,
   import_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
   imports: AtomicUsize,
+  login_flows: Mutex<Vec<LoginFlow>>,
   quota_reads: AtomicUsize,
   /// Reads of the `limited-key` account, which the vendor always answers with 429
   limited_reads: AtomicUsize,
@@ -337,7 +338,8 @@ impl AccountProvider for FakeProvider {
     self.auto
   }
   fn login(&self) -> BoxFuture<Result<LoginFlow>> {
-    Box::pin(async { Err(anyhow!("not in test")) })
+    let flow = self.login_flows.lock().unwrap().pop();
+    Box::pin(async move { flow.ok_or_else(|| anyhow!("not in test")) })
   }
   fn authenticate(&self, proc: Arc<AgentProcess>, cred: AccountCredential) -> Option<BoxFuture<Result<()>>> {
     self.authentications.fetch_add(1, Ordering::SeqCst);
@@ -436,6 +438,81 @@ async fn import_progress_publishes_at_once_and_repeated_clicks_wait_for_it() {
   release.send(()).unwrap();
   first.await.unwrap();
   assert_eq!(action_events().last().unwrap(), &json!([{ "agent": "fake", "via": "import", "status": "success" }]));
+  s.m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_login_can_be_retried_from_a_reloaded_view_without_waiting_for_the_old_cleanup() {
+  let fake = fake_or_skip!();
+  let s = setup(&fake, false);
+  let (old_done, old_cleanup) = tokio::sync::oneshot::channel();
+  let cancelled = Arc::new(AtomicBool::new(false));
+  let saw_cancel = cancelled.clone();
+  s.provider.login_flows.lock().unwrap().push(LoginFlow {
+    command: "first-login".into(), args: vec![], env: Default::default(),
+    collect: Box::new(move |cancel| Box::pin(async move {
+      cancel.cancelled().await;
+      saw_cancel.store(true, Ordering::SeqCst);
+      old_cleanup.await.ok();
+      None
+    })),
+  });
+  let first = s.m.spawn_handle(json!({ "type": "addAccount", "agent": "fake", "via": "login" }));
+  until(|| s.terminals.lock().unwrap().len() == 1, 2000).await;
+
+  // Closing an external terminal sends no notification; a new page still sees the pending action.
+  let viewer = s.m.m.attach(Some(acpira_shared::sidecar::InitialView::Empty { empty: true }));
+  assert_eq!(actions(&s.m), json!([{ "agent": "fake", "via": "login", "status": "pending" }]));
+  let (signed_in, credential) = tokio::sync::oneshot::channel();
+  s.provider.login_flows.lock().unwrap().push(LoginFlow {
+    command: "replacement-login".into(), args: vec![], env: Default::default(),
+    collect: Box::new(move |_| Box::pin(async move {
+      credential.await.ok();
+      Some(draft("retry@example.com", None, "retry-key", None))
+    })),
+  });
+  let manager = s.m.m.clone();
+  let retry = tokio::spawn(async move { manager.add_account(&viewer, "fake", acpira_shared::protocol::AddAccountVia::Login).await });
+  until(|| s.terminals.lock().unwrap().len() == 2 && cancelled.load(Ordering::SeqCst), 2000).await;
+  // The old cancellation must not overwrite the replacement's pending state.
+  old_done.send(()).unwrap();
+  first.await.unwrap();
+  assert_eq!(actions(&s.m), json!([{ "agent": "fake", "via": "login", "status": "pending" }]));
+  signed_in.send(()).unwrap();
+  retry.await.unwrap().unwrap();
+  assert_eq!(actions(&s.m), json!([{ "agent": "fake", "via": "login", "status": "success" }]));
+  assert_eq!(s.accounts.list()[0].label, "retry@example.com");
+  s.m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_import_supersedes_an_auto_login_and_a_late_credential_cannot_overwrite_it() {
+  let fake = fake_or_skip!();
+  let s = setup(&fake, false);
+  let local = s.provider.import_draft.lock().unwrap().take();
+  let (old_done, old_cleanup) = tokio::sync::oneshot::channel();
+  let cancelled = Arc::new(AtomicBool::new(false));
+  let saw_cancel = cancelled.clone();
+  s.provider.login_flows.lock().unwrap().push(LoginFlow {
+    command: "abandoned-login".into(), args: vec![], env: Default::default(),
+    collect: Box::new(move |cancel| Box::pin(async move {
+      cancel.cancelled().await;
+      saw_cancel.store(true, Ordering::SeqCst);
+      old_cleanup.await.ok();
+      // A credential read that was already in flight can still finish after cancellation.
+      Some(draft("late@example.com", None, "late-key", None))
+    })),
+  });
+  let first = s.m.spawn_handle(json!({ "type": "addAccount", "agent": "fake", "via": "auto" }));
+  until(|| s.terminals.lock().unwrap().len() == 1, 2000).await;
+  *s.provider.import_draft.lock().unwrap() = local;
+  s.m.handle(json!({ "type": "addAccount", "agent": "fake", "via": "import" })).await;
+  until(|| cancelled.load(Ordering::SeqCst), 2000).await;
+  assert_eq!(actions(&s.m), json!([{ "agent": "fake", "via": "import", "status": "success" }]));
+  old_done.send(()).unwrap();
+  first.await.unwrap();
+  assert_eq!(actions(&s.m), json!([{ "agent": "fake", "via": "import", "status": "success" }]));
+  assert_eq!(s.accounts.list().iter().map(|a| a.label.clone()).collect::<Vec<_>>(), ["one@example.com"]);
   s.m.dispose().await;
 }
 
@@ -669,7 +746,7 @@ async fn windows_on_one_data_dir_share_quota_answers_and_429_pauses() {
 async fn quota_is_fetched_as_soon_as_an_account_is_stored() {
   let fake = fake_or_skip!();
   let s = setup(&fake, false);
-  let a = s.accounts.add("fake").await.unwrap().unwrap();
+  let a = s.accounts.add("fake", Cancel::new()).await.unwrap().unwrap();
   assert!(a.quota.is_none());
   until(|| s.accounts.get(&a.id).and_then(|x| x.quota).is_some_and(|q| v(q)["windows"][0]["remaining"] == 0.9), 5000).await;
 }
@@ -679,13 +756,13 @@ async fn plus_imports_the_local_login_once_and_falls_back_to_terminal_login_afte
   let fake = fake_or_skip!();
   let s = setup(&fake, false);
   // first time: the local login is not in the list yet → import directly
-  expect_match(s.accounts.add("fake").await.unwrap().unwrap(), json!({ "label": "one@example.com" }));
+  expect_match(s.accounts.add("fake", Cancel::new()).await.unwrap().unwrap(), json!({ "label": "one@example.com" }));
   assert!(s.toasts.lock().unwrap().last().unwrap().contains("one@example.com"));
   // second time: already imported → goes to login (the fake provider's login fails, proving that path was taken)
-  assert!(s.accounts.add("fake").await.unwrap_err().to_string().contains("not in test"));
+  assert!(s.accounts.add("fake", Cancel::new()).await.unwrap_err().to_string().contains("not in test"));
   // not logged in locally → also goes to login
   *s.provider.import_draft.lock().unwrap() = None;
-  assert!(s.accounts.add("fake").await.unwrap_err().to_string().contains("not in test"));
+  assert!(s.accounts.add("fake", Cancel::new()).await.unwrap_err().to_string().contains("not in test"));
   assert_eq!(s.accounts.list().len(), 1);
 }
 
