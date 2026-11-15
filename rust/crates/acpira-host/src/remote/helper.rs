@@ -123,8 +123,8 @@ pub fn hello(opts: &HelperOpts) -> Hello {
   }
 }
 
-/// The host's identity: systemd's machine id on Linux, the hardware UUID on macOS. `ACPIRA_REMOTE_MACHINE_ID`
-/// overrides it (tests of the mismatch guard)
+/// The host's identity: systemd's machine id on Linux, the hardware UUID on macOS, `MachineGuid` on Windows.
+/// `ACPIRA_REMOTE_MACHINE_ID` overrides it (tests of the mismatch guard)
 pub fn machine_id() -> String {
   if let Ok(id) = std::env::var("ACPIRA_REMOTE_MACHINE_ID") {
     return id;
@@ -145,7 +145,29 @@ pub fn machine_id() -> String {
       return uuid.to_owned();
     }
   }
+  #[cfg(windows)]
+  if let Some(guid) = windows_machine_guid() {
+    return guid;
+  }
   String::new()
+}
+
+#[cfg(windows)]
+fn windows_machine_guid() -> Option<String> {
+  use windows_sys::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY, RegGetValueW};
+  let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+  let (key, value) = (wide(r"SOFTWARE\Microsoft\Cryptography"), wide("MachineGuid"));
+  let flags = RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY;
+  let mut buf = [0u16; 128];
+  let mut len = std::mem::size_of_val(&buf) as u32;
+  // SAFETY: NUL-terminated registry names; `buf` holds `len` bytes and receives a NUL-terminated UTF-16 string
+  let err = unsafe { RegGetValueW(HKEY_LOCAL_MACHINE, key.as_ptr(), value.as_ptr(), flags, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut len) };
+  if err != 0 {
+    return None;
+  }
+  let chars = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+  let guid = String::from_utf16_lossy(buf.get(..chars).unwrap_or_default()).trim().to_owned();
+  (!guid.is_empty()).then_some(guid)
 }
 
 /// Where the helper's output goes: control lines first, bulk chunks only while the window has room. A request that
@@ -542,5 +564,16 @@ async fn dispatch(op: &str, a: Value, id: u64, out: &Out, stdin: Option<mpsc::Un
       Ok(json!({ "size": size, "offset": offset }))
     }
     other => Err(WireError::new("unknownOp", format!("unknown operation \"{other}\""))),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[cfg(any(target_os = "macos", windows))]
+  #[test]
+  fn machine_id_is_present() {
+    assert!(!machine_id().is_empty());
   }
 }
