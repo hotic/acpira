@@ -10,8 +10,8 @@ const root = fileURLToPath(new URL('../..', import.meta.url));
 export const IOS_ICONS_FILE = join(root, 'apps/ios/Packages/AcpiraKit/Sources/AcpiraDesign/LucideIcons.generated.swift');
 export const IOS_MARKS_FILE = join(root, 'apps/ios/Packages/AcpiraKit/Sources/AcpiraDesign/Marks.generated.swift');
 
-// Icons the iOS layout needs beyond what the webview imports (iOS-only affordances)
-const EXTRA = ['ArrowDown', 'Asterisk', 'Menu', 'Mic', 'Camera', 'Maximize2', 'Minimize2'];
+// Icons the iOS / Android layouts need beyond what the webview imports
+const EXTRA = ['ArrowDown', 'Asterisk', 'CirclePause', 'Menu', 'Mic', 'Camera', 'Maximize2', 'Minimize2'];
 
 export type Attrs = Record<string, string | number>;
 export type IconNode = [string, Attrs][];

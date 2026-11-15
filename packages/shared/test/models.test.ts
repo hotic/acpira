@@ -270,6 +270,11 @@ describe('modelBrand', () => {
     expect(modelBrand('Beam')).toBe('reflection');
     expect(modelBrand('asgard/beam')).toBe('reflection');
     expect(modelBrand('reflection/beam')).toBe('reflection');
+    expect(modelBrand('Inkling')).toBe('thinkingmachines');
+    expect(modelBrand('Inkling 2 Small Free')).toBe('thinkingmachines');
+    expect(modelBrand('thinkingmachines/inkling-2-small')).toBe('thinkingmachines');
+    expect(modelBrand('Flint 40B Free')).toBe('recursive');
+    expect(modelBrand('recursive/flint')).toBe('recursive');
     expect(modelBrand('qwq-plus')).toBe('qwen');
     expect(modelBrand('ministral-14b-2512')).toBe('mistral');
     expect(modelBrand('o4-mini')).toBe('openai');
@@ -290,9 +295,11 @@ describe('modelBrand', () => {
   });
 
   it('returns undefined for unbranded names', () => {
-    expect(modelBrand('Inkling')).toBeUndefined();
+    expect(modelBrand('big-pickle')).toBeUndefined();
+    expect(modelBrand('iceman-free')).toBeUndefined();
     expect(modelBrand('Sunbeam')).toBeUndefined();
     expect(modelBrand('Beaming')).toBeUndefined();
+    expect(modelBrand('Flintlock')).toBeUndefined();
   });
 
   it('matches on word boundaries only', () => {
@@ -311,6 +318,8 @@ describe('optionBrand', () => {
     expect(optionBrand({ id: 'custom-1', name: 'Claude Opus 5' })).toBe('claude');
     expect(optionBrand({ id: 'model-1', name: 'Composer 2.5' })).toBe('cursor');
     expect(optionBrand({ id: 'model-1', name: 'Beam' })).toBe('reflection');
+    expect(optionBrand({ id: 'inkling-2-small-free', name: 'Inkling 2 Small Free' })).toBe('thinkingmachines');
+    expect(optionBrand({ id: 'flint-40b-free', name: 'Flint 40B Free' })).toBe('recursive');
     // claude-agent-acp's short ids: no "claude" anywhere, the family word alone is the brand
     expect(optionBrand({ id: 'opus[1m]', name: 'Opus 5.5' })).toBe('claude');
     expect(optionBrand({ id: 'sonnet', name: 'Sonnet 5' })).toBe('claude');
