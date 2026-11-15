@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ComponentP
 import { Collapsible as Base } from '@base-ui/react/collapsible';
 import { cn, cnState } from './cn';
 import { cssTimeVar } from './cssTime';
+import { QuietEntranceContext } from './Row';
 
 // Settled transcript content: a panel under `true` mounts its body only while open. Finished turns keep almost all of
 // their DOM inside closed folds; mounting it made every session switch lay out the whole history, and keeping a body
@@ -36,14 +37,16 @@ function Root({ open: controlled, defaultOpen = false, onOpenChange, children, .
 
 function Panel({ children, className, ...props }: ComponentProps<'div'>) {
   const open = useContext(OpenContext);
-  return <PanelFrame {...props} open={open} className={cn(PANEL, className)} data-open={open ? '' : undefined} data-closed={open ? undefined : ''}>{children}</PanelFrame>;
+  const quiet = useContext(QuietEntranceContext).current;
+  return <PanelFrame {...props} open={open} data-quiet={quiet || undefined} className={cn(PANEL, className, quiet && 'transition-none')} data-open={open ? '' : undefined} data-closed={open ? undefined : ''}>{children}</PanelFrame>;
 }
 
 // A further part of a root's panel, for a body broken by content that stays visible while it is closed (a steered
 // prompt between process segments): each part closes on the panel's own curve, so the visible content slides with
 // them instead of being drawn twice. Base UI tracks one panel per root, so a section follows `open` directly.
 function Section({ open, className, children }: { open: boolean; className?: string; children: ReactNode }) {
-  return <PanelFrame open={open} className={cn(PANEL, className)} data-open={open ? '' : undefined} data-closed={open ? undefined : ''}>{children}</PanelFrame>;
+  const quiet = useContext(QuietEntranceContext).current;
+  return <PanelFrame open={open} data-quiet={quiet || undefined} className={cn(PANEL, className, quiet && 'transition-none')} data-open={open ? '' : undefined} data-closed={open ? undefined : ''}>{children}</PanelFrame>;
 }
 
 function PanelFrame({ open, children, ...attributes }: ComponentProps<'div'> & { open: boolean }) {

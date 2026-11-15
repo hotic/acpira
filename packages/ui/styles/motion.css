@@ -157,6 +157,8 @@
 .plan-entry-fold { opacity: 1; transition-property: grid-template-rows; }
 .plan-entry-fold .plan-dock-entry { transition: opacity var(--plan-entry-fade-in) ease; }
 .plan-entry-fold[data-closed] .plan-dock-entry { opacity: 0; transition-duration: var(--plan-entry-fade-out); }
+/* Catch-up is restored history: neither the fold nor its entry fade may replay the update. */
+.plan-entry-fold[data-quiet], .plan-entry-fold[data-quiet] .plan-dock-entry { transition: none; }
 
 /* One measured path from the icon to a short solid-dot endpoint. The segment's own
    height is the single source of length: the line fills it and the dot hangs off its
