@@ -14,11 +14,18 @@ import { t, useLocale } from '../i18n';
 export const CODE_CARD = 'rounded-lg border border-conversation-line';
 export const CODE_INSET = 'px-pad py-[calc(var(--pad)-2px)]';
 
+// The bottom inset less the horizontal bar's gutter, which the surface always keeps (see CodeSurface)
+const CODE_INSET_BAR = 'pb-[max(0px,calc(var(--pad)_-_2px_-_var(--scrollbar)))]';
+
 // Code surface: all monospace content (code blocks / tool output / diffs) shares this one surface,
-// outlined with the conversation ring so it reads as a card next to the composer and bubbles
+// outlined with the conversation ring so it reads as a card next to the composer and bubbles.
+// The horizontal bar's gutter is always there and stands in for most of the bottom inset: a gutter that appeared only
+// once a line overflowed left an invisible strip under the text (the track is transparent until hover), so a one-line
+// fence looked bottom-heavy. A bar present from the start also counts in WebKit's first layout, which is what
+// scrollbarRoom would otherwise arrange
 export function CodeSurface({ children, className, padded = true }: { children: ReactNode; className?: string; padded?: boolean }) {
   return (
-    <pre ref={scrollbarRoom} className={cn('m-0 overflow-auto bg-code font-mono text-mono text-fg-1', CODE_CARD, padded && CODE_INSET, className)}>
+    <pre className={cn('m-0 overflow-auto overflow-x-scroll bg-code font-mono text-mono text-fg-1', CODE_CARD, padded && [CODE_INSET, CODE_INSET_BAR], className)}>
       {children}
     </pre>
   );

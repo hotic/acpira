@@ -40,6 +40,9 @@
 /* Items sit a little closer than paragraphs: the renderer's own padding on each item is dropped, so this gap is the only one */
 .acp-prose li { padding-block: 0; }
 .acp-prose li + li, .acp-prose li > :is(ul, ol) { margin-top: 8px; }
+/* Blocks inside a loose item (a paragraph, then a fence, table or quote) sit apart, or a fenced command lies flush under
+   the sentence that introduced it; half the reply's gap, so they still read as one item */
+.acp-prose li > * + * { margin-top: calc(var(--gap) / 2); }
 .acp-prose blockquote {
   position: relative; margin: 0; padding: var(--gap) var(--pad); border: 0;
   background: transparent; color: var(--fg-2); font-style: normal;
