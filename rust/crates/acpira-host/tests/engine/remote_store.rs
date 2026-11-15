@@ -155,6 +155,11 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
     store.flush(Arc::new(local.clone())).await.unwrap();
     let remote_log = lab.host_home().join(".acpira/agent/sessions").join(format!("{sid}.jsonl"));
     until("native log synced", || std::fs::read_to_string(&remote_log).ok().as_deref() == Some(&native)).await;
+    let appended = format!("{native}{{\"type\":\"item\",\"t\":2,\"item\":{{\"role\":\"user\",\"parts\":[{{\"text\":\"follow-up\"}}]}}}}\n");
+    std::fs::write(logs.join(format!("{sid}.jsonl")), &appended).unwrap();
+    local.updated_at = "2026-10-01T00:00:05.000Z".into();
+    store.flush(Arc::new(local.clone())).await.unwrap();
+    until("native log appended incrementally", || std::fs::read_to_string(&remote_log).ok().as_deref() == Some(&appended)).await;
     connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
     let mut remote = host.load(id).await.unwrap();
     remote.copy_of = None;
@@ -169,7 +174,7 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
     connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
     until("local identity retired", || !crate::support::listed(&root.join("sessions"), id)).await;
     assert_eq!(host.load(id).await.unwrap().turns, remote.turns);
-    assert!(std::fs::read_to_string(&remote_log).unwrap() == native);
+    assert!(std::fs::read_to_string(&remote_log).unwrap() == appended);
     let tombs = read(&root.join("run/remote/gone.json")).unwrap_or(json!({}));
     assert!(!tombs.to_string().contains(id), "{tombs}");
     let list = store.load_index().await.unwrap();

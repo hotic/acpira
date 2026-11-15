@@ -267,6 +267,10 @@ impl SessionManager {
       if picks.mode_id.is_some() { settings.mode_id = picks.mode_id.clone(); }
       settings.config.extend(picks.config.clone());
     }
+    let old_native = (record.agent == crate::acp::agents::registry::SELF_AGENT_ID)
+      .then(|| record.acp_session_id.clone())
+      .flatten()
+      .filter(|sid| is_session_id(sid));
     self.prepare_copy_takeover(&mut record);
     let s = AcpSession::new(record, self.session_deps());
     s.hold_settings(&settings);
@@ -283,6 +287,11 @@ impl SessionManager {
     s.adopt_controls(settings).await;
     self.sync_leases();
     if s.status() == SessionStatus::Ready {
+      if let Some(old) = old_native.filter(|old| s.acp_session_id().as_deref() != Some(old.as_str())) {
+        let dir = self.deps.lease_root.join("agent/sessions").join(&old);
+        let _ = tokio::fs::remove_file(dir.join(".sync.jsonl")).await;
+        let _ = tokio::fs::remove_dir(dir).await;
+      }
       s.mark_owned();
       self.state.lock().pending_copies.remove(id);
       self.deps.store.flush(s.clone()).await?;
