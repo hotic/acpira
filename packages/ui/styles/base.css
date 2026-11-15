@@ -122,6 +122,8 @@
    so it drops the vertical bar and keeps only the wheel; a horizontal bar (terminal long lines) keeps its height.
    Must follow .scroll-thin (same specificity) and must not use scrollbar-width, which would disable the ::-webkit-scrollbar rules. */
 .acp-shell .scroll-fade::-webkit-scrollbar { width: 0; }
+/* Page-level scrollers that scroll by wheel / trackpad without a visible bar or reserved gutter (SettingsShell). */
+.acp-shell .scroll-none::-webkit-scrollbar { width: 0; height: 0; }
 /* A WebKit box that overflows sideways (ui/scrollbarRoom.ts): a bar there from the start counts in its parent's first layout */
 .acp-shell [data-hbar] { overflow-x: scroll; }
 

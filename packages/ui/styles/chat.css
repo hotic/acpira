@@ -183,10 +183,12 @@
   }
 
   /* Transcript and to-do dock rows put the icon's box on the text edge, so row icons and the prose or composer text around
-     them share one keyline (a 14 px icon centred in the 20 px lead sat 3 px in). The slot moves out by the difference and
-     gives it back on its far side, so labels keep their line; a mark filling the slot (Orb, subagent bars) overhangs the edge
-     by as much. Lists follow (prose.css) */
-  :is([data-thread], [data-plan-dock]) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2) calc((var(--lead) - var(--icon)) / 2); }
+     them share one keyline (a 14 px icon centred in the 20 px lead sat 3 px in). The slot gives up its air on both sides,
+     so it takes the icon's width, and the label follows the row gap plus 4 px later: the full slot's air on top of the gap
+     left the glyph further from its label than anywhere else in the shell. Bodies under a row (pl-indent) and lists (prose.css) start on
+     that label line; a mark filling the slot (Orb, subagent bars) overhangs it by the air on each side */
+  :is([data-thread], [data-plan-dock]) { --row-gap: calc(var(--gap) + 4px); --indent: calc(var(--icon) + var(--row-gap)); }
+  :is([data-thread], [data-plan-dock]) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2); }
 
   /* Dock cards (chat/Alert.tsx DockCard): text block, then the actions on its line. Below 30rem (the notice tier) a
      card that has a way around its primary takes two bands instead: the actions drop into a footer strip that spans the
@@ -225,6 +227,9 @@
   [data-theme="light"] :is(.diff-source, .code-syntax, .code-line) > span { color: var(--syntax-light, var(--fg-1)); }
   /* A fenced code block's source line (CodeBlock.tsx): a block of its own, so a streamed line is laid out alone */
   .code-line { display: block; }
+  /* An open thought's rail ends under its last line's glyphs, not on the line box's lower edge: the half-leading
+     below the text read as the dot hanging toward the next row. A plain length, ConnectedRail parses it as a number */
+  .thought-row { --rail-end-inset: 4px; }
 
   /* Tool output (ToolOutput in Terminal.tsx) wraps; each line is its own block so a wrapped continuation hangs under the
      line's start and a long `key: value` report stays scannable */
@@ -278,6 +283,17 @@
   .process-content > [data-after-text] > :first-child:not([data-calls]),
   .process-content > [data-after-text] > [data-calls]:first-child > * {
     margin-block-start: calc(var(--process-prose-gap) - var(--process-row-gap));
+  }
+
+  /* The reply stands under its process the way narrative stands under a tool row inside it (the prose gap), well
+     inside the message gap above the process, so the process and its reply read as one turn. The fold's margin takes
+     back the reply stack's gap and whatever sits under the last line: the panel's tail while open, the head row's extra
+     height over a process row while folded. A fold with nothing under it keeps the stack's spacing. */
+  [data-process-fold]:not(:last-child) {
+    margin-block-end: calc(var(--process-prose-gap) - var(--gap) - (var(--chat-row) - var(--process-row)) / 2);
+  }
+  [data-process-fold][data-open]:not(:last-child) {
+    margin-block-end: calc(var(--process-prose-gap) - var(--gap) - var(--spacing) * 1.5);
   }
 
   /* The context report pointing at calls (chat/reportLink.ts): their rows lit on a band, the rest of the thread dimmed.

@@ -24,7 +24,9 @@ export const Thought = memo(function Thought({ block }: { block: ThoughtBlock })
   return (
     <EntranceOnce id={`thought:${block.startedAt ?? ''}`}>
       {/* `thought-row`: reply screenshots leave reasoning out (shareCapture.ts) */}
-      <Disclosure className="action-details thought-row" tone="action" lead={lead} open={fold?.open} onToggle={fold?.onToggle} body={<ThoughtBody block={block} />}>
+      {/* The text is prose, taller than a row's label: a hairline of top padding puts its first line one row pitch
+          under the label, level with the entries an open read or edit group lists */}
+      <Disclosure className="action-details thought-row" tone="action" lead={lead} open={fold?.open} onToggle={fold?.onToggle} bodyClassName="pt-px" body={<ThoughtBody block={block} />}>
         <Shimmer active={live}>
           {live ? t('host.thinking') : t('thought.label')}
         </Shimmer>

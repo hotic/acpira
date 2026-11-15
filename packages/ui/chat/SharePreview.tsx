@@ -57,7 +57,7 @@ export function ShareCard({ ref, meta, node, children }: {
       </div>
       <div
         data-share-watermark
-        className="flex min-w-0 items-center justify-between gap-gap pt-pad pb-gap text-4 text-fg-2 opacity-85 select-none"
+        className="flex min-w-0 items-center justify-between gap-gap px-share-mark-x pt-pad pb-gap text-4 text-fg-2 opacity-85 select-none"
       >
         <div className="flex min-w-0 items-center gap-chip-gap">
           <MarkSvg id="acpira" name="Acpira" className="size-icon shrink-0 text-fg-3" />

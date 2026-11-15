@@ -452,6 +452,7 @@
 }
 /* On a page's card the rules stop at the rows' text and control edges, a step above the fill, and a clickable row's
    hover is an inset rounded band clear of them */
+
 .acp-settings .acp-section-panel {
   --rule-color: color-mix(in srgb, var(--fg-1) 6%, transparent);
   --rule-out: 0px;
@@ -600,6 +601,8 @@
   --spacing-chip-gap: calc(var(--gap) * 2 / 3);
   /* The share card's frame around its sheet (sides and top): thick enough to read as a base holding the sheet, not as an outline */
   --spacing-share-frame: calc(var(--gap) * 5 / 4);
+  /* The share watermark's inset from the frame edge, so its marks sit a little inside the sheet's corners */
+  --spacing-share-mark-x: 3px;
   /* A docked list's right padding beside its stable thin gutter: padding and gutter together match the left padding (gap-half) */
   --spacing-list-gutter: max(0px, calc(var(--gap) / 2 - var(--scrollbar-thin)));
   /* A dialog body's right padding beside its stable thin gutter: padding and gutter together match the left padding (pad) */
@@ -622,7 +625,9 @@
   --spacing-agent-image: var(--agent-image);
   --spacing-widget-placeholder: var(--widget-placeholder);
   --spacing-widget-max: var(--widget-max);
-  --spacing-indent: calc(var(--lead) + var(--gap));
+  /* Where a row's label starts, from the row's edge: bodies under a row indent by it. A scope that moves its rows' labels
+     sets --indent (chat.css does for the transcript) */
+  --spacing-indent: var(--indent, calc(var(--lead) + var(--gap)));
   --spacing-hit: var(--row-hit-outset);
   /* An exchange's paint clip on the thread's right side: the hit outset, but never past the thread's right padding
      (dock-gutter, 0 at the cozy and compact densities), or the section would overflow into a horizontal scrollbar */
