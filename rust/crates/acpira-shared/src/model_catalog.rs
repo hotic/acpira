@@ -58,10 +58,12 @@ pub fn option_level(option: &SessionOption) -> Option<Level> {
   parse_level(&option.id).or_else(|| parse_level(&option.name))
 }
 
-static DATED: LazyLock<Regex> = LazyLock::new(|| crate::re::compile(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$"));
+static DATED: LazyLock<Regex> =
+  LazyLock::new(|| crate::re::compile(r"-(?:\d{8}|\d{4}-\d{2}-\d{2}|(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))$"));
 static DASHES: LazyLock<Regex> = LazyLock::new(|| crate::re::compile(r"-{2,}"));
 
-/// Identity key: the part after the last `/`, lowercase, `_` / space / `.` as `-`, without a date or `-latest` suffix
+/// Identity key: the part after the last `/`, lowercase, `_` / space / `.` as `-`, without a date (including MMDD) or
+/// `-latest` suffix
 pub fn model_key(value: &str) -> String {
   let tail = value.rsplit('/').next().unwrap_or(value).trim().to_lowercase();
   let dashed: String = tail.chars().map(|c| if matches!(c, '_' | '.') || c.is_whitespace() { '-' } else { c }).collect();
@@ -227,6 +229,13 @@ impl Catalog {
     for (i, m) in file.models.iter().enumerate() {
       index.entry(model_key(&m.id)).or_insert(i);
     }
+    // Vendor display names can carry the version missing from a rolling id (DeepSeek's `deepseek-flash`). Exact ids
+    // always win over name aliases, even when a later entry owns that id.
+    for (i, m) in file.models.iter().enumerate() {
+      if !m.name.trim().is_empty() {
+        index.entry(model_key(&m.name)).or_insert(i);
+      }
+    }
     Catalog { file, index }
   }
 
@@ -333,6 +342,8 @@ mod tests {
       "alibaba": { "models": {
         "kimi-k3": { "name": "Kimi K3", "reasoning": true, "reasoning_options": [{ "type": "effort", "values": ["low", "high", "max"] }] } } },
       "deepseek": { "models": {
+        "deepseek-flash": { "name": "DeepSeek V4.1 Flash 1017", "reasoning": true,
+          "reasoning_options": [{ "type": "toggle" }, { "type": "effort", "values": ["low", "high", "max"] }] },
         "deepseek-v4-flash": { "name": "DeepSeek V4 Flash", "reasoning": true,
           "reasoning_options": [{ "type": "toggle" }, { "type": "effort", "values": ["low", "high", "max"] }] } } },
       "openrouter": { "models": { "gemini-3.8-flash": { "name": "x", "reasoning_options": [{ "type": "effort", "values": ["max"] }] } } }
@@ -412,6 +423,8 @@ mod tests {
       ("claude-opus-4-6-20260115", "claude-opus-4-6"),
       ("gemini-3.8-flash-latest", "gemini-3-8-flash"),
       ("Gemini 3.8 Flash", "gemini-3-8-flash"),
+      ("DeepSeek V4.1 Flash 1017", "deepseek-v4-1-flash"),
+      ("model-2024", "model-2024"),
       ("GPT_6  Sol", "gpt-6-sol"),
       ("openrouter/moonshotai/kimi-k3", "kimi-k3"),
     ] {
@@ -437,8 +450,31 @@ mod tests {
     assert_eq!(c.resolve(&opt("asgard/claude-opus-5.5-fast", "Claude Opus 5.5 Fast")).map(|m| m.id.as_str()), Some("claude-opus-5-5"));
     assert_eq!(c.resolve(&opt("claude-opus-4-6[1m]", "Claude Opus 4.6 (Thinking)")).map(|m| m.id.as_str()), Some("claude-opus-4-6"));
     assert_eq!(c.resolve(&opt("asgard", "gemini-3.8-flash")).map(|m| m.provider.as_str()), Some("google"));
-    assert!(c.resolve(&opt("asgard/deepseek-v4.1-flash", "asgard/DeepSeek V4.1 Flash")).is_none());
+    assert_eq!(c.resolve(&opt("asgard/deepseek-v4.1-flash", "asgard/DeepSeek V4.1 Flash")).map(|m| m.id.as_str()), Some("deepseek-flash"));
+    assert_eq!(c.efforts("ds-flash", Some("DeepSeek V4.1 Flash")).unwrap(), ["low", "high", "max"]);
+    assert!(c.resolve(&opt("asgard/deepseek-v9-flash", "asgard/DeepSeek V9 Flash")).is_none());
     assert!(c.resolve(&opt("default", "Default (recommended)")).is_none());
+  }
+
+  #[test]
+  fn guessed_provider_efforts_follow_the_rolling_catalogue_name() {
+    let guessed: crate::providers::ProviderModel = serde_json::from_value(json!({
+      "id": "deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash",
+      "efforts": ["low", "medium", "high"], "estimated": ["efforts"]
+    }))
+    .unwrap();
+    assert_eq!(guessed.offered_efforts(&catalog()), ["low", "high", "max"]);
+  }
+
+  #[test]
+  fn catalogue_ids_take_precedence_over_display_name_aliases() {
+    let api = json!({ "deepseek": { "models": {
+      "a-rolling": { "name": "Versioned Model" },
+      "versioned-model": { "name": "Other Model" }
+    } } });
+    let c = Catalog::new(trim_models_dev(&api, "2026-10-10T00:00:00Z", None));
+    assert_eq!(c.lookup("versioned-model", None).unwrap().id, "versioned-model");
+    assert_eq!(c.lookup("other-model", None).unwrap().id, "versioned-model");
   }
 
   #[test]
@@ -459,15 +495,22 @@ mod tests {
   fn pi_custom_models_meet_pi_and_catalogue_levels() {
     let c = catalog();
     let mut native = NativeLevels { catalog_fallback: true, ..Default::default() };
-    for id in ["asgard/claude-opus-5.5", "asgard/gemini-3.8-flash", "asgard/kimi-k3", "asgard/deepseek-v4.1-flash"] {
+    for id in [
+      "asgard/claude-opus-5.5",
+      "asgard/gemini-3.8-flash",
+      "asgard/kimi-k3",
+      "asgard/deepseek-v4.1-flash",
+      "asgard/deepseek-v9-flash",
+    ] {
       native.levels.insert(id.into(), PI_OFF_TO_HIGH.to_vec());
     }
     let cases = [
       ("asgard/claude-opus-5.5", "asgard/Claude Opus 5.5", vec!["low", "medium", "high"]),
       ("asgard/gemini-3.8-flash", "asgard/Gemini 3.8 Flash", vec!["low", "medium", "high"]),
       ("asgard/kimi-k3", "asgard/Kimi K3", vec!["off", "low", "high"]),
+      ("asgard/deepseek-v4.1-flash", "asgard/DeepSeek V4.1 Flash", vec!["off", "low", "high"]),
       // Not in the catalogue: pi's own levels alone (pi would clamp xhigh down to high)
-      ("asgard/deepseek-v4.1-flash", "asgard/DeepSeek V4.1 Flash", vec!["off", "minimal", "low", "medium", "high"]),
+      ("asgard/deepseek-v9-flash", "asgard/DeepSeek V9 Flash", vec!["off", "minimal", "low", "medium", "high"]),
     ];
     for (id, name, want) in cases {
       let mut controls = pi_controls(sourced(id, name, SourceKind::Custom));

@@ -412,6 +412,7 @@ function grouped<T>(groups: SourceGroup<T>[] | undefined, row: (item: T) => Reac
   );
 }
 type SidekickOption = ConfigControl['options'][number];
+const sidekickSource = (o: SidekickOption) => o.source?.name ?? o.group?.name ?? o.description;
 // A family's source as a category. An id that only tells two equally named models apart is no category: it stays on the row
 const familySource = (f: ModelFamily) => (f.source && !f.variants.some(v => v.id === f.source) ? f.source : undefined);
 
@@ -572,7 +573,7 @@ function FusionParams({ family: f, variant: v, onSelect }: { family: ModelFamily
   );
 }
 
-// The built-in agent's sidekick side: none, or any model the model list offers (its source on the second line). The
+// The built-in agent's sidekick side: none, or any model the model list offers, with sources grouped like the lead. The
 // picked one carries its level and Fast on its row like a lead does, and opens them in the menu beside it; a pick keeps
 // the panel open, since the level is set from that row. The side fills the lead's height (`.pair-view`)
 function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { control: ConfigControl; effort?: ConfigControl; fast?: ConfigControl; onSetConfig: (id: string, value: string) => void }) {
@@ -586,7 +587,7 @@ function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { co
   };
   const family: ModelFamily | undefined = picked && { key: picked.id, name: picked.name, variants: [view!.variant], efforts: [], hasFast: false, hasLong: false };
   const params = !!view && viewHasParams(family!, view);
-  const groups = useMemo(() => bySource(control.options, o => o.description), [control.options]);
+  const groups = useMemo(() => bySource(control.options, sidekickSource), [control.options]);
   const closeMenu = () => {
     setMenu(undefined);
     requestAnimationFrame(() => (list.current?.querySelector<HTMLElement>('input') ?? list.current?.querySelector<HTMLElement>('[role="listbox"]'))?.focus({ preventScroll: true }));
@@ -602,7 +603,7 @@ function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { co
         setMenu(row);
       }}>
       <Command.Root<SidekickOption> items={groups ?? control.options} value={cur ?? null} itemToStringValue={o => o.id} isItemEqualToValue={(a, b) => a.id === b.id}
-        itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, o.description].filter(Boolean).join(' '))}>
+        itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, sidekickSource(o)].filter(Boolean).join(' '))}>
         <Command.Input visible={control.options.length >= SEARCH_FROM} />
         <Command.Empty />
         <Command.List searchable={control.options.length >= SEARCH_FROM} fill>
@@ -612,7 +613,7 @@ function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { co
               onClick={() => onSetConfig(control.id, o.id)} className="group/row">
               {o.id === NO_SIDEKICK
                 ? <OptionContent icon={<Ban className="text-fg-3" strokeWidth={1.75} />} checked={o === cur} checkSlot={!!cur}>{t('composer.sidekickNone')}</OptionContent>
-                : <OptionContent icon={<ModelMark family={o.name} brand={optionBrand(o)} />} description={groups ? undefined : o.description}
+                : <OptionContent icon={<ModelMark family={o.name} brand={optionBrand(o)} />}
                   trail={<RowTrail checked={o === cur} label={own ? t('composer.modelParams', { model: o.name }) : undefined}
                     onOpen={own ? row => setMenu(m => (m ? undefined : row)) : undefined} />}>
                   <span className="flex min-w-0 items-baseline gap-1"><span className="truncate">{o.name}</span>{o === picked && <RowParams family={family!} view={view!} />}</span>

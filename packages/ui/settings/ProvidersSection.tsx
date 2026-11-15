@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Eye, EyeOff, Globe, LoaderCircle, Plus, Server, Settings2 } from 'lucide-react';
 import {
-  BUILTIN_AGENT_ID, newModel, syncListedFast,
+  BUILTIN_AGENT_ID, newModel, syncListedModels,
   type LocalSource, type ProbeOutcome, type Provider, type ProviderAction, type ProviderModel, type ProviderProbe, type ProvidersView, type ProviderView,
 } from '@acpira/shared/providers';
 import { Button, Chip, IconButton } from '../ui/Button';
@@ -88,8 +88,8 @@ export function ProvidersSection({ state, on, detect }: { state?: ProvidersState
   const save = (provider: Provider, key?: string, form = false, listed?: ProviderModel[]) => {
     if (!provider.id) before.current = new Set(state?.view.providers.map(p => p.id));
     listedOnSave.current = listed;
-    // An answered /models keeps the fast-tier listing on the already configured models too
-    const synced = syncListedFast(provider.models, listed);
+    // An answered /models updates listed fast tiers and corrects guessed effort levels on saved models too
+    const synced = syncListedModels(provider.models, listed);
     act({ kind: 'save', provider: strip(synced ? { ...provider, models: synced } : provider), key }, form);
   };
   const saveRow = (provider: Provider) => act({ kind: 'save', provider: strip(provider) }, false, true);
@@ -135,12 +135,12 @@ export function ProvidersSection({ state, on, detect }: { state?: ProvidersState
     setOpening(undefined);
     if (opened.kind === 'models') {
       const target = providers.find(p => p.id === opening.id);
-      const models = target && syncListedFast(target.models, opened.models);
+      const models = target && syncListedModels(target.models, opened.models);
       if (target && models) saveRow({ ...strip(target), models });
       setAdding({ id: opening.id, listed: opened.models });
     } else if (opened.kind === 'failed') { setFormError(opened.error); setEditing(opening.id); }
   }, [opening, opened]);
-  // A refresh probe landing updates the fast-tier flags of that source's saved models once, never touching other sources
+  // A refresh probe updates that source's listed metadata once, never touching other sources
   // or a ProviderForm verify probe
   const syncedProbes = useRef(new Set<string>());
   useEffect(() => {
@@ -150,7 +150,7 @@ export function ProvidersSection({ state, on, detect }: { state?: ProvidersState
       if (outcome?.kind !== 'models' || syncedProbes.current.has(probeId)) continue;
       syncedProbes.current.add(probeId);
       const target = providers.find(p => p.id === providerId);
-      const models = target && syncListedFast(target.models, outcome.models);
+      const models = target && syncListedModels(target.models, outcome.models);
       if (target && models) saveRow({ ...strip(target), models });
     }
   }, [checks, state?.probes]);
