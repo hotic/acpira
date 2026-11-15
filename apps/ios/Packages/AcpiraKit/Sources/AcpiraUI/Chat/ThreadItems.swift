@@ -99,6 +99,10 @@ struct ThreadItemView: View {
       // back button share; the thread's own inset moves them a little inside it
       .padding(.horizontal, Metrics.threadInset)
       .readableWidth()
+      // A row moves as one piece. A fold above it animates its height frame by frame, and text whose position changes
+      // is recorded and drawn again: in the stacked thread (the subagent inspector) every row below the fold redrew
+      // its whole text on each frame of the reveal, on screen or not
+      .geometryGroup()
   }
 
   @ViewBuilder private var content: some View {

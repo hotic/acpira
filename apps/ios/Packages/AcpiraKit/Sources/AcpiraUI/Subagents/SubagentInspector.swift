@@ -149,6 +149,8 @@ private struct InspectorThread: View {
           .textStyle(WebType.text2)
           .padding(.horizontal, Metrics.s1 + Metrics.pad)
           .padding(.bottom, WebMetrics.msgGap)
+          // Below every fold of the thread: moved as one piece while one opens (`ThreadItemView`)
+          .geometryGroup()
         }
       }
       // The result lines up with the transcript in a wide window
