@@ -432,10 +432,23 @@ pub struct AgentRegistry {
   next_listener: std::sync::atomic::AtomicU64,
 }
 
+/// `command` starts the built-in's `builtin` launcher: the same name, or a path to it (an npm shim's absolute path, its
+/// `.cmd` on Windows). A path read as a different command dropped the adapter and with it the update offer
+fn same_launcher(builtin: &str, command: &str) -> bool {
+  let file = command.rsplit(['/', '\\']).next().unwrap_or(command);
+  let stem = match file.rsplit_once('.') {
+    Some((stem, ext)) if ["cmd", "exe", "bat", "ps1"].iter().any(|e| ext.eq_ignore_ascii_case(e)) => stem,
+    _ => file,
+  };
+  stem == builtin
+}
+
 /// A built-in definition with an agents.json entry for the same launcher laid over it: fields the entry sets win, env
 /// merges key by key. An install line naming the built-in's own adapter package is a stale copy of the pin (IDE settings
 /// seeded agents.json with it, then the pin moved on), so the built-in line wins over it
 fn overlay(mut b: AgentDef, c: CustomAgentSetting, login: Vec<String>, install: Option<String>, docs: Option<String>) -> AgentDef {
+  // A path to the launcher runs that very file, as the entry asked
+  b.command = c.command.trim().to_owned();
   if let Some(name) = c.name {
     b.name = name;
   }
@@ -503,7 +516,7 @@ impl AgentRegistry {
       let docs = c.install.as_ref().and_then(|i| i.docs.as_deref()).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
       // Same id and launcher as a built-in: the entry only tunes it (env, args, flags), so the built-in's adapter,
       // lookup paths and pinned install line survive and an update stays offered
-      if let Some(b) = defs.get(id).filter(|b| b.command == c.command.trim()).cloned() {
+      if let Some(b) = defs.get(id).filter(|b| same_launcher(&b.command, c.command.trim())).cloned() {
         let def = overlay(b, c, login, command, docs);
         defs.insert(id.clone(), def);
         continue;
@@ -955,6 +968,21 @@ mod tests {
     let codex = r.get("codex").unwrap();
     assert!(codex.adapter.is_none() && codex.candidates.is_empty());
     assert_eq!(r.install("codex").unwrap().command.as_deref(), Some("make install"));
+  }
+
+  #[test]
+  fn a_path_to_a_built_in_launcher_still_overlays_it() {
+    let shim = r"C:\Users\u\AppData\Roaming\npm\claude-agent-acp.cmd";
+    let r = AgentRegistry::with_os(
+      &json!({ "claude": { "command": shim, "login": format!("{shim} --cli auth login") }, "codex": { "command": "/opt/codex-acp-fork" } }),
+      Os::Windows,
+    );
+    let claude = r.get("claude").unwrap();
+    assert!(claude.adapter.is_some() && claude.install.is_some(), "adapter and install line survive, so the update stays offered");
+    assert_eq!(claude.command, shim, "the entry's path is still what runs");
+    assert!(r.get("codex").unwrap().adapter.is_none(), "a different file name is another launcher");
+    assert!(same_launcher("codex-acp", "/usr/local/bin/codex-acp") && same_launcher("devin", r"D:\bin\devin.EXE"));
+    assert!(!same_launcher("devin", r"D:\bin\devin-old.exe"));
   }
 
   #[test]
