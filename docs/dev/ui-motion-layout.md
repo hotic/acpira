@@ -1,6 +1,6 @@
 # UI conventions: motion and layout
 
-Rules for motion, status signals, rails, sticky prompts, bottom follow, scrollbars, folding and appearance, and the browser behaviour behind them. Component rules are in `ui-conventions.md`.
+Rules for motion, status signals, rails, sticky prompts, bottom follow, scrollbars, folding and appearance, and the browser behaviour behind them.
 
 ## Motion rules
 

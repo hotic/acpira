@@ -60,7 +60,6 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 | Agent registry / launching / installs, cross-harness subagents, handoff pack, shared config, the prompt library (every model-facing text and its overrides) | `docs/dev/host-agents.md` |
 | Transcript normalization: prompts and attachments, tool content, terminal / image output, session import, subagents, usage, forking, export | `docs/dev/transcript-pipeline.md` |
 | `packages/ui` structure, stylesheets, markdown links, slash commands, render budget | `docs/dev/webview.md` |
-| UI primitives, tokens, rows, menus, overlays, composer, model panels | `docs/dev/ui-conventions.md` |
 | Motion, rails, sticky prompts, scrollbars, folding, appearance | `docs/dev/ui-motion-layout.md` |
 | Edits and retries, model identity, plans, permissions, controls, queue, workspace hooks, scope / deletion, prefs, compaction and context usage, questions, to-dos | `docs/dev/protocol-gotchas.md` |
 | The built-in agent (`acpira-agent`): providers, ACP surface, MCP, Plan mode, goals, compaction, session records | `docs/dev/builtin-agent.md` |
