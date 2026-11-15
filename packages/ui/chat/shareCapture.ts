@@ -4,6 +4,8 @@
 import { WIDGET_MESSAGE } from './widgetDoc';
 
 const MAX_CANVAS_PIXELS = 16_000_000;
+const MAX_CANVAS_SIDE = 16_384;
+const MAX_CAPTURE_ATTEMPTS = 8;
 const TARGET_DPR = 2;
 // How long one video frame or widget snapshot may take before the capture goes ahead without it
 const MEDIA_TIMEOUT_MS = 5_000;
@@ -347,19 +349,23 @@ function pruneEmptyEdges(root: HTMLElement) {
   }
 }
 
+// Bound every canvas allocation, not only the final PNG: very tall replies must also be allowed to scale below 1x.
+export function shareRasterSize(width: number, height: number): { width: number; height: number } {
+  const scale = Math.min(TARGET_DPR, Math.sqrt(MAX_CANVAS_PIXELS / (width * height)), MAX_CANVAS_SIDE / width, MAX_CANVAS_SIDE / height);
+  return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
+}
+
 // Rasterizes a live ShareCard element into a high-DPI PNG Blob
 export async function renderShareCardToPng(cardEl: HTMLElement): Promise<Blob> {
   await Promise.all([...cardEl.querySelectorAll('img')].map(img => pendingMedia.get(img)));
   const rect = cardEl.getBoundingClientRect();
   // Rounded up: offsetHeight rounds to the nearest pixel, so a fractional card would lose its bottom border row
   const width = Math.max(1, Math.ceil(rect.width) || cardEl.offsetWidth);
-  const height = Math.max(1, Math.ceil(rect.height) || cardEl.offsetHeight);
-  const dpr = Math.max(1, Math.min(TARGET_DPR, Math.sqrt(MAX_CANVAS_PIXELS / (width * height))));
+  const estimatedHeight = Math.max(1, Math.ceil(rect.height) || cardEl.offsetHeight);
 
   const clonedCard = cloneWithPaintedMedia(cardEl);
-  // Pinned to the measured box: WebKit lays a foreignObject's text out a pixel taller than the live card, which pushed
-  // the bottom border past the canvas; pinned, the card (overflow hidden) absorbs that under its watermark instead
-  clonedCard.style.height = `${height}px`;
+  // The SVG can wrap text differently. Let the card grow rather than clipping its reply or watermark to the live height.
+  clonedCard.style.height = 'auto';
   await inlineImages(clonedCard);
   // Kept alive until the draw below: WebKit only starts decoding an SVG's nested images on its first draw and paints
   // them blank there, unless the same data URLs are already decoded
@@ -372,7 +378,7 @@ export async function renderShareCardToPng(cardEl: HTMLElement): Promise<Blob> {
   const wrapper = document.createElement('div');
   wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
   wrapper.className = document.body.className;
-  wrapper.style.cssText = `margin:0;padding:0;width:${width}px;height:${height}px;overflow:hidden;background:transparent;`;
+  wrapper.style.cssText = `margin:0;padding:0;width:${width}px;background:transparent;`;
 
   const shellWrap = document.createElement('div');
   shellWrap.className = shellEl ? shellEl.className : 'acp-shell';
@@ -381,7 +387,7 @@ export async function renderShareCardToPng(cardEl: HTMLElement): Promise<Blob> {
       if (attr.startsWith('data-')) shellWrap.setAttribute(attr, shellEl.getAttribute(attr) ?? '');
     }
   }
-  shellWrap.style.cssText = `${shellVars};width:${width}px;height:${height}px;overflow:visible;background:transparent;`;
+  shellWrap.style.cssText = `${shellVars};width:${width}px;height:auto;overflow:visible;background:transparent;`;
 
   const styleEl = document.createElement('style');
   styleEl.textContent = cssText;
@@ -390,27 +396,44 @@ export async function renderShareCardToPng(cardEl: HTMLElement): Promise<Blob> {
   wrapper.appendChild(shellWrap);
 
   const serialized = new XMLSerializer().serializeToString(wrapper);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject x="0" y="0" width="${width}" height="${height}">${serialized}</foreignObject></svg>`;
-  const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-
   const img = new Image();
   img.decoding = 'sync';
-  img.src = svgUrl;
-  await img.decode();
-
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(width * dpr);
-  canvas.height = Math.round(height * dpr);
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2D context is unavailable');
-  ctx.scale(dpr, dpr);
-  ctx.drawImage(img, 0, 0, width, height);
-  // A second draw after a task picks up any nested image WebKit was still decoding during the first
-  if (decoded.length) {
-    await new Promise(resolve => setTimeout(resolve, 32));
-    ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
+
+  // Leave transparent room below the natural card. Its opaque frame crosses the centre column all the way to the
+  // bottom, so only that column is needed to find the painted edge, including any SVG-only layout growth.
+  let renderHeight = estimatedHeight + Math.max(32, Math.ceil(estimatedHeight / 8));
+  let height: number;
+  for (let attempt = 0; ; attempt++) {
+    if (attempt === MAX_CAPTURE_ATTEMPTS) throw new Error('Could not find the share card bottom edge');
+    const raster = shareRasterSize(width, renderHeight);
+    // Keep the SVG viewport at its layout size: WebKit mispaints a foreignObject when its root viewBox scales it.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${renderHeight}" viewBox="0 0 ${width} ${renderHeight}"><foreignObject x="0" y="0" width="${width}" height="${renderHeight}">${serialized}</foreignObject></svg>`;
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    await img.decode();
+    canvas.width = raster.width;
+    canvas.height = raster.height;
+    ctx.drawImage(img, 0, 0, raster.width, raster.height);
+    // A second draw after a task picks up any nested image WebKit was still decoding during the first.
+    if (decoded.length) {
+      await new Promise(resolve => setTimeout(resolve, 32));
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, raster.width, raster.height);
+    }
+    const column = ctx.getImageData(Math.floor(canvas.width / 2), 0, 1, canvas.height).data;
+    height = canvas.height;
+    while (height > 0 && column[(height - 1) * 4 + 3] === 0) height--;
+    if (height === 0) throw new Error('Share card rendered no pixels');
+    if (height < canvas.height) break;
+    // No transparent tail means the probe itself may still be clipping the card. Retry instead of exporting a cut edge.
+    renderHeight *= 2;
   }
+  // Crop the raster that was checked, rather than laying it out again at a different height or scale.
+  const rasterHeight = canvas.height;
+  canvas.height = height;
+  ctx.drawImage(img, 0, 0, canvas.width, rasterHeight);
   decoded.length = 0;
 
   return new Promise<Blob>((resolve, reject) => {
