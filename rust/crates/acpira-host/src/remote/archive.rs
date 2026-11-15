@@ -6,48 +6,156 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
 
+const DOWNLOAD_TRIES: usize = 4;
+const RETRY_BACKOFF_MS: [u64; 3] = [150, 500, 1500];
+
 fn hex(digest: &[u8]) -> String {
   digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Download `url` into `to`, reporting (bytes so far, content length) after every chunk; the SHA-256 of what arrived
+fn part_path(to: &Path) -> PathBuf {
+  let mut s = to.as_os_str().to_owned();
+  s.push(".part");
+  PathBuf::from(s)
+}
+
+/// Parses `Content-Range: bytes <from>-<end>/<total>` for a resumed request from `from`; returns `Some(total)` (`None`
+/// when total is `*`) only when the range starts at `from`
+fn content_range_total(raw: Option<&str>, from: u64) -> Option<Option<u64>> {
+  let rest = raw?.trim().strip_prefix("bytes")?.trim_start();
+  let (span, total_str) = rest.split_once('/')?;
+  let (start, end) = span.split_once('-')?;
+  if start.trim().parse::<u64>().ok()? != from {
+    return None;
+  }
+  let end = end.trim().parse::<u64>().ok()?;
+  if end < from {
+    return None;
+  }
+  let total = match total_str.trim() {
+    "*" => None,
+    n => {
+      let t = n.parse::<u64>().ok()?;
+      if end >= t {
+        return None;
+      }
+      Some(t)
+    }
+  };
+  Some(total)
+}
+
+/// Download `url` into `to` (resuming `<to>.part` with HTTP `Range` across transient connection drops and retries),
+/// reporting `(bytes so far, total length)` after every chunk; returns the SHA-256 of the complete file
 pub fn download_progress(url: &str, to: &Path, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<String> {
+  if let Some(dir) = to.parent() {
+    std::fs::create_dir_all(dir)?;
+  }
+  let part = part_path(to);
   let agent: ureq::Agent = crate::net_proxy::ureq_config(
     ureq::Agent::config_builder()
       .timeout_connect(Some(std::time::Duration::from_secs(30)))
+      .timeout_recv_response(Some(std::time::Duration::from_secs(30)))
       .timeout_recv_body(Some(std::time::Duration::from_secs(600)))
       .http_status_as_error(false),
   )
   .build()
   .into();
-  let mut res = agent.get(url).call().with_context(|| format!("download {url}"))?;
-  let status = res.status().as_u16();
-  if !(200..300).contains(&status) {
-    bail!("download {url}: HTTP {status}");
-  }
-  let total = res.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
-  let mut reader = res.body_mut().as_reader();
-  let mut file = std::fs::File::create(to)?;
-  let mut hash = Sha256::new();
-  let mut buf = vec![0u8; 1 << 16];
-  let mut got: u64 = 0;
-  loop {
-    let n = reader.read(&mut buf).with_context(|| format!("download {url}"))?;
-    if n == 0 {
-      break;
+  for attempt in 0..DOWNLOAD_TRIES {
+    if attempt > 0
+      && let Some(&ms) = RETRY_BACKOFF_MS.get(attempt - 1)
+    {
+      std::thread::sleep(std::time::Duration::from_millis(ms));
     }
-    file.write_all(&buf[..n])?;
-    hash.update(&buf[..n]);
-    got += n as u64;
-    progress(got, total);
+    let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    let mut req = agent.get(url);
+    if have > 0 {
+      req = req.header("Range", format!("bytes={have}-"));
+    }
+    let mut res = match req.call() {
+      Ok(r) => r,
+      Err(_) if attempt + 1 < DOWNLOAD_TRIES => continue,
+      Err(e) => return Err(e).with_context(|| format!("download {url}")),
+    };
+    let status = res.status().as_u16();
+    let content_len = res.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
+    let (resumed, total) = if status == 416 {
+      let _ = std::fs::remove_file(&part);
+      if attempt + 1 < DOWNLOAD_TRIES {
+        continue;
+      }
+      bail!("download {url}: HTTP {status}");
+    } else if status == 206 {
+      let hdr = res.headers().get("content-range").and_then(|v| v.to_str().ok());
+      match (have > 0).then(|| content_range_total(hdr, have)).flatten() {
+        Some(range_total) => (true, range_total.or_else(|| content_len.map(|n| have + n))),
+        None => {
+          let _ = std::fs::remove_file(&part);
+          if attempt + 1 < DOWNLOAD_TRIES {
+            continue;
+          }
+          bail!("download {url}: unexpected HTTP 206");
+        }
+      }
+    } else if (200..300).contains(&status) {
+      (false, content_len)
+    } else if status == 408 || status == 429 || (500..600).contains(&status) {
+      if attempt + 1 < DOWNLOAD_TRIES {
+        continue;
+      }
+      bail!("download {url}: HTTP {status}");
+    } else {
+      let _ = std::fs::remove_file(&part);
+      bail!("download {url}: HTTP {status}");
+    };
+    let mut file = std::fs::OpenOptions::new().create(true).write(true).read(true).truncate(!resumed).open(&part)?;
+    let mut hash = Sha256::new();
+    let mut got = if resumed {
+      std::io::copy(&mut (&file).take(have), &mut hash)?;
+      file.seek(SeekFrom::Start(have))?;
+      progress(have, total);
+      have
+    } else {
+      0
+    };
+    let mut reader = res.body_mut().as_reader();
+    let mut buf = vec![0u8; 1 << 16];
+    let read_err = loop {
+      match reader.read(&mut buf) {
+        Ok(0) => break None,
+        Ok(n) => {
+          let chunk = buf.get(..n).unwrap_or_default();
+          file.write_all(chunk)?;
+          hash.update(chunk);
+          got += n as u64;
+          progress(got, total);
+        }
+        Err(e) => break Some(e),
+      }
+    };
+    file.sync_all()?;
+    drop(file);
+    if let Some(e) = read_err {
+      if attempt + 1 < DOWNLOAD_TRIES {
+        continue;
+      }
+      return Err(e).with_context(|| format!("download {url}"));
+    }
+    if let Some(t) = total
+      && t != got
+    {
+      if got > t {
+        let _ = std::fs::remove_file(&part);
+      }
+      if attempt + 1 < DOWNLOAD_TRIES {
+        continue;
+      }
+      bail!("download {url}: got {got} of {t} bytes");
+    }
+    std::fs::rename(&part, to)?;
+    return Ok(hex(&hash.finalize()));
   }
-  file.sync_all()?;
-  if let Some(t) = total
-    && t != got
-  {
-    bail!("download {url}: got {got} of {t} bytes");
-  }
-  Ok(hex(&hash.finalize()))
+  bail!("download {url}: retries exhausted")
 }
 
 const EOCD: u32 = 0x0605_4b50;
@@ -288,5 +396,88 @@ mod tests {
     let file = put(tmp.path(), "nested.zip", &zip(&[("a/", b"", 0o40755, false), ("a/b/c.txt", b"deep", FILE, true)]));
     assert_eq!(extract_zip(&file, &tmp.path().join("out-nested")).unwrap(), 1);
     assert_eq!(std::fs::read_to_string(tmp.path().join("out-nested/a/b/c.txt")).unwrap(), "deep");
+  }
+
+  #[test]
+  fn interrupted_downloads_retry_and_resume_via_range() {
+    use std::io::BufRead;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let body: Vec<u8> = (0..150_000u32).map(|i| (i % 251) as u8).collect();
+    let expected = hex(&Sha256::digest(&body));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_srv = hits.clone();
+    let served = body.clone();
+    std::thread::spawn(move || {
+      let mut cuts = 2usize;
+      for stream in listener.incoming().flatten() {
+        let call = hits_srv.fetch_add(1, Ordering::SeqCst);
+        let mut r = std::io::BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        if r.read_line(&mut line).is_err() {
+          continue;
+        }
+        let path = line.split_whitespace().nth(1).unwrap_or("/").to_owned();
+        let mut range: Option<usize> = None;
+        loop {
+          let mut h = String::new();
+          if r.read_line(&mut h).unwrap_or(0) == 0 || h == "\r\n" {
+            break;
+          }
+          if let Some(v) = h.to_ascii_lowercase().strip_prefix("range: bytes=") {
+            range = v.trim().trim_end_matches('-').parse().ok();
+          }
+        }
+        let mut s = stream;
+        if path == "/missing" {
+          let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+          continue;
+        }
+        // First hit drops before sending any HTTP status, as a reset proxy tunnel does
+        if call == 0 {
+          continue;
+        }
+        let from = range.unwrap_or(0);
+        let slice = &served[from..];
+        let head = if from > 0 {
+          format!(
+            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {from}-{}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            served.len() - 1,
+            served.len(),
+            slice.len()
+          )
+        } else {
+          format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", served.len())
+        };
+        let _ = s.write_all(head.as_bytes());
+        let send_len = if cuts > 0 {
+          cuts -= 1;
+          (slice.len() / 2).max(1)
+        } else {
+          slice.len()
+        };
+        let _ = s.write_all(&slice[..send_len]);
+      }
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("asset.vsix");
+    let mut seen = vec![];
+    let got = download_progress(&format!("{base}/asset.vsix"), &out, &mut |done, total| seen.push((done, total))).unwrap();
+    assert_eq!(got, expected);
+    assert_eq!(std::fs::read(&out).unwrap(), body);
+    assert!(!part_path(&out).exists());
+    assert_eq!(hits.load(Ordering::SeqCst), 4, "1 reset + 2 cut streams + 1 final range completion");
+    assert!(seen.windows(2).all(|w| w[1].0 >= w[0].0), "progress stays monotonic across range resumes: {seen:?}");
+    assert_eq!(seen.last().copied(), Some((body.len() as u64, Some(body.len() as u64))));
+
+    // Permanent 404 fails on the first request without retrying
+    let before = hits.load(Ordering::SeqCst);
+    let err = download_progress(&format!("{base}/missing"), &tmp.path().join("missing"), &mut |_, _| {}).unwrap_err();
+    assert!(format!("{err:#}").contains("HTTP 404"), "{err:#}");
+    assert_eq!(hits.load(Ordering::SeqCst), before + 1);
   }
 }

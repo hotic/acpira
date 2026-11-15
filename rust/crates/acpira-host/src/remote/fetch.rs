@@ -38,10 +38,30 @@ pub fn digest_in_sums(sums: &str, name: &str) -> Option<String> {
   })
 }
 
+/// Serialize concurrent fetches of the same `(builds, version, platform)` so two hosts of one platform connecting at
+/// once share the downloaded build instead of racing on its `.part` file
+fn fetch_lock(builds: &Path, version: &str, platform: &str) -> std::sync::Arc<parking_lot::Mutex<()>> {
+  type TargetLock = std::sync::Arc<parking_lot::Mutex<()>>;
+  static LOCKS: std::sync::LazyLock<parking_lot::Mutex<Vec<(PathBuf, TargetLock)>>> = std::sync::LazyLock::new(Default::default);
+  let key = builds.join(version).join(platform);
+  let mut list = LOCKS.lock();
+  if let Some((_, lock)) = list.iter().find(|(k, _)| *k == key) {
+    return lock.clone();
+  }
+  let lock = TargetLock::default();
+  list.push((key, lock.clone()));
+  lock
+}
+
 /// Download, check and unpack the build; blocking. `progress` gets (bytes so far, archive size)
 pub fn fetch(base: &str, builds: &Path, version: &str, platform: &str, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<PathBuf> {
   if !valid_part(version) || !valid_part(platform) {
     bail!("not a release name: {version} / {platform}");
+  }
+  let lock = fetch_lock(builds, version, platform);
+  let _guard = lock.lock();
+  if let Some(p) = installed(builds, version, platform) {
+    return Ok(p);
   }
   std::fs::create_dir_all(builds).with_context(|| format!("create {}", builds.display()))?;
   let stage = builds.join(format!(".stage-{}-{}", std::process::id(), nanos()));
@@ -79,13 +99,25 @@ fn fetch_into(base: &str, builds: &Path, stage: &Path, version: &str, platform: 
       _ => anyhow!("the Acpira {version} release has no {platform} build ({name})"),
     });
   };
-  let archive = stage.join(&name);
-  let got = download_progress(&format!("{dir}/{name}"), &archive, progress)?;
+  // Keep the archive path under `<builds>/<version>/` so `<name>.part` survives across manual retries too
+  let version_dir = builds.join(version);
+  std::fs::create_dir_all(&version_dir).with_context(|| format!("create {}", version_dir.display()))?;
+  let archive = version_dir.join(&name);
+  let got = match std::fs::read(&archive).ok().map(|b| crate::util::sha256_hex(&b)) {
+    Some(existing) if existing.eq_ignore_ascii_case(&expected) => existing,
+    _ => {
+      let _ = std::fs::remove_file(&archive);
+      download_progress(&format!("{dir}/{name}"), &archive, progress)?
+    }
+  };
   if !got.eq_ignore_ascii_case(&expected) {
+    let _ = std::fs::remove_file(&archive);
     bail!("SHA-256 mismatch for {name}: {sums_name} lists {expected}, the download is {got}");
   }
   let pkg = stage.join("pkg");
-  extract_zip(&archive, &pkg)?;
+  let unpacked = extract_zip(&archive, &pkg);
+  let _ = std::fs::remove_file(&archive);
+  unpacked?;
   let inner = pkg.join("extension").join("bin").join("acpira");
   if !inner.is_file() {
     bail!("{name} holds no extension/bin/acpira");
