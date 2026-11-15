@@ -579,6 +579,7 @@ export const ru = {
   'notice.method.antigravity:oauth-business': 'Войти через Gemini Enterprise (браузер)',
   'notice.method.antigravity:gemini-api-key': 'Использовать GEMINI_API_KEY',
   'notice.method.antigravity:agent-platform': 'Использовать Gemini Enterprise Agent Platform',
+  'notice.method.antigravity:terminal-login': 'Войти через Google (терминал)',
 
   'turns.readFiles': 'Прочитано {n} файлов',
   'turns.readFiles#one': 'Прочитан {n} файл',

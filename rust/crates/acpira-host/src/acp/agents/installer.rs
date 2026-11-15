@@ -152,7 +152,7 @@ pub async fn plan(line: &str, os: Os) -> Result<Plan, PlanError> {
   ];
   if let Some(url) = &proxy {
     env.extend(crate::net_proxy::env_pairs(url));
-    // `acpira install-agent` (a native release) takes the same route; it has no settings of its own
+    // A line that runs this engine's own subcommands takes the same route; they have no settings of their own
     env.push((crate::net_proxy::OVERRIDE_ENV.into(), url.clone()));
   }
   let mut prefix = None;

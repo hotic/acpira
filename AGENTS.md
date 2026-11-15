@@ -1,6 +1,6 @@
 # Acpira
 
-A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives official agent CLIs (`grok agent stdio`, `devin acp`, `kimi acp`, Codex, Claude, OpenCode, Google's `agy_acp_server`, or any ACP-compatible command) over [ACP](https://agentclientprotocol.com) (JSON-RPC over stdio). The shell owns UI, session organization, permission approvals, accounts, and context budget; model calls and agent execution stay in the CLIs.
+A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives official agent CLIs (`grok agent stdio`, `devin acp`, `kimi acp`, Codex, Claude, OpenCode, Google's `agy acp`, or any ACP-compatible command) over [ACP](https://agentclientprotocol.com) (JSON-RPC over stdio). The shell owns UI, session organization, permission approvals, accounts, and context budget; model calls and agent execution stay in the CLIs.
 
 ## Working rules
 
@@ -21,7 +21,7 @@ A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives offici
 - `pnpm harness [port]` — the real webview bundle against the real sidecar and CLIs in a browser, no IDE (`test/host-preview/`); open the URL with the token printed on stderr, data under `~/.acpira/harness` unless `--home`. Build first
 - Probes against real CLIs: `pnpm probe <agent> [...] [prompt]` (raw `initialize` + `session/new`, use first for protocol issues) and `scripts/probe/*-host.ts` (the webview's path through the sidecar). Flags and what each covers: "Host probes" in `docs/dev/host-architecture.md`. Everything but a prompt-less `pnpm probe` spends model calls
 - Evals (`scripts/eval/`) and `acpira quota [--json]`: `docs/dev/evals.md`; real runs spend model calls or quota
-- Engine subcommands: `acpira engine` (starts or takes over the machine's one engine and prints its socket; every shell runs it on macOS / Linux, `ACPIRA_ENGINE=stdio` falls back to the attached sidecar), `acpira serve` (that engine), `acpira install-agent`, `acpira handoff-pack`, `acpira agents --json`: `docs/dev/host-architecture.md`
+- Engine subcommands: `acpira engine` (starts or takes over the machine's one engine and prints its socket; every shell runs it on macOS / Linux, `ACPIRA_ENGINE=stdio` falls back to the attached sidecar), `acpira serve` (that engine), `acpira handoff-pack`, `acpira agents --json`: `docs/dev/host-architecture.md`
 - `pnpm catalog:update` — regenerate the built-in model catalogue from models.dev; refresh before a release
 - `pnpm package` — page, picker, this machine's release sidecar, then its `.vsix` and, on an arm64 Mac, the desktop app and dmg; `pnpm install:local [--vsix | --desktop]` installs them. Cross-platform sidecars, per-platform VSIX and versioning: `docs/releasing.md`
 - `apps/ios/scripts/check.sh [simulator]` / `shot.sh` — the iOS app's tests / a simulator screenshot (`docs/dev/ios.md`)

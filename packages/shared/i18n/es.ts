@@ -569,6 +569,7 @@ export const es = {
   'notice.method.antigravity:oauth-business': 'Iniciar sesión con Gemini Enterprise (navegador)',
   'notice.method.antigravity:gemini-api-key': 'Usar GEMINI_API_KEY',
   'notice.method.antigravity:agent-platform': 'Usar Gemini Enterprise Agent Platform',
+  'notice.method.antigravity:terminal-login': 'Iniciar sesión con Google (terminal)',
 
   'turns.readFiles': 'Leídos {n} archivos',
   'turns.readFiles#one': 'Leído {n} archivo',

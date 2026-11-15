@@ -6,7 +6,7 @@ How each external agent CLI behaves on the ACP wire, with the version observed. 
 
 - `promptCapabilities.image` is honoured for every agent except Grok, which advertises `image: false` yet takes inline image blocks the model sees (`prompt.imagesRegardless` in the registry). DSH rejects images its route cannot take. `embeddedContext`: Grok / Devin / Kimi / OpenCode `true`, DSH and pi-acp `false`.
 - **Client MCP**: every built-in agent launches a stdio server from `session/new` except Pi (pi-acp 0.0.33 advertises no `mcpCapabilities`). Codex (codex-acp 1.13.0) takes http but not sse, DSH http only; the shared-MCP filter drops sse for them.
-- **`tools/list_changed`**: re-listed at once by Claude (claude-agent-acp 0.93.0), OpenCode 1.18.15, DSH (acp 0.0.1). Not within 10 s: Codex (codex-acp 2.2.2), Grok 1.0.62, Kimi 2.2.0, the built-in agent (next turn, by design). Devin 3000.11.205 sends no `tools/list` before a prompt; Antigravity 1.3.0 and Pi (pi-acp 0.0.34) never launch the server.
+- **`tools/list_changed`**: re-listed at once by Claude (claude-agent-acp 0.93.0), OpenCode 1.18.15, DSH (acp 0.0.1). Not within 10 s: Codex (codex-acp 2.2.2), Grok 1.0.62, Kimi 2.2.0, the built-in agent (next turn, by design). Devin 3000.11.205 sends no `tools/list` before a prompt; Pi (pi-acp 0.0.34) never launches the server; Antigravity (`agy acp`) is unchecked.
 - Open: whether non-listing CLIs pick up a changed tool list at their next turn (needs a prompt); until then plugin tools reach them with the next session.
 - Project `.mcp.json`: Claude (0.83.0) and Devin (3000.11.3) launch its servers at session/new; Grok 1.0.18 only until its Claude-import prompt is answered; Kimi 0.41.0 never. `LOADS_MCP_JSON` (`mcp.rs`) treats it as native for Claude and Devin only.
 - Shared skills: Grok 1.0.18 scans `.agents/skills` at each tier, Kimi 0.41.0 reads `~/.agents/skills`, Claude Code reads neither (gets per-skill symlinks). Claude Code 2.1.277+ reads `AGENTS.md` only where no `CLAUDE.md` exists, hence the `@AGENTS.md` import offer.
@@ -70,12 +70,12 @@ How each external agent CLI behaves on the ACP wire, with the version observed. 
 
 ## Antigravity
 
-- Google's `antigravity-acp` 1.2.1 / 1.3.0 (`agy_acp_server`) installs from a pinned, digest-checked zip (`native_release.rs`) and launches by real path in its own process group, because the `.par` starts `localharness_external` from next to `argv[0]`.
-- Unauthenticated `session/new` is `-32000`. Google OAuth uses a `127.0.0.1` loopback (useless over Remote-SSH, use `GEMINI_API_KEY`); an `agy` CLI login does not carry over.
-- `ask_question` (1.2.1) is `session/request_permission` on an `interaction_*` tool call with empty `rawInput`, one option per answer, all `allow_once` (handling: `protocol-gotchas.md` Permissions). The server keeps its own default / auto_edit / yolo modes.
-- Failed turns are `end_turn` with the failure as the last message chunk (MCP init failure, `Usage Limit Reached`, connection lost, `Agent execution error`); `vendors/antigravity.rs` cuts it into the turn error (1.1.1 live, 1.2.1 source).
-- Any configured MCP server failing aborts the whole turn, so a shared server it cannot start is skipped and the connection rebuilt. `User location is not supported for the API use` is a region refusal after a good login.
-- stderr is absl logging that prints sign-in links on every login; `auth_hint_of` drops info lines and links.
+- The entry runs `agy acp` (Antigravity CLI 1.5.9), the server the Antigravity docs give ACP clients. The separate `agy_acp_server` package (ACP Registry `antigravity-acp`, 1.3.0 – 1.5.0) offers Claude / GPT only to an allowlist of `clientInfo.name` (JetBrains, Zed, Xcode, T3 Code, Android Studio); `agy acp` offers them to any client.
+- Login: the `terminal-login` method (`type: terminal`, args `--login`). The token lives in the macOS keychain item `gemini` / `antigravity` whatever `--gemini-dir` says, so there is no per-account home to switch between.
+- Controls: `configOptions` `model` (one entry per family), `thought_level`, `mode` (`default` / `accept-edits` / `auto` / `plan`). `session/new` `_meta.antigravity.tier` names the plan; `initialize` advertises `_meta.antigravity.systemPrompt.append`. A prompt comes back as `user_message_chunk` before the reply.
+- Failed turns are `end_turn` with the failure as its own chunk, one line `\n⚠ <text>\n` (an exhausted quota: `⚠ Individual quota reached. … Resets in 46m9s.`); `vendors/antigravity.rs` cuts it into the turn error. Gemini models share one quota bucket, Claude has its own. The module's other patterns are `agy_acp_server`'s, unverified on `agy acp`.
+- Restore: `session/resume` does not replay. An id it never stored answers `-32603 Failed to read session <id>; retry, or load it with session/load`, and that `session/load` then succeeds with an empty history, so the message counts as gone (`errors.rs`). `agy_acp_server` sessions are such ids: the next prompt hands their transcript over.
+- Unverified on `agy acp`: the `ask_question` and permission option shapes (`protocol-gotchas.md` keys on `agy_acp_server`'s `interaction_*` calls), MCP failures, the Windows install directory.
 
 ## Pi (pi-acp)
 

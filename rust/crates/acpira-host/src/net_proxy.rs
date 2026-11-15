@@ -8,7 +8,7 @@
 //! - anything else: a proxy URL (`http://`, `https://`, `socks5://`, `socks5h://`) used as is, by the children and the
 //!   engine's own HTTP client alike
 //!
-//! `ACPIRA_PROXY` overrides the setting: CLI subcommands (`acpira install-agent`) and the harness have no settings, and
+//! `ACPIRA_PROXY` overrides the setting: CLI subcommands (`acpira quota`) and the harness have no settings, and
 //! the in-app installer hands the route it chose to them through it. The mode and its resolution are
 //! `acpira_shared::proxy`, which the desktop shell's own downloads use too.
 

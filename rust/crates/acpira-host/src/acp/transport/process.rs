@@ -202,17 +202,8 @@ impl AgentProcess {
     init_timeout: Option<Duration>,
   ) -> Result<Arc<AgentProcess>> {
     let box_: HandlerBox = Arc::new(parking_lot::RwLock::new(h));
-    // A native release finds its helpers next to its own path, which a symlink on PATH would hide
-    let real = def.release.and_then(|_| std::fs::canonicalize(binary).ok()).map(|p| p.to_string_lossy().into_owned());
-    let binary = real.as_deref().unwrap_or(binary);
-    #[cfg(unix)]
-    let group = def.release.is_some();
     let mut cmd = launch::command(binary, &def.args);
     cmd.current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(false);
-    #[cfg(unix)]
-    if group {
-      cmd.process_group(0);
-    }
     // Claude Code keeps dynamic workflows off for SDK hosts by default (no Workflow tool, ultracode ignored); the terminal
     // CLI has them on. The variable only moves that default, the user's own settings still decide (`claude_workflow`)
     if Vendor::of(&def.id).workflows() && std::env::var_os(claude_workflow::WORKFLOWS_ENV).is_none() {
@@ -248,8 +239,6 @@ impl AgentProcess {
     let signals = pid.map(|_pid| Signals {
       #[cfg(unix)]
       pid: _pid,
-      #[cfg(unix)]
-      group,
       #[cfg(windows)]
       job,
       reaped: Arc::new(parking_lot::Mutex::new(false)),
@@ -283,16 +272,6 @@ impl AgentProcess {
     let (exit_info_tx, exit_info_rx) = watch::channel::<Option<(Option<i32>, Option<String>)>>(None);
     let reaper = signals.clone();
     tokio::spawn(async move {
-      // A group leader is left unreaped until its group is swept: while it is a zombie its pid, and so the group id, cannot
-      // be reused, and helpers it left behind (crashed or not) go with it
-      #[cfg(unix)]
-      if let Some(sig) = reaper.as_ref().filter(|s| s.group)
-        && leader_exited(sig.pid).await
-      {
-        let mut reaped = sig.reaped.lock();
-        sig.kill_group();
-        *reaped = true;
-      }
       let status = child.wait().await;
       if let Some(sig) = &reaper {
         #[cfg(windows)]
@@ -375,7 +354,7 @@ impl AgentProcess {
 /// wedged engine may never release (`kill_all_hard`)
 static LIVE_AGENTS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<u32, Signals>>> = std::sync::LazyLock::new(Default::default);
 
-/// SIGKILL to every agent this engine started (its process group, or its Job on Windows), for an engine about to exit
+/// SIGKILL to every agent this engine started (its pid, or its Job on Windows), for an engine about to exit
 /// without its normal teardown: its leases come free with it, and no agent may still write a native session that the
 /// next engine resumes
 pub fn kill_all_hard() {
@@ -399,15 +378,11 @@ fn terminate(signals: Option<Signals>, life: watch::Receiver<Life>) {
   });
 }
 
-/// Where an agent's signals go. `group`: the pid leads a process group this process created (`process_group(0)` at
-/// spawn), so the whole group is signalled. Nothing is sent once the child was reaped: its pid may belong to someone
-/// else by then
+/// Where an agent's signals go. Nothing is sent once the child was reaped: its pid may belong to someone else by then
 #[derive(Clone)]
 struct Signals {
   #[cfg(unix)]
   pid: u32,
-  #[cfg(unix)]
-  group: bool,
   #[cfg(windows)]
   job: Arc<crate::platform::windows_process::Job>,
   reaped: Arc<parking_lot::Mutex<bool>>,
@@ -418,7 +393,7 @@ impl Signals {
     let reaped = self.reaped.lock();
     if !*reaped {
       #[cfg(unix)]
-      send_signal(self.pid, self.group, force);
+      send_signal(self.pid, force);
       #[cfg(windows)]
       {
         let _ = force;
@@ -426,45 +401,14 @@ impl Signals {
       }
     }
   }
-
-  /// SIGKILL to the group, called by the reaper with the leader still unreaped
-  #[cfg(unix)]
-  fn kill_group(&self) {
-    send_signal(self.pid, true, true);
-  }
 }
 
 #[cfg(unix)]
-fn send_signal(pid: u32, group: bool, force: bool) {
-  let target = if group { -(pid as libc::pid_t) } else { pid as libc::pid_t };
-  // SAFETY: plain kill(2) on our own unreaped child's pid or the group it leads
+fn send_signal(pid: u32, force: bool) {
+  // SAFETY: plain kill(2) on our own unreaped child's pid
   unsafe {
-    libc::kill(target, if force { libc::SIGKILL } else { libc::SIGTERM });
+    libc::kill(pid as libc::pid_t, if force { libc::SIGKILL } else { libc::SIGTERM });
   }
-}
-
-/// Resolves once the child has exited, without reaping it (`waitid` with `WNOWAIT`), so the zombie keeps its pid. False
-/// when that could not be watched (no thread): the group is then left alone rather than swept while it may still run
-#[cfg(unix)]
-async fn leader_exited(pid: u32) -> bool {
-  let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-  let spawned = std::thread::Builder::new().name(format!("acpira-wait-{pid}")).spawn(move || {
-    let exited = loop {
-      // SAFETY: waitid fills a zeroed siginfo_t for our own child; WNOWAIT leaves it waitable for tokio
-      let r = unsafe {
-        let mut info: libc::siginfo_t = std::mem::zeroed();
-        libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, libc::WEXITED | libc::WNOWAIT)
-      };
-      if r == 0 {
-        break true;
-      }
-      if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
-        break false;
-      }
-    };
-    let _ = tx.send(exited);
-  });
-  spawned.is_ok() && rx.await.unwrap_or(false)
 }
 
 #[cfg(unix)]

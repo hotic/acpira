@@ -136,7 +136,7 @@ The webview's path through the sidecar (`scripts/probe/agent-host.ts`: new sessi
 | Kimi | 2.2.0 | no (next turn unverified) | verified |
 | Devin | 3000.11.205 | no `tools/list` before a prompt | verified |
 | Acpira (built-in) | acpira 1.11.0 | no, at its next turn by design | verified (wire), source |
-| Antigravity | antigravity-acp 1.3.0 | server not launched | verified |
+| Antigravity | agy 1.5.9 (`agy acp`) | unchecked | unverified |
 | Pi | pi-acp 0.0.34 | server not launched | verified |
 
 Session tools (2026-10-16): with the relay env every agent that launches the server above is offered `search_sessions` / `read_session` (`host-architecture.md`, session links); Pi, which launches none, has no way to read another session yet. Unverified on every real CLI: whether the model finds the tools from a pasted link (Claude Code defers them behind ToolSearch, the server instructions name them), whether it reads the outline first, how the answers sit against Claude Code's MCP output warning, and whether Claude or Codex ask before the first call. The row namings are those recorded for `show_image`, not observed for these tools.
@@ -177,27 +177,21 @@ The Shared tab therefore keeps project servers in `.mcp.json` and sends them ove
 
 Pi's project trust (pi 0.86.0 `core/trust-manager.js`, `core/project-trust.js`, source): project resources, `.agents/skills` included, load only when `<agent dir>/trust.json` (`PI_CODING_AGENT_DIR`, default `~/.pi/agent`) maps the project or its nearest listed ancestor to `true`, or `settings.json` has `defaultProjectTrust: "always"`. RPC mode (what pi-acp runs) never asks, so an untrusted project silently goes without its skills. Context files such as `AGENTS.md` load regardless. The store is written sorted and pretty under a `trust.json.lock` directory (proper-lockfile, 10 s stale); the Shared tab's "Trust this project" writes the same entry the same way.
 
-## Google Antigravity (antigravity-acp 1.2.1, 2026-10-01)
+## Google Antigravity (`agy acp`, agy 1.5.9)
 
-Google's official ACP server (`agy_acp_server`, ACP Registry id `antigravity-acp`), a native zip per platform from `dl.google.com/agy-extensions/releases/`, installed by `acpira install-agent antigravity` (see `docs/dev/host-architecture.md`). It is a separate product from the `agy` CLI 1.2.11 (Homebrew), whose login it does not share. "verified" rows were observed on macOS arm64 with `pnpm probe` / `scripts/probe/acp.ts --cmd` (initialize and session/new only, no model call); "source" rows were read from the Python source embedded in the 1.2.1 `.par` (`strings`), with no logged-in account on this machine.
+The Antigravity CLI's ACP mode, the server antigravity.google documents for ACP clients ("Other editors (ACP)"). It replaced Google's separate `agy_acp_server` package (ACP Registry `antigravity-acp`, a Python wrapper of the Antigravity SDK), which offers non-Gemini models only to an allowlist of `clientInfo.name` values. "verified" rows come from raw wire runs on macOS arm64 (handshakes, plus prompts on Claude Sonnet 5.5 and on Gemini models with an exhausted quota).
 
-| Fact | Antigravity 1.2.1 | Grade |
+| Fact | agy 1.5.9 | Grade |
 |---|---|---|
-| package | darwin / linux zips hold `agy_acp_server.par` + `localharness_external`, windows zips `agy_acp_server.exe` + `localharness_external.exe`; the registry passes `--uid=` on Linux only. SHA-256 of all six archives is pinned in `native_release.rs`. 1.3.0 (registry 2026-10-08) keeps this layout and launch; `native_release.rs` now pins it, and on Windows x64 its initialize matched the 1.2.1 row below | verified |
-| harness lookup | `ANTIGRAVITY_HARNESS_PATH`, else `dirname(argv[0])`, else `dirname(sys.executable)`: a symlink on PATH loses the harness, so the host spawns the real path | source |
-| data | `GEMINI_HOME` (default `~/.gemini`); the server's own `<home>/antigravity-acp/` holds `settings.json`, `acp_token.json`, `conversations/`, `trusted_workspaces.json` | source |
-| `initialize` | ~4.2 s cold; `agentInfo { name: antigravity-acp, title: Google Antigravity, version: 1.2.1 }`; `loadSession`, `promptCapabilities { image, audio, embeddedContext }`, `mcpCapabilities { http, sse }`, `sessionCapabilities { list, resume }`, `auth.logout` | verified |
-| `authMethods` | `oauth-personal` "Log in with Google", `oauth-business` "Log in with Gemini Enterprise", `gemini-api-key`, `agent-platform` — none `type: terminal`, so the host calls `authenticate` | verified |
-| unauthenticated `session/new` | `-32000 Authentication required`, `data.message` naming the methods and `settings.json` `auth.type` | verified |
-| `authenticate(oauth-personal)` | opens a browser on the machine the server runs on, with a loopback redirect server on `127.0.0.1:<random>` and a 300 s timeout; stderr prints "Open the following link to authenticate the ACP server: <url>". Success writes `auth.type` to `settings.json`, so later processes authenticate by themselves. Over Remote-SSH the browser and the loopback are on the remote host, so use `GEMINI_API_KEY` (env of a custom entry) there | source |
-| client tools | with the host's `fs: false` / `terminal: false` the server runs its own harness tools (`create_file`, `edit_file`, `run_command`); `client_*_file` tools exist only when fs is advertised | source |
-| permissions | options `allow_always` "Allow Always" (or "Allow Always (risky)" with `_meta agy.security.warning`), `allow` "Allow" (allow_once), `deny` "Deny" (reject_once); edits offer Allow / Deny only. Modes `default` / `auto_edit` / `yolo` are the server's own (no host-side yolo) | source |
-| `ask_question` | a `tool_call` `interaction_<8 hex>` (title = the question, `rawInput {}`, pending) then `session/request_permission` with one option per answer (`optionId` = answer id, `name` = text), all `allow_once` except ids `deny` / `dont_trust` / `block`; `cancelled` → the tool row fails with "Interaction cancelled". The host turns it into a question card (`docs/dev/protocol-gotchas.md`) | source · host path covered by `tests/engine/questions.rs` |
-| controls | standard `configOptions`: a `model` select (category model) and a `mode` select (category mode), plus the legacy `models` / `modes` fields | source |
-| restore | `session/resume` restores without replay; `session/load` replays from the conversation `.db`; a missing id answers `-32002 Session not found in the current GEMINI_HOME` (matches `errors.rs` `GONE`); `session/list` titles are `Session <id8>`; `available_commands_update` arrives after the new / resume / load response | source |
-| skills | `<home>/config/skills`, `<home>/antigravity-cli/skills`, `<cwd>/.gemini/skills`, `<cwd>/.agents/skills` — not `~/.agents/skills`, so the Shared tab links global skills into `~/.gemini/config/skills` | source |
-| rules | `GEMINI.md`, `AGENTS.md` and `.agents/rules/*.md` hierarchically up to the repo root; the global customization root is `<home>/config/` (`rules/` or a standalone `AGENTS.md` / `GEMINI.md`), where the Shared tab links `~/.agents/AGENTS.md` | source |
-| MCP | `<home>/config/mcp_config.json` merged with session/new `mcpServers` | source |
+| install | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` (`~/.local/bin/agy`), Windows `irm https://antigravity.google/cli/install.ps1 \| iex` (`%LOCALAPPDATA%\agy\bin`); Homebrew also ships `agy` | docs; Windows unverified |
+| `initialize` | `agentInfo { name: Antigravity ACP Server, version: 1.5.9 }`; `loadSession`, `promptCapabilities { image, embeddedContext }`, `sessionCapabilities { resume, close, load, list, additionalDirectories }`, `auth.logout`, `_meta.antigravity { tier, systemPrompt.append }` | verified |
+| `authMethods` | `oauth-personal`, `oauth-business`, `gemini-api-key`, `agent-platform`, `terminal-login` (`type: terminal`, args `--login`) | verified |
+| login store | macOS keychain `gemini` / `antigravity`, shared with the interactive CLI; `--gemini-dir` moves config and conversations but not the login | verified |
+| controls | `configOptions` `model` (families: Gemini 4 Carbon / Argon / Hydrogen, Gemini 3.8 Flash, Claude Opus 5.5, Claude Sonnet 5.5, gpt-oss-120b, orchestrators), `thought_level` (low / medium / high), `mode` (default / accept-edits / auto / plan); the legacy `models` list keeps one id per family and level | verified |
+| prompt | the prompt is echoed as `user_message_chunk`; Claude's result carries `usage`; a trivial Claude turn reported ~17.4k input tokens | verified |
+| failed turn | `end_turn` with `\n⚠ <text>\n` as the last chunk (quota exhausted on the Gemini bucket) | verified |
+| restore | `session/resume` keeps the session without replay; `session/load` replays; an unknown id fails resume with `-32603 Failed to read session …` while load "succeeds" empty; `session/list` lists sessions with title and `updatedAt` | verified |
+| skills / commands | `available_commands_update` lists built-ins (`/goal /compact /schedule /browser /plan …`) plus skills from `~/.gemini/config/skills` and the project's `.agents/skills` | verified |
 
 ## Factory Droid and Hermes Agent (droid 1.6.0, hermes-agent 0.22.5)
 
@@ -236,8 +230,7 @@ Open:
 
 ## Open items (not yet verified)
 
-- Antigravity end to end (needs a browser login and model calls): `authenticate(oauth-personal)` through the Notice, a real turn with a permission card, an `ask_question` card, `session/resume` / `load` round trip and `session/list` import (`scripts/probe/restore-host.ts antigravity`), and `pnpm probe antigravity --mcp` (session/new needs auth first). The stderr login URL reaching the Notice when no browser opens.
-- Antigravity on Linux / Windows: the `--uid=` launch and `localharness_external.exe` lookup, and process cleanup on Windows (`taskkill /T`).
+- Antigravity (`agy acp`): a permission card, an `ask_question` card, `terminal-login` through the Notice, `session/list` import, client MCP servers, and Linux / Windows.
 - Whether OpenCode deduplicates a skill seen both through `.agents/skills` and a `.claude/skills` link by real path (`OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` would switch the Claude folders off); only Claude gets skill links today, so this matters only for project `.claude/skills` links.
 - An agent actually calling a tool of a shared MCP server in a turn (needs a model call); only the launch and `tools/list` are verified.
 - Shared-config links on Windows (junction / hard-link fallbacks).

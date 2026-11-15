@@ -21,8 +21,6 @@
 //!                                                optional references), as a summoned agent would get it
 //!   acpira quota [--json] [codex|claude|devin…]  the quota windows of each CLI's own login, read without storing anything
 //!   acpira store revert ID [--home DIR]          write a SQLite-backed session back to a complete legacy JSON record
-//!   acpira install-agent <id> [--force] [--archive FILE]
-//!                                                download (or take FILE), verify and unpack an agent shipped as a native archive
 //!   acpira pdf-pages FIRST LIMIT MAX_BYTES        the built-in agent's PDF parser in a child process (the PDF on stdin,
 //!                                                the pages as JSON on stdout), so a parser panic ends only that child
 //!   acpira remote --stdio                       the helper an SSH host runs for another machine's engine (frames over stdio,
@@ -72,7 +70,6 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "mcp"
         | "mcp-host"
         | "remote"
-        | "install-agent"
         | "agents"
         | "model-catalog"
         | "handoff-pack"
@@ -113,9 +110,6 @@ pub fn run(args: Vec<String>) -> i32 {
   }
   if args.first().map(String::as_str) == Some("remote") {
     return crate::remote::helper::main(&args[1..], VERSION);
-  }
-  if args.first().map(String::as_str) == Some("install-agent") {
-    return install_agent(&args[1..]);
   }
   if args.first().map(String::as_str) == Some("gateway") {
     return acpira_gateway::cli::main(args[1..].to_vec());
@@ -227,49 +221,6 @@ async fn stdio(home: PathBuf, exe: Option<String>) -> i32 {
   let _ = end.send(String::new());
   let _ = tokio::time::timeout(std::time::Duration::from_secs(2), writer).await;
   code
-}
-
-/// `acpira install-agent <id> [--force] [--archive FILE]`: the settings page runs this in a terminal; data goes under
-/// ACPIRA_HOME / ~/.acpira. `--archive` installs a copy downloaded by hand (same digest check)
-fn install_agent(args: &[String]) -> i32 {
-  use crate::acp::agents::native_release::{Installed, current_platform, install, release_of};
-  let archive = flag(args, "--archive").filter(|a| !a.is_empty()).map(|a| absolute(&PathBuf::from(a)));
-  let valued = args.iter().position(|a| a == "--archive").map(|i| i + 1);
-  let Some(id) = args.iter().enumerate().find(|(i, a)| !a.starts_with("--") && Some(*i) != valued).map(|(_, a)| a) else {
-    eprintln!("usage: acpira install-agent <id> [--force] [--archive FILE]   (agents: antigravity)");
-    return 2;
-  };
-  let Some(release) = release_of(id) else {
-    eprintln!("{id} is not installed this way (agents: antigravity)");
-    return 2;
-  };
-  let Some(platform) = current_platform() else {
-    eprintln!("unsupported platform {}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    return 1;
-  };
-  if archive.is_none()
-    && let Some(asset) = release.asset(&platform)
-  {
-    println!("If the download fails on this network, fetch {} by hand and run this again with --archive <file>", asset.url);
-  }
-  let root = acpira_home();
-  println!("{} {} for {platform} → {}", release.registry_id, release.version, release.dir(&root).display());
-  let mut say = |line: &str| println!("{line}");
-  match install(release, &root, &platform, args.iter().any(|a| a == "--force"), archive.as_deref(), &mut say) {
-    Ok(Installed::Already { version, path }) => {
-      println!("{} {version} is already installed: {}", release.registry_id, path.display());
-      0
-    }
-    Ok(Installed::Fresh { version, path, .. }) => {
-      println!("Installed {} {version}: {}", release.registry_id, path.display());
-      println!("Acpira notices it on its next availability check (every 10 s while the agent is missing, and on window focus); new sessions use this version.");
-      0
-    }
-    Err(e) => {
-      eprintln!("install failed: {e:#}");
-      1
-    }
-  }
 }
 
 async fn shutdown_signal() {

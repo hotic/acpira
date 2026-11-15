@@ -573,6 +573,7 @@ export const ko = {
   'notice.method.antigravity:oauth-business': 'Gemini Enterprise로 로그인 (브라우저)',
   'notice.method.antigravity:gemini-api-key': 'GEMINI_API_KEY 사용',
   'notice.method.antigravity:agent-platform': 'Gemini Enterprise Agent Platform 사용',
+  'notice.method.antigravity:terminal-login': 'Google로 로그인 (터미널)',
 
   'turns.readFiles': '파일 {n}개 읽음',
   'turns.searched': '{n}회 검색',

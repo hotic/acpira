@@ -12,7 +12,6 @@ use acpira_shared::transcript::{AgentId, AgentInfo, AgentInstall, SessionOption,
 
 use crate::acp::agents::launch::{Env, ProcessEnv, resolve_executable};
 use crate::platform::command::Os;
-use crate::acp::agents::native_release::{self, NativeRelease};
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
 
@@ -76,10 +75,6 @@ pub struct AgentDef {
   pub subagents: bool,
   /// false opts out of the terminal-auth capability (default on)
   pub terminal_auth: bool,
-  /// A native release archive installed under `$ACPIRA_HOME/agents/<id>/` (`acpira install-agent <id>`): looked up there
-  /// first, spawned by its real path (the launcher finds its helpers next to it) in a process group of its own, so its
-  /// helper processes end with it
-  pub release: Option<&'static NativeRelease>,
   /// Who makes the CLI and its mark (SVG path data, 24 x 24), for an agent the page knows neither of
   pub vendor: Option<String>,
   pub mark: Option<Vec<String>>,
@@ -284,7 +279,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       adapter: Some(AdapterDef { package: s("@deepseek-ai/dsh"), engine: None }),
       ..base("dsh", "DSH", "dsh", &["--profile", "acp"], &["~/.local/bin/dsh", "/opt/homebrew/bin/dsh", "/usr/local/bin/dsh"])
     },
-    antigravity(native_release::current_platform().as_deref().unwrap_or("")),
+    antigravity(),
     AgentDef {
       requires: list(&["pi"]),
       login: login("pi", &[]),
@@ -343,16 +338,18 @@ pub fn builtin_agents() -> Vec<AgentDef> {
   ]
 }
 
-/// Google's official Antigravity ACP server (agy_acp_server 1.3.0): a native archive per platform, its launcher and
-/// arguments as the ACP Registry entry gives them; sign-in goes through ACP `authenticate` (a browser flow on the host)
-pub fn antigravity(platform: &str) -> AgentDef {
-  let r = &native_release::ANTIGRAVITY;
-  let (cmd, args) = r.launch(platform);
-  let args: Vec<&str> = args.iter().map(String::as_str).collect();
+/// Google's Antigravity CLI in its ACP mode (`agy acp`, agy 1.5.9), the server the Antigravity docs give for ACP
+/// clients. It offers the Claude and GPT models the separate `agy_acp_server` package only gives a client allowlist, and
+/// shares the CLI's own login and conversations. Sign-in is its `terminal-login` method (`agy acp --login`)
+pub fn antigravity() -> AgentDef {
   AgentDef {
-    release: Some(r),
-    install: Some(InstallDef { posix: None, windows: None, docs: Some(s(r.docs)) }),
-    ..base("antigravity", "Antigravity", cmd, &args, &[])
+    login: login("agy", &["acp", "--login"]),
+    install: install(
+      "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+      "irm https://antigravity.google/cli/install.ps1 | iex",
+      "https://antigravity.google/docs/ide/extensions/acp",
+    ),
+    ..base("antigravity", "Antigravity", "agy", &["acp"], &["~/.local/bin/agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy"])
   }
 }
 
@@ -524,7 +521,6 @@ impl AgentRegistry {
         subagents: c.subagents != Some(false),
         terminal_auth: c.terminal_auth != Some(false),
         ignore_modes: c.ignore_modes == Some(true),
-        release: None,
         login: login.split_first().map(|(cmd, rest)| LoginDef { command: cmd.clone(), args: rest.to_vec() }),
         install: (command.is_some() || docs.is_some()).then(|| InstallDef { posix: command.clone(), windows: command, docs }),
         adapter: None,
@@ -596,22 +592,18 @@ impl AgentRegistry {
       .collect()
   }
 
-  /// The install line for this platform (plus docs); None when the definition offers nothing usable here. A native
-  /// release installs through this executable's own `install-agent`
+  /// The install line for this platform (plus docs); None when the definition offers nothing usable here
   pub fn install(&self, id: &str) -> Option<AgentInstall> {
     let agent = self.defs.get(id)?;
     let def = agent.install.as_ref()?;
-    let command = match agent.release {
-      Some(r) => native_release::current_platform()
-        .filter(|p| r.asset(p).is_some())
-        .and_then(|_| native_release::install_command(&agent.id, self.os == Os::Windows)),
-      None if self.os == Os::Windows => def.windows.clone(),
+    let command = if self.os == Os::Windows {
+      def.windows.clone()
+    } else if super::installer::npm_prefix_blocked() {
       // npm's global prefix is not writable here (a system Node on a shared server): the copyable line goes to ~/.local,
       // where the in-app install puts it too
-      None if super::installer::npm_prefix_blocked() => {
-        def.posix.as_deref().map(|l| if super::installer::is_npm_global(l) { super::installer::with_user_prefix(l) } else { l.to_owned() })
-      }
-      None => def.posix.clone(),
+      def.posix.as_deref().map(|l| if super::installer::is_npm_global(l) { super::installer::with_user_prefix(l) } else { l.to_owned() })
+    } else {
+      def.posix.clone()
     };
     // A newer adapter on npm than the pin: install (and update to) that one
     let targets: Vec<(&str, semver::Version)> = tracked(agent).into_iter().filter_map(|p| Some((p, target_for(agent, p)?))).collect();
@@ -683,17 +675,10 @@ impl AgentRegistry {
     // CLIs installed through rc files (an npm prefix, nvm, mise …) are only on the login shell's PATH: every lookup
     // waits for its first run (bounded), so the engine's startup does not have to
     super::login_path::ready_within_first_wait().await;
-    // A managed install is read fresh on every pass: `current` moves when a new version lands
-    let mut candidates = def.candidates.clone();
-    if let Some(r) = def.release {
-      candidates.insert(0, r.dir(&crate::store::data_dir::acpira_home()).join("<version>").join(&def.command).to_string_lossy().into_owned());
-      if let Some(managed) = r.managed_binary() {
-        candidates[0] = managed;
-      }
-    }
+    let candidates = def.candidates.clone();
     let cached = self.resolved.lock().get(id).cloned();
     let found = match cached {
-      Some(c) if def.release.is_none() && resolve_executable(&c, self.os, &ProcessEnv).await.is_some() => Some(c),
+      Some(c) if resolve_executable(&c, self.os, &ProcessEnv).await.is_some() => Some(c),
       _ => resolve_command(&def.command, &candidates, self.os, &ProcessEnv).await,
     };
     let mut missing = vec![];
@@ -848,6 +833,8 @@ pub fn search_paths(command: &str, candidates: &[String], os: Os, env: &dyn Env)
     let sub: &[&str] = match command.to_ascii_lowercase().as_str() {
       "devin" => &["devin", "cli", "bin"],
       "hermes" => &["hermes", "bin"],
+      // The Antigravity CLI installer's directory (antigravity.google getting started, unverified on Windows)
+      "agy" => &["agy", "bin"],
       _ => &[],
     };
     if let Some(local) = env.get("LOCALAPPDATA").filter(|d| !d.is_empty() && !sub.is_empty()) {

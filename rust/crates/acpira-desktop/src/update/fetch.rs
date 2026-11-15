@@ -1,5 +1,5 @@
-//! The updater's downloads: https only and from the release hosts only, every redirect hop checked against them (the
-//! host whitelist of acpira-host's `native_release.rs`); through the same proxy route as the engine; an interrupted
+//! The updater's downloads: https only and from the release hosts only, every redirect hop checked against them;
+//! through the same proxy route as the engine; an interrupted
 //! download resumes with a Range request; bytes are hashed as they are written and the file takes its final name only
 //! once size and SHA-256 match the signed manifest
 
