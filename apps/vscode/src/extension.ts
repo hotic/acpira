@@ -145,6 +145,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // The editor's live selection. Focus moving into a chat keeps the last one (that is when it gets used); only another file editor
   // becoming active, a collapsed selection, or closing the document clears it. Selections are debounced: a drag fires dozens
   const shareSelection = () => vscode.workspace.getConfiguration('acpira').get<boolean>('shareEditorSelection', true);
+  let lastTextEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
   let liveSelection: EditorSelection | undefined;
   // Kept for pages that open (or reload after a sidecar restart) after the copy: a paste there must still become a range chip
   let lastCopy: EditorSelection | undefined;
@@ -422,7 +423,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.window.onDidChangeTextEditorSelection(e => trackSelection(e.textEditor)),
-    vscode.window.onDidChangeActiveTextEditor(editor => { if (editor) trackSelection(editor); }),
+    vscode.window.onDidChangeActiveTextEditor(editor => { if (editor) { lastTextEditor = editor; trackSelection(editor); } }),
     vscode.workspace.onDidCloseTextDocument(doc => {
       if (liveSelection?.uri !== doc.uri.toString()) return;
       clearTimeout(selectionTimer);
@@ -481,6 +482,20 @@ export async function activate(context: vscode.ExtensionContext) {
     // A local page in Acpira's browser panel, where elements can be picked into the chat; without a URL it asks for one
     vscode.commands.registerCommand('acpira.openPreview', (url?: unknown) => openPreview(url)),
     vscode.commands.registerCommand('acpira.openView', () => vscode.commands.executeCommand(`${VIEW_ID}.focus`)),
+    vscode.commands.registerCommand('acpira.focusInput', () => {
+      const panel = lastFocused && panels.get(lastFocused);
+      if (panel?.active && !vscode.window.activeTextEditor && lastTextEditor && !lastTextEditor.document.isClosed) {
+        void vscode.window.showTextDocument(lastTextEditor.document, { viewColumn: lastTextEditor.viewColumn, preserveFocus: false });
+        return;
+      }
+      if (panel && lastFocused) {
+        panel.reveal(undefined, false);
+        lastFocused.postShell({ type: 'focusComposer' });
+        return;
+      }
+      void vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+      withSidebar(b => b.postShell({ type: 'focusComposer' }));
+    }),
     vscode.commands.registerCommand('acpira.newSession', () => withSidebar(b => b.send({ type: 'newSession' }))),
     vscode.commands.registerCommand('acpira.showLog', () => log.show()),
     vscode.commands.registerCommand('acpira.safeMode', () => switchSafeMode(!safeModeOn(home))),

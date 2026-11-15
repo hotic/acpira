@@ -1,6 +1,7 @@
 {
   "acpira.conf.agents.deprecated": "Die Startkonfiguration der Agenten verwaltet jetzt Acpira in agents.json auf dem Rechner, auf dem der Agent läuft. Sie lässt sich in den Acpira-Einstellungen öffnen. Lokale Altwerte werden einmalig übernommen; Remote-Verbindungen übernehmen keine Agent-Einstellungen der IDE.",
   "acpira.cmd.openView": "Chat öffnen",
+  "acpira.cmd.focusInput": "Chat-Eingabe fokussieren",
   "acpira.cmd.newSession": "Neue Sitzung",
   "acpira.cmd.openInEditor": "Im Editor öffnen",
   "acpira.cmd.openInEditorColumns": "In Editor-Spalten öffnen",

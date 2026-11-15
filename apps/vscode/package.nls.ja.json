@@ -1,6 +1,7 @@
 {
   "acpira.conf.agents.deprecated": "エージェントの起動設定は Acpira が管理し、エージェントが動くマシンの agents.json に保存します。Acpira の設定から開けます。ローカルの旧設定は一度だけ取り込まれ、リモート接続では IDE のエージェント設定は取り込まれません。",
   "acpira.cmd.openView": "チャットを開く",
+  "acpira.cmd.focusInput": "チャット入力にフォーカス",
   "acpira.cmd.newSession": "新しいセッション",
   "acpira.cmd.openInEditor": "エディターで開く",
   "acpira.cmd.openInEditorColumns": "エディターに複数列で開く",
