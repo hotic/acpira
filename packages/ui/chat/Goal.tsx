@@ -12,7 +12,7 @@ import { SentTime } from './TurnClock';
 
 // The session goal (codex-acp / claude-agent-acp goal extension, `SessionView.goal`): the head of the floating to-do
 // card for the present, a quiet row in the transcript for each milestone, and "Set as goal" under the last prompt.
-// See docs/dev/transcript-pipeline.md (goal) and docs/dev/ui-conventions.md (goal head).
+// See docs/dev/transcript-pipeline.md (goal).
 
 const STATUS_KEY: Record<GoalStatus, MsgKey> = {
   active: 'goal.status.active',

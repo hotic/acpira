@@ -1,6 +1,6 @@
 # Webview
 
-The React UI in `packages/ui` and the render budget every stream chunk depends on. Component rules are in `ui-conventions.md`, motion and layout in `ui-motion-layout.md`.
+The React UI in `packages/ui` and the render budget every stream chunk depends on. Motion and layout are in `ui-motion-layout.md`.
 
 ## Checking visual work
 
