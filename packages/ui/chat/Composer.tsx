@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { Plus, ShieldAlert, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
+import { Plus, Shrink, SquareDashedMousePointer, TextSelect, X, type LucideIcon } from 'lucide-react';
 import type { ConfigControl, Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@acpira/shared/transcript';
 import type { EditorSelection, FileHit } from '@acpira/shared/protocol';
 import type { HiddenMap } from '@acpira/shared/settings';
@@ -9,19 +9,19 @@ import { collectPastedText } from '@acpira/shared/pastedText';
 import { useAppearance } from '../appearance';
 import { getLocale, t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
-import { Chip, ChipTag, IconButton } from '../ui/Button';
+import { Chip, IconButton } from '../ui/Button';
 import { DropdownMenu, optionClass } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { WorkingBeam } from '../effects/WorkingBeam';
 import { SendButton } from '../effects/SendButton';
+import type { ModelMemory, ModelShapes } from '@acpira/shared/modelShapes';
 import { DraftChips } from './Attachments';
 import { CommandButtons } from '../plugins/CommandButtons';
 import { collectDrafts, collectImageSources, hasPayload, hiddenText, imageSources, pastedText, pathlessWorkbenchDrag, typeInto, type Collected } from './drafts';
 import { droppedPathResolver, hostDragPaths } from '../vscodeApi';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
-import { SlashList, commandAt, commandHint, completeCommand, promptMarks, useSlashHits } from './Slash';
-import { accessLabel, modeIcon, modeLabel } from './modeIcons';
-import { SegmentScale } from '../ui/Field';
+import { SlashList, commandAt, commandHint, completeCommand, isHostAction, promptMarks, useSlashHits, type HostAction, type SlashHit } from './Slash';
+import { accessIcon, accessLabel, modeHint, modeIcon, modeLabel, modeName } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
 import { parkDraftText, useComposerDraft } from './useComposerDraft';
@@ -30,6 +30,7 @@ import { contextDrafts, copiedSelection, markContextSent, markSelectionSent, sam
 import { PromptInput } from './PromptInput';
 import type { SqueezeLevel } from './useFitStage';
 import { imeKey } from '../ui/ime';
+import { hitShortcut } from '../keybindings';
 import { SlotPieces } from '../plugins/Pieces';
 
 // motion.css acp-rewrite-in, and a frame to spare: the field drops data-rewritten once the wipe is over
@@ -61,7 +62,7 @@ export interface ComposerProps {
   compactAt?: number;
   // Workspace root: dropped and mentioned files are labeled relative to it
   cwd: string;
-  onSend: (text: string, attachments: Draft[]) => void | Promise<void>;
+  onSend: (text: string, attachments: Draft[], invertSteer?: boolean) => void | Promise<void>;
   // A send while running steers into the turn instead of queueing (only the placeholder changes here)
   steer?: boolean;
   // A plan card waits on the user: a send revises that plan (only the placeholder changes here)
@@ -80,7 +81,11 @@ export interface ComposerProps {
   onNotice: (text: string) => void;
   onStop: () => void;
   onSetMode: (id: string) => void;
-  onSetConfig: (configId: string, value: string) => void;
+  // `also`: parameters to set once the pick has landed (a model picked together with its level)
+  onSetConfig: (configId: string, value: string, also?: Record<string, string>) => void;
+  // What the engine remembers of the agent's models: the model panel's rows carry their own level and Fast
+  modelMemory?: ModelMemory;
+  modelShapes?: ModelShapes;
   onCompact: () => void;
   // Session-level navigation is omitted from history and queued-message editors.
   toolbarStart?: ReactNode;
@@ -129,8 +134,13 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
     const typed = value ? document.execCommand('insertText', false, value) : !el.value || document.execCommand('delete');
     if (!typed) typedFallback.current(el.value.slice(0, start) + value + el.value.slice(end));
   }, []);
-  const { text, setText: updateText, drafts, setDrafts } = useComposerDraft(p.draftKey, p.edit?.text, p.main ? { focus: focusInput, write: writeInput } : undefined);
+  const textNow = useRef('');
+  const draftsNow = useRef<Draft[]>([]);
+  const emptyInput = useCallback(() => textNow.current.length === 0 && draftsNow.current.length === 0, []);
+  const { text, setText: updateText, drafts, setDrafts } = useComposerDraft(p.draftKey, p.edit?.text, p.main ? { focus: focusInput, empty: emptyInput, write: writeInput } : undefined);
   typedFallback.current = updateText;
+  textNow.current = text;
+  draftsNow.current = drafts;
   const recall = useRef(new PromptRecall());
   const setText = (value: string) => { recall.current.reset(); updateText(value); };
   // The editor's live selection: offered as a chip beside the mode, clicked away to leave it out of this prompt
@@ -167,6 +177,10 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   const dim = p.running || p.disabled;
   const { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, sidekickFast, other } = composerControls(p.controls.options);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
+  // Permission as a control of its own beside the modes (the built-in agent's approval): the permission chip is the one
+  // solid chip, and a working mode is a pill picked from the / list
+  const split = p.controls.modes.length > 0 && permission.length > 0;
+  const pill = split ? p.controls.modes.find((m, i) => i > 0 && m.id === p.controls.modeId) : undefined;
   // Files are read asynchronously after a paste / drop; sending is held until every read has landed, so a message never leaves without its attachments
   const [reading, setReading] = useState(0);
   const [sending, setSending] = useState(false);
@@ -179,9 +193,6 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   const [rewrite, setRewrite] = useState<'busy' | 'done'>();
   const rewritten = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(rewritten.current), []);
-  // The draft as it is now, for a result that lands after the field has moved on
-  const textNow = useRef(text);
-  textNow.current = text;
   // `from`: the draft the command was given. A field gone since (another session opened) gets the text as that session's
   // parked draft; a draft that changed meanwhile is the user's and stays
   const onRewritten = (value: string, from: string) => {
@@ -206,8 +217,8 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       setSending(false);
     }
   };
-  // `as`: what a command button sends in the draft's place, with the draft's attachments
-  const send = async (as?: string) => {
+  // `as`: what a command button sends in the draft's place, with the draft's attachments; `invertSteer`: ⌘Enter / Ctrl+Enter flips steer ↔ queue mid-turn
+  const send = async (as?: string, invertSteer?: boolean) => {
     if (sendingRef.current || rewrite === 'busy' || (as === undefined ? !canSend : p.disabled || sending || reading > 0)) return;
     sendingRef.current = true;
     setSending(true);
@@ -216,7 +227,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       const included = contexts.filter(contextOn);
       const offeredDrafts = [...(sel ? [sel] : []), ...included.flatMap(c => contextDrafts(c.source, c.items))]
         .filter(l => !drafts.some(d => sameRange(d, l) || sameContext(d, l)));
-      await p.onSend(as ?? text, [...drafts, ...offeredDrafts]);
+      await p.onSend(as ?? text, [...drafts, ...offeredDrafts], invertSteer);
       if (offeredOn) markSelectionSent(offered);
       for (const c of included) markContextSent(c);
       setText('');
@@ -349,10 +360,27 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   const [slashDismissed, setSlashDismissed] = useState<number>();
   const slashSpan = collapsed && !p.disabled ? commandAt(text, caret) : undefined;
   const slashLive = slashSpan && slashSpan.start !== slashDismissed ? slashSpan : undefined;
-  const slash = useSlashHits(p.commands, slashLive?.query);
+  // What the shell does itself leads the list by name: the working modes of an agent whose permission is its own control
+  // (so no mode chip), and Compact wherever the context ring offers it. The agent's own `/compact` then leaves the list
+  const hostActions: HostAction[] = p.main && !p.edit ? [
+    ...(split && !p.controlsLocked ? p.controls.modes.slice(1).map(m => ({ id: m.id, label: modeName(m), description: modeHint(m), icon: modeIcon(m), run: () => p.onSetMode(m.id) })) : []),
+    ...(canCompact && !p.running ? [{ id: 'compact', label: t('composer.action.compact'), description: t('composer.action.compactHint'), icon: Shrink, run: p.onCompact }] : []),
+  ] : [];
+  const hostCompact = hostActions.some(a => a.id === 'compact');
+  const listed = useMemo(() => (hostCompact ? p.commands?.filter(c => c.name !== 'compact') : p.commands), [p.commands, hostCompact]);
+  const slash = useSlashHits(listed, slashLive?.query, hostActions);
   const slashOpen = !!slashLive && slash.hits.length > 0;
-  const pickCommand = (c: SlashCommand) => {
+  const pickCommand = (c: SlashHit) => {
     if (!slashSpan) return;
+    // A host action runs at once and takes its token out of the draft
+    if (isHostAction(c)) {
+      const head = text.slice(0, slashSpan.start);
+      setText(head + text.slice(caret).replace(/^\S*/, '').trimStart());
+      setCaret(head.length);
+      requestAnimationFrame(() => textarea.current?.setSelectionRange(head.length, head.length));
+      c.run();
+      return;
+    }
     const next = completeCommand(text, slashSpan, caret, c.name);
     setText(next.text);
     setCaret(next.caret);
@@ -364,6 +392,24 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   // and every `@name` of an enabled persona the summon mark
   const summons = useMemo(() => personas?.map(x => x.name) ?? [], [personas]);
   const marks = promptMarks(p.commands ?? [], summons, text);
+  const modelToggle = useRef<(() => void) | undefined>(undefined);
+  if (!models.length) modelToggle.current = undefined;
+  const modelKeyState = useRef({ disabled: !!p.disabled, locked: !!p.controlsLocked, sending });
+  modelKeyState.current = { disabled: !!p.disabled, locked: !!p.controlsLocked, sending };
+  useEffect(() => {
+    if (!p.main || p.edit) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.isComposing || e.defaultPrevented || !hitShortcut(e, 'openModelPicker')) return;
+      const { disabled, locked, sending: busy } = modelKeyState.current;
+      if (disabled || locked || busy || !modelToggle.current) return;
+      if (fieldRef.current?.closest('[inert]') || document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      modelToggle.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [p.main, p.edit]);
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (imeKey(e.nativeEvent)) return;
     if (slashOpen) {
@@ -371,7 +417,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       if (e.key === 'Escape') { e.preventDefault(); setSlashDismissed(slashSpan!.start); return; }
       // Tab completes; Enter completes too unless the token already is the active command — then it sends, so `/compact⏎` is one keystroke
       const hit = slash.hits[slash.active];
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && hit && hit.name !== slashSpan!.query)) { e.preventDefault(); if (hit) pickCommand(hit); return; }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && hit && (isHostAction(hit) || hit.name !== slashSpan!.query))) { e.preventDefault(); if (hit) pickCommand(hit); return; }
     }
     if (mentionOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); return; }
@@ -381,6 +427,10 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         if (!ready) { e.preventDefault(); return; }
         if (hits[active]) { e.preventDefault(); pick(hits[active]!); return; }
       }
+    }
+    // Shift+Tab (or user-customized cycleMode) cycles the session's working / permission mode
+    if (p.main && !p.edit && !p.disabled && !p.controlsLocked && !sending && hitShortcut(e.nativeEvent, 'cycleMode')) {
+      if (cycleComposerMode(p.controls, p.onSetMode, p.onSetConfig)) { e.preventDefault(); return; }
     }
     // Recall never steals selection / modified arrows, completion navigation, or cursor movement inside a message.
     const el = e.currentTarget;
@@ -401,7 +451,12 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       }
     }
     if (e.key === 'Escape' && p.edit && !sending) { e.preventDefault(); p.edit.onCancel(); return; }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
+    const modSend = hitShortcut(e.nativeEvent, 'invertSteerSend');
+    const plainEnter = e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
+    if (modSend || plainEnter) {
+      e.preventDefault();
+      if (canSend) void send(undefined, modSend || undefined);
+    }
   };
   const syncCaret = (el: HTMLTextAreaElement) => {
     setCaret(el.selectionStart);
@@ -436,6 +491,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       <PromptInput
         marks={marks}
         ref={textarea}
+        data-main-composer={p.main && !p.edit ? '' : undefined}
         rows={1}
         value={text}
         disabled={p.disabled || sending}
@@ -468,8 +524,8 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
           without the floor the whole composer jumped by the difference every time. The floor lives on the row, not the fieldset:
           a fieldset lays children out in an anonymous inner box that ignores the fieldset's min-height, so items-center there
           only centered the chips within their own --ctl-sm height and they rode a few px above the row-centered send button.
-          box-content keeps the floor off the padding: under the preflight's border-box, min-h-ctl minus pt-1 / pb-2 left less than a chip */}
-      <div className="group/bar @container box-content flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-2" data-squeezed={squeeze > 0 || undefined}>
+          box-content keeps the floor off the padding: under the preflight's border-box, min-h-ctl minus the vertical padding left less than a chip */}
+      <div className="group/bar @container box-content flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-corner-b" data-squeezed={squeeze > 0 || undefined}>
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 shrink-0 items-center gap-1 border-0 p-0">
           <div className="flex shrink-0 items-center gap-1">
             {/* Working mode first (Codex collaboration_mode: Build / Plan), then the permission modes; both are solid chips that never truncate */}
@@ -477,15 +533,17 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
               <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)}
                 modes={c.options} labelOf={o => (o.id === 'default' ? t('composer.modeShort.build') : modeLabel(o))} />
             ))}
-            {/* A permission level offered as a config option (custom category `_permission_mode`) rides in the mode menu,
-                under the modes; without modes it is a chip of its own */}
-            {p.controls.modes.length > 0 && (
-              <ModeMenu title={t('composer.mode')} modes={p.controls.modes} value={p.controls.modeId} onOpenChange={onOpenChange} onSelect={p.onSetMode}
-                access={permission[0]} onAccess={v => { if (permission[0]) p.onSetConfig(permission[0].id, v); }} />
+            {p.controls.modes.length > 0 && !split && (
+              <ModeMenu title={t('composer.mode')} modes={p.controls.modes} value={p.controls.modeId} onOpenChange={onOpenChange} onSelect={p.onSetMode} />
             )}
-            {(p.controls.modes.length > 0 ? permission.slice(1) : permission).map(c => (
-              <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)} modes={c.options} />
+            {/* A permission level offered as a config option (custom category `_permission_mode`) is a chip of its own.
+                Beside it the modes have no chip: the first is the resting state, any other shows as a pill after the
+                chip, where its coming and going moves nothing */}
+            {permission.map(c => (
+              <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)} modes={c.options}
+                labelOf={accessLabel} iconOf={accessIcon} />
             ))}
+            {pill && <ModePill mode={pill} onExit={() => p.onSetMode(p.controls.modes[0]!.id)} />}
           </div>
         </fieldset>
         {/* The live chips share one slot, however many sources there are, and give way first: the slot starts at its content
@@ -516,7 +574,9 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
               modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} sidekickEffort={i === 0 ? sidekickEffort[0] : undefined} sidekickFast={i === 0 ? sidekickFast[0] : undefined}
               sidekickLive={i === 0 && p.sidekickLive}
               onConfigure={i === 0 && p.main && !p.edit ? p.onAddModel : undefined}
+              toggleRef={i === 0 && p.main && !p.edit ? modelToggle : undefined}
               hiddenConfig={p.hidden} onSqueeze={i === 0 ? setSqueeze : undefined}
+              memory={i === 0 ? p.modelMemory : undefined} shapes={i === 0 ? p.modelShapes : undefined}
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.onAddModel && p.main && !p.edit && !p.controlsLocked && !models.length && (
@@ -535,11 +595,35 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   return field;
 });
 
+// Cycles the composer's primary working / permission mode forward by one step (Shift+Tab). Working mode (Codex Build / Plan)
+// wins when offered, else ACP modes, else a config-backed permission mode
+export function cycleComposerMode(
+  controls: SessionControls,
+  onSetMode: (id: string) => void,
+  onSetConfig: (configId: string, value: string) => void,
+): boolean {
+  const { collaboration, permission } = composerControls(controls.options);
+  const step = (options: readonly SessionOption[], current?: string) => {
+    if (options.length < 2) return undefined;
+    const at = options.findIndex(o => o.id === current);
+    return options[(at + 1) % options.length]!.id;
+  };
+  if (collaboration[0]) {
+    const next = step(collaboration[0].options, collaboration[0].value);
+    if (next !== undefined) { onSetConfig(collaboration[0].id, next); return true; }
+  }
+  const nextMode = step(controls.modes, controls.modeId);
+  if (nextMode !== undefined) { onSetMode(nextMode); return true; }
+  if (permission[0]) {
+    const next = step(permission[0].options, permission[0].value);
+    if (next !== undefined) { onSetConfig(permission[0].id, next); return true; }
+  }
+  return false;
+}
+
 // One mode chip and its menu: single-line rows with a glyph each, the agent's own name and description ride along as a tooltip.
-// Chip and rows use the same short label (`modeLabel`); the full_access glyph carries the warning color.
-// `access`, a permission level (the built-in agent's approval), sits under the modes as an even segmented scale, the way
-// effort sits under the models; a level past the first rides on the chip as a tag, gliding in and out (Chip `tagsKey`)
-function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeLabel, access, onAccess }: {
+// Chip and rows use the same short label (`modeLabel`); a permission control passes its own label and glyph
+function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeLabel, iconOf = modeIcon }: {
   modes: SessionOption[];
   value?: string;
   title: string;
@@ -547,40 +631,48 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeL
   onOpenChange: (open: boolean) => void;
   // Codex's collaboration `default` is its Build mode, not the permission default beside it
   labelOf?: (mode: SessionOption) => string;
-  access?: ConfigControl;
-  onAccess?: (value: string) => void;
+  iconOf?: (mode: SessionOption) => LucideIcon;
 }) {
   const mode = modes.find(m => m.id === value);
-  const ModeIcon = mode ? modeIcon(mode) : undefined;
-  const level = access?.options.find(o => o.id === access.value);
-  // The first level is the default and shows no tag
-  const tagged = level && level.id !== access!.options[0]?.id ? level : undefined;
+  const ModeIcon = mode ? iconOf(mode) : undefined;
   return (
     <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
-      <DropdownMenu.Trigger render={<Chip variant="solid" data-part="composer-mode" className="ml-0.5 shrink-0" narrow="icon"
-        title={[mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : title, level && accessLabel(level)].filter(Boolean).join('\n')}
-        icon={ModeIcon && <ModeIcon strokeWidth={1.75} className={mode?.kind === 'full_access' ? 'text-warn' : undefined} />}
-        tags={tagged && [<ChipTag key="access" icon={tagged.kind === 'full_access' ? <ShieldAlert className="size-2.5 shrink-0" strokeWidth={2.25} aria-hidden /> : undefined}>{accessLabel(tagged)}</ChipTag>]}
-        tagsKey={access ? tagged?.id ?? '' : undefined}>
+      <DropdownMenu.Trigger render={<Chip variant="solid" data-part="composer-mode" className="shrink-0" narrow="icon"
+        title={mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : title}
+        icon={ModeIcon && <ModeIcon strokeWidth={1.75} />}>
         {mode ? labelOf(mode) : title}
       </Chip>} />
-      <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width={access ? 'md' : 'sm'}><DropdownMenu.Popup>
+      <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="sm"><DropdownMenu.Popup>
         <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
           {modes.map(m => {
-            const Icon = modeIcon(m);
+            const Icon = iconOf(m);
             const label = labelOf(m);
             return <DropdownMenu.RadioItem key={m.id} value={m.id} title={[label === m.name ? undefined : m.name, m.description].filter(Boolean).join(t('common.metaSep')) || undefined} onClick={() => onSelect(m.id)}>
-              <OptionContent icon={<Icon strokeWidth={1.75} className={m.kind === 'full_access' ? 'text-warn' : undefined} />} checked={m.id === value} checkSlot={!!mode}>{label}</OptionContent>
+              <OptionContent icon={<Icon strokeWidth={1.75} />} checked={m.id === value} checkSlot={!!mode}>{label}</OptionContent>
             </DropdownMenu.RadioItem>;
           })}
         </DropdownMenu.RadioGroup>
-        {/* A level pick keeps the menu open, like an effort pick in the model panel */}
-        {access && onAccess && <div className="mt-1 border-t border-line pt-1.5">
-          <SegmentScale bare equal label={t('composer.access')} options={access.options.map(o => ({ value: o.id, label: accessLabel(o) }))}
-            value={access.value ?? ''} onChange={onAccess} />
-        </div>}
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+// The working mode in force, after the permission chip: outlined where the chip is filled, so it reads as a removable
+// token and not a second menu. Its × goes back to the first mode; below the sm tier only the glyph and the × stay
+function ModePill({ mode, onExit }: { mode: SessionOption; onExit: () => void }) {
+  const Icon = modeIcon(mode);
+  const name = modeName(mode);
+  const exit = t('composer.modeExit', { mode: name });
+  return (
+    <span title={[mode.name, mode.description].filter(Boolean).join(t('common.metaSep'))}
+      className="inline-flex h-ctl-sm shrink-0 animate-[acp-fade-in_var(--dur-open)_ease-out] items-center gap-1 rounded-sm border border-line pr-0.5 pl-1.5 text-3 text-fg-1">
+      <Icon className="size-icon shrink-0" strokeWidth={1.75} />
+      <span className="@max-sm:hidden group-data-[squeezed]/bar:hidden">{name}</span>
+      <button type="button" title={exit} aria-label={exit} onClick={onExit}
+        className="flex size-4 shrink-0 items-center justify-center rounded-xs text-fg-3 outline-none transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1">
+        <X className="size-3" strokeWidth={1.75} />
+      </button>
+    </span>
   );
 }
 

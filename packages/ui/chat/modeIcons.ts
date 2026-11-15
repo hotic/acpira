@@ -1,4 +1,4 @@
-import { Bug, CircleDashed, Code, Eye, FolderPen, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldOff, Sparkles, Unplug, Users, type LucideIcon } from 'lucide-react';
+import { Bug, CircleDashed, Code, Eye, FolderPen, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldCheck, ShieldEllipsis, ShieldOff, Sparkles, Unplug, Users, type LucideIcon } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { SessionOption } from '@acpira/shared/transcript';
 import { t } from '../i18n';
@@ -87,8 +87,8 @@ export function modeLabel(mode: SessionOption): string {
   return key ? t(key) : mode.name;
 }
 
-// An approval level in the mode menu's scale and on the mode chip: the built-in agent's levels (`APPROVAL_LEVELS`) by id,
-// short enough for an even third of the menu; any other agent's level keeps its short mode label
+// An approval level on the permission chip and in its menu: the built-in agent's levels (`APPROVAL_LEVELS`) by id; any
+// other agent's level keeps its short mode label
 const ACCESS: Record<string, MsgKey> = {
   ask: 'composer.access.ask',
   'auto-edit': 'composer.access.autoEdit',
@@ -97,4 +97,25 @@ const ACCESS: Record<string, MsgKey> = {
 
 export function accessLabel(level: SessionOption): string {
   return Object.hasOwn(ACCESS, level.id) ? t(ACCESS[level.id]!) : modeLabel(level);
+}
+
+// The built-in agent's levels as one shield family, so the chip reads as a scale; other levels keep their mode glyph
+const ACCESS_ICON: Record<string, LucideIcon> = { ask: ShieldEllipsis, 'auto-edit': ShieldCheck, full: ShieldOff };
+
+export function accessIcon(level: SessionOption): LucideIcon {
+  return Object.hasOwn(ACCESS_ICON, level.id) ? ACCESS_ICON[level.id]! : modeIcon(level);
+}
+
+// A working mode where it is picked by name instead of sitting on a chip (the composer's pill and its row in the / list):
+// the bare name, without the chip labels' padding to one length, and one line on what it does. Unknown modes keep the
+// agent's own wording
+const NAME: Record<string, MsgKey> = { plan: 'composer.modeName.plan', team: 'composer.modeName.team', raw: 'composer.modeName.raw' };
+const HINT: Record<string, MsgKey> = { plan: 'composer.modeHint.plan', team: 'composer.modeHint.team', raw: 'composer.modeHint.raw' };
+
+export function modeName(mode: SessionOption): string {
+  return Object.hasOwn(NAME, mode.id) ? t(NAME[mode.id]!) : modeLabel(mode);
+}
+
+export function modeHint(mode: SessionOption): string | undefined {
+  return Object.hasOwn(HINT, mode.id) ? t(HINT[mode.id]!) : mode.description;
 }

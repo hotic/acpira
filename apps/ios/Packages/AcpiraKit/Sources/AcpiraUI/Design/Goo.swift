@@ -811,14 +811,13 @@ struct LiquidControls: View {
     let mode = c.mode
     return GooBean(key: "mode", title: t("composer.mode"),
                    glyph: AnyView(Icon(mode.map(modeIcon) ?? .circleDashed, size: Metrics.barIcon, strokeWidth: 1.75)
-                     .foregroundStyle(mode?.kind == "full_access" ? Palette.warn : Palette.fg1)),
+                     .foregroundStyle(Palette.fg1)),
                    caption: AnyView(GooCaption(text: mode.map(modeLabel) ?? t("composer.mode"))),
                    rows: modes.count,
                    panel: AnyView(GooList(current: mode?.id) {
                      ForEach(modes) { m in
                        GooRow(name: modeLabel(m), checked: m.id == mode?.id) {
                          Icon(modeIcon(m), size: Metrics.icon, strokeWidth: 1.75)
-                           .foregroundStyle(m.kind == "full_access" ? Palette.warn : Palette.fg1)
                        } action: {
                          onSetMode(m.id)
                          fold()

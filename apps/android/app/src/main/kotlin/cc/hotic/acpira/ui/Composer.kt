@@ -560,14 +560,14 @@ private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig
     val mode = c.mode
     out += Bean(
       "mode", t("composer.mode"), mode?.let(::modeLabel) ?: t("composer.mode"),
-      glyph = { Lucide(mode?.let(::modeIcon) ?: "circleDashed", if (mode?.kind == "full_access") Palette.warn else Palette.fg1, size = Metrics.barIcon) },
+      glyph = { Lucide(mode?.let(::modeIcon) ?: "circleDashed", Palette.fg1, size = Metrics.barIcon) },
       rows = c.modes.size,
       panel = {
         GooList(c.modes.indexOfFirst { it.id == mode?.id }) {
           for (m in c.modes) {
-            GooRow(modeLabel(m), m.id == mode?.id, glyph = {
-              Lucide(modeIcon(m), if (m.kind == "full_access") Palette.warn else Palette.fgStrong, size = Metrics.icon)
-            }) { onSetMode(m.id); fold() }
+            GooRow(modeLabel(m), m.id == mode?.id, glyph = { Lucide(modeIcon(m), Palette.fgStrong, size = Metrics.icon) }) {
+              onSetMode(m.id); fold()
+            }
           }
         }
       },
