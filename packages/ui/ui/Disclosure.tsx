@@ -46,7 +46,8 @@ export function Disclosure({ body, open: controlled, defaultOpen = false, indent
       <DisclosureRow {...row} independentAction={independentAction} />
       {/* Nested rows extend their hit area beyond the text column; reserve it inside the clip so its edges cannot cut off row corners. */}
       <Collapsible.Panel className="-mx-hit [&>div]:px-hit">
-        <div className={cn('pt-1', !rail && 'pb-1.5', indent && row.lead !== undefined && 'pl-indent', bodyClassName)}>{body}</div>
+        {/* A list of rows on the head's own rail follows it at the rows' own pitch; any other body stands off a little */}
+        <div className={cn(rail === 'rows' ? 'pt-0' : 'pt-1', !rail && 'pb-1.5', indent && row.lead !== undefined && 'pl-indent', bodyClassName)}>{body}</div>
       </Collapsible.Panel>
     </Collapsible.Root>
   );
