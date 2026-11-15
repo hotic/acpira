@@ -189,7 +189,7 @@ class ContractTest {
     check(InitState.serializer(), TS.interfaceFields(protocol, "InitState"), setOf("agentInstalls"))
     check(SettingsView.serializer(), TS.interfaceFields(shared("settings.ts"), "SettingsView"), setOf(
       "sessionScope", "sessionListPosition", "uiFontSize", "codeFontSize", "diffMarkers", "fontSmoothing", "shareEditorSelection",
-      "agentCpuCap", "proxy", "openFilesWith", "desktopLayout", "panelScope", "panelFiles", "panelTerminal", "panelBrowser", "sshLocalAgents",
+      "agentCpuCap", "proxy", "openFilesWith", "desktopLayout", "panelScope", "panelFiles", "panelTerminal", "panelBrowser", "sshLocalAgents", "keybindings",
     ))
     for ((s, name) in listOf(
       FileHit.serializer() to "FileHit", ProjectEntry.serializer() to "ProjectEntry", ProjectHunk.serializer() to "ProjectHunk",

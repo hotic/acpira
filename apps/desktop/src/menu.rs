@@ -2,11 +2,11 @@
 //! Items muda has no stock role for (reload, developer tools, zoom, paste and match style, delete, speech) are the app's
 //! own; Quit is too, so the windows' places are saved before the app goes
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[cfg(target_os = "macos")]
 use acpira_desktop::menu::SubmenuRole;
-use acpira_desktop::menu::{Command, Entry, Stock, UpdateItem, build_menu, shell_command};
+use acpira_desktop::menu::{Command, Entry, Stock, UpdateItem, build_menu_with_keys, shell_command};
 use acpira_desktop::wire::Initial;
 use parking_lot::Mutex;
 use tauri::menu::{AboutMetadata, CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -24,7 +24,11 @@ pub fn install(handle: &AppHandle) {
   // Restart into a staged version, else check (which also opens About)
   let staged = a.updater().and_then(|u| u.staged()).map(|s| s.version);
   let update = a.updater().map(|_| staged.as_deref().map_or(UpdateItem::Check, UpdateItem::Restart));
-  let tree = build_menu(&t, "Acpira", layout.as_str().unwrap_or("chat"), cfg!(target_os = "macos"), update);
+  let keys: BTreeMap<String, String> = serde_json::from_value(
+    acpira_shared::settings::sanitize_setting("keybindings", &a.setting("keybindings").unwrap_or_default()),
+  )
+  .unwrap_or_default();
+  let tree = build_menu_with_keys(&t, "Acpira", layout.as_str().unwrap_or("chat"), cfg!(target_os = "macos"), update, &keys);
   log(&format!("menu language {}", a.locale().tag()));
   // No global menu bar outside macOS, and a window's own Win32 bar would hang under a title bar the window does not have:
   // the page draws the menu in its title row and sends the picks back (chat_window.rs menuCommand)
@@ -66,7 +70,7 @@ fn submenu(h: &AppHandle, label: &str, items: &[Entry]) -> tauri::Result<Submenu
   for e in items {
     let item: Box<dyn IsMenuItem<Wry>> = match e {
       Entry::Separator => Box::new(PredefinedMenuItem::separator(h)?),
-      Entry::Item { command, label, accelerator } => Box::new(MenuItem::with_id(h, command.id(), label, true, *accelerator)?),
+      Entry::Item { command, label, accelerator } => Box::new(MenuItem::with_id(h, command.id(), label, true, accelerator.as_deref())?),
       Entry::Radio { command, label, checked } => Box::new(CheckMenuItem::with_id(h, command.id(), label, true, *checked, None::<&str>)?),
       Entry::Stock { stock, label } => stock_item(h, *stock, label)?,
       Entry::Submenu { label, items, .. } => Box::new(submenu(h, label, items)?),
@@ -140,7 +144,16 @@ fn focused_webview(h: &AppHandle) -> Option<tauri::WebviewWindow> {
 /// Main thread
 pub fn on_page_command(window: &tauri::WebviewWindow, id: &str) {
   match id {
-    "window.close" => window_control(window, "close"),
+    "Close" => {
+      if let Some(a) = crate::app::try_app()
+        && let Some(chat) = a.window_by_label(window.label())
+      {
+        chat.post(serde_json::json!({ "type": "shellCommand", "command": "close" }));
+      } else {
+        window_control(window, "close");
+      }
+    }
+    "window.close" | "CloseWindow" => window_control(window, "close"),
     "window.minimize" => window_control(window, "minimize"),
     "window.fullScreen" => {
       let _ = window.set_fullscreen(!window.is_fullscreen().unwrap_or(false));
@@ -179,6 +192,23 @@ pub fn on_event(h: &AppHandle, id: &str) {
     return;
   }
   let Some(c) = Command::from_id(id) else { return };
+  // Closing acts only on the window currently focused, never opening a new one when none is up
+  if c == Command::Close {
+    if let Some(w) = focused_webview(h) {
+      if let Some(chat) = a.window_by_label(w.label()) {
+        chat.post(serde_json::json!({ "type": "shellCommand", "command": "close" }));
+      } else {
+        let _ = w.close();
+      }
+    }
+    return;
+  }
+  if c == Command::CloseWindow {
+    if let Some(w) = focused_webview(h) {
+      let _ = w.close();
+    }
+    return;
+  }
   if let Some(page) = shell_command(c) {
     a.command(page);
     return;

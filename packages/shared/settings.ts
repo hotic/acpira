@@ -1,6 +1,7 @@
 import type { AgentId } from './transcript';
 import { sanitizePersonas, type SubagentGroup, type SubagentPersona } from './subagents';
 import { isLanguage, type Language, type Locale } from './i18n/core';
+import { sanitizeKeybindings, type KeybindingMap } from './keybindings';
 import { SSH_LOCAL_AGENTS } from './remote';
 
 // Hidden option families (acpira.hiddenOptions): agent → configOption id → source-qualified family keys (legacy family names remain readable; see models.ts) kept out of the composer menus.
@@ -130,11 +131,13 @@ export interface SettingsView {
   panelFiles: boolean;
   panelTerminal: boolean;
   panelBrowser: boolean;
+  // User-customized keyboard shortcuts (missing: default, "": unbound)
+  keybindings: KeybindingMap;
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'sshLocalAgents' | 'subagents' | 'agentCpuCap' | 'proxy' | 'openFilesWith' | 'desktopLayout' | 'panelScope' | 'panelFiles' | 'panelTerminal' | 'panelBrowser';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'sshLocalAgents', 'subagents', 'agentCpuCap', 'proxy', 'openFilesWith', 'desktopLayout', 'panelScope', 'panelFiles', 'panelTerminal', 'panelBrowser'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'sshLocalAgents' | 'subagents' | 'agentCpuCap' | 'proxy' | 'openFilesWith' | 'desktopLayout' | 'panelScope' | 'panelFiles' | 'panelTerminal' | 'panelBrowser' | 'keybindings';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'sshLocalAgents', 'subagents', 'agentCpuCap', 'proxy', 'openFilesWith', 'desktopLayout', 'panelScope', 'panelFiles', 'panelTerminal', 'panelBrowser', 'keybindings'];
 
 // The settings each shell keeps in its own store, since they follow the window's shape: the session list's side and scope
 // (the desktop app always lists every project on the left) and sharing the editor selection (IDE shells only). Every
@@ -191,6 +194,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   panelFiles: true,
   panelTerminal: true,
   panelBrowser: true,
+  keybindings: {},
 };
 
 // A hand-edited settings.json or a forged webview message can send anything; fall back per key so the page never sees an illegal value
@@ -260,6 +264,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       if (lower === 'off' || lower === 'none' || lower === 'direct') return 'off' as SettingsView[K];
       return (proxyUrl(raw) ?? DEFAULT_PROXY) as SettingsView[K];
     }
+    case 'keybindings':
+      return sanitizeKeybindings(value) as SettingsView[K];
   }
 }
 

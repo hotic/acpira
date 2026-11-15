@@ -105,6 +105,7 @@ impl SettingsCenter {
       panel_files: read("panelFiles").as_bool().unwrap_or(true),
       panel_terminal: read("panelTerminal").as_bool().unwrap_or(true),
       panel_browser: read("panelBrowser").as_bool().unwrap_or(true),
+      keybindings: serde_json::from_value(read("keybindings")).unwrap_or_default(),
     }
   }
 

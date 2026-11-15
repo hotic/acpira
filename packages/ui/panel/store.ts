@@ -458,6 +458,50 @@ export const panel = {
       : s.opened;
     if (changed || opened !== s.opened) update({ views, opened });
   },
+  // Shows the session's All Changes review in the first Files tab (or as a stage tab in the files layout)
+  openReview(root: string) {
+    const s = current();
+    if (!s.files) return;
+    const tab = s.tabs.find(t => t.id === s.tab)?.kind === 'files' ? s.tab : FILES_TAB;
+    const key = viewKey(tab, root);
+    const r = scopedRoot(root);
+    update({ open: true, tab, ...withFiles(s, tab), views: { ...s.views, [key]: 'review' }, opened: withOpened(s, r, 'review') });
+  },
+  // Toggles a browser tab: brings an existing browser tab forward (or folds the panel if already on it in chat layout), else opens one
+  toggleBrowser(filesLayout = false): string | undefined {
+    const s = current();
+    if (!s.browser) return undefined;
+    const existing = s.tabs.find(t => t.kind === 'browser');
+    if (existing) {
+      if (!filesLayout && s.open && s.tab === existing.id) {
+        update({ open: false });
+        return undefined;
+      }
+      update({ open: true, tab: existing.id });
+      return existing.id;
+    }
+    return panel.openBrowser();
+  },
+  // Closes the active panel tab (or stage view in files layout); returns false when no panel tab is open to close
+  closeActive(filesLayout = false): boolean {
+    const s = current();
+    if (filesLayout) {
+      if (s.tab === FILES_TAB) {
+        if (!s.root) return false;
+        const r = scopedRoot(s.root);
+        const shown = s.views[r];
+        if (!shown) return false;
+        panel.closeView(s.root, shown);
+        return true;
+      }
+      if (!s.tabs.some(t => t.id === s.tab)) return false;
+      panel.close(s.tab);
+      return true;
+    }
+    if (!s.open) return false;
+    panel.close(s.tab);
+    return true;
+  },
   // `key`: a Files tab's view of a project (`viewKey`)
   setView(key: string, view: PanelView | null | undefined) {
     const s = current();

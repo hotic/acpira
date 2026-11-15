@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
-import { Blocks, BrainCircuit, HardDrive, Info, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
+import { Blocks, BrainCircuit, HardDrive, Info, Keyboard, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
+import { SHORTCUT_DEFS } from '@acpira/shared/keybindings';
+import { SHORTCUT_GROUP_LABEL, SHORTCUT_LABEL } from './ShortcutsPage';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { PluginKind } from '@acpira/shared/plugins';
 import type { AgentInfo } from '@acpira/shared/transcript';
@@ -20,10 +22,10 @@ export interface SearchEntry {
   anchor?: string;
 }
 
-export type SearchPage = 'general' | 'appearance' | 'models' | 'subagents' | 'plugins' | 'shared' | 'connections' | 'storage' | 'about';
+export type SearchPage = 'general' | 'appearance' | 'shortcuts' | 'models' | 'subagents' | 'plugins' | 'shared' | 'connections' | 'storage' | 'about';
 
 const ICON: Record<SearchPage, ReactNode> = {
-  general: <SlidersHorizontal />, appearance: <Palette />, models: <BrainCircuit />, subagents: <Workflow />, plugins: <Blocks />,
+  general: <SlidersHorizontal />, appearance: <Palette />, shortcuts: <Keyboard />, models: <BrainCircuit />, subagents: <Workflow />, plugins: <Blocks />,
   shared: <Layers />, connections: <Network />, storage: <HardDrive />, about: <Info />,
 };
 
@@ -45,8 +47,14 @@ function holds(page: SearchPage, desktop: boolean): MsgKey[] {
       'settings.compactAt', 'settings.group.run', 'settings.accountSwitch', 'settings.agentCpuCap', 'settings.proxy',
       'settings.notifications.title', 'settings.notifySound', 'settings.notifySystem'];
     case 'appearance': return ['settings.group.ui', desktop ? 'settings.desktopLayout' : 'settings.sessionListPosition', 'settings.theme', 'settings.motion',
-      'settings.autoExpand', 'settings.reportLink', 'settings.diffMarkers', 'settings.panels', 'settings.plugins.files', 'settings.plugins.terminal', 'settings.plugins.browser',
+      'settings.projectMarks', 'settings.group.process', 'settings.steps', 'settings.stepIcons', 'settings.autoExpand', 'settings.keepProcess', 'settings.group.chat', 'settings.chatWidth', 'settings.codeWrap',
+      'settings.diffMarkers', 'settings.reportLink', 'settings.panels', 'settings.plugins.files', 'settings.plugins.terminal', 'settings.plugins.browser',
       ...(desktop ? ['settings.panelScope' as const] : []), 'settings.text.title', 'settings.uiFontSize', 'settings.codeFontSize', 'settings.fontSmoothing'];
+    case 'shortcuts': {
+      const visible = SHORTCUT_DEFS.filter(d => desktop || !d.desktopOnly);
+      const groups = (['general', 'chat', 'sessions', 'panel'] as const).filter(g => visible.some(d => d.group === g));
+      return [...groups.map(g => SHORTCUT_GROUP_LABEL[g]), ...visible.map(d => SHORTCUT_LABEL[d.id])];
+    }
     case 'subagents': return ['subagents.page.list', 'subagents.groups.list'];
     case 'shared': return ['settings.shared.tab.skills', 'settings.shared.tab.mcp', 'settings.shared.tab.prompts'];
     case 'connections': return ['connections.hosts'];
@@ -90,7 +98,7 @@ export function searchHits(index: SearchEntry[], query: string): SearchEntry[] {
 export function scrollToAnchor(from: Element, anchor: string) {
   const root = from.closest('.acp-settings');
   const attempt = (left: number) => requestAnimationFrame(() => {
-    const el = [...(root?.querySelectorAll('main label, main h3 span, main [role=tab]') ?? [])].find(x => x.textContent?.trim() === anchor);
+    const el = [...(root?.querySelectorAll('main label, main h3 span, main [role=tab], main [data-search-anchor]') ?? [])].find(x => x.textContent?.trim() === anchor);
     if (el) el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     else if (left > 0) attempt(left - 1);
   });

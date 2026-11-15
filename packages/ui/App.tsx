@@ -22,13 +22,14 @@ import { panel, panelState } from './panel/store';
 import { deliverTerminal, startTerminals, terminalsConnected } from './panel/terminals';
 import { vscodeApi } from './vscodeApi';
 import { requestTable } from './requestTable';
-import { desktopShell, pushShellToast, runShellCommand, setDesktopMenu, setUpdateState, setWindowMaximized } from './desktop';
+import { desktopShell, postWindowControl, pushShellToast, runShellCommand, setDesktopMenu, setUpdateState, setWindowMaximized } from './desktop';
+import { setActiveKeybindings } from './keybindings';
 import { deliverRemote, watchConnections } from './remote/api';
 import { deliverRemoteAccess, watchRemoteAccess } from './remote/access';
 import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelection, setEditorCopy, setEditorSelection } from './chat/editorContext';
-import { updateMainComposer, writeMainComposer } from './chat/useComposerDraft';
+import { focusMainComposer, updateMainComposer, writeMainComposer } from './chat/useComposerDraft';
 import { playChime } from './effects/chime';
 import { setWhooshOn } from './effects/whoosh';
 import { probeUrl } from './probeUrl';
@@ -138,6 +139,7 @@ const EMPTY_TURNS: Turn[] = [];
 const EMPTY_CONTROLS: SessionControls = { modes: [], options: [] };
 
 function syncPanelScope(incoming: SettingsView): SettingsView {
+  setActiveKeybindings(incoming.keybindings);
   panel.setModules({
     files: incoming.panelFiles !== false,
     terminal: incoming.panelTerminal !== false,
@@ -345,6 +347,7 @@ export function App() {
         case 'shellCommand':
           if (m.command === 'settings') { setView('settings'); break; }
           if (m.command === 'about') { setPage({ kind: 'about' }); setView('settings'); break; }
+          if (m.command === 'close' && lastView.current !== 'chat') { postWindowControl('close'); break; }
           // The View menu's layout picks: written like the gear's, the page they reach stays up
           if (m.command === 'layoutChat' || m.command === 'layoutFiles') {
             if (m.command === 'layoutFiles') {
@@ -437,6 +440,7 @@ export function App() {
         }
         case 'chime': playChime(); break;
         case 'probeUrl': { const { id, url } = m; void probeUrl(url).then(r => post({ type: 'probeResult', id, ...r })); break; }
+        case 'focusComposer': setView('chat'); focusMainComposer(); break;
         case 'showSession': {
           const kept = views.select(m.id);
           if (kept) { setNoProject(false); setSession(kept); }
@@ -509,7 +513,7 @@ export function App() {
     imageBlob,
     openBlob: (sessionId, name) => post({ type: 'openBlob', sessionId, name }),
     setMode: id => post({ type: 'setMode', sessionId: activeId.current, id }),
-    setConfig: (configId, value) => post({ type: 'setConfig', sessionId: activeId.current, configId, value }),
+    setConfig: (configId, value, also) => post({ type: 'setConfig', sessionId: activeId.current, configId, value, ...(also && Object.keys(also).length ? { also } : {}) }),
     selectSession: id => {
       const kept = views.select(id);
       if (kept) { setNoProject(false); setSession(kept); }
@@ -577,6 +581,7 @@ export function App() {
       if (key === 'panelFiles') panel.setModules({ files: value as boolean });
       if (key === 'panelTerminal') panel.setModules({ terminal: value as boolean });
       if (key === 'panelBrowser') panel.setModules({ browser: value as boolean });
+      if (key === 'keybindings') setActiveKeybindings(value as SettingsView['keybindings']);
       setSettings(s => (s ? { ...s, [key]: value } : s));
       post({ type: 'setSetting', key, value });
     },
@@ -747,6 +752,7 @@ export function App() {
       forkedFrom={session?.forkedFrom}
       controls={session?.controls ?? EMPTY_CONTROLS}
       modelShapes={session?.modelShapes}
+      modelMemory={session?.modelMemory}
       usage={session?.usage}
       commands={session?.commands}
       compactAt={settings.autoCompact && settings.compactAtTokens > 0 ? settings.compactAtTokens : undefined}

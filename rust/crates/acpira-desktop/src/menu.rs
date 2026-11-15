@@ -4,6 +4,8 @@
 //! app's language too: macOS adds items of its own (tiling, Quit and Keep Windows) in the system's language, and default
 //! English labels stood out among them. The shell turns this tree into its toolkit's menu
 
+use std::collections::BTreeMap;
+
 use acpira_shared::settings::DESKTOP_LAYOUTS;
 
 /// Commands the shell handles itself (the menu item's id)
@@ -12,8 +14,13 @@ pub enum Command {
   NewSession,
   NewWindow,
   OpenFolder,
+  QuickOpen,
+  Close,
+  CloseWindow,
   Search,
   Settings,
+  Terminal,
+  Changes,
   Browser,
   /// The column at the left edge: the session list, or the explorer in the files layout
   Sidebar,
@@ -64,12 +71,17 @@ impl Command {
   }
 }
 
-const ALL: [Command; 22] = [
+const ALL: [Command; 27] = [
   Command::NewSession,
   Command::NewWindow,
   Command::OpenFolder,
+  Command::QuickOpen,
+  Command::Close,
+  Command::CloseWindow,
   Command::Search,
   Command::Settings,
+  Command::Terminal,
+  Command::Changes,
   Command::Browser,
   Command::Sidebar,
   Command::ToolPanel,
@@ -113,7 +125,7 @@ pub enum Stock {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Entry {
-  Item { command: Command, label: String, accelerator: Option<&'static str> },
+  Item { command: Command, label: String, accelerator: Option<String> },
   Radio { command: Command, label: String, checked: bool },
   Stock { stock: Stock, label: String },
   Separator,
@@ -133,11 +145,34 @@ pub type Translate<'a> = &'a dyn Fn(&str, &[(&str, &str)]) -> String;
 /// when it changes, since ⌥⌘B folds the session column instead of the tool panel in the files layout. `update`: the
 /// updater's item under About (in Help elsewhere), rebuilt when a version is staged
 pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool, update: Option<UpdateItem>) -> Vec<Entry> {
+  build_menu_with_keys(t, app, layout, mac, update, &BTreeMap::new())
+}
+
+pub fn build_menu_with_keys(
+  t: Translate,
+  app: &str,
+  layout: &str,
+  mac: bool,
+  update: Option<UpdateItem>,
+  keys: &BTreeMap<String, String>,
+) -> Vec<Entry> {
   let named = [("app", app)];
-  let item = |command, key: &str, accelerator| Entry::Item { command, label: t(key, &[]), accelerator };
+  let item = |command, key: &str, accelerator: Option<&str>| Entry::Item {
+    command,
+    label: t(key, &[]),
+    accelerator: accelerator.map(str::to_owned),
+  };
+  let bound = |command, key: &str, shortcut_id: &str, default_accel: &str| {
+    let accel = match keys.get(shortcut_id).map(String::as_str) {
+      None => Some(default_accel.to_owned()),
+      Some("") => None,
+      Some(custom) => Some(custom.to_owned()),
+    };
+    Entry::Item { command, label: t(key, &[]), accelerator: accel }
+  };
   let stock = |stock, key: &str| Entry::Stock { stock, label: t(key, &named) };
   let sep = || Entry::Separator;
-  let settings = || item(Command::Settings, "session.settings", Some("CmdOrCtrl+,"));
+  let settings = || bound(Command::Settings, "session.settings", "openSettings", "CmdOrCtrl+,");
   let quit = || stock(Stock::Quit, "desktop.menu.quit");
   let update_item = update.map(|u| match u {
     UpdateItem::Check => item(Command::CheckUpdates, "desktop.menu.checkUpdates", None),
@@ -165,12 +200,18 @@ pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool, update: Opti
     });
   }
   let mut file = vec![
-    item(Command::NewSession, "session.new", Some("CmdOrCtrl+N")),
+    bound(Command::NewSession, "session.new", "newSession", "CmdOrCtrl+N"),
     item(Command::NewWindow, "desktop.menu.newWindow", Some("CmdOrCtrl+Shift+N")),
-    item(Command::OpenFolder, "desktop.empty.open", Some("CmdOrCtrl+O")),
+    bound(Command::OpenFolder, "desktop.empty.open", "openFolder", "CmdOrCtrl+O"),
+    bound(Command::QuickOpen, "panel.searchFiles", "quickOpen", "CmdOrCtrl+P"),
     sep(),
-    stock(Stock::CloseWindow, "desktop.menu.closeWindow"),
+    bound(Command::Close, "common.close", "closeTab", "CmdOrCtrl+W"),
   ];
+  if mac {
+    file.push(item(Command::CloseWindow, "desktop.menu.closeWindow", Some("CmdOrCtrl+Shift+W")));
+  } else {
+    file.push(stock(Stock::CloseWindow, "desktop.menu.closeWindow"));
+  }
   if !mac {
     file.extend([sep(), settings(), sep(), quit()]);
   }
@@ -210,10 +251,12 @@ pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool, update: Opti
     label: t("desktop.menu.view", &[]),
     role: None,
     items: vec![
-      item(Command::Search, "session.search", Some("CmdOrCtrl+K")),
-      item(Command::Sidebar, "desktop.sidebar", Some("CmdOrCtrl+B")),
-      item(Command::ToolPanel, if layout == "files" { "desktop.sessionList" } else { "panel.label" }, Some("Alt+CmdOrCtrl+B")),
-      item(Command::Browser, "desktop.menu.browser", None),
+      bound(Command::Search, "session.search", "searchSessions", "CmdOrCtrl+K"),
+      bound(Command::Sidebar, "desktop.sidebar", "toggleSidebar", "CmdOrCtrl+B"),
+      bound(Command::ToolPanel, if layout == "files" { "desktop.sessionList" } else { "panel.label" }, "toggleToolPanel", "Alt+CmdOrCtrl+B"),
+      bound(Command::Terminal, "panel.terminal", "toggleTerminal", "Ctrl+`"),
+      bound(Command::Changes, "panel.allChanges", "openChanges", "CmdOrCtrl+Shift+D"),
+      bound(Command::Browser, "desktop.menu.browser", "toggleBrowser", "CmdOrCtrl+Shift+B"),
       sep(),
       Entry::Submenu { label: t("settings.desktopLayout", &[]), role: None, items: layouts },
       sep(),
@@ -255,8 +298,12 @@ pub fn shell_command(c: Command) -> Option<&'static str> {
   Some(match c {
     Command::NewSession => "newSession",
     Command::OpenFolder => "openFolder",
+    Command::QuickOpen => "quickOpen",
+    Command::Close => "close",
     Command::Search => "search",
     Command::Settings => "settings",
+    Command::Terminal => "terminal",
+    Command::Changes => "changes",
     Command::Browser => "browser",
     Command::Sidebar => "sidebar",
     Command::ToolPanel => "toolPanel",
@@ -378,8 +425,8 @@ mod tests {
       labels(&build_menu(&t, "Acpira", "chat", true, Some(UpdateItem::Restart("1.11.0"))), &mut all);
       for l in &all {
         assert!(
-          !l.is_empty() && !l.starts_with("desktop.") && !l.starts_with("settings.") && !l.starts_with("session.") && !l.contains("{app}")
-            && !l.contains("{version}"),
+          !l.is_empty() && !l.starts_with("desktop.") && !l.starts_with("settings.") && !l.starts_with("session.")
+            && !l.starts_with("panel.") && !l.starts_with("common.") && !l.contains("{app}") && !l.contains("{version}"),
           "{locale:?}: {l}"
         );
       }
@@ -401,7 +448,10 @@ mod tests {
     let files = view("files");
     assert!(matches!(&files[1], Entry::Item { command: Command::Sidebar, .. }));
     assert!(matches!(&files[2], Entry::Item { label, .. } if label == "desktop.sessionList"));
-    let Entry::Submenu { items, .. } = &files[5] else { panic!() };
+    assert!(matches!(&files[3], Entry::Item { command: Command::Terminal, accelerator, .. } if accelerator.as_deref() == Some("Ctrl+`")));
+    assert!(matches!(&files[4], Entry::Item { command: Command::Changes, accelerator, .. } if accelerator.as_deref() == Some("CmdOrCtrl+Shift+D")));
+    assert!(matches!(&files[5], Entry::Item { command: Command::Browser, accelerator, .. } if accelerator.as_deref() == Some("CmdOrCtrl+Shift+B")));
+    let Entry::Submenu { items, .. } = &files[7] else { panic!() };
     assert_eq!(
       items,
       &[
@@ -468,6 +518,16 @@ mod tests {
     // The page's own shortcut: shown, run by the page's keys
     assert_eq!(find("NewSession")["key"], "Ctrl+N");
     assert_eq!(find("NewSession")["page"], true);
+    assert_eq!(find("QuickOpen")["key"], "Ctrl+P");
+    assert_eq!(find("QuickOpen")["page"], true);
+    assert_eq!(find("Close")["key"], "Ctrl+W");
+    assert_eq!(find("Close")["page"], true);
+    assert_eq!(find("Terminal")["key"], "Ctrl+`");
+    assert_eq!(find("Terminal")["page"], true);
+    assert_eq!(find("Changes")["key"], "Ctrl+Shift+D");
+    assert_eq!(find("Changes")["page"], true);
+    assert_eq!(find("Browser")["key"], "Ctrl+Shift+B");
+    assert_eq!(find("Browser")["page"], true);
     // The shell's: handed back on its key
     assert_eq!(find("NewWindow")["key"], "Ctrl+Shift+N");
     assert!(find("NewWindow").get("page").is_none());

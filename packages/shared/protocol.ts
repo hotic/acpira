@@ -33,7 +33,7 @@ export type WebviewHost = 'sidebar' | 'editor';
 
 // The desktop app's menu bar commands the page carries out (HostMsg shellCommand), each what its shortcut does there; the
 // layout picks write acpira.desktopLayout as the gear menu does; `about` opens settings on About (the updater's check)
-export type ShellCommand = 'newSession' | 'search' | 'openFolder' | 'settings' | 'about' | 'sidebar' | 'toolPanel' | 'browser' | 'layoutChat' | 'layoutFiles';
+export type ShellCommand = 'newSession' | 'search' | 'openFolder' | 'quickOpen' | 'close' | 'settings' | 'about' | 'sidebar' | 'toolPanel' | 'terminal' | 'changes' | 'browser' | 'layoutChat' | 'layoutFiles';
 
 // The desktop app updating itself (rust/crates/acpira-desktop/src/update/state.rs UpdateState, docs/dev/desktop.md
 // "Updates"): made by the shell, never by the sidecar. `manual` says why this install only links to the release page
@@ -284,6 +284,8 @@ export type HostMsg =
   | { type: 'addContext'; source: ContextSource; items: ContextItem[] }
   // The shell brings a session up in this page (a session link opened from outside, a notification's Open button): the page
   // selects it and leaves the settings page if it is there. Never sent by the sidecar
+  // The shell asks the page to leave settings if needed and focus the main composer (IDE host focus-toggle shortcut)
+  | { type: 'focusComposer' }
   | { type: 'showSession'; id: string }
   | { type: 'editTurnResult'; requestId: string; error?: string }
   // Completion belongs to this delete request; only the engine holding its undo may offer Restore.

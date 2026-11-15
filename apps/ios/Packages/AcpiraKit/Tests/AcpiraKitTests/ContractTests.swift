@@ -126,7 +126,7 @@ struct ContractTests {
     try checkStruct(state, try need(TS.interface(proto, "InitState")), leftOut: ["agentInstalls"])
     try checkStruct(state.settings, try need(TS.interface(Self.source("settings.ts"), "SettingsView")), leftOut: [
       "sessionScope", "sessionListPosition", "uiFontSize", "codeFontSize", "diffMarkers", "fontSmoothing", "shareEditorSelection",
-      "agentCpuCap", "proxy", "openFilesWith", "desktopLayout", "panelScope", "panelFiles", "panelTerminal", "panelBrowser", "sshLocalAgents",
+      "agentCpuCap", "proxy", "openFilesWith", "desktopLayout", "panelScope", "panelFiles", "panelTerminal", "panelBrowser", "sshLocalAgents", "keybindings",
     ])
     let subagents = try Self.source("subagents.ts")
     try checkStruct(try need(state.settings.subagents.first), try need(TS.interface(subagents, "SubagentPersona")))

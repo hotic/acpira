@@ -87,4 +87,12 @@ function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
 function Empty({ className, children = t('common.noMatch'), ...props }: ComponentProps<typeof Base.Empty>) {
   return <Base.Empty {...props} className={cnState(cn('flex min-h-row items-center px-2 text-3 text-fg-3 empty:hidden'), className)}>{children}</Base.Empty>;
 }
-export const Command = { Root, Input, List, Item, Empty, Group: Base.Group, GroupLabel: Base.GroupLabel };
+// A category of rows (`items` on Root are then `{ value, items }` groups): a faint label on the rows' icon line, its rows
+// in a Collection under it
+function Group({ className, ...props }: ComponentProps<typeof Base.Group>) {
+  return <Base.Group {...props} className={cnState(cn('flex shrink-0 flex-col'), className)} />;
+}
+function GroupLabel({ className, ...props }: ComponentProps<typeof Base.GroupLabel>) {
+  return <Base.GroupLabel {...props} className={cnState(cn('truncate pr-2 pl-1.5 pt-1.5 pb-0.5 text-3 text-fg-3'), className)} />;
+}
+export const Command = { Root, Input, List, Item, Empty, Group, GroupLabel, Collection: Base.Collection };

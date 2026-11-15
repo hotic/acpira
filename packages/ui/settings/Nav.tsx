@@ -1,5 +1,5 @@
 import { useState, type CSSProperties, type ReactNode, type Ref } from 'react';
-import { ArrowLeft, Blocks, BrainCircuit, HardDrive, Info, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
+import { ArrowLeft, Blocks, BrainCircuit, HardDrive, Info, Keyboard, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
 import { UpdateDot } from '../ui/UpdateDot';
@@ -13,14 +13,14 @@ import { t } from '../i18n';
 // agent's dialog open, so an opened dialog is a step of its own in the
 // back / forward trail and the chat can open the settings straight at one. Plugins carries its open filter, so the
 // rail's search can land on one
-export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'models' } | { kind: 'plugins'; tab?: string } | { kind: 'shared' } | { kind: 'connections' }
+export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'shortcuts' } | { kind: 'models' } | { kind: 'plugins'; tab?: string } | { kind: 'shared' } | { kind: 'connections' }
   | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'storage' } | { kind: 'about' }
   | { kind: 'agent'; id: AgentInfo['id']; tab?: 'models' | 'sources' };
 
 // Two pages are the same place (a click on the page already shown adds nothing to the trail)
 export const samePage = (a: SettingsPage, b: SettingsPage) => JSON.stringify(a) === JSON.stringify(b);
 
-type RailId = 'general' | 'appearance' | 'models' | 'plugins' | 'subagents' | 'shared' | 'connections' | 'storage' | 'about';
+type RailId = 'general' | 'appearance' | 'shortcuts' | 'models' | 'plugins' | 'subagents' | 'shared' | 'connections' | 'storage' | 'about';
 // The rail entry a page lights: an agent's dialog sits on the Models page
 export const railOf = (p: SettingsPage): RailId => (p.kind === 'agent' ? 'models' : p.kind);
 
@@ -95,7 +95,7 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
     <aside data-settings-rail data-opening={opening || undefined} style={width ? { '--rail-w': width } as CSSProperties : undefined} className={cn('flex shrink-0 flex-col', desktop ? 'gap-gap-half pb-(--foot-bottom)' : cn('gap-(--section-gap)', inset, 'w-(--settings-nav-w) py-pad-y settings-narrow:w-(--settings-rail-w)'))}>
       {/* Desktop: the window's pinned title row sits here; Back to chat leads the list below */}
       {desktop ? <TitleSpace /> : back}
-      <nav aria-label={t('settings.title')} className={cn('flex min-h-0 flex-col gap-1 overflow-y-auto', desktop && inset)}>
+      <nav aria-label={t('settings.title')} className={cn('scroll-none flex min-h-0 flex-col gap-1 overflow-y-auto', desktop && inset)}>
         {/* Desktop: Back to chat heads the list as the chat column's first row heads it, Codex-style; the title row's back
             walks the pages visited, this one leaves at once */}
         {desktop && <button type="button" onClick={onBack} title={t('settings.back')} aria-label={t('settings.back')}
@@ -124,6 +124,7 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
         ) : <>
           {item('general', t('settings.nav.general'), <SlidersHorizontal />)}
           {item('appearance', t('settings.nav.appearance'), <Palette />)}
+          {item('shortcuts', t('settings.nav.shortcuts'), <Keyboard />)}
           {item('models', t('settings.nav.models'), <BrainCircuit />)}
           {item('subagents', t('settings.nav.subagents'), <Workflow />)}
           {item('plugins', t('settings.nav.plugins'), <Blocks />)}

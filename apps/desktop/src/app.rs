@@ -315,7 +315,7 @@ impl App {
     // The menu's language and the browser panel's look follow the shared file, whichever engine wrote it
     app.shared.watch(Duration::from_secs(1), |keys| {
       let app = crate::app::app();
-      if keys.iter().any(|k| k == "language" || k == "desktopLayout") {
+      if keys.iter().any(|k| k == "language" || k == "desktopLayout" || k == "keybindings") {
         app.refresh_menu();
       }
       if keys.iter().any(|k| acpira_desktop::browser::affects_look(k)) {
