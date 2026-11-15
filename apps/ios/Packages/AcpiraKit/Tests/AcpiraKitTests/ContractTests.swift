@@ -151,7 +151,7 @@ struct ContractTests {
   func transcriptFieldsExist() throws {
     let transcript = try Self.source("transcript.ts")
     guard case .initState(let state) = try decode(ContractSamples.pushes[0]) as HostMsg else { Issue.record("not init"); return }
-    try checkStruct(try need(state.active), try need(TS.interface(transcript, "SessionView")))
+    try checkStruct(try need(state.active), try need(TS.interface(transcript, "SessionView")), leftOut: ["modelMemory"])
     // completedAt / question feed the page's plugin style hooks (data-done, data-state="question"); the phone has none
     try checkStruct(try need(state.sessions.first), try need(TS.interface(transcript, "SessionSummary")), leftOut: ["completedAt", "question"])
     try checkStruct(try need(state.accounts.first), try need(TS.interface(transcript, "AccountInfo")), subset: true)
@@ -194,7 +194,7 @@ struct ContractTests {
     func inline(_ fields: [TSField], _ name: String) throws -> [TSField] {
       try TS.inline(try need(fields.first { $0.name == name }, name).type)
     }
-    try checkStruct(view, try need(TS.interface(transcript, "SessionView")))
+    try checkStruct(view, try need(TS.interface(transcript, "SessionView")), leftOut: ["modelMemory"])
     let auth = try need(view.authMethods?.first), authFields = try need(TS.interface(transcript, "AuthMethodInfo"))
     try checkStruct(auth, authFields)
     try checkStruct(try need(auth.terminal), try inline(authFields, "terminal"))
@@ -560,7 +560,7 @@ enum ContractSamples {
     .answer(sessionId: "s1", blockId: "q1", answers: ["a": .one("notes"), "b": .many(["docs"])], images: ["a": [drafts[0]]], skip: false, clientId: "c4"),
     .buildPlan(sessionId: "s1", planId: "p1", optionId: "build", model: ModelPick(configId: "model", value: "opus")),
     .setMode(sessionId: "s1", id: "plan"),
-    .setConfig(sessionId: "s1", configId: "effort", value: "high"),
+    .setConfig(sessionId: "s1", configId: "effort", value: "high", also: ["model": "m1"]),
     .selectSession(id: "s1"),
     .deselectSession(id: "s1"),
     .newSession(agent: "claude", category: "c1", cwd: "/w", chat: true),
