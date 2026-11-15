@@ -53,6 +53,8 @@ struct AgentMessage: View {
           PlanDocumentCard(block: plan, permission: shown.blocks.lazy.compactMap { block -> PermissionBlock? in
             if case .permission(let p) = block, p.planId == plan.id { p } else { nil }
           }.first)
+            // Under the stretch's fold, like the reply (`CodexMessage`)
+            .geometryGroup()
         }
       }
       // A child's transcript offers no action row: fork there would act on the parent session
@@ -108,6 +110,9 @@ struct CodexMessage: View {
         // A long press on a block of the reply quotes it into the composer (Quotes.swift); a child's transcript has
         // no composer of its own to quote into
         StreamProse(block: block).environment(\.quoteProse, readOnly ? nil : QuoteAction(run: actions.quote))
+          // The reply sits under the process fold and moves with every frame of its reveal. As a group it moves as one
+          // piece; without it each paragraph was recorded and its glyphs drawn again per frame (`ThreadItemView`)
+          .geometryGroup()
       }
       // Later milestones (paused, met, cleared …) close the reply they followed
       ForEach(Array(split.goals.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
