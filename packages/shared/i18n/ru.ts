@@ -8,7 +8,7 @@ export const ru = {
   "observation.unknownTool": "Результат выполнения не подтверждён",
   'permission.run': 'Выполнить команду',
   'permission.more': 'Другие варианты',
-  'permission.once': 'Разрешить один раз',
+  'permission.once': 'Разрешить',
   'permission.reject': 'Отклонить',
   'permission.session': 'Разрешить в этой сессии',
   'permission.project': 'Всегда разрешать в {project}',

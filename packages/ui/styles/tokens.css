@@ -245,7 +245,7 @@
   /* Bound the whole question body so long prompts leave room for the transcript. */
   --question-body-max: min(calc(var(--row) * 8), 35dvh);
   --question-section-gap: 6px;
-  --question-top-pad: 12px;
+  --question-head-pad: 10px;
   /* Plan cards scroll their body past this height so the approval bar stays next to the plan */
   --plan-body-max: min(calc(var(--row) * 14), 55dvh);
   --question-option-pad: 4px;
@@ -576,6 +576,9 @@
   --spacing-ctl-bleed: calc((var(--ctl) - var(--icon-ctl)) / 2);
   --spacing-ctl-sm-bleed: calc((var(--ctl-sm) - var(--icon)) / 2);
   --spacing-bar-bleed: calc((var(--ctl) - var(--icon)) / 2 - 8px);
+  /* Bottom padding under a --ctl row whose corner controls are --ctl-sm (the composer bar): with the row's px-2 it leaves
+     those controls the same 8px from the card's side and bottom edge at every density */
+  --spacing-corner-b: calc(8px - (var(--ctl) - var(--ctl-sm)) / 2);
   /* The check glyph inside a review row's tick box (settings/StoragePage.tsx), inset from the icon-sized box */
   --spacing-tick: calc(var(--icon) - 4px);
   --spacing-pad: var(--pad);

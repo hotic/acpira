@@ -8,7 +8,7 @@ export const zhCN = {
   "observation.unknownTool": "执行结果未确认",
   'permission.run': '运行命令',
   'permission.more': '更多授权',
-  'permission.once': '允许一次',
+  'permission.once': '允许',
   'permission.reject': '拒绝',
   'permission.session': '本会话内允许',
   'permission.project': '始终允许 {project} 项目',

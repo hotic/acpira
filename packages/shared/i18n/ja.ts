@@ -7,7 +7,7 @@ export const ja = {
   "observation.unknownTool": "実行結果は未確認",
   'permission.run': 'コマンドを実行',
   'permission.more': 'その他のオプション',
-  'permission.once': '今回だけ許可',
+  'permission.once': '許可',
   'permission.reject': '拒否',
   'permission.session': 'このセッション中は許可',
   'permission.project': '{project} では常に許可',

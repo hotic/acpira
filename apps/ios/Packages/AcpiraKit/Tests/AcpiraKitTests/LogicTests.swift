@@ -368,7 +368,7 @@ private let command = block(#"{"type":"tool_call","id":"x","kind":"execute","ver
   }
 
   @Test func quickChoicesAreLocalized() {
-    #expect(display("Allow", .allow_once).label == "允许一次")
+    #expect(display("Allow", .allow_once).label == "允许")
     #expect(display("Reject", .reject_once).label == "拒绝")
     #expect(display("Allow", .allow_once).id == "wire-id")
   }

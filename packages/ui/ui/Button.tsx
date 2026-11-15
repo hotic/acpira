@@ -12,17 +12,22 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   // A destructive action (Remove): red text that stays red on hover, over a faint red fill
   tone?: 'danger';
   kbd?: string;
+  // A menu trigger: a caret after the label that turns while the menu is open
+  caret?: boolean;
 }
 
-// Two neutral tiers (picked in the buttons LAB, scheme "tonal"): primary is a tonal grey fill with strong text and a firmer outline, secondary is an outline that fills on hover.
+// Two neutral tiers of one shape: both are outlines in the same weight, and the primary only firms its outline and
+// lifts its text one step (a secondary as bright as the primary outshone a disabled primary beside it).
+// A filled primary beside an outlined secondary read as two unrelated controls; position (the primary closes its group)
+// carries the rest of the emphasis.
 // No inverted solid (that look belongs to the send button alone) and no colored buttons (accent is reserved for status dots); the danger tone only tints a secondary's text.
-// Hover is one clear step on both tiers: primary goes from --active to --chip-hover, secondary fills with --active and firms its outline
+// Hover is the same clear step on both tiers: the outline firms and the button fills with --active
 // (--hover alone, a list row's step, was too faint to read on a button)
 const buttonVariants = cva('inline-flex h-ctl items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-2 transition-colors', {
   variants: {
     variant: {
-      primary: 'border border-line-strong bg-active text-fg-strong font-medium hover:bg-chip-hover focus-visible:bg-chip-hover',
-      secondary: 'border border-line text-fg-2 hover:border-line-strong hover:bg-active hover:text-fg-1 focus-visible:border-line-strong focus-visible:bg-active focus-visible:text-fg-1',
+      primary: 'border border-line-strong text-fg-strong font-medium hover:bg-active focus-visible:bg-active',
+      secondary: 'border border-line text-fg-2 font-medium hover:border-line-strong hover:bg-active hover:text-fg-1 focus-visible:border-line-strong focus-visible:bg-active focus-visible:text-fg-1',
     },
     tone: {
       danger: 'text-danger hover:border-danger/40 hover:bg-danger/10 hover:text-danger focus-visible:border-danger/40 focus-visible:bg-danger/10 focus-visible:text-danger',
@@ -30,24 +35,28 @@ const buttonVariants = cva('inline-flex h-ctl items-center gap-1.5 whitespace-no
   }, defaultVariants: { variant: 'secondary' },
 });
 // Icon buttons hover to --active, like the session list's row actions; an open menu keeps the same pressed fill.
-// The default size clips that fill to its content box, inset by --icon-fill-inset, so the fill is smaller than the hit area
-const iconVariants = cva('inline-flex shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1', {
+// The default size clips that fill to its content box, inset by --icon-fill-inset, so the fill is smaller than the hit area.
+// A disabled one dims and takes no pointer here, so call sites do not each pick their own opacity
+const iconVariants = cva('inline-flex shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors disabled:pointer-events-none disabled:opacity-40 hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1', {
   variants: { size: { sm: 'size-ctl-sm [&_svg]:size-icon', default: 'size-ctl bg-clip-content p-(--icon-fill-inset) [&_svg]:size-icon-ctl' } }, defaultVariants: { size: 'default' },
 });
 
 // All buttons share --ctl height, --r-md radius, and 12px horizontal padding
-export function Button({ variant = 'secondary', tone, kbd, className, children, ...rest }: ButtonProps) {
+export function Button({ variant = 'secondary', tone, kbd, caret, className, children, ...rest }: ButtonProps) {
   return (
     <button
       type="button"
       className={cn(
         buttonVariants({ variant, tone }),
         className,
+        // The end padding drops to the label gap, so the caret sits midway between the label and the button's edge
+        caret && 'group/chip pr-1.5',
       )}
       {...rest}
     >
       {children}
       {kbd && <kbd className="font-sans text-3 opacity-60">{kbd}</kbd>}
+      {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN)} strokeWidth={1.75} />}
     </button>
   );
 }
@@ -213,7 +222,8 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
       </span>}
       {tagsKey !== undefined ? <TagTrail tagsKey={tagsKey}>{tags}</TagTrail> : tags && <span className={TAGS}>{tags}</span>}
       {trail}
-      {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN, narrow && '@max-sm:hidden', narrow === 'icon' && 'group-data-[squeezed]/bar:hidden')} strokeWidth={1.75} />}
+      {/* -mr-0.5: the chip's end padding is one step wider than its gap, which left the caret nearer the label than the edge */}
+      {caret && <ChevronDown className={cn('-mr-0.5 size-3 shrink-0 text-fg-3', CARET_TURN, narrow && '@max-sm:hidden', narrow === 'icon' && 'group-data-[squeezed]/bar:hidden')} strokeWidth={1.75} />}
     </button>
   );
 }

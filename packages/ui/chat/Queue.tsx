@@ -52,9 +52,9 @@ function QueuedRow({ item, blobUrl, sending, disabled, onEdit, onRemove, onSendN
       aria-busy={item.sending || undefined}
       className={cn(surfaceVariants({ tone: 'queue' }), 'px-pad py-1 text-1 text-fg-1')}
       trailing={(onEdit || onRemove) && <>
-        {send && <IconButton title={item.sending ? send.busy : send.label} aria-label={send.label} disabled={disabled || sending} className="disabled:opacity-50" onClick={send.run}>{send.icon}</IconButton>}
-        {onEdit && <IconButton title={t('queue.edit')} aria-label={t('queue.edit')} disabled={item.sending} className="disabled:opacity-50" onClick={onEdit}><Pencil /></IconButton>}
-        {onRemove && <IconButton title={t('queue.remove')} aria-label={t('queue.remove')} disabled={item.sending} className="disabled:opacity-50" onClick={onRemove}><Trash2 /></IconButton>}
+        {send && <IconButton title={item.sending ? send.busy : send.label} aria-label={send.label} disabled={disabled || sending} onClick={send.run}>{send.icon}</IconButton>}
+        {onEdit && <IconButton title={t('queue.edit')} aria-label={t('queue.edit')} disabled={item.sending} onClick={onEdit}><Pencil /></IconButton>}
+        {onRemove && <IconButton title={t('queue.remove')} aria-label={t('queue.remove')} disabled={item.sending} onClick={onRemove}><Trash2 /></IconButton>}
       </>}
     >
       {item.attachments.length > 0 && <AttachmentTiles attachments={item.attachments} blobUrl={blobUrl} />}

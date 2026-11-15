@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { TriangleAlert, X } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { X } from 'lucide-react';
 import type { AgentTurn, TurnStop } from '@acpira/shared/transcript';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { isContextLengthError } from '@acpira/shared/turnErrors';
@@ -21,7 +21,6 @@ export interface AlertProps {
 // Shared by the dock's alert cards (this one and chat/Notice): the glyph sits in a Row-sized lead slot so the text below
 // starts at the title's column (pl-indent), and actions are the small in-card buttons, so the title row stays one text
 // line tall instead of growing to a full control
-export const DOCK_LEAD = 'flex w-lead shrink-0 items-center justify-center text-fg-3';
 export const DOCK_BUTTON = 'h-ctl-sm px-2 text-3';
 
 // A turn stopped short (the same card Cursor pins above its composer, in our own tones): one row holds a colorless glyph, what happened,
@@ -35,23 +34,52 @@ export function Alert({ turn, onRetry, onContinue, onDismiss, onCompact, onNewSe
   const copyable = [err?.message, detail].filter(Boolean).join('\n');
   const message = contextTooLong ? t(onCompact ? 'alert.contextLength.text' : 'alert.contextLength.unsupported')
     : stop === 'error' ? err?.message || t('alert.error.unknown') : TEXT[stop] && t(TEXT[stop]);
+  const retry = stop === 'error' && !contextTooLong && (err?.actions === undefined || err.actions.includes('retry'));
+  return (
+    <DockCard
+      role="alert"
+      title={t(contextTooLong ? 'alert.contextLength.title' : TITLE[stop])}
+      detail={copyable && <CopyDetail text={copyable} label={detail} />}
+      text={message}
+      // An AIR sessionFailure names its own remedies; 'login' has no button here because the Notice card owns sign-in.
+      // Retry is the only remedy otherwise: it continues where the turn stopped and reconnects by itself on a repeat failure
+      alt={stop === 'error' && !contextTooLong && err?.actions?.includes('new_session') === true && onNewSession
+        && <Button variant="secondary" className={DOCK_BUTTON} onClick={onNewSession}>{t('notice.continueNew')}</Button>}
+      actions={<>
+        {retry && <Button variant="primary" className={DOCK_BUTTON} title={t('alert.retryHint')} onClick={onRetry}>{t('common.retry')}</Button>}
+        {(stop === 'max_tokens' || stop === 'max_turn_requests') && <Button variant="primary" className={DOCK_BUTTON} onClick={onContinue}>{t('alert.continue')}</Button>}
+        {contextTooLong && onCompact && <Button variant="primary" className={DOCK_BUTTON} onClick={onCompact}>{t('alert.contextLength.compact')}</Button>}
+      </>}
+      trail={<IconButton size="sm" aria-label={t('common.close')} onClick={onDismiss}><X strokeWidth={1.5} /></IconButton>}
+    />
+  );
+}
+
+// The skeleton every dock card shares (this alert, chat/Notice): a title with its one line of text as one block, the
+// actions beside that block and centred on it, the primary last, and a small icon control (dismiss, re-check) at the
+// end. `alt` is the way around the primary (a menu or a second button): with one, a card below the notice tier takes
+// the question card's shape, the actions in a footer under a hairline with `alt` at its start (styles/chat.css).
+// No glyph leads the title: beside two lines of text it read as a stray mark
+export function DockCard({ title, detail, text, textRole, alt, actions, trail, role, busy }: {
+  title: string; detail?: ReactNode; text?: ReactNode; textRole?: 'status'; alt?: ReactNode; actions?: ReactNode; trail?: ReactNode; role?: 'alert'; busy?: boolean;
+}) {
   return (
     <div className="px-dock">
-      <Card role="alert" className="flex flex-col gap-1 px-pad py-2.5">
-        <div className="flex min-h-ctl-sm items-center gap-gap">
-          <span className={DOCK_LEAD}><TriangleAlert className="size-icon" strokeWidth={1.75} /></span>
-          <span className="shrink-0 text-2 font-medium text-fg-1">{t(contextTooLong ? 'alert.contextLength.title' : TITLE[stop])}</span>
-          {copyable && <CopyDetail text={copyable} label={detail} />}
-          <span className="flex-1" />
-          {/* An AIR sessionFailure names its own remedies; 'login' has no button here because the Notice card owns sign-in.
-              Retry is the only remedy otherwise: it continues where the turn stopped and reconnects by itself on a repeat failure */}
-          {stop === 'error' && !contextTooLong && (err?.actions === undefined || err.actions.includes('retry')) && <Button variant="primary" className={DOCK_BUTTON} title={t('alert.retryHint')} onClick={onRetry}>{t('common.retry')}</Button>}
-          {stop === 'error' && !contextTooLong && err?.actions?.includes('new_session') === true && onNewSession && <Button variant="secondary" className={DOCK_BUTTON} onClick={onNewSession}>{t('notice.continueNew')}</Button>}
-          {(stop === 'max_tokens' || stop === 'max_turn_requests') && <Button variant="primary" className={DOCK_BUTTON} onClick={onContinue}>{t('alert.continue')}</Button>}
-          <IconButton size="sm" aria-label={t('common.close')} onClick={onDismiss} className="-mr-ctl-sm-bleed"><X strokeWidth={1.5} /></IconButton>
+      <Card role={role} className="dock-card">
+        <div className="dock-card-body" data-foot={alt ? '' : undefined}>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <div className="flex min-w-0 items-center gap-gap">
+              <span className="min-w-0 truncate text-2 font-medium text-fg-1" title={title}>{title}</span>
+              {detail}
+            </div>
+            {text && <p role={textRole} className="m-0 whitespace-pre-wrap text-3 text-fg-3 [overflow-wrap:anywhere]">{text}</p>}
+          </div>
+          <fieldset disabled={busy} aria-busy={busy} className="dock-card-actions disabled:opacity-60">
+            {alt && <span className="dock-card-alt flex min-w-0">{alt}</span>}
+            {actions}
+          </fieldset>
+          {trail && <span className="dock-card-trail flex">{trail}</span>}
         </div>
-        {message && <p className="m-0 whitespace-pre-wrap pl-indent text-3 text-fg-2 [overflow-wrap:anywhere]">{message}</p>}
-        {contextTooLong && onCompact && <div className="flex justify-end pt-1"><Button variant="primary" className={DOCK_BUTTON} onClick={onCompact}>{t('alert.contextLength.compact')}</Button></div>}
       </Card>
     </div>
   );
