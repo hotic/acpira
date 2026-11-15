@@ -179,19 +179,27 @@ export function newModel(id: string): ProviderModel {
   return { id, enabled: true, input: ['text'], thinking: 'auto', efforts: [], sampling: {}, estimated: [] };
 }
 
-// Carry fresh `fastListed` flags from an endpoint listing onto already configured models; undefined when nothing moved
-export function syncListedFast(models: ProviderModel[], listed?: ProviderModel[]): ProviderModel[] | undefined {
+// Refresh listed fast tiers and replace guessed effort levels with the endpoint's confirmed scale. Saved / manual
+// levels and thinking-off stay intact; undefined when nothing moved.
+export function syncListedModels(models: ProviderModel[], listed?: ProviderModel[]): ProviderModel[] | undefined {
   if (!listed?.length || !models.length) return undefined;
-  const byId = new Map(listed.map(m => [m.id, m.fastListed ?? undefined]));
+  const byId = new Map(listed.map(m => [m.id, m]));
   let changed = false;
   const next = models.map(m => {
-    if (!byId.has(m.id)) return m;
-    const fastListed = byId.get(m.id);
-    if ((m.fastListed ?? undefined) === fastListed) return m;
+    const fresh = byId.get(m.id);
+    if (!fresh) return m;
+    const fastListed = fresh.fastListed ?? undefined;
+    const efforts = m.thinking !== 'off' && m.estimated.includes('efforts')
+      && fresh.efforts.length > 0 && !fresh.estimated.includes('efforts');
+    if ((m.fastListed ?? undefined) === fastListed && !efforts) return m;
     changed = true;
     const copy = { ...m };
     if (fastListed === undefined) delete copy.fastListed;
     else copy.fastListed = fastListed;
+    if (efforts) {
+      copy.efforts = [...fresh.efforts];
+      copy.estimated = m.estimated.filter(field => field !== 'efforts');
+    }
     return copy;
   });
   return changed ? next : undefined;
