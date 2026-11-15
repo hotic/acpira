@@ -52,7 +52,7 @@ export function RemoteAccessSection({ view }: { view: RemoteAccessView }) {
         : <Note>{t(unavailableKey(view))}</Note>}
       {view.enabled && <Field label={t('devices.keepAwake')}
         // A hold the system refused: the switch is on, the computer may still sleep
-        desc={awakeError && <span className="flex items-center gap-1.5" title={awakeError}><Dot ok={false} warn />{t('devices.keepAwakeFailed')}</span>}>
+        desc={awakeError ? <span className="flex items-center gap-1.5" title={awakeError}><Dot ok={false} warn />{t('devices.keepAwakeFailed')}</span> : t('devices.keepAwakeDesc')}>
         <Switch checked={view.keepAwake ?? true} label={t('devices.keepAwake')} onChange={v => remoteAccessOp({ op: 'setKeepAwake', on: v })} />
       </Field>}
       {view.enabled && <Field label={t('devices.relays')} desc={t('devices.relaysDesc')}>
