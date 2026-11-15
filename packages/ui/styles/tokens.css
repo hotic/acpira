@@ -167,6 +167,8 @@
   --dock-gap: 8px;
   /* Conversation column in the editor panel */
   --content-w: 720px;
+  /* The transcript column and the dock above it; Appearance `chatWidth` moves it, dialogs and settings keep --content-w */
+  --chat-w: var(--content-w);
   --gap: 8px;
   --msg-gap: 16px;
   --hdr: 52px;
@@ -370,6 +372,10 @@
 [data-diff="signs"] { --diff-add: transparent; --diff-del: transparent; }
 
 /* Appearance axes (acpira.appearance.*): change tokens only, never structure */
+[data-chat-width="narrow"] { --chat-w: 600px; }
+[data-chat-width="wide"] { --chat-w: 880px; }
+/* No cap: the column takes the window */
+[data-chat-width="full"] { --chat-w: 100vw; }
 [data-density="compact"] {
   --row: 24px; --row-dense: 20px; --chat-row: 24px; --process-row: 22px; --process-prose-gap: 8px; --ctl: 24px; --ctl-sm: 20px;
   --pad: 12px; --pad-y: 12px; --page: 16px; --gap: 6px; --msg-gap: 12px; --hdr: 44px; --text-1-lh: calc(var(--ui-font-size) + 5px);
@@ -584,7 +590,7 @@
   --spacing-dock: max(var(--scrollbar), calc(var(--page) - var(--scrollbar)));
   --spacing-dock-gutter: max(0px, calc(var(--page) - 2 * var(--scrollbar)));
   /* Editor-panel cap of the transcript column: the island dock is content-w + 2 × page wide, so its inner width matches this */
-  --spacing-chat-column: calc(var(--content-w) + 2 * min(var(--scrollbar), calc(var(--page) - var(--scrollbar))));
+  --spacing-chat-column: calc(var(--chat-w) + 2 * min(var(--scrollbar), calc(var(--page) - var(--scrollbar))));
   --spacing-gap: var(--gap);
   --spacing-gap-half: calc(var(--gap) / 2);
   /* Between attachment chips in a row: a little tighter than --gap, so a row of files reads as one group */

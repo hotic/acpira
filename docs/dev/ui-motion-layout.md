@@ -66,5 +66,7 @@ Rules for motion, status signals, rails, sticky prompts, bottom follow, scrollba
 ## Appearance
 
 - The combo code is positional (`shared/appearance.ts`): new axes go at the end of `AXES`; the baseline decodes to every `acpira.appearance.*` default (`appearanceBaseline.test.ts`).
+- `chatWidth` moves `--chat-w` (the transcript column and its dock) only: `--content-w` also caps settings pages and dialogs, which share the shell's appearance attributes.
+- Step kinds switched off (`show*`) leave the process list before grouping (`visibleSteps`); calls that carry a picture or a widget, delegations and steered prompts are never steps, since the fold draws them from that list.
 - A fixed theme sets `--host-*` to `initial` so fallbacks paint. Components read `ThemeContext`, never the body class.
 - `--text-*` are declared on `:root, .acp-shell` from `--ui-font-size`, since a custom property resolves where declared; line heights stay `calc()` offsets of it.

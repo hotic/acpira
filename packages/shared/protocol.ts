@@ -617,7 +617,7 @@ export type WebviewMsg =
   // rescan an agent's extension inventory, read the configOptions of its latest session
   | { type: 'setSetting'; key: SettingKey; value: unknown }
   | { type: 'openAgentConfig' }
-  // An appearance axis the page exposes (motion, autoExpand); host maps it onto acpira.appearance.<axis> and re-pushes the Appearance
+  // An appearance axis the page exposes (motion, autoExpand, reportLink, projectMarks); host maps it onto acpira.appearance.<axis> and re-pushes the Appearance
   | { type: 'setAppearance'; axis: AxisKey; value: string }
   // `reveal` shows a file in the OS file manager instead of opening it
   | { type: 'openPath'; path: string; reveal?: boolean }

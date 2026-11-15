@@ -9,7 +9,7 @@ import { getLocale, t, useLocale } from '../i18n';
 import { commandSegments } from './PromptInput';
 import { promptMarks } from './slashCommands';
 import { absorbedNotices, hasTurnStats, revisedPlanEnd, turnOutcome } from './turnOutcome';
-import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext, QuietEntranceContext } from '../ui/Row';
+import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, RowLeadsContext, EntranceScopeContext, QuietEntranceContext } from '../ui/Row';
 import { Button } from '../ui/Button';
 import { Disclosure } from '../ui/Disclosure';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
@@ -39,7 +39,7 @@ import { QuestionRecord } from './Questions';
 import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from './fileLinks';
 import { PlanDocument } from './PlanDocument';
 import { TurnAttachments } from './Attachments';
-import { clockStart, elapsedDuration, splitCodexBlocks } from './folding';
+import { clockStart, elapsedDuration, splitCodexBlocks, visibleSteps } from './folding';
 import { GoalRow } from './Goal';
 import { rememberFold, rememberedFold } from './foldMemory';
 import { ProcessHistory } from './ProcessHistory';
@@ -599,7 +599,9 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // `working` is false while a /compact reply shows only its compaction row, which retires the head the same way a settled turn does
 function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions, notices, goalsLead, goals, compactions } = useMemo(() => splitCodexBlocks(turn.blocks, running), [turn.blocks, running]);
-  const stableProcess = useStableList(process);
+  const appearance = useAppearance();
+  // The kinds of step the reader left out (Appearance `show*`) drop out before grouping; the head still names them live
+  const stableProcess = useStableList(useMemo(() => visibleSteps(process, appearance), [process, appearance]));
   const hasTools = useMemo(() => turn.blocks.some(block => block.type === 'tool_call'), [turn.blocks]);
   // The process folds away only once the reply has finished drawing, not when its last chunk arrived
   const [replyBusy, setReplyBusy] = useState(false);
@@ -650,9 +652,12 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   const manual = choice.key === memoryKey ? choice.manual : undefined;
   const toggle = useCallback((next: boolean) => { setChoice({ key: memoryKey, manual: next }); if (memoryKey) rememberFold(memoryKey, next); }, [memoryKey]);
   const following = useFollowing();
+  const { keepProcess, stepIcons } = useAppearance();
   const held = useRef(false);
-  const auto = running || replyBusy || (!following && held.current);
-  held.current = auto;
+  const live = running || replyBusy || (!following && held.current);
+  held.current = live;
+  // `keepProcess` never closes the fold on its own; the rows inside still follow the run
+  const auto = live || keepProcess === 'on';
   // A turn that ends with no process worth a head (a plain reply, or only a compaction status) retires the head row
   // the way the Working row used to: fade, then collapse. A compaction status stays as a flat line.
   const retired = !running && !hasTools && !blocks.some(b => b.type !== 'compaction');
@@ -665,7 +670,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   const activeProcess = running || everOpen.current || hasExposed;
   const items = useMemo(() => activeProcess ? groupProcess(blocks) : EMPTY_ITEMS, [activeProcess, blocks]);
   const continuing = continuingToolItem(items, running && turn.blocks.at(-1) === blocks.at(-1));
-  const store = useProcessFolds(items, manual === undefined, auto, following, memoryKey);
+  const store = useProcessFolds(items, manual === undefined && keepProcess === 'off', live, following, memoryKey);
   const imageResults = useMemo(() => blocks.filter(isImageResultBlock), [blocks]);
   const activity = liveActivity(turn, lead);
   const since = clockStart(turn);
@@ -708,7 +713,8 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
         </div>
       )}
       {blocks.length > 0 && (
-        <ImageInFoldContext.Provider value={open}>
+        // The head keeps its status mark either way; the steps under it drop their icons with Appearance `stepIcons`
+        <RowLeadsContext.Provider value={stepIcons === 'on'}><ImageInFoldContext.Provider value={open}>
           <AutoFoldContext.Provider value={store}>
             {activeProcess ? parts.map((part, i) => {
               // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
@@ -738,7 +744,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
                 : <Collapsible.Section key={part.id} open={open} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Section>;
             }) : <Collapsible.Panel key={blockItemId(blocks[0]!, 0)} className="-mx-pad [&>div]:px-pad">{null}</Collapsible.Panel>}
           </AutoFoldContext.Provider>
-        </ImageInFoldContext.Provider>
+        </ImageInFoldContext.Provider></RowLeadsContext.Provider>
       )}
       {!open && imageResults.length > 0 && (
         <div className="flex min-w-0 flex-col gap-gap pt-gap">

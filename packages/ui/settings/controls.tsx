@@ -8,7 +8,7 @@ import { Card } from '../ui/Card';
 import { IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
 import { Command, SEARCH_FROM } from '../ui/Command';
-import { DropdownMenu } from '../ui/DropdownMenu';
+import { DropdownMenu, optionClass } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Popover } from '../ui/Popover';
 import { Shimmer } from '../ui/Shimmer';
@@ -454,6 +454,32 @@ export function Select<V extends string>({ options, value, onChange, label, clas
           {content(o)}
         </DropdownMenu.RadioItem>)}
       </DropdownMenu.RadioGroup>
+    </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+  </DropdownMenu.Root>;
+}
+
+// A select whose list ticks several values: the same field and list as `Select`, the list staying open while values
+// are ticked. `summary` words the field from what is on (all, none, a count)
+export function MultiSelect<V extends string>({ options, on, onChange, summary, label, className }: {
+  options: Option<V>[]; on: readonly V[]; onChange: (value: V, next: boolean) => void; summary: string; label: string; className?: string;
+}) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [tone, setTone] = useState<CSSProperties>();
+  const [open, setOpen] = useState(false);
+  const field = <button ref={trigger} type="button" aria-label={label}
+    className={cn('flex h-ctl w-(--ctl-w) max-w-full min-w-0 items-center gap-2 rounded-md border border-line bg-hover px-3 text-left text-2 text-fg-1 transition-colors hover:border-line-strong hover:bg-active data-[popup-open]:border-line-strong data-[popup-open]:bg-hover', className)}>
+    <span className="min-w-0 flex-1 truncate">{summary}</span>
+    <ChevronsUpDown className="size-icon shrink-0 text-fg-3" strokeWidth={1.75} aria-hidden />
+  </button>;
+  return <DropdownMenu.Root open={open} onOpenChange={next => { setOpen(next); if (next) setTone(fieldTone(trigger.current)); }}>
+    <DropdownMenu.Trigger render={field} />
+    <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="anchor" className="w-max max-w-pop-xl min-w-(--anchor-width)"><DropdownMenu.Popup style={tone}>
+      <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+        {options.map(o => <DropdownMenu.CheckboxItem key={o.value} checked={on.includes(o.value)} onCheckedChange={next => onChange(o.value, next)} closeOnClick={false}
+          render={<button type="button" />} nativeButton className={optionClass}>
+          <OptionContent checked={on.includes(o.value)} checkSlot>{o.label}</OptionContent>
+        </DropdownMenu.CheckboxItem>)}
+      </div>
     </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
   </DropdownMenu.Root>;
 }

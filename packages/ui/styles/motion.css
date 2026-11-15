@@ -172,6 +172,9 @@
 .rail-tint > .rail-segment::before { background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--warn) 75%, var(--rail-color)) min(var(--rail-fade), 40%), var(--rail-color) min(calc(var(--rail-fade) * 3), 80%)); }
 .rail-segment[data-terminal]::after { content: ''; position: absolute; left: 50%; bottom: 0; width: var(--rail-dot-size); height: var(--rail-dot-size); border-radius: 50%; background: var(--rail-color); transform: translate(-50%, 50%); }
 /* A rail whose panel is closing retracts with it (ConnectedRail clamps its length) and fades on the close curve */
+/* A row's lead with the step icons off (Appearance `stepIcons`): the bead the rail's end already draws, so an open
+   step runs from one bead to another */
+.row-bead { width: var(--rail-dot-size); height: var(--rail-dot-size); border-radius: 50%; background: var(--rail-color); }
 .connected-rail[data-retracting] > .rail-segment { opacity: 0; transition: opacity var(--dur-close) var(--ease-close); }
 .connected-rail:has(> .process-row-enter) > .rail-segment:not([data-enter], [data-entered]) { animation: acp-row-part-in var(--row-enter-duration) var(--row-enter-file) ease-out both; }
 /* A new segment leading to an entering list row draws from the top down over one step, ending as that row starts to

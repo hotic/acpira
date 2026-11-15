@@ -105,9 +105,11 @@
    one way or the other depending on the layers above them: a fold toggled by hand rebuilt those layers and the Orb
    twitched sideways against its row. An engine without CSS round() drops the declaration and keeps plain centring. */
 @utility thread-column {
-  max-width: var(--spacing-chat-column);
+  /* --spacing-chat-column spelled out: read as a variable it resolves at the root, deaf to the shell's `chatWidth` */
+  --thread-column: calc(var(--chat-w) + 2 * min(var(--scrollbar), calc(var(--page) - var(--scrollbar))));
+  max-width: var(--thread-column);
   margin-inline: auto;
-  margin-left: max(0px, round(down, (100% - var(--spacing-chat-column)) / 2, 1px));
+  margin-left: max(0px, round(down, (100% - var(--thread-column)) / 2, 1px));
 }
 
 /* The subagent inspector's transcript: no sticky prompt covers its top, so rows scrolling under the header fade out there

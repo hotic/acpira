@@ -3,7 +3,7 @@
 use serde_json::{Map, Value};
 
 /// (axis key, allowed values in option order); the order is the digit order of the combo code
-pub const AXES: [(&str, &[&str]); 17] = [
+pub const AXES: [(&str, &[&str]); 28] = [
   ("density", &["cozy", "compact", "airy"]),
   ("radius", &["12", "8", "16"]),
   ("surface", &["hairline", "tonal", "stroke"]),
@@ -21,10 +21,21 @@ pub const AXES: [(&str, &[&str]); 17] = [
   ("fold", &["codex", "cursor"]),
   ("autoExpand", &["on", "off"]),
   ("reportLink", &["on", "off"]),
+  ("projectMarks", &["on", "off"]),
+  ("keepProcess", &["off", "on"]),
+  ("showThoughts", &["on", "off"]),
+  ("showCommentary", &["on", "off"]),
+  ("showReads", &["on", "off"]),
+  ("showCommands", &["on", "off"]),
+  ("showEdits", &["on", "off"]),
+  ("showOtherTools", &["on", "off"]),
+  ("chatWidth", &["standard", "narrow", "wide", "full"]),
+  ("codeWrap", &["off", "on"]),
+  ("stepIcons", &["on", "off"]),
 ];
 
-/// Baseline combo code 20111020030210011 decoded
-const BASE: &str = "20111020030210011";
+/// Baseline combo code 2011102003021001110000000000 decoded
+const BASE: &str = "2011102003021001110000000000";
 
 pub type Appearance = Map<String, Value>;
 
@@ -63,5 +74,11 @@ mod tests {
     assert_eq!(a["fold"], "codex");
     assert_eq!(a["autoExpand"], "off");
     assert_eq!(a["reportLink"], "off");
+    assert_eq!(a["projectMarks"], "off");
+    assert_eq!(a["keepProcess"], "off");
+    assert_eq!(a["showThoughts"], "on");
+    assert_eq!(a["chatWidth"], "standard");
+    assert_eq!(a["codeWrap"], "off");
+    assert_eq!(a["stepIcons"], "on");
   }
 }

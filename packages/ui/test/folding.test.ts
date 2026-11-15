@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '@acpira/shared/transcript';
 import { setLocale } from '../i18n';
-import { elapsedDuration, foldActivity, splitCodexBlocks, toolTarget, toolVerb } from '../chat/folding';
+import { BASE_APPEARANCE } from '@acpira/shared/appearance';
+import { elapsedDuration, foldActivity, splitCodexBlocks, toolTarget, toolVerb, visibleSteps } from '../chat/folding';
 
 const read: ToolCallBlock = { type: 'tool_call', id: 'read', kind: 'read', verb: 'Read', target: 'README.md', status: 'completed' };
 const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb: 'Run', target: 'pnpm test', targetMono: true, status: 'in_progress' };
@@ -10,6 +11,16 @@ const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb
 afterEach(() => setLocale('en'));
 
 describe('Codex process folding', () => {
+  it('leaves out the step kinds switched off and keeps delegations and everything that is not a step', () => {
+    const thought: AgentBlock = { type: 'thought', text: 'hm', streaming: false };
+    const note: AgentBlock = { type: 'text', markdown: 'Looking at the tests first.' };
+    const delegated: ToolCallBlock = { ...read, id: 'task', kind: 'other', subagentId: 'sub-1' };
+    const steer: AgentBlock = { type: 'steer', id: 'steer', text: 'also the docs' } as AgentBlock;
+    const blocks = [thought, note, read, run, delegated, steer];
+    expect(visibleSteps(blocks, BASE_APPEARANCE)).toBe(blocks);
+    expect(visibleSteps(blocks, { ...BASE_APPEARANCE, showThoughts: 'off', showReads: 'off', showOtherTools: 'off' })).toEqual([note, run, delegated, steer]);
+    expect(visibleSteps(blocks, { ...BASE_APPEARANCE, showCommentary: 'off', showCommands: 'off' })).toEqual([thought, read, delegated, steer]);
+  });
   it('names edited files from their diffs in older transcripts with a generic or missing target', () => {
     const edit: ToolCallBlock = { type: 'tool_call', id: 'edit', kind: 'edit', verb: 'Edit', target: 's', status: 'completed',
       content: { type: 'diff', lines: [], source: { path: '/repo/docs/TASKS.md', omitted: true } } };
