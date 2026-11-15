@@ -96,6 +96,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case infinity
   case info
   case keyRound
+  case keyboard
   case languages
   case laptop
   case layers
@@ -156,6 +157,8 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case settings
   case settings2
   case shieldAlert
+  case shieldCheck
+  case shieldEllipsis
   case shieldOff
   case shieldX
   case shrink
@@ -290,6 +293,7 @@ extension LucideIcon {
     case .infinity: [.path("M6 16c5 0 7-8 12-8a4 4 0 0 1 0 8c-5 0-7-8-12-8a4 4 0 1 0 0 8")]
     case .info: [.circle(cx: 12, cy: 12, r: 10), .path("M12 16v-4"), .path("M12 8h.01")]
     case .keyRound: [.path("M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"), .circle(cx: 16.5, cy: 7.5, r: 0.5)]
+    case .keyboard: [.path("M10 8h.01"), .path("M12 12h.01"), .path("M14 8h.01"), .path("M16 12h.01"), .path("M18 8h.01"), .path("M6 8h.01"), .path("M7 16h10"), .path("M8 12h.01"), .rect(x: 2, y: 4, width: 20, height: 16, rx: 2)]
     case .languages: [.path("m5 8 6 6"), .path("m4 14 6-6 2-3"), .path("M2 5h12"), .path("M7 2h1"), .path("m22 22-5-10-5 10"), .path("M14 18h6")]
     case .laptop: [.path("M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z"), .path("M20.054 15.987H3.946")]
     case .layers: [.path("M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"), .path("M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"), .path("M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17")]
@@ -350,6 +354,8 @@ extension LucideIcon {
     case .settings: [.path("M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"), .circle(cx: 12, cy: 12, r: 3)]
     case .settings2: [.path("M14 17H5"), .path("M19 7h-9"), .circle(cx: 17, cy: 17, r: 3), .circle(cx: 7, cy: 7, r: 3)]
     case .shieldAlert: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("M12 8v4"), .path("M12 16h.01")]
+    case .shieldCheck: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("m9 12 2 2 4-4")]
+    case .shieldEllipsis: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("M8 12h.01"), .path("M12 12h.01"), .path("M16 12h.01")]
     case .shieldOff: [.path("m2 2 20 20"), .path("M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.94a1 1 0 0 0 .67.01c2.35-.82 4.48-1.97 5.9-3.71"), .path("M9.309 3.652A12.252 12.252 0 0 0 11.24 2.28a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1v7a9.784 9.784 0 0 1-.08 1.264")]
     case .shieldX: [.path("M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"), .path("m14.5 9.5-5 5"), .path("m9.5 9.5 5 5")]
     case .shrink: [.path("m15 15 6 6m-6-6v4.8m0-4.8h4.8"), .path("M9 19.8V15m0 0H4.2M9 15l-6 6"), .path("M15 4.2V9m0 0h4.8M15 9l6-6"), .path("M9 4.2V9m0 0H4.2M9 9 3 3")]

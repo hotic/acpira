@@ -73,6 +73,8 @@ const BRANDS: BrandRule[] = [
   { pattern: /\bsonar(?![a-z])|\bperplexity\b|\br1-1776\b/, brand: 'perplexity' },
   { pattern: /\bcomposer(?![a-z])/, brand: 'cursor' },
   { pattern: /\bbeam(?![a-z])|\breflection\b/, brand: 'reflection' },
+  { pattern: /\binkling(?![a-z])|\bthinking[- ]?machines\b/, brand: 'thinkingmachines' },
+  { pattern: /\bflint(?![a-z])|\brecursive(?:si)?\b/, brand: 'recursive' },
   {
     pattern: /\bgpt(?![a-z])|\bopenai\b|\bcodex\b|\bchatgpt\b|\bo\d(?![a-z])|\bdall-?e(?![a-z])|\bwhisper(?![a-z])|\btts-\d|\btext-embedding\b|\bsora(?![a-z])/,
     brand: 'openai'
