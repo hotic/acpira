@@ -41,7 +41,12 @@ static AUTH_WORDS: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile
 static GLOG: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^([IWEFD])\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+[\w.-]+:\d+\]"));
 /// A sign-in link printed while the browser opens (antigravity-acp `Open the following link to authenticate …: <url>`)
 static SIGN_IN_LINK: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)^(?:open|visit|go to)\b.*\bhttps?://"));
-static GONE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)session not found|no rollout found for thread id"));
+/// `agy acp` 1.5.9 answers a resume of an id it never stored with `-32603 Failed to read session <id>; retry, or load it
+/// with session/load`, and that session/load then "succeeds" with an empty history (no replay, nothing on disk): taken
+/// as gone, so the restore stops there and the next prompt hands the local transcript to a fresh session
+static GONE: LazyLock<Regex> = LazyLock::new(|| {
+  acpira_shared::re::compile(r"(?i)session not found|no rollout found for thread id|failed to read session \S+; retry, or load it with session/load")
+});
 static LOCKED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)already active|in use|held by|locked"));
 /// Codex's per-thread writer lock (`thread <id> already has an active writer`), held by another live Codex process
 static WRITER_LOCKED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)already has an active writer"));
@@ -247,6 +252,13 @@ mod tests {
 
   fn rpc(message: &str, data: Option<Value>) -> anyhow::Error {
     anyhow::Error::new(RpcError { code: -32603, message: message.into(), data })
+  }
+
+  #[test]
+  fn an_unknown_agy_session_is_gone_not_a_transient_failure() {
+    let e = rpc("Failed to read session 05277762-e835-4b38-aeff-edf96d386f87; retry, or load it with session/load", None);
+    assert_eq!(classify_restore_error(&e), Some(RestoreFailure::Gone));
+    assert_eq!(classify_restore_error(&rpc("Failed to read session file: disk I/O error", None)), Some(RestoreFailure::Failed));
   }
 
   #[test]
