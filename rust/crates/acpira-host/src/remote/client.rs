@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, watch};
 
-use super::wire::{self, DEAD_AFTER_MS, Frame, Hello, PING_EVERY_MS, PROTOCOL, WireError};
+use super::wire::{self, BULK_WINDOW, CHUNK, DEAD_AFTER_MS, Frame, Hello, PING_EVERY_MS, PROTOCOL, WireError};
 
 /// Lines of noise before the handshake kept for the error message
 const NOISE_KEPT: usize = 20;
@@ -102,7 +102,11 @@ impl Default for ClientOpts {
 
 struct Inner {
   hello: Hello,
-  lines: mpsc::UnboundedSender<String>,
+  /// Control frames, ordinary requests and interactive `stdin`: always sent ahead of `bulk`
+  ctrl: mpsc::UnboundedSender<(String, usize)>,
+  /// Background bulk `stdin` frames (`Call::send_bulk`): sent one chunk at a time while `BULK_WINDOW` has room
+  bulk: mpsc::Sender<(u64, String, usize)>,
+  acks: mpsc::UnboundedSender<usize>,
   pending: Mutex<HashMap<u64, mpsc::UnboundedSender<Event>>>,
   next_id: AtomicU64,
   /// Why the channel ended, once it has
@@ -159,7 +163,21 @@ impl RemoteClient {
       });
     }
     let stderr_text = |s: &Arc<Mutex<VecDeque<String>>>| s.lock().iter().cloned().collect::<Vec<_>>().join("\n");
+    Self::start_io(stdin, stdout, Some(child), stderr, stderr_text, opts).await
+  }
 
+  pub(super) async fn start_io<R, W>(
+    stdin: W,
+    stdout: R,
+    mut child: Option<Child>,
+    stderr: Arc<Mutex<VecDeque<String>>>,
+    stderr_text: impl Fn(&Arc<Mutex<VecDeque<String>>>) -> String,
+    opts: ClientOpts,
+  ) -> Result<RemoteClient, StartError>
+  where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+  {
     let mut reader = BufReader::new(stdout);
     let mut noise = vec![];
     let hello = {
@@ -187,8 +205,13 @@ impl RemoteClient {
       Ok(Some(h)) => h,
       other => {
         let timed_out = other.is_err();
-        let _ = child.start_kill();
-        let exit_code = tokio::time::timeout(Duration::from_secs(2), child.wait()).await.ok().and_then(Result::ok).and_then(|s| s.code());
+        let exit_code = match child.as_mut() {
+          Some(c) => {
+            let _ = c.start_kill();
+            tokio::time::timeout(Duration::from_secs(2), c.wait()).await.ok().and_then(Result::ok).and_then(|s| s.code())
+          }
+          None => None,
+        };
         // Let the stderr reader take the last lines ssh wrote as it ended
         tokio::time::sleep(Duration::from_millis(50)).await;
         let stderr = stderr_text(&stderr);
@@ -201,7 +224,9 @@ impl RemoteClient {
       }
     };
     if hello.protocol != PROTOCOL {
-      let _ = child.start_kill();
+      if let Some(c) = child.as_mut() {
+        let _ = c.start_kill();
+      }
       return Err(StartError {
         message: format!("the host's helper speaks protocol {}, this engine {PROTOCOL}", hello.protocol),
         stderr: stderr_text(&stderr),
@@ -210,11 +235,16 @@ impl RemoteClient {
       });
     }
 
-    let (lines_tx, mut lines_rx) = mpsc::unbounded_channel::<String>();
+    let stdin_ack = hello.stdin_ack;
+    let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel::<(String, usize)>();
+    let (bulk_tx, mut bulk_rx) = mpsc::channel::<(u64, String, usize)>(2);
+    let (ack_tx, mut ack_rx) = mpsc::unbounded_channel::<usize>();
     let (closed, _) = watch::channel(None);
     let inner = Arc::new(Inner {
       hello,
-      lines: lines_tx,
+      ctrl: ctrl_tx,
+      bulk: bulk_tx,
+      acks: ack_tx,
       pending: Mutex::default(),
       next_id: AtomicU64::new(1),
       closed,
@@ -222,18 +252,45 @@ impl RemoteClient {
       pings: Mutex::default(),
       last_seen: Mutex::new(tokio::time::Instant::now()),
       stderr,
-      child: Mutex::new(Some(child)),
+      child: Mutex::new(child),
     });
 
-    // Writer: requests and control frames, in order
+    // Writer: control frames and ordinary requests first; bulk `stdin` chunks only while `BULK_WINDOW` has room
     {
       let inner = inner.clone();
       let mut stdin = stdin;
       tokio::spawn(async move {
-        while let Some(line) = lines_rx.recv().await {
+        let mut in_flight = 0usize;
+        loop {
+          let (line, n) = tokio::select! {
+            biased;
+            c = ctrl_rx.recv() => match c {
+              Some(c) => c,
+              None => break,
+            },
+            a = ack_rx.recv() => {
+              if let Some(a) = a {
+                in_flight = in_flight.saturating_sub(a);
+              }
+              continue;
+            }
+            b = bulk_rx.recv(), if !stdin_ack || in_flight < BULK_WINDOW => match b {
+              Some((id, line, n)) => {
+                // Already answered or cancelled while queued: save the wire bytes too
+                if !inner.pending.lock().contains_key(&id) {
+                  continue;
+                }
+                (line, n)
+              }
+              None => continue,
+            },
+          };
           // The end marker: dropping stdin is the helper's EOF, which it answers by cleaning up and exiting
           if line.is_empty() {
             break;
+          }
+          if stdin_ack {
+            in_flight += n;
           }
           if stdin.write_all(line.as_bytes()).await.is_err() || stdin.write_all(b"\n").await.is_err() || stdin.flush().await.is_err() {
             close(&inner, "the connection stopped taking input", false);
@@ -376,11 +433,42 @@ impl Call {
 
   /// Bytes for an exec's stdin
   pub fn stdin(&self, bytes: &[u8]) {
-    send(&self.client.inner, &Frame::Stdin { id: self.id, b: wire::b64(bytes), eof: false });
+    send_counted(&self.client.inner, &Frame::Stdin { id: self.id, b: wire::b64(bytes), eof: false }, bytes.len());
   }
 
   pub fn stdin_eof(&self) {
     send(&self.client.inner, &Frame::Stdin { id: self.id, b: String::new(), eof: true });
+  }
+
+  /// Send `bytes` as this request's bulk `stdin` body, yielding to ordinary requests and control frames between chunks
+  /// and keeping at most `BULK_WINDOW` bytes unacknowledged on helpers that advertise `stdinAck`
+  pub async fn send_bulk(&self, bytes: &[u8]) -> Result<(), RemoteError> {
+    if let Some(why) = self.client.closed_reason() {
+      return Err(RemoteError::Disconnected(why));
+    }
+    if !self.client.inner.pending.lock().contains_key(&self.id) {
+      return Ok(());
+    }
+    if bytes.is_empty() {
+      self.stdin_eof();
+      return Ok(());
+    }
+    let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
+    let last = chunks.len().saturating_sub(1);
+    for (i, part) in chunks.into_iter().enumerate() {
+      if let Some(why) = self.client.closed_reason() {
+        return Err(RemoteError::Disconnected(why));
+      }
+      if !self.client.inner.pending.lock().contains_key(&self.id) {
+        return Ok(());
+      }
+      let frame = Frame::Stdin { id: self.id, b: wire::b64(part), eof: i == last };
+      let Ok(line) = serde_json::to_string(&frame) else { continue };
+      if self.client.inner.bulk.send((self.id, line, part.len())).await.is_err() {
+        return Err(RemoteError::Disconnected(self.client.closed_reason().unwrap_or_else(|| "closed".into())));
+      }
+    }
+    Ok(())
   }
 
   pub async fn collect(mut self) -> Result<Reply, RemoteError> {
@@ -411,8 +499,12 @@ impl Drop for Call {
 }
 
 fn send(inner: &Inner, f: &Frame) {
+  send_counted(inner, f, 0);
+}
+
+fn send_counted(inner: &Inner, f: &Frame, stdin_bytes: usize) {
   if let Ok(line) = serde_json::to_string(f) {
-    let _ = inner.lines.send(line);
+    let _ = inner.ctrl.send((line, stdin_bytes));
   }
 }
 
@@ -441,7 +533,10 @@ fn on_frame(inner: &Inner, frame: Frame) {
         inner.rtt_ms.store(at.elapsed().as_millis().min(u32::MAX as u128) as u32, Ordering::Relaxed);
       }
     }
-    Frame::Req { .. } | Frame::Cancel { .. } | Frame::Stdin { .. } | Frame::Ack { .. } => {}
+    Frame::Ack { n } => {
+      let _ = inner.acks.send(n);
+    }
+    Frame::Req { .. } | Frame::Cancel { .. } | Frame::Stdin { .. } => {}
   }
 }
 
@@ -461,15 +556,124 @@ fn close(inner: &Inner, why: &str, graceful: bool) {
   for (_, tx) in inner.pending.lock().drain() {
     let _ = tx.send(Event::Done(Err(RemoteError::Disconnected(why.to_owned()))));
   }
+  // Wake the writer in both modes so `stdin` and `bulk_rx` drop right away
+  let _ = inner.ctrl.send((String::new(), 0));
   let Some(mut child) = inner.child.lock().take() else { return };
   if !graceful {
     let _ = child.start_kill();
     return;
   }
-  let _ = inner.lines.send(String::new());
   tokio::spawn(async move {
     if tokio::time::timeout(CLOSE_GRACE, child.wait()).await.is_err() {
       let _ = child.start_kill();
     }
   });
+}
+
+#[cfg(test)]
+pub(super) async fn test_channel(slice_bytes: usize, pause: Duration) -> (RemoteClient, Arc< std::sync::atomic::AtomicUsize >) {
+  use tokio::io::AsyncReadExt;
+  use crate::remote::helper::{self, HelperOpts};
+  let (client_w, mut pump_r) = tokio::io::duplex(16 * 1024);
+  let (mut pump_w, helper_r) = tokio::io::duplex(16 * 1024);
+  let (helper_w, client_r) = tokio::io::duplex(64 * 1024);
+  let uplink = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+  let counted = uplink.clone();
+  tokio::spawn(async move {
+    let mut buf = vec![0u8; slice_bytes.max(1024)];
+    while let Ok(n) = pump_r.read(&mut buf).await {
+      if n == 0 {
+        break;
+      }
+      counted.fetch_add(n, Ordering::Relaxed);
+      if !pause.is_zero() {
+        tokio::time::sleep(pause).await;
+      }
+      if pump_w.write_all(&buf[..n]).await.is_err() || pump_w.flush().await.is_err() {
+        break;
+      }
+    }
+  });
+  tokio::spawn(helper::serve(
+    helper_r,
+    helper_w,
+    HelperOpts { version: "test".into(), dead_after_ms: DEAD_AFTER_MS, ping_every_ms: PING_EVERY_MS, login_path: false, digest: String::new() },
+  ));
+  let client = RemoteClient::start_io(client_w, client_r, None, Arc::default(), |_| String::new(), ClientOpts::default()).await.unwrap();
+  (client, uplink)
+}
+
+#[cfg(test)]
+mod tests {
+  use serde_json::json;
+
+  use super::*;
+  use crate::remote::host_store::call_with_body;
+
+  #[tokio::test]
+  async fn tool_requests_jump_ahead_of_bulk_uploads_on_a_throttled_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    // ~2 MiB/s uplink (16 KiB per 8 ms): a 3 MiB blob (~4 MiB base64 on the wire) takes ~2 s end-to-end
+    let (client, uplink) = test_channel(16 * 1024, Duration::from_millis(8)).await;
+    assert!(client.hello().stdin_ack);
+
+    let blob: Vec<u8> = (0..3 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let blob_name = crate::store::transcript_store::blob_name(".bin", &blob);
+    let client_for_blob = client.clone();
+    let home_str = home.to_string_lossy().into_owned();
+    let name_for_blob = blob_name.clone();
+    let payload = blob.clone();
+    let mut upload = tokio::spawn(async move {
+      call_with_body(&client_for_blob, "storeBlob", json!({ "home": home_str, "id": "s-bulk", "name": name_for_blob }), &payload).await
+    });
+
+    // Wait until the bulk upload has filled the window and is actively saturating the link
+    while uplink.load(Ordering::Relaxed) < BULK_WINDOW {
+      tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    // An ordinary request (`info`, like `tool`) must jump the remaining ~3.7 MiB instead of waiting ~1.8 s behind it
+    let t0 = tokio::time::Instant::now();
+    let reply = client.call("info", json!({})).await.unwrap();
+    let elapsed = t0.elapsed();
+    let sent_so_far = uplink.load(Ordering::Relaxed);
+    assert!(reply.value.get("path").is_some());
+    assert!(elapsed < Duration::from_millis(750), "ordinary request waited {elapsed:?} behind bulk upload");
+    assert!(sent_so_far < 2 * 1024 * 1024, "bulk upload was not still in flight ({sent_so_far} bytes sent)");
+    assert!(!upload.is_finished(), "bulk upload finished before the priority check");
+
+    (&mut upload).await.unwrap().unwrap();
+    assert_eq!(std::fs::read(home.join("sessions/s-bulk").join(&blob_name)).unwrap(), blob);
+    client.close();
+  }
+
+  #[tokio::test]
+  async fn bulk_uploads_stop_once_the_helper_answers_early() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let store = crate::store::transcript_store::TranscriptStore::new(home.join("sessions"), Arc::new(|_| {}), None);
+    let owned: crate::store::record::SessionRecord = serde_json::from_value(json!({
+      "id": "owned", "agent": "acpira", "acpSessionId": "native", "cwd": "/work", "title": "owned",
+      "updatedAt": "2026-01-01T00:00:00.000Z", "turns": []
+    }))
+    .unwrap();
+    store.flush(Arc::new(owned)).await.unwrap();
+
+    let (client, uplink) = test_channel(16 * 1024, Duration::from_millis(2)).await;
+    let huge = vec![b'x'; 4 * 1024 * 1024];
+    let reply = call_with_body(
+      &client,
+      "storeAgentLog",
+      json!({ "home": home, "sessionId": "owned", "id": "native" }),
+      &huge,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply["written"], false);
+    assert_eq!(reply["takenOver"], true);
+    let total = uplink.load(Ordering::Relaxed);
+    assert!(total < 2 * BULK_WINDOW, "kept uploading {total} bytes after the helper rejected the write");
+    client.close();
+  }
 }

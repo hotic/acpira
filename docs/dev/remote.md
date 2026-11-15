@@ -11,7 +11,7 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 - A remote command runs as non-login `$SHELL -c`: stdout may carry shell noise (hence the `ACPIRA-REMOTE` handshake line) and PATH lacks user dirs (hence `read_shell_path`). Calls run `/bin/sh -c` and are hardened (`BatchMode`, no forwarding, `PermitLocalCommand=no`, `--` before the destination); a host key is never accepted automatically.
 - No ControlMaster; one long-lived channel per host.
 - `-C` slows random data, so only known-compressible payloads are compressed, with `gzip` (macOS ships no `zstd`).
-- Bytes handed to ssh wait in its window ahead of anything later, so bulk output runs under the helper's own credit window and control frames jump the queue.
+- Bytes handed to ssh wait in its window ahead of anything later, so bulk frames in both directions (`chunk` out, bulk `stdin` in when `stdinAck` is advertised) run under `BULK_WINDOW` and ordinary requests and control frames jump the queue.
 - Without a pty sshd sends no signal on disconnect, and a frozen network keeps a stdin reader alive for hours. So the helper ends on stdin EOF or a missed heartbeat, kills its process groups itself, and its writer must never block the heartbeat watchdog.
 
 ## Folder identity
@@ -70,7 +70,7 @@ Its file and shell tools live in its own process, so under local run it runs her
 - Promotion resumes a synced built-in native log, otherwise hands the retained transcript to a fresh peer. Host ownership is authoritative regardless of clocks: the source reconciles after its current turn settles, preserves a divergent transcript (a subagent's counts) and blobs as a fresh branch, then retires the old local identity and attaches its viewers to the host. Retirement must never enter the deletion queue.
 - A deletion stays in `run/remote/gone.json` until the host confirms, so a restart cannot relist it as a host session.
 - Host session blobs come over in the background, never ahead of the view: every reader uses only the local sessions directory and a page never reloads a failed image, so pages get the view without the `blob` fields not yet here and again as each lands (`hosts.rs` `Shown::publish`). Holding the view for them makes opening wait on every picture. Above a size cap a blob stays on the host; a cut-off fetch resumes from `<sessions>/.partial/`.
-- Built-in native logs travel compressed with their record; they already name the host's cwd. A record copy removes the log of the copy it replaces, so a promotion never resumes context older than the record; a log that did not land goes again with the record. Older helpers without log sync fall back to transcript handoff. Other CLIs' native stores are never copied.
+- Built-in native logs travel compressed with their record; they already name the host's cwd. A record copy parks the log of the copy it replaces at `<sid>/.sync.jsonl` so a promotion before `storeAgentLog` lands never resumes context older than the record, while `storeAgentLog` appends only the new tail when the prefix stamp still matches (falling back to a full upload after a rewind or clip); a log that did not land goes again with the record. Older helpers without log sync fall back to transcript handoff. Other CLIs' native stores are never copied.
 - Unverified: a real host (tests use a fake ssh, `tests/engine/remote_*.rs`), incl. a macOS one over the network.
 
 ## Remote run: the peer wire

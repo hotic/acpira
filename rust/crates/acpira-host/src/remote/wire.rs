@@ -2,9 +2,10 @@
 //! handshake line behind `HELLO_PREFIX`; whatever a login shell printed before it is dropped (docs/dev/remote.md).
 //!
 //! Requests carry an id unique on the connection; their answer is one `res`, optionally after `chunk`s of bulk bytes.
-//! Bulk travels under a credit window: the helper keeps at most `BULK_WINDOW` chunk bytes unacknowledged and the
-//! client acks each chunk as it lands, so a cancel or a heartbeat never queues behind megabytes already handed to ssh
-//! (measured: a ping behind an 8 MiB write took 6 s on gen1). Control frames jump the helper's own queue
+//! Bulk in either direction (`chunk` out, bulk `stdin` in) travels under a credit window: the sender keeps at most
+//! `BULK_WINDOW` bytes unacknowledged and the receiver acks each frame as it lands, so a tool call, a cancel or a
+//! heartbeat never queues behind megabytes already handed to ssh (measured: a ping behind an 8 MiB write took 6 s on
+//! gen1). Control frames and ordinary requests jump the sender's own queue
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,9 @@ pub struct Hello {
   pub pid: u32,
   /// The login shell's PATH was recovered (`$SHELL -i -l -c`) and commands get it
   pub login_path: bool,
+  /// The helper acks every `stdin` frame's bytes with `Ack`, so bulk uploads share `BULK_WINDOW`
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub stdin_ack: bool,
 }
 
 /// One frame, either direction
@@ -53,7 +57,7 @@ pub enum Frame {
   Cancel { id: u64 },
   /// client → helper: bytes for a running exec's stdin; `eof` closes it
   Stdin { id: u64, #[serde(default)] b: String, #[serde(default)] eof: bool },
-  /// client → helper: `n` bulk bytes landed
+  /// receiver → sender: `n` bulk bytes landed
   Ack { n: usize },
   /// helper → client: part of a request's bulk output; `s` names the stream (`data`, `out`, `err`)
   Chunk { id: u64, s: String, b: String },
@@ -149,7 +153,7 @@ mod tests {
   fn the_handshake_survives_noise_in_front() {
     let hello = Hello {
       protocol: PROTOCOL, version: "1.2.3".into(), digest: "ab".into(), machine_id: "m".into(), os: "linux".into(), arch: "x86_64".into(),
-      home: "/home/u".into(), user: "u".into(), pid: 9, login_path: true,
+      home: "/home/u".into(), user: "u".into(), pid: 9, login_path: true, stdin_ack: true,
     };
     let line = hello_line(&hello);
     assert_eq!(parse_hello(&format!("{line}\r\n")), Some(hello));

@@ -22,9 +22,9 @@ use tokio::sync::mpsc;
 use acpira_shared::remote::{ConnectionState, ConnectionView, parse_remote_folder};
 use acpira_shared::transcript::Turn;
 
-use super::client::RemoteClient;
+use super::client::{RemoteClient, RemoteError};
 use super::connections::Connections;
-use super::wire::{self, WireError};
+use super::wire::WireError;
 use crate::store::diff_texts;
 use crate::store::file_lock::{with_file_lock, write_atomic};
 use crate::store::record::SessionRecord;
@@ -58,14 +58,15 @@ pub(super) async fn body(stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>
   Ok(buf)
 }
 
-/// Send `bytes` as a request's body and wait for its answer
-pub(super) async fn call_with_body(client: &RemoteClient, op: &str, a: Value, bytes: &[u8]) -> Result<Value> {
+/// Send `bytes` as a request's bulk body and wait for its answer
+async fn send_body(client: &RemoteClient, op: &str, a: Value, bytes: &[u8]) -> std::result::Result<Value, RemoteError> {
   let call = client.request(op, a);
-  for chunk in bytes.chunks(wire::CHUNK) {
-    call.stdin(chunk);
-  }
-  call.stdin_eof();
-  Ok(call.collect().await.map_err(|e| anyhow!("{e}"))?.value)
+  call.send_bulk(bytes).await?;
+  Ok(call.collect().await?.value)
+}
+
+pub(super) async fn call_with_body(client: &RemoteClient, op: &str, a: Value, bytes: &[u8]) -> Result<Value> {
+  send_body(client, op, a, bytes).await.map_err(|e| anyhow!("{e}"))
 }
 
 fn gunzip(bytes: &[u8]) -> Result<Vec<u8>> {
@@ -79,6 +80,137 @@ fn gzip(bytes: &[u8]) -> Result<Vec<u8>> {
   let mut gz = flate2::write::GzEncoder::new(vec![], flate2::Compression::new(6));
   gz.write_all(bytes)?;
   Ok(gz.finish()?)
+}
+
+async fn gunzip_blocking(gz: Vec<u8>) -> Result<Vec<u8>> {
+  tokio::task::spawn_blocking(move || gunzip(&gz)).await?
+}
+
+async fn gzip_blocking(raw: Vec<u8>) -> Result<Vec<u8>> {
+  tokio::task::spawn_blocking(move || gzip(&raw)).await?
+}
+
+/// Edge window hashed at the start and end of a synced native-log prefix (8 KiB max disk read regardless of log size)
+const LOG_EDGE: u64 = 4096;
+const STAGED_LOG: &str = ".sync.jsonl";
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct LogStamp {
+  size: u64,
+  digest: String,
+}
+
+fn staged_log_path(agent_sessions: &Path, sid: &str) -> PathBuf {
+  agent_sessions.join(sid).join(STAGED_LOG)
+}
+
+fn log_stamp_at(file: &mut std::fs::File, prefix_len: u64) -> std::io::Result<Option<LogStamp>> {
+  use sha2::{Digest, Sha256};
+  use std::io::Seek;
+  let len = file.metadata()?.len();
+  if prefix_len == 0 || len < prefix_len {
+    return Ok(None);
+  }
+  let mut h = Sha256::new();
+  h.update(prefix_len.to_le_bytes());
+  let head_len = prefix_len.min(LOG_EDGE) as usize;
+  let mut buf = vec![0u8; head_len];
+  file.seek(std::io::SeekFrom::Start(0))?;
+  file.read_exact(&mut buf)?;
+  h.update(&buf);
+  let tail_start = prefix_len.saturating_sub(LOG_EDGE);
+  let tail_len = (prefix_len - tail_start) as usize;
+  buf.resize(tail_len, 0);
+  file.seek(std::io::SeekFrom::Start(tail_start))?;
+  file.read_exact(&mut buf)?;
+  h.update(&buf);
+  let hex: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+  Ok(Some(LogStamp { size: prefix_len, digest: hex }))
+}
+
+async fn staged_log_stamp(path: PathBuf) -> Option<LogStamp> {
+  tokio::task::spawn_blocking(move || {
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    log_stamp_at(&mut f, len).ok().flatten()
+  })
+  .await
+  .ok()
+  .flatten()
+}
+
+struct PreparedLog {
+  gz: Vec<u8>,
+  base: Option<LogStamp>,
+  local_len: u64,
+}
+
+/// Gzip only the bytes appended past `host_base` when the local prefix still matches it; otherwise stream the whole file
+async fn prepare_log_upload(path: PathBuf, host_base: Option<LogStamp>) -> Result<Option<PreparedLog>> {
+  tokio::task::spawn_blocking(move || {
+    use std::io::Seek;
+    let mut f = match std::fs::File::open(&path) {
+      Ok(f) => f,
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+      Err(e) => return Err(e.into()),
+    };
+    let local_len = f.metadata()?.len();
+    let matched = match host_base {
+      Some(base) if base.size > 0 && base.size <= local_len => {
+        log_stamp_at(&mut f, base.size)?.filter(|local| local.digest == base.digest)
+      }
+      _ => None,
+    };
+    let offset = matched.as_ref().map_or(0, |b| b.size);
+    f.seek(std::io::SeekFrom::Start(offset))?;
+    let mut gz = flate2::write::GzEncoder::new(vec![], flate2::Compression::new(6));
+    std::io::copy(&mut (&mut f).take(local_len - offset), &mut gz)?;
+    Ok(Some(PreparedLog { gz: gz.finish()?, base: matched, local_len }))
+  })
+  .await?
+}
+
+enum LogWrite {
+  Written,
+  Resync,
+}
+
+async fn write_agent_log(dir: PathBuf, id: String, bytes: Vec<u8>, base: Option<LogStamp>) -> Result<LogWrite> {
+  match base {
+    Some(want) => {
+      tokio::task::spawn_blocking(move || {
+        let staged = staged_log_path(&dir, &id);
+        let mut f = match std::fs::OpenOptions::new().read(true).write(true).open(&staged) {
+          Ok(f) => f,
+          Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LogWrite::Resync),
+          Err(e) => return Err(e.into()),
+        };
+        if f.metadata()?.len() != want.size || log_stamp_at(&mut f, want.size)?.as_ref() != Some(&want) {
+          return Ok(LogWrite::Resync);
+        }
+        if !bytes.is_empty() {
+          use std::io::Seek;
+          f.seek(std::io::SeekFrom::End(0))?;
+          if let Err(e) = f.write_all(&bytes).and_then(|()| f.flush()) {
+            let _ = f.set_len(want.size);
+            return Err(e.into());
+          }
+        }
+        drop(f);
+        std::fs::rename(&staged, dir.join(format!("{id}.jsonl")))?;
+        let _ = std::fs::remove_dir(dir.join(&id));
+        Ok(LogWrite::Written)
+      })
+      .await?
+    }
+    None => {
+      tokio::fs::create_dir_all(&dir).await?;
+      write_atomic(&dir.join(format!("{id}.jsonl")), &bytes, None).await?;
+      let _ = tokio::fs::remove_file(staged_log_path(&dir, &id)).await;
+      let _ = tokio::fs::remove_dir(dir.join(&id)).await;
+      Ok(LogWrite::Written)
+    }
+  }
 }
 
 /// The helper's store operations on this host's sessions directory
@@ -97,23 +229,37 @@ pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedRece
       let stamps = store.copy_stamps(&ids).await;
       Ok(json!({ "records": stamps }))
     }
-    // A record copy, gzipped JSON as the body; answers whether it was written and the blobs the session has here
+    // A record copy, gzipped JSON as the body; answers whether it was written, the blobs the session has here, and the
+    // parked native log's prefix stamp so `storeAgentLog` only sends the newly appended bytes
     "storePut" => {
       let gz = body(stdin).await?;
-      let raw = gunzip(&gz).map_err(|e| WireError::new("invalid", e.to_string()))?;
+      let raw = gunzip_blocking(gz).await.map_err(|e| WireError::new("invalid", e.to_string()))?;
       let record: SessionRecord = serde_json::from_slice(&raw).map_err(|e| WireError::new("invalid", format!("not a session record: {e}")))?;
-      // The built-in agent's log the host has is of the copy being replaced: it goes with that copy, and the log of
-      // this one follows (`storeAgentLog`). Until it does a promotion hands the transcript over, never the old context
-      let log = (record.agent == "acpira").then_some(record.acp_session_id.as_deref()).flatten().filter(|sid| is_session_id(sid)).map(|sid| root.join("agent/sessions").join(format!("{sid}.jsonl")));
-      let written = store.put_copy(&record, log.as_deref()).await.map_err(failed)?;
+      // The built-in agent's previous log is parked aside under `<sid>/.sync.jsonl`, so a promotion before
+      // `storeAgentLog` lands hands the transcript over instead of resuming old context, while `storeAgentLog` appends
+      let agent_sessions = root.join("agent/sessions");
+      let written = store.put_copy(&record, Some(&agent_sessions)).await.map_err(failed)?;
       let stamps = store.copy_stamps(std::slice::from_ref(&record.id)).await;
       let taken_over = stamps.get(&record.id).is_some_and(|s| s.copy_of.as_ref().map(|c| &c.machine) != record.copy_of.as_ref().map(|c| &c.machine));
-      Ok(json!({ "written": written, "takenOver": taken_over, "blobs": store.blob_names(&record.id).await }))
+      let mut out = json!({ "written": written, "takenOver": taken_over, "blobs": store.blob_names(&record.id).await });
+      if written
+        && record.agent == "acpira"
+        && let Some(sid) = record.acp_session_id.as_deref().filter(|s| is_session_id(s))
+        && let Some(stamp) = staged_log_stamp(staged_log_path(&agent_sessions, sid)).await
+      {
+        out["agentLog"] = serde_json::to_value(stamp).unwrap_or(Value::Null);
+      }
+      Ok(out)
     }
     "storeAgentLog" => {
       let id = id_arg()?;
       let session = a.get("sessionId").and_then(Value::as_str).filter(|s| is_session_id(s)).ok_or_else(|| WireError::new("invalid", "invalid sessionId"))?;
-      let bytes = gunzip(&body(stdin).await?).map_err(|e| WireError::new("invalid", e.to_string()))?;
+      if let Some(record) = store.load(session).await
+        && (record.copy_of.is_none() || record.agent != "acpira" || record.acp_session_id.as_deref() != Some(&id))
+      {
+        return Ok(json!({ "written": false, "takenOver": record.copy_of.is_none() }));
+      }
+      let bytes = gunzip_blocking(body(stdin).await?).await.map_err(|e| WireError::new("invalid", e.to_string()))?;
       let leases = crate::store::session_lease::SessionLeases::new(&root, Arc::new(|_: &str| {}));
       if !matches!(leases.claim(session), crate::store::session_lease::Claim::Held(_)) {
         return Ok(json!({ "written": false }));
@@ -122,10 +268,14 @@ pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedRece
       if record.copy_of.is_none() || record.agent != "acpira" || record.acp_session_id.as_deref() != Some(&id) {
         return Ok(json!({ "written": false, "takenOver": record.copy_of.is_none() }));
       }
-      let dir = root.join("agent/sessions");
-      tokio::fs::create_dir_all(&dir).await.map_err(|e| WireError::io(&e, "agent sessions"))?;
-      write_atomic(&dir.join(format!("{id}.jsonl")), &bytes, None).await.map_err(failed)?;
-      Ok(json!({ "written": true }))
+      let base = a.get("offset").and_then(Value::as_u64).map(|size| LogStamp {
+        size,
+        digest: a.get("digest").and_then(Value::as_str).unwrap_or("").to_owned(),
+      });
+      match write_agent_log(root.join("agent/sessions"), id, bytes, base).await.map_err(failed)? {
+        LogWrite::Written => Ok(json!({ "written": true })),
+        LogWrite::Resync => Ok(json!({ "written": false, "resync": true })),
+      }
     }
     // One blob of a session, named by its content as every blob is: a name that does not match the bytes is refused. A
     // diff text blob is named by the text it holds compressed (`store::diff_texts`)
@@ -251,14 +401,28 @@ async fn edit_tombs(file: &Path, f: impl FnOnce(&mut Tombs) + Send) -> Result<()
   .await
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct Synced {
+  helper_pid: u32,
+  record_sha256: [u8; 32],
+  log_len: Option<u64>,
+  blobs: BTreeSet<String>,
+}
+
 #[derive(Default)]
 struct State {
   /// Sessions whose copy each host needs again, by alias
   dirty: HashMap<String, HashSet<String>>,
+  /// Last state confirmed on each connected host `(alias, id)`, so `compare` / `flush` overlaps and local-only edits
+  /// (`category`) do not re-upload an unchanged record
+  synced: HashMap<(String, String), Synced>,
   /// Deletions and restores in the order they happened (alias, session, deleted), for the one task that files them
   edits: Option<mpsc::UnboundedSender<(String, String, bool)>>,
-  /// A batch is waiting to go
+  /// A timer is waiting to start the next flush
   batching: bool,
+  /// A flush is running now; any schedule during it sets `again` instead of starting a second flush
+  flushing: bool,
+  again: bool,
   /// Hosts whose channel is up and was compared since
   up: HashSet<String>,
   sub: Option<u64>,
@@ -270,6 +434,7 @@ pub struct HostMirror {
   root: PathBuf,
   manager: parking_lot::RwLock<Weak<crate::session_manager::SessionManager>>,
   retiring: parking_lot::Mutex<HashSet<String>>,
+  sync_lock: tokio::sync::Mutex<()>,
   reconcile_lock: tokio::sync::Mutex<()>,
   /// `Tombs`
   gone_file: PathBuf,
@@ -289,7 +454,7 @@ impl HostMirror {
   /// `new` gathering changes for `batch` (tests)
   pub fn with_batch(connections: Arc<Connections>, store: Arc<TranscriptStore>, root: &Path, log: LogFn, batch: Duration) -> Arc<HostMirror> {
     let gone_file = root.join("run").join("remote").join("gone.json");
-    Arc::new_cyclic(|me| HostMirror { connections, store, root: root.to_path_buf(), manager: Default::default(), retiring: Default::default(), reconcile_lock: Default::default(), gone_file, log, batch, state: Default::default(), on_gone: Default::default(), me: me.clone() })
+    Arc::new_cyclic(|me| HostMirror { connections, store, root: root.to_path_buf(), manager: Default::default(), retiring: Default::default(), sync_lock: Default::default(), reconcile_lock: Default::default(), gone_file, log, batch, state: Default::default(), on_gone: Default::default(), me: me.clone() })
   }
 
   /// Follow the store's changes and the hosts' connections
@@ -366,6 +531,9 @@ impl HostMirror {
       } else {
         st.dirty.entry(alias.clone()).or_default().insert(id.to_owned());
       }
+      if gone || matches!(change, RecordChange::Restored { .. }) {
+        st.synced.remove(&(alias.clone(), id.to_owned()));
+      }
       // Only a restore takes a filed deletion back; a write after it is copied again once the removal is done
       if (gone || matches!(change, RecordChange::Restored { .. }))
         && let Some(tx) = &st.edits
@@ -389,19 +557,40 @@ impl HostMirror {
       if st.batching {
         return;
       }
+      if st.flushing {
+        st.again = true;
+        return;
+      }
       st.batching = true;
     }
     let (weak, m_batch) = (self.me.clone(), self.batch);
     tokio::spawn(async move {
       tokio::time::sleep(m_batch).await;
       let Some(m) = weak.upgrade() else { return };
-      m.state.lock().batching = false;
+      {
+        let mut st = m.state.lock();
+        st.batching = false;
+        if st.flushing {
+          st.again = true;
+          return;
+        }
+        st.flushing = true;
+      }
       m.flush().await;
+      let again = {
+        let mut st = m.state.lock();
+        st.flushing = false;
+        std::mem::take(&mut st.again)
+      };
+      if again {
+        m.schedule();
+      }
     });
   }
 
   /// Send every pending change to the hosts that are up; the rest wait for their host's next connection
   async fn flush(&self) {
+    let _sync = self.sync_lock.lock().await;
     let (up, dirty) = {
       let mut st = self.state.lock();
       let up = st.up.clone();
@@ -469,6 +658,7 @@ impl HostMirror {
       let mut st = self.state.lock();
       let connected: HashSet<String> = views.iter().filter(|v| v.state == ConnectionState::Connected).map(|v| v.alias.clone()).collect();
       st.up.retain(|a| connected.contains(a));
+      st.synced.retain(|(a, _), _| connected.contains(a));
       let came: Vec<String> = connected.into_iter().filter(|a| !st.up.contains(a)).collect();
       st.up.extend(came.iter().cloned());
       came
@@ -486,6 +676,7 @@ impl HostMirror {
   /// Bring the host's copies of this engine's records in its folders up to date: missing or older ones go again, with
   /// their blobs. Deletions made while it was away go first
   async fn compare(&self, alias: &str) {
+    let _sync = self.sync_lock.lock().await;
     let Some(client) = self.connections.client(alias) else { return };
     let mine: Vec<(String, String)> = match self.store.load_index().await {
       Ok(list) => list.into_iter().filter(|s| parse_remote_folder(&s.cwd).is_some_and(|f| f.alias == alias)).map(|s| (s.id, s.updated_at)).collect(),
@@ -567,7 +758,11 @@ impl HostMirror {
       return Err(e);
     }
     // Keep the id suppressed: already queued change notifications must not resurrect its deletion later.
-    if let Some(ids) = self.state.lock().dirty.get_mut(alias) { ids.remove(id); }
+    {
+      let mut st = self.state.lock();
+      if let Some(ids) = st.dirty.get_mut(alias) { ids.remove(id); }
+      st.synced.remove(&(alias.to_owned(), id.to_owned()));
+    }
     edit_tombs(&self.gone_file, |t| {
       if let Some(ids) = t.get_mut(alias) { ids.remove(id); }
     }).await?;
@@ -578,6 +773,10 @@ impl HostMirror {
   /// One record's copy and the blobs the host lacks. The folder becomes the host's own path; the category stays here
   /// (categories are this machine's list)
   async fn push(&self, client: &RemoteClient, alias: &str, id: &str) -> Result<()> {
+    self.push_to(client, alias, id, None).await
+  }
+
+  async fn push_to(&self, client: &RemoteClient, alias: &str, id: &str, host_home: Option<&Path>) -> Result<()> {
     if self.retiring.lock().contains(id) { return Ok(()); }
     // The wire format stays a complete record whether the local body is a file, a packed archive or SQLite rows.
     let Some(record) = self.store.load(id).await else { return Ok(()) };
@@ -591,10 +790,37 @@ impl HostMirror {
     obj.remove("category");
     let (machine, name) = this_machine();
     obj.insert("copyOf".into(), json!({ "machine": machine, "name": name }));
-    let mut gz = flate2::write::GzEncoder::new(vec![], flate2::Compression::new(6));
-    gz.write_all(&serde_json::to_vec(&record)?)?;
-    let reply = call_with_body(client, "storePut", json!({}), &gz.finish()?).await?;
-    let there: Vec<String> = serde_json::from_value(reply.get("blobs").cloned().unwrap_or(Value::Null)).unwrap_or_default();
+    let raw = serde_json::to_vec(&record)?;
+    let record_sha256: [u8; 32] = {
+      use sha2::Digest;
+      sha2::Sha256::digest(&raw).into()
+    };
+    let sid = (record.get("agent").and_then(Value::as_str) == Some("acpira"))
+      .then(|| record.get("acpSessionId").and_then(Value::as_str))
+      .flatten()
+      .filter(|s| is_session_id(s))
+      .map(str::to_owned);
+    let local_blobs: BTreeSet<String> = self.store.blob_names(id).await.into_iter().collect();
+    let current_log_len = match &sid {
+      Some(sid) => tokio::fs::metadata(self.root.join("agent/sessions").join(format!("{sid}.jsonl"))).await.ok().map(|m| m.len()),
+      None => None,
+    };
+    let helper_pid = client.hello().pid;
+    let key = (alias.to_owned(), id.to_owned());
+    let candidate = Synced { helper_pid, record_sha256, log_len: current_log_len, blobs: local_blobs.clone() };
+    if self.state.lock().synced.get(&key) == Some(&candidate) {
+      return Ok(());
+    }
+    let with_home = |mut a: Value| {
+      if let Some(h) = host_home {
+        a["home"] = json!(h);
+      }
+      a
+    };
+
+    let gz = gzip_blocking(raw).await?;
+    let reply = call_with_body(client, "storePut", with_home(json!({})), &gz).await?;
+    let there: HashSet<String> = serde_json::from_value(reply.get("blobs").cloned().unwrap_or(Value::Null)).unwrap_or_default();
     if reply.get("takenOver").and_then(Value::as_bool) == Some(true) {
       return self.reconcile(client, alias, id).await;
     }
@@ -602,30 +828,48 @@ impl HostMirror {
       (self.log)(&format!("host store: {alias}: {id} kept as the host has it (newer there, or deleted there)"));
       return Ok(());
     }
-    if record.get("agent").and_then(Value::as_str) == Some("acpira")
-      && let Some(sid) = record.get("acpSessionId").and_then(Value::as_str).filter(|s| is_session_id(s))
-      && let Ok(bytes) = tokio::fs::read(self.root.join("agent/sessions").join(format!("{sid}.jsonl"))).await
-    {
-      let call = client.request("storeAgentLog", json!({ "sessionId": id, "id": sid }));
-      for chunk in gzip(&bytes)?.chunks(wire::CHUNK) {
-        call.stdin(chunk);
-      }
-      call.stdin_eof();
-      match call.collect().await {
-        Ok(reply) if reply.value.get("takenOver").and_then(Value::as_bool) == Some(true) => return self.reconcile(client, alias, id).await,
-        // The host dropped the log of its last copy when it took this record: the copy is whole again only with this
-        // one, so a log that did not land goes again with the record
-        Ok(reply) if reply.value.get("written").and_then(Value::as_bool) == Some(false) => return Err(anyhow!("native log {sid}: the host is busy with the session")),
-        Ok(_) => {}
-        // Older helpers have no native-log operation; the transcript handoff still works there.
-        Err(e) if e.code() == "unknownOp" => (self.log)(&format!("host store: {alias}: native log {sid} not copied: {e}")),
-        Err(e) => return Err(anyhow!("native log {sid}: {e}")),
+    let mut uploaded_log_len = None;
+    if let Some(ref sid) = sid {
+      let log_path = self.root.join("agent/sessions").join(format!("{sid}.jsonl"));
+      let host_base: Option<LogStamp> = reply.get("agentLog").and_then(|v| serde_json::from_value(v.clone()).ok());
+      if let Some(mut prep) = prepare_log_upload(log_path.clone(), host_base).await? {
+        loop {
+          let mut args = with_home(json!({ "sessionId": id, "id": sid }));
+          if let Some(ref base) = prep.base {
+            args["offset"] = json!(base.size);
+            args["digest"] = json!(base.digest);
+          }
+          match send_body(client, "storeAgentLog", args, &prep.gz).await {
+            Ok(r) if r.get("takenOver").and_then(Value::as_bool) == Some(true) => return self.reconcile(client, alias, id).await,
+            Ok(r) if r.get("resync").and_then(Value::as_bool) == Some(true) && prep.base.is_some() => {
+              let Some(full) = prepare_log_upload(log_path.clone(), None).await? else { break };
+              prep = full;
+            }
+            // The host parked the log of its last copy when it took this record: the copy is whole again only with this
+            // one, so a log that did not land goes again with the record
+            Ok(r) if r.get("written").and_then(Value::as_bool) == Some(false) => {
+              return Err(anyhow!("native log {sid}: the host is busy with the session"));
+            }
+            Ok(_) => {
+              uploaded_log_len = Some(prep.local_len);
+              break;
+            }
+            // Older helpers have no native-log operation; the transcript handoff still works there.
+            Err(e) if e.code() == "unknownOp" => {
+              (self.log)(&format!("host store: {alias}: native log {sid} not copied: {e}"));
+              uploaded_log_len = Some(prep.local_len);
+              break;
+            }
+            Err(e) => return Err(anyhow!("native log {sid}: {e}")),
+          }
+        }
       }
     }
-    for name in self.store.blob_names(id).await.into_iter().filter(|n| !there.contains(n)) {
-      let bytes = self.store.read_blob(id, &name).await?;
-      call_with_body(client, "storeBlob", json!({ "id": id, "name": name }), &bytes).await?;
+    for name in local_blobs.iter().filter(|n| !there.contains(*n)) {
+      let bytes = self.store.read_blob(id, name).await?;
+      call_with_body(client, "storeBlob", with_home(json!({ "id": id, "name": name })), &bytes).await?;
     }
+    self.state.lock().synced.insert(key, Synced { helper_pid, record_sha256, log_len: uploaded_log_len, blobs: local_blobs });
     Ok(())
   }
 }
@@ -700,5 +944,214 @@ mod tests {
     local.subagents.as_mut().unwrap()[0].turns.push(serde_json::from_value(json!({ "role": "user", "text": "written after the last copy" })).unwrap());
     assert!(!is_prefix(&local, &host), "the session's own turns match, the subagent's do not");
     assert!(is_prefix(&host, &local));
+  }
+
+  #[tokio::test]
+  async fn native_logs_append_incrementally_and_fall_back_on_rewind_or_interruption() {
+    let dir = tempfile::tempdir().unwrap();
+    let local_root = dir.path().join("local");
+    let host_root = dir.path().join("host");
+    std::fs::create_dir_all(local_root.join("agent/sessions")).unwrap();
+    let local_log = local_root.join("agent/sessions/native.jsonl");
+    let host_log = host_root.join("agent/sessions/native.jsonl");
+    let staged_log = host_root.join("agent/sessions/native/.sync.jsonl");
+
+    let mut record: SessionRecord = serde_json::from_value(json!({
+      "id": "session", "agent": "acpira", "acpSessionId": "native", "cwd": "/work", "title": "copied",
+      "updatedAt": "2026-01-01T00:00:00.000Z", "turns": [], "copyOf": { "machine": "source", "name": "Source" }
+    }))
+    .unwrap();
+
+    // Start with a multi-window (> 2 * LOG_EDGE) JSONL log so head and tail stamps cover distinct regions
+    let mut expected = Vec::new();
+    for i in 0..800 {
+      expected.extend_from_slice(format!("{{\"type\":\"item\",\"t\":{i},\"text\":\"line-{i:04}-padding-for-realistic-log-volume\"}}\n").as_bytes());
+    }
+    assert!(expected.len() as u64 > 4 * LOG_EDGE);
+    std::fs::write(&local_log, &expected).unwrap();
+
+    // 1. Initial sync: no parked base on the host yet, so the whole log goes
+    let put = serve("storePut", &json!({ "home": host_root }), body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    assert_eq!(put["written"], true);
+    assert!(put.get("agentLog").is_none());
+    let prep = prepare_log_upload(local_log.clone(), None).await.unwrap().unwrap();
+    assert!(prep.base.is_none());
+    let full_gz_len = prep.gz.len();
+    let res = serve("storeAgentLog", &json!({ "home": host_root, "sessionId": "session", "id": "native" }), body_of(prep.gz)).await.unwrap();
+    assert_eq!(res["written"], true);
+    assert_eq!(std::fs::read(&host_log).unwrap(), expected);
+
+    // 2. Append one new step locally: `storePut` parks `native.jsonl` (promotion guard holds) and `storeAgentLog`
+    //    carries only the newly appended bytes
+    let delta = b"{\"type\":\"item\",\"t\":801,\"text\":\"one small incremental step\"}\n";
+    expected.extend_from_slice(delta);
+    std::fs::write(&local_log, &expected).unwrap();
+    record.updated_at = "2026-01-02T00:00:00.000Z".into();
+    let put = serve("storePut", &json!({ "home": host_root }), body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    assert_eq!(put["written"], true);
+    assert!(!host_log.exists(), "stale live log must not stay visible before storeAgentLog lands");
+    assert!(staged_log.exists());
+    let stamp: LogStamp = serde_json::from_value(put["agentLog"].clone()).unwrap();
+    let prep = prepare_log_upload(local_log.clone(), Some(stamp)).await.unwrap().unwrap();
+    assert!(prep.base.is_some(), "pure append should match the host's parked prefix");
+    assert!(prep.gz.len() < 200 && prep.gz.len() * 10 < full_gz_len, "delta gz={} vs full gz={full_gz_len}", prep.gz.len());
+    assert_eq!(gunzip(&prep.gz).unwrap(), delta);
+    let base = prep.base.unwrap();
+    let res = serve(
+      "storeAgentLog",
+      &json!({ "home": host_root, "sessionId": "session", "id": "native", "offset": base.size, "digest": base.digest }),
+      body_of(prep.gz),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res["written"], true);
+    assert_eq!(std::fs::read(&host_log).unwrap(), expected);
+    assert!(!staged_log.exists());
+
+    // 3. Record metadata edit with 0 new log bytes: unparks in place with an empty delta
+    record.title = "renamed".into();
+    record.updated_at = "2026-01-03T00:00:00.000Z".into();
+    let put = serve("storePut", &json!({ "home": host_root }), body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    let stamp: LogStamp = serde_json::from_value(put["agentLog"].clone()).unwrap();
+    let prep = prepare_log_upload(local_log.clone(), Some(stamp)).await.unwrap().unwrap();
+    assert!(prep.base.is_some());
+    assert!(gunzip(&prep.gz).unwrap().is_empty());
+    let base = prep.base.unwrap();
+    let res = serve(
+      "storeAgentLog",
+      &json!({ "home": host_root, "sessionId": "session", "id": "native", "offset": base.size, "digest": base.digest }),
+      body_of(prep.gz),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res["written"], true);
+    assert_eq!(std::fs::read(&host_log).unwrap(), expected);
+
+    // 4. Interrupted sync: `storePut` parks the log, connection drops before `storeAgentLog`, then another `storePut`
+    //    arrives after more local appends — the parked base still survives for an incremental delta
+    record.updated_at = "2026-01-04T00:00:00.000Z".into();
+    let put1 = serve("storePut", &json!({ "home": host_root }), body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    assert!(put1.get("agentLog").is_some());
+    assert!(!host_log.exists() && staged_log.exists());
+    let more = b"{\"type\":\"item\",\"t\":802,\"text\":\"after reconnect\"}\n";
+    expected.extend_from_slice(more);
+    std::fs::write(&local_log, &expected).unwrap();
+    record.updated_at = "2026-01-05T00:00:00.000Z".into();
+    let put2 = serve("storePut", &json!({ "home": host_root }), body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    let stamp: LogStamp = serde_json::from_value(put2["agentLog"].clone()).unwrap();
+    let prep = prepare_log_upload(local_log.clone(), Some(stamp)).await.unwrap().unwrap();
+    assert_eq!(gunzip(&prep.gz).unwrap(), more);
+    let base = prep.base.unwrap();
+    let res = serve(
+      "storeAgentLog",
+      &json!({ "home": host_root, "sessionId": "session", "id": "native", "offset": base.size, "digest": base.digest }),
+      body_of(prep.gz),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res["written"], true);
+    assert_eq!(std::fs::read(&host_log).unwrap(), expected);
+
+    // 5. Rewind / prefix rewrite locally (even when longer than before): falls back to full upload and cleans `.sync.jsonl`
+    let mut rewound = b"{\"type\":\"session\",\"t\":999,\"rewound\":true}\n".to_vec();
+    rewound.resize(expected.len() + 64, b'\n');
+    std::fs::write(&local_log, &rewound).unwrap();
+    record.updated_at = "2026-01-06T00:00:00.000Z".into();
+    let put = serve("storePut", &json!({ "home": host_root }), body_of(gzip(&serde_json::to_vec(&record).unwrap()).unwrap())).await.unwrap();
+    let stamp: LogStamp = serde_json::from_value(put["agentLog"].clone()).unwrap();
+    let prep = prepare_log_upload(local_log.clone(), Some(stamp)).await.unwrap().unwrap();
+    assert!(prep.base.is_none(), "rewound prefix must trigger full replacement");
+    // Also verify a stale offset request on the host asks for `resync` without corrupting anything
+    let stale_try = serve(
+      "storeAgentLog",
+      &json!({ "home": host_root, "sessionId": "session", "id": "native", "offset": 123, "digest": "wrong" }),
+      body_of(gzip(b"x").unwrap()),
+    )
+    .await
+    .unwrap();
+    assert_eq!((stale_try["written"].as_bool(), stale_try["resync"].as_bool()), (Some(false), Some(true)));
+    let res = serve("storeAgentLog", &json!({ "home": host_root, "sessionId": "session", "id": "native" }), body_of(prep.gz)).await.unwrap();
+    assert_eq!(res["written"], true);
+    assert_eq!(std::fs::read(&host_log).unwrap(), rewound);
+    assert!(!staged_log.exists());
+  }
+
+  #[tokio::test]
+  async fn schedule_waits_for_an_active_flush_instead_of_overlapping() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let connections = Connections::new(root, root, Arc::new(|_| {}), None, Default::default());
+    let store = TranscriptStore::new(root.join("sessions"), Arc::new(|_| {}), None);
+    let mirror = HostMirror::with_batch(connections, store, root, Arc::new(|_| {}), Duration::from_millis(20));
+
+    // Simulate an in-flight flush: rapid schedules during it must coalesce into `again` without starting a batch timer
+    mirror.state.lock().flushing = true;
+    mirror.schedule();
+    mirror.schedule();
+    {
+      let st = mirror.state.lock();
+      assert!(!st.batching, "must not start a parallel batch timer while a flush is running");
+      assert!(st.again, "must remember to schedule once the running flush finishes");
+    }
+    mirror.state.lock().flushing = false;
+  }
+
+  #[tokio::test]
+  async fn push_deduplicates_unchanged_copies_and_sends_only_log_deltas_over_the_wire() {
+    use std::sync::atomic::Ordering;
+    let dir = tempfile::tempdir().unwrap();
+    let local_root = dir.path().join("local");
+    let host_root = dir.path().join("host");
+    std::fs::create_dir_all(local_root.join("agent/sessions")).unwrap();
+    let connections = Connections::new(&local_root, &local_root, Arc::new(|_| {}), None, Default::default());
+    let store = TranscriptStore::new(local_root.join("sessions"), Arc::new(|_| {}), None);
+    let mirror = HostMirror::with_batch(connections, store.clone(), &local_root, Arc::new(|_| {}), Duration::from_secs(60));
+
+    let local_log = local_root.join("agent/sessions/native-wire.jsonl");
+    let host_log = host_root.join("agent/sessions/native-wire.jsonl");
+    let mut log_bytes = Vec::new();
+    for i in 0..2500 {
+      // Pseudo-unique payloads so the initial log compresses to many KiB on the wire
+      let noise = crate::store::transcript_store::blob_name("", format!("seed-{i}").as_bytes());
+      log_bytes.extend_from_slice(format!("{{\"type\":\"item\",\"t\":{i},\"h\":\"{noise}\"}}\n").as_bytes());
+    }
+    std::fs::write(&local_log, &log_bytes).unwrap();
+    let mut rec: SessionRecord = serde_json::from_value(json!({
+      "id": "s-wire", "agent": "acpira", "acpSessionId": "native-wire", "cwd": "ssh://gen1/work/proj",
+      "title": "wire", "category": Some("cat-a"), "createdAt": "2026-10-01T00:00:00.000Z",
+      "updatedAt": "2026-10-01T00:00:00.000Z", "turns": [], "controls": { "modes": [], "options": [] }, "commands": []
+    }))
+    .unwrap();
+    store.flush(Arc::new(rec.clone())).await.unwrap();
+
+    let (client, uplink) = super::super::client::test_channel(64 * 1024, Duration::ZERO).await;
+
+    // 1. First push sends the whole ~130 KiB log
+    uplink.store(0, Ordering::Relaxed);
+    mirror.push_to(&client, "gen1", "s-wire", Some(&host_root)).await.unwrap();
+    let first_bytes = uplink.load(Ordering::Relaxed);
+    assert!(first_bytes > 20_000, "initial push should carry the full compressed log ({first_bytes} B)");
+    assert_eq!(std::fs::read(&host_log).unwrap(), log_bytes);
+
+    // 2. Duplicate push and local-only `category` move send 0 wire bytes
+    uplink.store(0, Ordering::Relaxed);
+    mirror.push_to(&client, "gen1", "s-wire", Some(&host_root)).await.unwrap();
+    rec.category = Some("cat-b".into());
+    store.flush(Arc::new(rec.clone())).await.unwrap();
+    mirror.push_to(&client, "gen1", "s-wire", Some(&host_root)).await.unwrap();
+    assert_eq!(uplink.load(Ordering::Relaxed), 0, "unchanged host copy must not re-upload");
+
+    // 3. One appended step sends only the small record + tiny log delta (a fraction of `first_bytes`)
+    log_bytes.extend_from_slice(b"{\"type\":\"item\",\"t\":9999,\"h\":\"step-delta\"}\n");
+    std::fs::write(&local_log, &log_bytes).unwrap();
+    rec.updated_at = "2026-10-01T00:00:05.000Z".into();
+    store.flush(Arc::new(rec.clone())).await.unwrap();
+    uplink.store(0, Ordering::Relaxed);
+    mirror.push_to(&client, "gen1", "s-wire", Some(&host_root)).await.unwrap();
+    let step_bytes = uplink.load(Ordering::Relaxed);
+    assert!(step_bytes < 2_500 && step_bytes * 10 < first_bytes, "incremental step sent {step_bytes} B vs initial {first_bytes} B");
+    assert_eq!(std::fs::read(&host_log).unwrap(), log_bytes);
+
+    client.close();
   }
 }

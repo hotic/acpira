@@ -120,6 +120,7 @@ pub fn hello(opts: &HelperOpts) -> Hello {
     user: std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_default(),
     pid: std::process::id(),
     login_path: opts.login_path,
+    stdin_ack: true,
   }
 }
 
@@ -292,11 +293,14 @@ where
         }
       }
       Frame::Stdin { id, b, eof } => {
+        let bytes = (!b.is_empty()).then(|| wire::unb64(&b).ok()).flatten();
+        if let Some(ref bytes) = bytes {
+          // Acked as it lands, whether the request still waits for it: the window is the channel's, not the request's
+          out.frame(&Frame::Ack { n: bytes.len() });
+        }
         let tx = running.lock().get(&id).and_then(|r| r.stdin.clone());
         if let Some(tx) = tx {
-          if !b.is_empty()
-            && let Ok(bytes) = wire::unb64(&b)
-          {
+          if let Some(bytes) = bytes {
             let _ = tx.send(Some(bytes));
           }
           if eof {

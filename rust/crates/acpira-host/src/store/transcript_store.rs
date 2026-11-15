@@ -253,7 +253,7 @@ pub enum RecordChange<'a> {
 
 pub type ChangeHook = Arc<dyn Fn(&str, RecordChange) + Send + Sync>;
 
-/// A record's `updatedAt` and folder alone, the transcript skipped over by the parser
+/// A record's `updatedAt`, folder and native-log owner alone, the transcript skipped over by the parser
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Stamped {
@@ -263,6 +263,10 @@ struct Stamped {
   cwd: String,
   #[serde(default)]
   copy_of: Option<CopyOf>,
+  #[serde(default)]
+  agent: String,
+  #[serde(default)]
+  acp_session_id: Option<String>,
 }
 
 /// The folder a record file names, empty when it cannot be read
@@ -561,9 +565,10 @@ impl TranscriptStore {
 
   /// Write a copy of a record another machine drives (a session it runs in a folder of this host, docs/dev/remote.md),
   /// unless the copy here was updated later or the record waits in the trash here (deleted on this host). False when
-  /// it was not written. `stale` is a file that goes with the copy being replaced (the built-in agent's log of it),
-  /// removed under the same lease before the new copy is there: a promotion never finds the two apart
-  pub async fn put_copy(&self, record: &SessionRecord, stale: Option<&Path>) -> Result<bool> {
+  /// it was not written. `agent_sessions` (`<home>/agent/sessions`) parks the built-in agent's previous log at
+  /// `<sid>/.sync.jsonl` under the same lease before the new copy lands: a promotion before `storeAgentLog` never
+  /// finds the stale context at `<sid>.jsonl`, while `storeAgentLog` can append only the new bytes onto the parked copy
+  pub async fn put_copy(&self, record: &SessionRecord, agent_sessions: Option<&Path>) -> Result<bool> {
     let id = &record.id;
     if !is_session_id(id) {
       return Err(anyhow!("{id} is not a session id"));
@@ -578,14 +583,31 @@ impl TranscriptStore {
     if !matches!(leases.claim(id), super::session_lease::Claim::Held(_)) {
       return Ok(false);
     }
-    if self.stamp_of(id).await.is_some_and(|here| here.copy_of.is_none() || here.copy_of.as_ref().map(|c| &c.machine) != record.copy_of.as_ref().map(|c| &c.machine) || here.updated_at > record.updated_at) {
+    let prev = self.stamp_of(id).await;
+    if prev.as_ref().is_some_and(|here| here.copy_of.is_none() || here.copy_of.as_ref().map(|c| &c.machine) != record.copy_of.as_ref().map(|c| &c.machine) || here.updated_at > record.updated_at) {
       return Ok(false);
     }
-    if let Some(stale) = stale
-      && let Err(error) = fs::remove_file(stale).await
-      && error.kind() != std::io::ErrorKind::NotFound
-    {
-      return Err(anyhow!("{}: {error}", stale.display()));
+    if let Some(logs) = agent_sessions {
+      let prev_sid = prev.as_ref().filter(|h| h.agent == "acpira").and_then(|h| h.acp_session_id.as_deref()).filter(|s| is_session_id(s));
+      let next_sid = (record.agent == "acpira").then_some(record.acp_session_id.as_deref()).flatten().filter(|s| is_session_id(s));
+      if let Some(old) = prev_sid.filter(|old| Some(*old) != next_sid) {
+        let _ = fs::remove_file(logs.join(format!("{old}.jsonl"))).await;
+        let _ = fs::remove_file(logs.join(old).join(".sync.jsonl")).await;
+        let _ = fs::remove_dir(logs.join(old)).await;
+      }
+      if let Some(sid) = next_sid {
+        let live = logs.join(format!("{sid}.jsonl"));
+        let staged = logs.join(sid).join(".sync.jsonl");
+        match fs::metadata(&live).await {
+          Ok(_) => {
+            let dir = logs.join(sid);
+            fs::create_dir_all(&dir).await.map_err(|e| anyhow!("{}: {e}", dir.display()))?;
+            fs::rename(&live, &staged).await.map_err(|e| anyhow!("{}: {e}", live.display()))?;
+          }
+          Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+          Err(e) => return Err(anyhow!("{}: {e}", live.display())),
+        }
+      }
     }
     let summary = record.summary();
     if self.database().is_some() {
