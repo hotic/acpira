@@ -566,6 +566,7 @@
   "notice.method.antigravity:oauth-business": "Gemini Enterprise でサインイン（ブラウザ）",
   "notice.method.antigravity:gemini-api-key": "GEMINI_API_KEY を使用",
   "notice.method.antigravity:agent-platform": "Gemini Enterprise Agent Platform を使用",
+  "notice.method.antigravity:terminal-login": "Google でサインイン（ターミナル）",
   "turns.readFiles": "{n} 個のファイルを読み取り",
   "turns.searched": "{n} 回検索",
   "turns.explored": "{n} か所を調査",

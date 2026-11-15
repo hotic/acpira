@@ -574,6 +574,7 @@ export const en = {
   'notice.method.antigravity:oauth-business': 'Sign in with Gemini Enterprise (browser)',
   'notice.method.antigravity:gemini-api-key': 'Use GEMINI_API_KEY',
   'notice.method.antigravity:agent-platform': 'Use Gemini Enterprise Agent Platform',
+  'notice.method.antigravity:terminal-login': 'Sign in with Google (terminal)',
 
   'turns.readFiles': 'Read {n} files',
   'turns.searched': 'Searched {n} times',

@@ -580,6 +580,7 @@ export const zhTW = {
   'notice.method.antigravity:oauth-business': '用 Gemini Enterprise 登入（瀏覽器）',
   'notice.method.antigravity:gemini-api-key': '用 GEMINI_API_KEY',
   'notice.method.antigravity:agent-platform': '用 Gemini Enterprise Agent Platform',
+  'notice.method.antigravity:terminal-login': '用 Google 帳號登入（終端）',
 
   // Conversation flow
   'turns.readFiles': '讀取 {n} 個檔案',

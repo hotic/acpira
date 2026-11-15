@@ -132,12 +132,13 @@ pub fn agent_ext(id: &str) -> Option<&'static AgentExt> {
       // dsh 0.1.5-rc.2 `dsh-agent-instructions`: one user-global file, `$DSH_HOME/AGENTS.md` (default ~/.dsh)
       shared: Shared { global_rules: Some(("~/.dsh/AGENTS.md", Link)), skill_links: None, own_skills: &["~/.dsh/skills", ".dsh/skills"], mcp: true },
     },
-    // antigravity-acp 1.2.1 source (GEMINI_HOME, default ~/.gemini): skills from <home>/config/skills,
-    // <home>/antigravity-cli/skills, .gemini/skills and .agents/skills (not ~/.agents/skills); rules GEMINI.md / AGENTS.md /
-    // .agents/rules up to the repo root plus the <home>/config customization root; <home>/config/mcp_config.json is merged
-    // with session/new `mcpServers`
+    // agy 1.5.9 (`agy acp`) keeps the customization root the earlier agy_acp_server read (its 1.2.1 source): skills from
+    // ~/.gemini/config/skills, ~/.gemini/antigravity-cli/skills, .gemini/skills and .agents/skills (its command list shows
+    // both global and project skills, not ~/.agents/skills); rules GEMINI.md / AGENTS.md / .agents/rules up to the repo root
+    // plus ~/.gemini/config; ~/.gemini/config/mcp_config.json is merged with session/new `mcpServers`. Its own settings
+    // are ~/.gemini/config/config.json
     "antigravity" => &AgentExt {
-      config: &["~/.gemini/antigravity-acp/settings.json", "~/.gemini/config/mcp_config.json"],
+      config: &["~/.gemini/config/config.json", "~/.gemini/config/mcp_config.json"],
       mcp: &[("~/.gemini/config/mcp_config.json", Json)],
       skills: &["~/.gemini/config/skills", "~/.gemini/antigravity-cli/skills", ".gemini/skills", ".agents/skills"],
       rules: &[("AGENTS.md", false), ("GEMINI.md", false), (".agents/rules", true), ("~/.gemini/config/AGENTS.md", false)],

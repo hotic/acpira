@@ -454,7 +454,7 @@ function AgentFacts({ agent, inventory: live, env, on }: { agent: AgentInfo; inv
   return (
     // A status of "sign-in required" carries the sign-in where the engine can start one without a session: the account
     // layer's import / terminal login, or the official account's CLI login. Other agents sign in from the chat's notice,
-    // with the methods their ACP handshake offers (Antigravity has no login command to run here)
+    // with the methods their ACP handshake offers
     <Section title={t('settings.agent.runtime')} desc={t('settings.agent.runtime.desc')}
       action={health?.stage === 'auth_required' && (agent.accounts || agent.localAccount) && <SectionAction icon={<LogIn />} onClick={() => on.addAccount(agent.id)}>{t('notice.goLogin')}</SectionAction>}>
       <FactRow label={t('settings.fact.binary')}>

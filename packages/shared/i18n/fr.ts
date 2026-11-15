@@ -570,6 +570,7 @@ export const fr = {
   'notice.method.antigravity:oauth-business': 'Se connecter avec Gemini Enterprise (navigateur)',
   'notice.method.antigravity:gemini-api-key': 'Utiliser GEMINI_API_KEY',
   'notice.method.antigravity:agent-platform': 'Utiliser Gemini Enterprise Agent Platform',
+  'notice.method.antigravity:terminal-login': 'Se connecter avec Google (terminal)',
 
   'turns.readFiles': '{n} fichiers lus',
   'turns.readFiles#one': '{n} fichier lu',

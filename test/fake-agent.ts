@@ -129,15 +129,6 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // -32002 Resource not found, since Claude Code writes no transcript before the first turn. FAKE_REBUILD_FAIL=ultracode
 // fails such a recreate when it asks for ultracode, =always fails every recreate (the session stays torn down either way)
 
-// FAKE_HELPER_PIDFILE → start a helper that ignores SIGTERM in this process's group (antigravity's localharness_external
-// stand-in) and write its pid to that file; with FAKE_HELPER_EXIT the leader then exits by itself
-if (process.env.FAKE_HELPER_PIDFILE) {
-  const helper = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1 << 30)", 'acpira-fake-helper'], { stdio: 'ignore' });
-  writeFileSync(process.env.FAKE_HELPER_PIDFILE, String(helper.pid));
-  // FAKE_HELPER_EXIT: the leader dies on its own right after starting the helper (a crash before initialize)
-  if (process.env.FAKE_HELPER_EXIT) process.exit(3);
-}
-
 if (process.env.FAKE_STUBBORN) {
   process.on('SIGTERM', () => {});
   setInterval(() => {}, 1 << 30);
