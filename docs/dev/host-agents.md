@@ -5,7 +5,7 @@ The engine side of agent CLIs: registry, launching, installs, cross-harness suba
 ## Registry and launching
 
 - `acp/agents/`: user definitions live in `$ACPIRA_HOME/agents.json` (`store/agent_config.rs`), shared by every sidecar. IDE definitions seed it only when the file is missing; an existing file, `{}` included, wins; malformed edits keep the last good registry.
-  - An entry under a built-in id with the built-in's own command overlays it (`registry.rs` `overlay`), so adapter, lookup paths and the install line survive; an install line naming that adapter package is treated as a stale seeded copy and loses to the built-in one. A different command replaces the built-in outright and drops its update offer.
+  - An entry under a built-in id with the built-in's own command overlays it (`registry.rs` `overlay`), so adapter, lookup paths and the install line survive; an install line naming that adapter package is treated as a stale seeded copy and loses to the built-in one. A path whose file name (less `.cmd` / `.exe`) is the built-in's command counts as the same launcher and stays what runs: an absolute shim path written into agents.json otherwise dropped the update offer. A different command replaces the built-in outright and drops its update offer.
   - VS Code Remote windows omit the legacy Agent setting: merged values cannot say which machine supplied them (a local Windows path reached a Linux remote; Devin 3000.11.3).
 - Disabled agents are flagged, never dropped, so their sessions stay reachable (`shared/agentOrder.ts`, mirrored by `SessionManager::default_agent`).
 - `launch.rs`: on win32 an extensionless npm POSIX shim must not hide its `.cmd` sibling (error 193). `%LOCALAPPDATA%/devin/cli/bin` is a Devin fallback (installer 3000.11.3).
