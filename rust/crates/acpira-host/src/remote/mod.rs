@@ -4,6 +4,7 @@
 //! client of a host's engine (remote run); `host_store` keeps one session history per host (the host's own store), `host_models` this machine's model sources
 //! on every host; `tcp` is a loopback port on a host as a byte stream
 
+pub mod archive;
 pub mod client;
 pub mod connections;
 pub mod deflate;
