@@ -381,6 +381,7 @@ export const ru = {
   'composer.modeShort.plan': 'План',
   'composer.modeShort.raw': 'Напрямую',
   'composer.modeShort.team': 'Команда',
+  'composer.modelParams': 'Параметры {model}',
   'composer.modeShort.autoEdit': 'Автоправки',
   'composer.modeShort.auto': 'Автоодобрение',
   'composer.modeShort.smart': 'Умное одобрение',

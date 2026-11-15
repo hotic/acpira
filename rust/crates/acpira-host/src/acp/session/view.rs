@@ -6,7 +6,7 @@ use std::sync::Arc;
 use acpira_shared::protocol::{HostMsg, RawJson};
 use acpira_shared::session_patch::{ViewParts, ViewPartsData, encode_turns, raw};
 use acpira_shared::subagents::SubagentSummary;
-use acpira_shared::model_shapes::{ModelShapes, session_model};
+use acpira_shared::model_shapes::{ModelMemory, ModelShapes, session_model};
 use acpira_shared::transcript::*;
 use serde::Serialize;
 use serde_json::value::RawValue;
@@ -156,13 +156,14 @@ impl AcpSession {
   }
 
   fn view_encoded(&self) -> (RawJson, bool, ViewParts) {
-    let shapes = self.deps.policy.model_shapes(&self.agent);
+    let (shapes, memory) = (self.deps.policy.model_shapes(&self.agent), self.deps.policy.model_memory(&self.agent));
     let mut c = self.core.lock();
-    if let Some((rev, status, running, ref cached_shapes, ref full, ref parts)) = c.cached_view
+    if let Some((rev, status, running, (ref cached_shapes, ref cached_memory), ref full, ref parts)) = c.cached_view
       && rev == c.rev
       && status == c.status
       && running == c.phase.running
       && *cached_shapes == shapes
+      && *cached_memory == memory
     {
       return (full.clone(), running, parts.clone());
     }
@@ -210,6 +211,7 @@ impl AcpSession {
       rev: c.rev,
       controls: picked.as_ref().unwrap_or(&c.state.controls),
       model_shapes: shapes.as_ref(),
+      model_memory: memory.as_ref(),
       usage: c.state.usage.as_ref(),
       commands: merged.as_deref().unwrap_or(&c.state.commands),
       queued,
@@ -230,7 +232,7 @@ impl AcpSession {
     let full = RawJson::new(&ViewRef { turns: &turns, ..head });
     let parts = ViewParts(Arc::new(ViewPartsData { id: self.id.clone(), epoch: self.epoch, rev: c.rev, head: encoded_head, turns, last }));
     let running = c.phase.running;
-    c.cached_view = Some((c.rev, c.status, running, shapes, full.clone(), parts.clone()));
+    c.cached_view = Some((c.rev, c.status, running, (shapes, memory), full.clone(), parts.clone()));
     (full, running, parts)
   }
 
@@ -383,6 +385,8 @@ struct ViewRef<'a> {
   controls: &'a SessionControls,
   #[serde(skip_serializing_if = "Option::is_none")]
   model_shapes: Option<&'a ModelShapes>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  model_memory: Option<&'a ModelMemory>,
   #[serde(skip_serializing_if = "Option::is_none")]
   usage: Option<&'a Usage>,
   commands: &'a [SlashCommand],

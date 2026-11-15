@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
-use crate::model_shapes::ModelShapes;
+use crate::model_shapes::{ModelMemory, ModelShapes};
 use crate::num::{Num, lenient_opt_i64, lenient_opt_u64};
 use crate::subagents::SubagentSummary;
 
@@ -1764,6 +1764,9 @@ pub struct SessionView {
   pub controls: SessionControls,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub model_shapes: Option<ModelShapes>,
+  /// What the user last ran each of this agent's models with (engine prefs)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub model_memory: Option<ModelMemory>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub usage: Option<Usage>,
   pub commands: Vec<SlashCommand>,

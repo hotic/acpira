@@ -377,6 +377,7 @@ export const fr = {
   'composer.modeShort.plan': 'Plan',
   'composer.modeShort.raw': 'Brut',
   'composer.modeShort.team': 'Équipe',
+  'composer.modelParams': 'Paramètres de {model}',
   'composer.modeShort.autoEdit': 'Édition auto',
   'composer.modeShort.auto': 'Approbation auto',
   'composer.modeShort.smart': 'Approbation smart',

@@ -1,11 +1,12 @@
 //! The agents: the registry and its probes, warm processes, remembered settings and model shapes, health, hidden
 //! agents and the controls a new session paints before session/new
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use acpira_shared::agent_order::arrange_agents;
 use acpira_shared::inventory::{AgentHealth, AgentHealthStage, AgentRuntimeInfo, HealthSource};
-use acpira_shared::model_shapes::{ModelShapes, learn_shape};
+use acpira_shared::model_shapes::{ModelMemory, ModelShapes, is_model_control, learn_shape};
 use acpira_shared::protocol::HostMsg;
 use acpira_shared::settings::HiddenMap;
 use acpira_shared::transcript::*;
@@ -116,7 +117,54 @@ impl SessionManager {
       let cur = st.prefs.last_settings.entry(s.agent.clone()).or_default();
       cur.config = config;
     }
+    self.remember_model(s);
     self.save_prefs(&s.agent);
+  }
+
+  /// The model a pick left the session on, with its own parameters as they stand, becomes the agent's newest (the
+  /// picker shows each model with what it last ran with, and a switch back restores it). Every open session of the
+  /// agent shows the memory, so each is pushed again
+  fn remember_model(&self, s: &AcpSession) {
+    let controls = s.agent_controls();
+    {
+      let mut st = self.state.lock();
+      let mut memory = st.prefs.model_memory.get(&s.agent).cloned().unwrap_or_default();
+      if !memory.note(&controls) {
+        return;
+      }
+      st.prefs.model_memory.insert(s.agent.clone(), memory);
+    }
+    for other in self.live_sessions() {
+      if other.agent == s.agent {
+        other.republish();
+      }
+    }
+  }
+
+  /// A user's pick on a live session, then the parameters that belong with it: `also` when the page sent them (a model
+  /// picked together with its level), else what a newly picked model last ran with. The model's own switch has ended
+  /// by then, carried-over effort included (`set_config_wire`), so nothing here races it. A parameter is set only when
+  /// the session offers that value and holds another; one that fails is logged and the rest still apply
+  pub(super) async fn pick_config(&self, s: &Arc<AcpSession>, config_id: String, value: String, also: Option<BTreeMap<String, String>>) -> anyhow::Result<()> {
+    let model = s.agent_controls().options.iter().any(|c| c.id == config_id && is_model_control(c));
+    s.select_config(config_id.clone(), value.clone()).await?;
+    let controls = s.agent_controls();
+    let landed = controls.options.iter().any(|c| c.id == config_id && c.value.as_deref() == Some(value.as_str()));
+    let params = match also {
+      Some(also) => Some(also),
+      None if model && landed => self.state.lock().prefs.model_memory.get(&s.agent).and_then(|m| m.picks.get(&value).cloned()),
+      None => None,
+    };
+    for (id, wanted) in params.into_iter().flatten() {
+      // A session still starting defers its picks (`defer_pick`): the parameter joins them, checked when they replay
+      let apply = s.status() != SessionStatus::Ready
+        || s.agent_controls().options.iter().any(|c| c.id == id && c.value.as_deref() != Some(wanted.as_str()) && c.options.iter().any(|o| o.id == wanted));
+      if apply && let Err(e) = s.select_config(id.clone(), wanted.clone()).await {
+        self.log(&format!("setConfig {id}={wanted} after {config_id} failed: {e}"));
+      }
+    }
+    self.remember(s);
+    Ok(())
   }
 
   /// What a session took over its remembered values while it started (`adopt_controls`) is remembered like a pick
@@ -172,26 +220,40 @@ impl SessionManager {
     saves.push(task);
   }
 
-  /// Model shapes another window learned reach this one's history editor
+  /// Model shapes another window learned reach this one's history editor, and the models only another engine ran
+  /// join this one's memory
   pub(super) async fn sync_shapes(&self) {
-    let disk = self.deps.store.load_prefs().await.model_shapes.unwrap_or_default();
+    let prefs = self.deps.store.load_prefs().await;
+    let disk = prefs.model_shapes.unwrap_or_default();
     let changed: Vec<String> = {
       let mut st = self.state.lock();
       let mine = st.prefs.model_shapes.clone().unwrap_or_default();
-      let changed: Vec<String> = disk
+      let mut changed: Vec<String> = disk
         .iter()
         .filter(|(agent, models)| models.iter().any(|(model, shape)| mine.get(*agent).and_then(|m| m.get(model)) != Some(shape)))
         .map(|(a, _)| a.clone())
         .collect();
+      if !changed.is_empty() {
+        let shapes = st.prefs.model_shapes.get_or_insert_with(Default::default);
+        for agent in &changed {
+          let entry = shapes.entry(agent.clone()).or_default();
+          for (k, v) in &disk[agent] {
+            entry.insert(k.clone(), v.clone());
+          }
+        }
+      }
+      for (agent, theirs) in &prefs.model_memory {
+        let mut memory = st.prefs.model_memory.get(agent).cloned().unwrap_or_default();
+        memory.absorb(theirs);
+        if st.prefs.model_memory.get(agent) != Some(&memory) && !memory.recent.is_empty() {
+          st.prefs.model_memory.insert(agent.clone(), memory);
+          if !changed.contains(agent) {
+            changed.push(agent.clone());
+          }
+        }
+      }
       if changed.is_empty() {
         return;
-      }
-      let shapes = st.prefs.model_shapes.get_or_insert_with(Default::default);
-      for agent in &changed {
-        let entry = shapes.entry(agent.clone()).or_default();
-        for (k, v) in &disk[agent] {
-          entry.insert(k.clone(), v.clone());
-        }
       }
       changed
     };
@@ -301,6 +363,11 @@ impl SessionManager {
   /// The parameters each of this agent's models came with, as remembered from its sessions (`model_shapes.rs`)
   pub fn model_shapes(&self, agent: &str) -> Option<ModelShapes> {
     self.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned())
+  }
+
+  /// What the user last ran each of this agent's models with
+  pub fn model_memory(&self, agent: &str) -> Option<ModelMemory> {
+    self.state.lock().prefs.model_memory.get(agent).cloned()
   }
 
   /// What a new session of this agent paints before session/new: the probe's or a stored session's options, and the modes

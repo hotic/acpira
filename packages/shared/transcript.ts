@@ -2,7 +2,7 @@
 
 import type { MsgKey } from './i18n/keys';
 import type { SubagentSummary } from './subagents';
-import type { ModelShapes } from './modelShapes';
+import type { ModelMemory, ModelShapes } from './modelShapes';
 import type { AccountAction } from './protocol';
 
 // Built-in devin / grok; custom ids can be added in acpira.agents
@@ -831,6 +831,9 @@ export interface SessionView {
   controls: SessionControls;
   // The agent's remembered per-model parameters (shared/modelShapes.ts), for the history editor's local model switch
   modelShapes?: ModelShapes;
+  // What the user last ran each of this agent's models with (engine prefs): `recent` holds model option ids, newest
+  // first; `picks` the values of the model's own parameters (reasoning level, model_config) per model option id
+  modelMemory?: ModelMemory;
   usage?: Usage;
   commands: SlashCommand[];
   // Prompts sent while a turn was in progress, in send order; the first goes out when the turn ends

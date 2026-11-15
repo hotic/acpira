@@ -2,10 +2,71 @@
 
 use std::collections::BTreeMap;
 
+use crate::composer_controls::is_reasoning_control;
 use crate::models::group_models;
 use crate::transcript::{ConfigControl, SessionControls, SessionModel};
 
 pub type ModelShapes = BTreeMap<String, Vec<ConfigControl>>;
+
+/// What the user last ran each of an agent's models with (mirror of `ModelMemory` in packages/shared/modelShapes.ts):
+/// `recent` holds model option ids, newest first; `picks` the values of the model's own parameters per model option id
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ModelMemory {
+  #[serde(default)]
+  pub recent: Vec<String>,
+  #[serde(default)]
+  pub picks: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+/// How many models a memory keeps; a model that falls off the end takes its picks along
+const MEMORY_CAP: usize = 64;
+
+impl ModelMemory {
+  /// The session's model becomes the newest, with its parameters as they stand now. False: no model control, or nothing
+  /// changed
+  pub fn note(&mut self, controls: &SessionControls) -> bool {
+    let Some(model) = controls.options.iter().find(|c| is_model_control(c)).and_then(|c| c.value.clone()) else { return false };
+    let picks = model_params(controls);
+    if self.recent.first() == Some(&model) && self.picks.get(&model) == Some(&picks) {
+      return false;
+    }
+    self.recent.retain(|m| m != &model);
+    self.recent.insert(0, model.clone());
+    self.picks.insert(model, picks);
+    self.trim();
+    true
+  }
+
+  /// Takes in what `older` knows and this does not: its models go behind this one's, and a model both hold keeps the
+  /// picks made here
+  pub fn absorb(&mut self, older: &ModelMemory) {
+    for model in &older.recent {
+      if !self.recent.contains(model) {
+        self.recent.push(model.clone());
+        if let Some(picks) = older.picks.get(model) {
+          self.picks.insert(model.clone(), picks.clone());
+        }
+      }
+    }
+    self.trim();
+  }
+
+  fn trim(&mut self) {
+    self.recent.truncate(MEMORY_CAP);
+    self.picks.retain(|model, _| self.recent.contains(model));
+  }
+}
+
+/// The values of the controls that belong to the model: its reasoning level and its `model_config` parameters. The
+/// approval level, the sidekick selects and modes are the session's, never a model's
+pub fn model_params(controls: &SessionControls) -> BTreeMap<String, String> {
+  controls
+    .options
+    .iter()
+    .filter(|c| is_reasoning_control(c) || c.category.as_deref() == Some("model_config"))
+    .filter_map(|c| Some((c.id.clone(), c.value.clone()?)))
+    .collect()
+}
 
 pub fn is_model_control(c: &ConfigControl) -> bool {
   c.category.as_deref() == Some("model") || (c.category.is_none() && c.id == "model")

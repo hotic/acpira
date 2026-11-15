@@ -119,14 +119,18 @@ impl Api {
         let msg: WebviewMsg = serde_json::from_value(message).map_err(|e| bad(format!("message: {e}")))?;
         let v = self.viewer(&m, plugin);
         // Switching a session to full access would answer its cards: that stays the user's
-        let pick = match &msg {
-          WebviewMsg::SetMode { session_id, id } => Some((session_id.clone(), None, id.as_str())),
-          WebviewMsg::SetConfig { session_id, config_id, value } => Some((session_id.clone(), Some(config_id.as_str()), value.as_str())),
-          _ => None,
+        let (sid, picks) = match &msg {
+          WebviewMsg::SetMode { session_id, id } => (session_id.clone(), vec![(None, id.as_str())]),
+          // The parameters that ride along are picks like the first
+          WebviewMsg::SetConfig { session_id, config_id, value, also } => {
+            let first = (Some(config_id.as_str()), value.as_str());
+            (session_id.clone(), std::iter::once(first).chain(also.iter().flatten().map(|(k, v)| (Some(k.as_str()), v.as_str()))).collect())
+          }
+          _ => (None, vec![]),
         };
-        if let Some((sid, config, value)) = pick
+        if !picks.is_empty()
           && let Some(s) = sid.or_else(|| v.active_id()).and_then(|id| m.live_session(&id))
-          && s.grants_full_access(config, value)
+          && let Some((_, value)) = picks.iter().find(|(config, value)| s.grants_full_access(*config, value))
         {
           return Err(bad(format!("`{value}` gives the agent full access; only the user may pick it")));
         }

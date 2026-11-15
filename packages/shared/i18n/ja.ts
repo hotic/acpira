@@ -382,6 +382,7 @@ export const ja = {
   'composer.modeShort.plan': '計画',
   'composer.modeShort.raw': 'ダイレクト',
   'composer.modeShort.team': 'チーム',
+  'composer.modelParams': '{model} のパラメータ',
   'composer.modeShort.autoEdit': '自動編集',
   'composer.modeShort.auto': '自動承認',
   'composer.modeShort.smart': 'スマート承認',

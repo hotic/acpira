@@ -14,12 +14,16 @@ use crate::store::record::{RecordSource, SessionRecord};
 use crate::store::session_lease::{Claim, SessionLeases};
 
 /// A mirror's policy: no compaction or plan auto-approval, and it never runs a turn; the live policy's model shapes
-/// still show
+/// and model memory still show
 struct MirrorPolicy(Arc<dyn SessionPolicy>);
 
 impl SessionPolicy for MirrorPolicy {
   fn model_shapes(&self, agent: &str) -> Option<acpira_shared::model_shapes::ModelShapes> {
     self.0.model_shapes(agent)
+  }
+
+  fn model_memory(&self, agent: &str) -> Option<acpira_shared::model_shapes::ModelMemory> {
+    self.0.model_memory(agent)
   }
 
   fn claim(&self, _session: &str) -> Option<Result<u64, String>> {

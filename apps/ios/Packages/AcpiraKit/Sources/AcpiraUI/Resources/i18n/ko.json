@@ -373,6 +373,7 @@
   "composer.modeShort.plan": "계획",
   "composer.modeShort.raw": "직접",
   "composer.modeShort.team": "팀",
+  "composer.modelParams": "{model} 매개변수",
   "composer.modeShort.autoEdit": "자동 편집",
   "composer.modeShort.auto": "자동 승인",
   "composer.modeShort.smart": "스마트 승인",

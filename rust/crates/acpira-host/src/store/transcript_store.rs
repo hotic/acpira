@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use tokio::fs;
 
-use acpira_shared::model_shapes::{ModelShapes, session_model};
+use acpira_shared::model_shapes::{ModelMemory, ModelShapes, session_model};
 use acpira_shared::transcript::{AgentId, CategoryOp, DiffSource, collect_text_blobs, SessionCategories, SessionControls, SessionModel, SessionSummary, SlashCommand, TurnSettings};
 
 use super::blob_pool;
@@ -87,6 +87,9 @@ pub struct SessionPrefs {
   pub last_settings: BTreeMap<AgentId, TurnSettings>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub model_shapes: Option<BTreeMap<AgentId, ModelShapes>>,
+  /// What the user last ran each model with, per agent: the model's own parameters only, from the user's own picks
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub model_memory: BTreeMap<AgentId, ModelMemory>,
   /// Sessions with a reply nobody has looked at yet: a user fact, the same in every engine and window on the machine and
   /// kept across restarts (edited only through `update_unread`; engines up to 1.10.8 keep it as an unknown key)
   #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -727,6 +730,14 @@ impl TranscriptStore {
           for (k, v) in shapes {
             mine.insert(k.clone(), v.clone());
           }
+        }
+        // This host's picks win; models only another host ran stay behind them
+        if let Some(memory) = prefs.model_memory.get(agent) {
+          let mut next = memory.clone();
+          if let Some(theirs) = disk.model_memory.get(agent) {
+            next.absorb(theirs);
+          }
+          disk.model_memory.insert(agent.clone(), next);
         }
       }
       write_atomic(&file, serde_json::to_string_pretty(&disk)?.as_bytes(), None).await?;

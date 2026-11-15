@@ -8,17 +8,19 @@ import { OptionContent } from './Panel';
 import { CARET_TURN } from './Button';
 import { cn } from './cn';
 
-// Neutral form controls for menu footers: switch rows, segmented single-select groups, ordinal segment scales, header toggles and inline dropdown rows.
+// Neutral form controls for menu footers: switch rows, segmented single-select groups, ordinal segment scales and inline dropdown rows.
 
 export interface SwitchRowProps {
   label: ReactNode;
+  icon?: ReactNode;
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
 }
 
-// A --row-tall row with the label on the left and the switch at the end; the whole row is the hit target
-export function SwitchRow({ label, checked, disabled, onChange }: SwitchRowProps) {
+// A --row-tall row with the label on the left and the switch at the end; the whole row is the hit target. `icon` sits in
+// the icon column of the option rows above it (the model panel's Fast bolt)
+export function SwitchRow({ label, icon, checked, disabled, onChange }: SwitchRowProps) {
   return (
     <Switch skin="menu"
       checked={checked}
@@ -26,6 +28,7 @@ export function SwitchRow({ label, checked, disabled, onChange }: SwitchRowProps
       onCheckedChange={onChange}
       className="flex min-h-row w-full items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors hover:bg-hover focus-visible:bg-hover disabled:text-fg-3 disabled:hover:bg-transparent"
     >
+      {icon && <span className="flex size-icon shrink-0 items-center justify-center [&_svg]:size-icon">{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{label}</span>
       <span className={cn('relative flex h-switch-track-h w-switch-track-w shrink-0 items-center rounded-full transition-colors', checked ? 'bg-btn-1' : 'bg-active', disabled && 'opacity-50')}>
         <span className={cn('size-switch-thumb rounded-full transition-transform', checked ? 'translate-x-switch-on bg-btn-1-fg' : 'translate-x-switch-off bg-fg-3')} />
@@ -107,26 +110,22 @@ export interface SegmentScaleProps<V extends string> {
   options: { value: V; label: string; disabled?: boolean; ultra?: boolean }[];
   value: V;
   onChange: (value: V) => void;
-  // Header controls at the end of the label row, e.g. the panel's Fast toggle
-  actions?: ReactNode;
-  // No label row (the label stays the group's accessible name): the mode menu's approval scale, whose labels say enough
+  // No label row (the label stays the group's accessible name): a scale under a list, whose levels say enough. The track
+  // then runs the full row width, edge to edge with the option rows' highlight
   bare?: boolean;
-  // Every segment the same width instead of sized to its label (equal-length labels, as the approval levels are)
-  equal?: boolean;
-  // Label, segments and actions on one row: a panel whose only content is this scale (a single model's effort)
+  // Label and segments on one row: a panel whose only content is this scale (a single model's effort)
   inline?: boolean;
 }
 
 // An ordinal single-select (reasoning effort) as one segmented capsule with every level spelled out; the current segment is raised.
-// The header carries only the label and `actions` at its end: the raised segment already names the current level, so it is not repeated.
+// The header carries only the label: the raised segment already names the current level, so it is not repeated.
 // Segments size to their labels and share the spare width, so six Codex levels fit a --pop-w-lg panel on one line.
 // Arrow keys move between segments (Base UI radio group)
-export function SegmentScale<V extends string>({ label, options, value, onChange, actions, bare, equal, inline }: SegmentScaleProps<V>) {
+export function SegmentScale<V extends string>({ label, options, value, onChange, bare, inline }: SegmentScaleProps<V>) {
   return (
-    <div className={cn('flex gap-1 px-2 pb-1', inline ? 'items-center gap-2 py-0.5' : 'flex-col', bare && 'pt-0.5')}>
+    <div className={cn('flex gap-1 pb-1', inline ? 'items-center gap-2 py-0.5' : 'flex-col', bare ? 'pt-0.5' : 'px-2')}>
       {!bare && <div className={cn('flex min-h-ctl-sm items-center gap-2 text-2', inline ? 'shrink-0' : undefined)}>
         <span className={cn('min-w-0 truncate text-fg-2', !inline && 'flex-1')}>{label}</span>
-        {!inline && actions && <span className="flex shrink-0 items-center gap-1">{actions}</span>}
       </div>}
       <RadioGroup value={value} onValueChange={v => onChange(v as V)} aria-label={label}
         className={cn('flex min-w-0 gap-0.5 rounded-md bg-hover p-0.5', inline && 'flex-1')}>
@@ -146,8 +145,7 @@ export function SegmentScale<V extends string>({ label, options, value, onChange
                 }
               }}
               className={cn(
-                'inline-flex h-ctl-sm min-w-0 items-center justify-center gap-0.5 rounded-sm px-1 text-3 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 disabled:opacity-50',
-                equal ? 'flex-1 basis-0' : 'flex-auto',
+                'inline-flex h-ctl-sm min-w-0 flex-auto items-center justify-center gap-0.5 rounded-sm px-1 text-3 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 disabled:opacity-50',
                 o.ultra
                   ? on ? 'bg-ultra/15 text-ultra' : 'text-fg-3 enabled:hover:bg-hover enabled:hover:text-ultra'
                   : on ? 'bg-active text-fg-1' : 'text-fg-2 enabled:hover:bg-hover enabled:hover:text-fg-1',
@@ -158,30 +156,6 @@ export function SegmentScale<V extends string>({ label, options, value, onChange
           );
         })}
       </RadioGroup>
-      {inline && actions && <span className="flex shrink-0 items-center gap-1">{actions}</span>}
     </div>
-  );
-}
-
-export interface HeaderToggleProps {
-  label: string;
-  icon?: ReactNode;
-  pressed: boolean;
-  disabled?: boolean;
-  onChange: (pressed: boolean) => void;
-}
-
-// A small pressed/unpressed button for a field header (the Fast toggle beside the effort level): --ctl-sm tall, --r-sm, like a toolbar Chip.
-// Off it is an outlined ghost; on it is raised, and its icon takes the colour given by the caller
-export function HeaderToggle({ label, icon, pressed, disabled, onChange }: HeaderToggleProps) {
-  return (
-    <button type="button" aria-pressed={pressed} disabled={disabled} onClick={() => onChange(!pressed)}
-      className={cn(
-        'inline-flex h-ctl-sm shrink-0 items-center gap-1 rounded-sm px-1.5 text-3 outline-none ring-1 ring-inset transition-colors focus-visible:ring-fg-2 disabled:opacity-50',
-        pressed ? 'bg-active text-fg-1 ring-line-strong' : 'text-fg-3 ring-line enabled:hover:bg-hover enabled:hover:text-fg-1',
-      )}>
-      {icon}
-      {label}
-    </button>
   );
 }

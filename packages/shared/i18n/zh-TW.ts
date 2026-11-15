@@ -384,6 +384,7 @@ export const zhTW = {
   'composer.modeShort.plan': '計畫模式',
   'composer.modeShort.raw': '原始模式',
   'composer.modeShort.team': '協作模式',
+  'composer.modelParams': '{model} 的參數',
   'composer.modeShort.autoEdit': '自動編輯',
   'composer.modeShort.auto': '自動核准',
   'composer.modeShort.smart': '智慧核准',

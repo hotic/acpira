@@ -2,7 +2,6 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { CircleFadingPlus, Plus } from 'lucide-react';
 import { isUltraLevel, levelShort } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
-import { ChipTag } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
 import { ModelMark } from './ModelMark';
@@ -18,9 +17,12 @@ export interface PairSide { name?: string; brand?: string; level?: string }
 // Picked in lab/sidekick-focus.preview.html (2026-10-21)
 export function PairSwitch({ role, lead, sidekick, onRole }: { role: PairRole; lead: PairSide; sidekick: PairSide; onRole: (role: PairRole) => void }) {
   return (
-    <div className="mb-1 flex gap-0.5 rounded-md bg-hover p-0.5">
-      <Side role="lead" side={lead} on={role === 'lead'} onClick={() => onRole('lead')} />
-      <Side role="sidekick" side={sidekick} on={role === 'sidekick'} onClick={() => onRole('sidekick')} />
+    // Ruled off from the list above it, as the search line is from the list below it
+    <div className="mt-1 shrink-0 border-t border-line pt-1">
+      <div className="flex gap-0.5 rounded-md bg-hover p-0.5">
+        <Side role="lead" side={lead} on={role === 'lead'} onClick={() => onRole('lead')} />
+        <Side role="sidekick" side={sidekick} on={role === 'sidekick'} onClick={() => onRole('sidekick')} />
+      </div>
     </div>
   );
 }
@@ -53,12 +55,12 @@ function Side({ role, side, on, onClick }: { role: PairRole; side: PairSide; on:
     : <CircleFadingPlus className="size-icon shrink-0 text-fg-3" strokeWidth={1.75} aria-hidden />;
   return (
     <button type="button" title={title} aria-label={title} aria-pressed={on} data-on={on ? '' : undefined} onClick={onClick}
-      className={cn('pair-side flex h-ctl-sm min-w-0 items-center gap-1.5 rounded-sm px-2 text-left text-2 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
+      className={cn('pair-side flex h-ctl-sm min-w-0 items-baseline gap-1.5 rounded-sm px-2 text-left text-2 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
         on ? 'bg-active text-fg-1' : 'text-fg-2 hover:text-fg-1')}>
-      <span ref={iconRef} className="flex shrink-0">{icon}</span>
+      <span ref={iconRef} className="flex shrink-0 self-center">{icon}</span>
       <span className={cn('pair-name', !side.name && 'text-fg-3')}><span ref={nameRef}>{side.name ?? none}</span></span>
       <span className="pair-level" data-open={showLevel ? '' : undefined} aria-hidden={!showLevel || undefined}>
-        <span>{level && <ChipTag tone={isUltraLevel(level) ? 'ultra' : undefined}>{on ? level : levelShort(level)}</ChipTag>}</span>
+        <span className={cn('text-3', level && isUltraLevel(level) ? 'text-ultra' : 'text-fg-3')}>{level && (on ? level : levelShort(level))}</span>
       </span>
     </button>
   );

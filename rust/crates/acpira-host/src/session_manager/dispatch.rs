@@ -184,19 +184,24 @@ impl SessionManager {
     // Picker changes on standby stay process-free and survive later disk updates.
     if let Some(id) = target_id.as_deref().filter(|id| self.state.lock().copies.contains(*id)) {
       let pick = match &m {
-        W::SetMode { id, .. } => Some((None, id.as_str())),
-        W::SetConfig { config_id, value, .. } => Some((Some(config_id.as_str()), value.as_str())),
+        W::SetMode { id, .. } => Some((None, id.as_str(), None)),
+        W::SetConfig { config_id, value, also, .. } => Some((Some(config_id.as_str()), value.as_str(), also.as_ref())),
         _ => None,
       };
-      if let Some((config, value)) = pick {
+      if let Some((config, value, also)) = pick {
         let _op = self.session_op(id).await;
         if let Some(s) = self.mirror_of(id) {
           s.standby_pick(config, value)?;
+          // The parameters that ride along are picked the same way; one the copy does not hold is passed over
+          let also: Vec<(&String, &String)> = also.into_iter().flatten().filter(|(key, v)| s.standby_pick(Some(key.as_str()), v.as_str()).is_ok()).collect();
           let mut st = self.state.lock();
           let picks = st.copy_picks.entry(id.to_owned()).or_default();
           match config {
             Some(key) => { picks.config.insert(key.to_owned(), value.to_owned()); }
             None => picks.mode_id = Some(value.to_owned()),
+          }
+          for (key, v) in also {
+            picks.config.insert(key.clone(), v.clone());
           }
           drop(st);
           self.emit_session(&s);
@@ -310,10 +315,9 @@ impl SessionManager {
           }
         }
       }
-      W::SetConfig { session_id, config_id, value } => {
+      W::SetConfig { session_id, config_id, value, also } => {
         if let Some(s) = self.target(v, session_id.as_deref()) {
-          s.select_config(config_id, value).await?;
-          self.remember(&s);
+          self.pick_config(&s, config_id, value, also).await?;
         }
       }
       W::SelectSession { id } => self.select_session_for(v, &id).await,
