@@ -380,6 +380,7 @@ export const en = {
   'composer.modeShort.plan': 'Plan',
   'composer.modeShort.raw': 'Raw',
   'composer.modeShort.team': 'Team',
+  'composer.modelParams': '{model} parameters',
   'composer.modeShort.autoEdit': 'Auto-edit',
   'composer.modeShort.auto': 'Auto-approve',
   'composer.modeShort.smart': 'Smart approve',

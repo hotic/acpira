@@ -49,7 +49,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use acpira_shared::inventory::{AgentHealthStage, AgentRuntimeInfo};
-use acpira_shared::model_shapes::ModelShapes;
+use acpira_shared::model_shapes::{ModelMemory, ModelShapes};
 use acpira_shared::num::Num;
 use acpira_shared::slash_commands::restore_command_receipts;
 use acpira_shared::transcript::*;
@@ -101,6 +101,9 @@ pub struct CompactionPolicy {
   pub auto: bool,
 }
 
+/// What a view shows of the agent's prefs: its model shapes and model memory
+pub type ViewPrefs = (Option<ModelShapes>, Option<ModelMemory>);
+
 pub type OnChange = Arc<dyn Fn(&str, bool) + Send + Sync>;
 
 /// What a session asks its manager while it runs. Each default is the inert answer: no automatic compaction, no plan
@@ -116,6 +119,10 @@ pub trait SessionPolicy: Send + Sync {
   }
   /// The model shapes saved for `agent`
   fn model_shapes(&self, _agent: &str) -> Option<ModelShapes> {
+    None
+  }
+  /// What the user last ran each of `agent`'s models with
+  fn model_memory(&self, _agent: &str) -> Option<ModelMemory> {
     None
   }
   /// Takes the session's cross-engine lease for a turn about to start (`store::session_lease`) and returns its pin; Err:
@@ -291,8 +298,8 @@ pub(crate) struct Core {
   /// What the plugins' processes were last told about each tool row (`plugin_events.rs`)
   pub plugin_events: crate::acp::session::plugin_events::EventState,
   pub plugin_state: crate::acp::session::plugin_hooks::PluginState,
-  /// The last encoded view for `(rev, status, running, model_shapes)`: selecting an unchanged live session reuses it without re-serializing
-  pub cached_view: Option<(i64, SessionStatus, bool, Option<ModelShapes>, acpira_shared::protocol::RawJson, acpira_shared::session_patch::ViewParts)>,
+  /// The last encoded view for `(rev, status, running, (model_shapes, model_memory))`: selecting an unchanged live session reuses it without re-serializing
+  pub cached_view: Option<(i64, SessionStatus, bool, ViewPrefs, acpira_shared::protocol::RawJson, acpira_shared::session_patch::ViewParts)>,
 }
 
 pub struct AcpSession {

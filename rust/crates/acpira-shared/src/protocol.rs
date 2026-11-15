@@ -931,6 +931,9 @@ pub enum WebviewMsg {
     session_id: Option<String>,
     config_id: String,
     value: String,
+    /// Parameters to set once the first pick has landed: a model picked together with its level
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    also: Option<BTreeMap<String, String>>,
   },
   SelectSession {
     id: String,

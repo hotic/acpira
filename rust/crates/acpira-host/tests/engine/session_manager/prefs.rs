@@ -77,6 +77,68 @@ async fn the_last_chosen_config_values_and_picked_mode_are_remembered_per_agent_
   m3.dispose().await;
 }
 
+fn option_value(view: &Value, id: &str) -> Value {
+  view["controls"]["options"].as_array().unwrap().iter().find(|c| c["id"] == id).map_or(Value::Null, |c| c["value"].clone())
+}
+
+// Each model keeps the level it last ran with: a switch back restores it instead of carrying the other model's over, and
+// the view reports every model's parameters, newest model first. Parameters sent along with the model win over the memory
+#[tokio::test(flavor = "multi_thread")]
+async fn each_model_keeps_its_own_level_and_a_switch_back_restores_it() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "setConfig", "configId": "effort", "value": "low" })).await;
+  // A model never run before keeps the level the session was on
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m2" })).await;
+  assert_eq!(option_values(&m.active().unwrap()), [json!("m2"), json!("low")]);
+  m.handle(json!({ "type": "setConfig", "configId": "effort", "value": "high" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m1" })).await;
+  assert_eq!(option_values(&m.active().unwrap()), [json!("m1"), json!("low")]);
+  let memory = json!({ "recent": ["m1", "m2"], "picks": { "m1": { "effort": "low" }, "m2": { "effort": "high" } } });
+  assert_eq!(m.active().unwrap()["modelMemory"], memory);
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m2" })).await;
+  assert_eq!(option_values(&m.active().unwrap()), [json!("m2"), json!("high")]);
+  // A level picked together with the model wins over what the model last ran with, and becomes its memory
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m1" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m2", "also": { "effort": "low", "gone": "x" } })).await;
+  assert_eq!(option_values(&m.active().unwrap()), [json!("m2"), json!("low")]);
+  assert_eq!(m.active().unwrap()["modelMemory"]["picks"]["m2"], json!({ "effort": "low" }));
+  m.dispose().await;
+  // The memory is on disk for the next engine
+  let next = Mgr::new(dir.path(), Opts::fake(&fake));
+  next.init().await;
+  assert_eq!(v(next.m.model_memory("fake")), json!({ "recent": ["m2", "m1"], "picks": { "m1": { "effort": "low" }, "m2": { "effort": "low" } } }));
+  next.dispose().await;
+}
+
+// The approval level and the sidekick are the session's, not a model's: neither is kept per model nor put back by a
+// model switch, while the model's own Fast toggle is
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_models_own_parameters_are_kept_per_model() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::with_agents(fake.setting(json!({ "env": { "FAKE_APPROVAL": "1", "FAKE_SIDEKICK": "1", "FAKE_BOOL": "1" } })), "fake"));
+  m.init().await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "setConfig", "configId": "approval", "value": "auto" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "fast", "value": "true" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m2" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "approval", "value": "ask" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "sidekick", "value": "m1" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "fast", "value": "false" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m1" })).await;
+  let view = m.active().unwrap();
+  assert_eq!(option_value(&view, "fast"), "true");
+  assert_eq!(option_value(&view, "approval"), "ask");
+  assert_eq!(option_value(&view, "sidekick"), "m1");
+  let both = json!({ "m1": { "effort": "high", "fast": "true" }, "m2": { "effort": "high", "fast": "false" } });
+  assert_eq!(view["modelMemory"]["picks"], both);
+  m.dispose().await;
+}
+
 fn shape_ids(shape: &Value) -> Vec<String> {
   shape.as_array().map(|a| a.iter().map(|c| format!("{}:{}", c["id"].as_str().unwrap(), c["options"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap()).collect::<Vec<_>>().join("|"))).collect()).unwrap_or_default()
 }

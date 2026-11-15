@@ -7,6 +7,10 @@ import { groupModels } from './models';
 // reads a model's parameters from here instead of keeping the previous model's.
 export type ModelShapes = Record<string, ConfigControl[]>;
 
+// What the user last ran each of an agent's models with (engine prefs): `recent` holds model option ids, newest first;
+// `picks` the values of the model's own parameters (reasoning level, model_config) per model option id
+export interface ModelMemory { recent: string[]; picks: Record<string, Record<string, string>> }
+
 export function isModelControl(c: Pick<ConfigControl, 'id' | 'category'>): boolean {
   return c.category === 'model' || (!c.category && c.id === 'model');
 }

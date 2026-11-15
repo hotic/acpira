@@ -1,15 +1,17 @@
-import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Plus, Zap } from 'lucide-react';
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Ban, Brain, Check, ChevronRight, Plus, Zap } from 'lucide-react';
 import type { ConfigControl } from '@acpira/shared/transcript';
+import { shapeFor, type ModelMemory, type ModelShapes } from '@acpira/shared/modelShapes';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
-import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
+import { chipTags, composerControls, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
 import { Chip, ChipTag } from '../ui/Button';
-import { HeaderToggle, SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
+import { SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
 import { cn } from '../ui/cn';
 import { Popover } from '../ui/Popover';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Command, SEARCH_FROM } from '../ui/Command';
+import { RadioGroup } from '../ui/RadioGroup';
 import { OptionContent } from '../ui/Panel';
 import { optionClass } from '../ui/DropdownMenu';
 import { ModelMark } from './ModelMark';
@@ -51,7 +53,7 @@ export function ModelOptions({ control, hidden, onSelect, close }: {
 
 // Every ACP uses the Devin-style model chip and panel. Native reasoning and model
 // parameters join the footer, while embedded variants retain their wire IDs.
-export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, sidekickLive, hiddenConfig, onSetConfig, onSqueeze, onSelect, onOpenChange, onConfigure }: OptionMenuProps & {
+export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, sidekickLive, hiddenConfig, onSetConfig, memory, shapes, onSqueeze, onOpenChange, onConfigure, toggleRef }: OptionMenuProps & {
   hidden?: string[];
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
@@ -63,13 +65,20 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   // The sidekick is working a round (chat/subagents/SidekickRelay.tsx)
   sidekickLive?: boolean;
   hiddenConfig?: Record<string, string[]>;
-  onSetConfig: (id: string, value: string) => void;
+  // `also`: parameters to set once the pick has landed (a model picked together with its level)
+  onSetConfig: (id: string, value: string, also?: Record<string, string>) => void;
+  // What each model was last run with and the parameters it came with (engine prefs): the rows' own levels
+  memory?: ModelMemory;
+  shapes?: ModelShapes;
   // Asks the toolbar to give way while the chip cannot keep its name, then its last form (useFitStage squeeze)
   onSqueeze?: (level: SqueezeLevel) => void;
   // Opens the current agent's model settings from the shared header above both sides
   onConfigure?: () => void;
+  // Imperative toggle for the ⌘⇧M / Ctrl+Shift+M model picker shortcut
+  toggleRef?: RefObject<(() => void) | undefined>;
 }) {
   const [open, setOpen] = useState(false);
+  if (toggleRef) toggleRef.current = () => setOpen(o => !o);
   const c = useMemo(() => ({ ...control, options: visibleOptions(control.options, hidden, control.value) }), [control, hidden]);
   // The sidekick offers the models the model list does: the ones hidden there stay out (unless picked)
   const sk = useMemo(() => sidekick && { ...sidekick, options: visibleOptions(sidekick.options, hidden, sidekick.value) }, [sidekick, hidden]);
@@ -90,31 +99,22 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   // The title spells every form's text: a pick that changes it fits the chip again before it paints
   const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(true, onSqueeze && { stage: 1, set: onSqueeze }, title);
   // Keep the last picked sidekick, its level and its fit stage while the chip's trail folds back for None
-  const [lastSk, setLastSk] = useState(skPicked);
-  const [lastSkLevel, setLastSkLevel] = useState(skLevel);
   const skFast = !!skPicked && !!sidekickFast && fastOn(sidekickFast);
-  const [lastStage, setLastStage] = useState(0);
-  if (skPicked && skPicked !== lastSk) setLastSk(skPicked);
-  if (skPicked && skLevel !== lastSkLevel) setLastSkLevel(skLevel);
-  if (skPicked && fit.stage !== lastStage) setLastStage(fit.stage);
-  const shownSk = skPicked ?? lastSk;
-  const shownSkLevel = skPicked ? skLevel : lastSkLevel;
   // The chip follows every pick at once, also while the panel is open (effort / Fast keep it open): it used to hold its
   // content until close, which read as a pick that had not landed (reported 2026-10-16). The panel is end-aligned to the
   // chip's right edge, so a chip resizing leftwards does not move the panel
   const chip = { title, family: cur?.name ?? c.name, brand: cur?.brand, tags, name: cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name };
   const at = (stage: number, ref?: typeof fit.item) => {
     const on = CHIP_STAGES[stage]!;
-    const skOn = CHIP_STAGES[skPicked ? stage : lastStage]!;
     return <Chip ref={ref} data-land="models" data-part={ref ? 'composer-model' : undefined} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
-      trail={sidekick && <SidekickTail open={!!skPicked} live={!!skPicked && !!sidekickLive} name={shownSk?.name} brand={shownSk && optionBrand(shownSk)} named={skOn.names} compact={skOn.compact} level={skOn.levels ? shownSkLevel : undefined} fast={skOn.levels && skFast} animate={!!ref} />}
-      tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}
-      // The short form is part of the key, so a stage step glides the badges like a new level does
-      tagsKey={ref ? (on.levels ? chip.tags.map(tag => tag.label).join(' ') + (on.compact ? ' (short)' : '') : '') : undefined}>
+      trail={skPicked && <SidekickTail live={!!sidekickLive} name={skPicked.name} brand={optionBrand(skPicked)} named={on.names} level={on.levels ? skLevel : undefined} fast={on.levels && skFast} />}
+      tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipParam key={tag.label} tag={tag} />) : undefined}>
       {on.names ? chip.name : null}
     </Chip>;
   };
-  const add = onConfigure && <Chip caret={false} className="-mr-1.5 shrink-0" icon={<Plus strokeWidth={1.75} />}
+  // The glyph sits in the rows' check column: the chip's own padding hangs past the line's inset, less the scrollbar
+  // gutter a searchable list keeps beside its rows
+  const add = onConfigure && <Chip caret={false} className={cn('shrink-0', modelSearch(families, true) ? '-mr-[calc(--spacing(1.5)-var(--scrollbar-thin))]' : '-mr-1.5')} icon={<Plus strokeWidth={1.75} />}
     title={t('settings.providers.addModel')} aria-label={t('settings.providers.addModel')}
     onClick={() => { setOpen(false); onConfigure(); }}>{null}</Chip>;
   return (<>
@@ -127,7 +127,8 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
           <span className="text-3 text-fg-3">{t('settings.agentTab.models')}</span>
           {add}
         </div>}
-        <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)} fold add={add}
+        <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={(value, also) => onSetConfig(c.id, value, also)} close={() => setOpen(false)} fold add={add}
+          model={c} memory={memory} shapes={shapes}
           reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} sidekickFast={sidekickFast} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
@@ -149,78 +150,38 @@ const CHIP_STAGES = [
   { compact: true, caret: false, names: false, levels: false },
 ];
 
+// A parameter on the model chip, read as part of the name: the level as faint text a word space after it, Fast as its
+// bolt alone. No box and no motion: a pick changes the words in place. The short form takes over below the sm container
+// tier and on a chip stepping down to fit (`data-compact`, useFitStage)
+function ChipParam({ tag }: { tag: { label: string; short?: string; fast?: boolean; ultra?: boolean } }) {
+  if (tag.fast) return <FastIcon />;
+  const compact = tag.short !== undefined;
+  return <span className={cn('shrink-0', tag.ultra ? 'text-ultra' : 'text-fg-3')}>
+    <span className={cn(compact && '@max-sm:hidden group-data-[compact]/chip:hidden')}>{tag.label}</span>
+    {tag.short && <span className="hidden @max-sm:inline group-data-[compact]/chip:inline">{tag.short}</span>}
+  </span>;
+}
+
 // The sidekick's part of the model chip: + and its mark in the icon tone, then its name and level like the lead's.
-// Unfolds when a sidekick is picked and folds back for None (matching the panel's effort section); switching between
-// two sidekicks or levels while open glides the width and fades the new model in place
 // While it works a round its mark takes its vendor's colour with a breathing dot and its name the chip's strong text
-// A stage step to or from the short level (`compact`) glides too, from wherever a glide begun in the same commit stands
-function SidekickTail({ open, live, name, brand, named, compact, level, fast, animate }: {
-  open: boolean; live: boolean; name?: string; brand?: string; named: boolean; compact: boolean; level?: string; fast?: boolean; animate?: boolean;
-}) {
-  const body = useRef<HTMLSpanElement>(null);
-  const id = useRef<HTMLSpanElement>(null);
-  const width = useRef(0);
-  const run = useRef<Animation | null>(null);
-  const runFrom = useRef(0);
-  const prev = useRef({ open, name, level, fast, named, compact });
-  useLayoutEffect(() => {
-    const el = body.current;
-    if (!el || !animate) return;
-    const observer = new ResizeObserver(() => {
-      if (!run.current) width.current = el.getBoundingClientRect().width;
-    });
-    observer.observe(el);
-    return () => { observer.disconnect(); run.current?.cancel(); run.current = null; };
-  }, [animate]);
-  useLayoutEffect(() => {
-    const was = prev.current;
-    prev.current = { open, name, level, fast, named, compact };
-    const el = body.current;
-    if (!el || !animate) return;
-    if (!open) {
-      run.current?.cancel();
-      run.current = null;
-      width.current = 0;
-      return;
-    }
-    // A glide that has not started yet (begun earlier in this commit) still stands at its own start
-    const from = run.current ? (run.current.pending ? runFrom.current : el.getBoundingClientRect().width) : width.current;
-    run.current?.cancel();
-    run.current = null;
-    const to = el.scrollWidth;
-    width.current = to;
-    if (!was.open || was.named !== named || (was.name === name && was.level === level && was.fast === fast && was.compact === compact)) return;
-    if (el.closest('[data-motion="none"]') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-    if (from > 0 && to > 0 && Math.abs(to - from) > 0.5) {
-      const anim = el.animate([{ width: `${from}px` }, { width: `${to}px` }], { duration: cssTimeVar(el, '--dur-open', 220), easing: 'ease-out' });
-      run.current = anim;
-      runFrom.current = from;
-      anim.onfinish = () => { if (run.current === anim) run.current = null; };
-    }
-    if (was.name !== name && id.current) {
-      id.current.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: cssTimeVar(el, '--dur', 150), easing: 'ease-out' });
-    }
-  }, [open, name, level, fast, named, compact, animate]);
+function SidekickTail({ live, name, brand, named, level, fast }: { live: boolean; name: string; brand?: string; named: boolean; level?: string; fast?: boolean }) {
   return (
-    <span className="chip-trail sidekick-tail" style={brandStyle(brand)} data-open={open ? '' : undefined} data-live={live ? '' : undefined} aria-hidden={!open || undefined}>
-      <span ref={body}>
-        {name && <>
-          <span className="text-fg-3">+</span>
-          <span ref={id} className="flex shrink-0 items-center gap-1">
-            <span className="sidekick-tail-mark relative flex shrink-0 items-center [&_svg]:size-icon"><ModelMark family={name} brand={brand} colored={live} /><i className="sidekick-pulse" aria-hidden /></span>
-            {named && <span className="sidekick-tail-name whitespace-nowrap">{name}</span>}
-          </span>
-          {level && <ChipTag tone={isUltraLevel(level) ? 'ultra' : undefined} short={levelShort(level)}>{level}</ChipTag>}
-          {/* The sidekick's Fast, tagged as the lead's is */}
-          {fast && <ChipTag icon={<FastIcon />} short="">Fast</ChipTag>}
-        </>}
+    <span className="sidekick-tail flex shrink-0" style={brandStyle(brand)} data-live={live ? '' : undefined}>
+      <span className="flex items-center gap-1 whitespace-nowrap">
+        <span className="text-fg-3">+</span>
+        <span className="flex shrink-0 items-center gap-1">
+          <span className="sidekick-tail-mark relative flex shrink-0 items-center [&_svg]:size-icon"><ModelMark family={name} brand={brand} colored={live} /><i className="sidekick-pulse" aria-hidden /></span>
+          {named && <span className="sidekick-tail-name whitespace-nowrap">{name}</span>}
+        </span>
+        {level && <ChipParam tag={{ label: level, short: levelShort(level), ultra: isUltraLevel(level) }} />}
+        {fast && <FastIcon />}
       </span>
     </span>
   );
 }
 
 function FastIcon() {
-  return <Zap className="size-2.5 shrink-0 fill-current text-fast" strokeWidth={2.25} aria-hidden />;
+  return <Zap className="size-3 shrink-0 fill-current text-fast" strokeWidth={2} aria-hidden />;
 }
 
 // Agents without a model selector still use the same reasoning field and labels.
@@ -247,8 +208,12 @@ interface ModelPanelProps {
   families: ModelFamily[];
   cur?: ModelFamily;
   curVar?: ModelVariant;
-  onSelect: (value: string) => void;
+  onSelect: (value: string, also?: Record<string, string>) => void;
   close: () => void;
+  // The model control with what the engine remembers of its models, for the rows' own levels
+  model?: ConfigControl;
+  memory?: ModelMemory;
+  shapes?: ModelShapes;
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
   sidekick?: ConfigControl;
@@ -257,7 +222,7 @@ interface ModelPanelProps {
   sidekickEffort?: ConfigControl;
   sidekickFast?: ConfigControl;
   hiddenConfig?: Record<string, string[]>;
-  onSetConfig?: (id: string, value: string) => void;
+  onSetConfig?: (id: string, value: string, also?: Record<string, string>) => void;
   // The composer's panel, where a lone model offers no sidekick and its effort fits one row (a plan's Build menu keeps the
   // stacked form)
   fold?: boolean;
@@ -266,11 +231,15 @@ interface ModelPanelProps {
 // One Fast toggle per panel, whatever its source: an embedded model-name variant, a Fusion pair, or a native model_config control
 interface FastState { on: boolean; disabled: boolean; set: (on: boolean) => void }
 
-// The Fast toggle in an effort header: the lead's, and the sidekick's in the same place on its side
-function FastToggle({ fast }: { fast: FastState }) {
-  return <HeaderToggle label="Fast" icon={<Zap className={cn('size-3 shrink-0', fast.on && 'fill-current text-fast')} strokeWidth={2} aria-hidden />}
-    pressed={fast.on} disabled={fast.disabled} onChange={fast.set} />;
+// Fast as a switch row under the effort scale: the lead's, and the sidekick's in the same place on its side. Its bolt
+// sits in the rows' icon column and lights with the switch
+function FastRow({ fast }: { fast: FastState }) {
+  return <SwitchRow label="Fast" icon={<Zap className={cn(fast.on && 'fill-current text-fast')} strokeWidth={1.75} aria-hidden />}
+    checked={fast.on} disabled={fast.disabled} onChange={fast.set} />;
 }
+const thinkingIcon = <Brain strokeWidth={1.75} aria-hidden />;
+// The room `scroll-stable` keeps for a thin scrollbar beside a searchable list
+const GUTTER = 'pr-(--scrollbar-thin)';
 
 function ModelPanel(props: ModelPanelProps) {
   const { cur, curVar, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, onSetConfig } = props;
@@ -283,11 +252,12 @@ function ModelPanel(props: ModelPanelProps) {
   if (isLone(props) && !picked) return <LeadPanel {...props} />;
   const leadLevel = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard')).find(tag => !tag.fast)?.label;
   return <>
+    <PairViews role={role} lead={<LeadPanel {...props} />}
+      sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} fast={sidekickFast} onSetConfig={(id, value) => onSetConfig?.(id, value)} />} />
+    {/* Under the lists, next to the chip it spells out: the search line stays the panel's top edge on either side */}
     <PairSwitch role={role} onRole={setRole}
       lead={{ name: cur?.name, brand: cur?.brand, level: leadLevel }}
       sidekick={{ name: picked?.name, brand: picked && optionBrand(picked), level: picked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined }} />
-    <PairViews role={role} lead={<LeadPanel {...props} />}
-      sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} fast={sidekickFast} onSetConfig={(id, value) => onSetConfig?.(id, value)} />} />
   </>;
 }
 
@@ -297,60 +267,239 @@ function isLone({ families, cur, curVar, reasoning = [], modelConfig = [], fold 
   return !!fold && params && families.length === 1 && families[0] === cur;
 }
 
-// The model list and the lead's parameters: the whole panel, or the lead's side of PairSwitch (which sets the panel's height)
-function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, fold, add }: ModelPanelProps) {
-  const pickFamily = (key: string) => {
-    const f = families.find(x => x.key === key);
-    if (!f) return;
-    // Into Fusion: the model in use becomes the lead when it is one (Claude Opus 5 High → Fusion (Claude Opus 5 High + …)); out of it: the lead's effort carries over.
-    // 1M variants are not offered by the panel, so a family switch lands on the standard-context variant
-    const next = f.fusion
-      ? findFusionVariant(f, { lead: curVar?.lead ?? cur?.name ?? '', effort: curVar?.effort ?? '', sidekick: curVar?.sidekick, fast: curVar?.fast ?? false })
-      : curVar && findVariant(f, curVar.effort, curVar.fast, false);
-    onSelect((next ?? f.variants[0]!).id);
-    close();
+// What a model row stands for: the variant a click on it picks and the parameters it would run with. The current model
+// reads the live controls; another one reads what the engine remembers of it, and offers nothing it has not seen yet
+interface FamilyView { variant: ModelVariant; reasoning: ConfigControl[]; modelConfig: ConfigControl[]; live: boolean; picks?: Record<string, string> }
+
+function familyView(f: ModelFamily, { cur, curVar, reasoning = [], modelConfig = [], model, memory, shapes }: ModelPanelProps): FamilyView {
+  if (f === cur && curVar) return { variant: curVar, reasoning: reasoning.filter(reasoningVisible), modelConfig, live: true };
+  // The variant last used, else the one a family switch lands on. Into Fusion: the model in use becomes the lead when it
+  // is one (Claude Opus 5 High → Fusion (Claude Opus 5 High + …)); out of it: the lead's effort carries over. 1M variants
+  // are not offered by the panel, so a family switch lands on the standard-context variant
+  const recent = memory?.recent.map(id => f.variants.find(v => v.id === id)).find(Boolean);
+  const carried = f.fusion
+    ? findFusionVariant(f, { lead: curVar?.lead ?? cur?.name ?? '', effort: curVar?.effort ?? '', sidekick: curVar?.sidekick, fast: curVar?.fast ?? false })
+    : curVar && findVariant(f, curVar.effort, curVar.fast, false);
+  const variant = recent ?? carried ?? f.variants[0]!;
+  const picks = memory?.picks[variant.id];
+  const shape = picks && model ? shapeFor(shapes, model, variant.id) : undefined;
+  const kept = composerControls((shape ?? []).map(c => (Object.hasOwn(picks!, c.id) && c.options.some(o => o.id === picks![c.id]) ? { ...c, value: picks![c.id] } : c)));
+  return { variant, reasoning: kept.reasoning.filter(reasoningVisible), modelConfig: kept.modelConfig, live: false, picks };
+}
+
+const viewHasParams = (f: ModelFamily, v: FamilyView) => f.variants.length > 1 || v.reasoning.length > 0 || v.modelConfig.length > 0;
+
+// A row's parameters after its name, read as one phrase with it: the level faint on the name's baseline, Fast as its bolt
+function RowParams({ family: f, view }: { family: ModelFamily; view: FamilyView }) {
+  if (f.fusion) return <span className="min-w-0 truncate text-3 text-fg-3">{fusionLabel(view.variant)}</span>;
+  const tags = chipTags(f, view.variant, view.reasoning, view.modelConfig, t('composer.standard'));
+  if (!tags.length) return null;
+  return <span className="flex shrink-0 items-baseline gap-0.5 text-3 text-fg-3">
+    {tags.map(tag => (tag.fast
+      ? <Zap key={tag.label} className="inline size-3 shrink-0 self-center fill-current text-fast" strokeWidth={2} aria-label="Fast" />
+      : <span key={tag.label} className={tag.ultra ? 'text-ultra' : undefined}>{tag.label}</span>))}
+  </span>;
+}
+
+// The end of a model row: the check of the current model, and where the row has parameters the arrow into them, shown
+// while the row is highlighted or its menu is open. A span, since the row itself is the button
+function RowTrail({ checked, label, onOpen }: { checked: boolean; label?: string; onOpen?: (row: HTMLElement) => void }) {
+  // The current row keeps its check under the keyboard's highlight (the panel opens on it); only the pointer swaps it
+  const check = <Check className={cn('size-icon shrink-0 text-fg-1', onOpen && 'group-hover/row:hidden group-data-[params]/row:hidden')} strokeWidth={2} />;
+  if (!onOpen) return checked ? check : <span className="size-icon shrink-0" aria-hidden />;
+  return (
+    <span role="button" tabIndex={-1} title={label} aria-label={label}
+      onClick={e => { e.preventDefault(); e.stopPropagation(); const row = e.currentTarget.closest<HTMLElement>('[data-family]'); if (row) onOpen(row); }}
+      className="-m-1 flex shrink-0 rounded-sm p-1 text-fg-3 hover:bg-active hover:text-fg-1">
+      {checked && check}
+      <ChevronRight strokeWidth={1.75} className={cn('size-icon shrink-0 group-data-[params]/row:block group-data-[params]/row:opacity-100',
+        checked ? 'hidden group-hover/row:block' : 'opacity-0 group-data-[highlighted]/row:opacity-100')} />
+    </span>
+  );
+}
+
+// A model row's own menu, beside the row: its levels as a list, then its switches. Opened from the row's arrow or with
+// the right arrow key; the left arrow key or Escape goes back to the list
+function ParamsMenu({ anchor, onClose, children }: { anchor: HTMLElement; onClose: () => void; children: ReactNode }) {
+  return (
+    <Popover.Root open onOpenChange={next => { if (!next) onClose(); }}>
+      <Popover.Portal><Popover.Positioner anchor={anchor} side="right" align="end" width="sm">
+        <Popover.Popup palette="menu" initialFocus aria-label={t('composer.effort')}
+          onKeyDown={e => {
+            if (e.key !== 'ArrowLeft' || (e.target as HTMLElement).closest('input, [role="menu"], [role="listbox"]')) return;
+            e.preventDefault();
+            onClose();
+          }}>
+          {children}
+        </Popover.Popup>
+      </Popover.Positioner></Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+// An ordinal single-select as rows, the current level checked: the levels in a model row's own menu
+function LevelList({ options, value, onChange }: { options: { value: string; label: string; ultra?: boolean }[]; value: string; onChange: (value: string) => void }) {
+  return (
+    <RadioGroup.Root value={value} onValueChange={v => onChange(v as string)} aria-label={t('composer.effort')} className="flex flex-col">
+      {options.map(o => <RadioGroup.Item key={o.value} value={o.value} className={o.ultra ? 'text-ultra' : undefined}>
+        <OptionContent checked={o.value === value} checkSlot>{o.label}</OptionContent>
+      </RadioGroup.Item>)}
+    </RadioGroup.Root>
+  );
+}
+
+// What a row's menu holds, for the current model or any other: an embedded family's levels (a Fusion pair as its lead,
+// level and sidekick), the native reasoning levels, then Fast and the model's other parameters. `setParam` sets a native
+// parameter of this row's model, `onSelect` picks one of its variants
+function FamilyParams({ family: f, view, hidden, onSelect, setParam }: {
+  family: ModelFamily; view: FamilyView; hidden?: Record<string, string[]>; onSelect: (id: string) => void; setParam: (id: string, value: string) => void;
+}) {
+  const v = view.variant;
+  const embedded = f.variants.length > 1;
+  const nativeFast = view.modelConfig.find(isFastControl);
+  const fast: FastState | undefined = embedded && f.hasFast
+    ? (f.fusion ? fusionFast(f, v, onSelect) : variantFast(f, v, onSelect))
+    : nativeFast && nativeFastState(nativeFast, hidden?.[nativeFast.id], value => setParam(nativeFast.id, value));
+  const rest = view.modelConfig.filter(control => control !== (fast && !(embedded && f.hasFast) ? nativeFast : undefined));
+  const pickEffort = (e: string) => { const hit = findVariant(f, e, v.fast, false); if (hit) onSelect(hit.id); };
+  const levels = <>
+    {embedded && f.fusion && <FusionParams family={f} variant={v} onSelect={onSelect} />}
+    {embedded && !f.fusion && variantScale(f) && <LevelList options={f.efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={pickEffort} />}
+    {view.reasoning.map(control => {
+      const p = presentReasoning(control);
+      return p.efforts.length > 1 && <LevelList key={control.id} options={p.efforts.map(o => ({ value: o.id, label: o.name, ultra: isUltraLevel(o.name) }))}
+        value={p.off ? '' : (p.value ?? '')} onChange={value => setParam(control.id, value)} />;
+    })}
+  </>;
+  const switches = <>
+    {embedded && !f.fusion && thinkingOnly(f) && <SwitchRow label="Thinking" checked={v.effort === 'Thinking'}
+      disabled={!findVariant(f, v.effort === 'Thinking' ? '' : 'Thinking', v.fast, false)} onChange={on => pickEffort(on ? 'Thinking' : '')} />}
+    {view.reasoning.map(control => {
+      const p = presentReasoning(control);
+      const turnOn = p.efforts.find(o => o.id === 'high')?.id ?? p.efforts[0]?.id ?? p.onId;
+      return p.offId && <SwitchRow key={control.id} label="Thinking" checked={!p.off} onChange={on => { if (on) { if (turnOn) setParam(control.id, turnOn); } else setParam(control.id, p.offId!); }} />;
+    })}
+    {fast && <SwitchRow label="Fast" checked={fast.on} disabled={fast.disabled} onChange={fast.set} />}
+    {rest.map(control => <ModelConfigParams key={control.id} control={control} hidden={hidden?.[control.id]} onChange={value => setParam(control.id, value)} />)}
+  </>;
+  // The hairline only stands between the two groups
+  return <div className="flex flex-col [&>div:empty]:hidden [&>div+div:not(:empty)]:mt-1 [&>div+div:not(:empty)]:border-t [&>div+div:not(:empty)]:border-line [&>div+div:not(:empty)]:pt-1">
+    <div className="flex flex-col">{levels}</div>
+    <div className="flex flex-col">{switches}</div>
+  </div>;
+}
+
+// Rows filed under their source like files under a folder, in first-seen order; rows without one lead, unlabelled.
+// Nothing to file with fewer than two sources: the list stays flat
+interface SourceGroup<T> { value: string; items: T[] }
+function bySource<T>(items: T[], sourceOf: (item: T) => string | undefined): SourceGroup<T>[] | undefined {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const source = sourceOf(item) ?? '';
+    groups.set(source, [...(groups.get(source) ?? []), item]);
+  }
+  if ([...groups.keys()].filter(Boolean).length < 2) return undefined;
+  return [...groups].sort(([a], [b]) => Number(!!a) - Number(!!b)).map(([value, items]) => ({ value, items }));
+}
+// A Command list's rows: flat, or each source's rows under its label
+function grouped<T>(groups: SourceGroup<T>[] | undefined, row: (item: T) => ReactNode) {
+  if (!groups) return row;
+  return (group: SourceGroup<T>) => (
+    <Command.Group key={group.value} items={group.items}>
+      {group.value && <Command.GroupLabel>{group.value}</Command.GroupLabel>}
+      <Command.Collection>{row}</Command.Collection>
+    </Command.Group>
+  );
+}
+type SidekickOption = ConfigControl['options'][number];
+// A family's source as a category. An id that only tells two equally named models apart is no category: it stays on the row
+const familySource = (f: ModelFamily) => (f.source && !f.variants.some(v => v.id === f.source) ? f.source : undefined);
+
+// The model list: the whole panel, or the lead's side of PairSwitch (which sets the panel's height). Every row carries
+// the level and Fast its model runs with; a row with parameters opens them in a menu beside it. A lone model keeps
+// them under its row instead (`isLone`): a list of one has nothing to switch between
+function LeadPanel(props: ModelPanelProps) {
+  const { families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, fold, add } = props;
+  const [menu, setMenu] = useState<{ key: string; row: HTMLElement }>();
+  const list = useRef<HTMLDivElement>(null);
+  const groups = useMemo(() => bySource(families, familySource), [families]);
+  const twoLine = families.some(f => f.source && !familySource(f));
+  const lone = isLone(props);
+  const views = useMemo(() => new Map(families.map(f => [f.key, familyView(f, props)])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [families, cur, curVar, reasoning, modelConfig, props.model, props.memory, props.shapes]);
+  const closeMenu = () => {
+    setMenu(undefined);
+    // Back where the keys were: the search line, or the list itself
+    requestAnimationFrame(() => (list.current?.querySelector<HTMLElement>('input') ?? list.current?.querySelector<HTMLElement>('[role="listbox"]'))?.focus({ preventScroll: true }));
   };
+  const opened = menu && families.find(f => f.key === menu.key);
+  const openedView = opened && views.get(opened.key);
+  return (
+    <>
+      {/* Always listed, a lone model too: its checked row is what the panel is about */}
+      <div ref={list} className="flex min-h-0 flex-col"
+        onKeyDown={e => {
+          // The right arrow steps into the highlighted row's parameters, unless it is moving the caret through a query
+          const input = e.target instanceof HTMLInputElement ? e.target : undefined;
+          if (e.key !== 'ArrowRight' || lone || (input && input.selectionStart !== input.value.length)) return;
+          const row = list.current?.querySelector<HTMLElement>('[data-highlighted][data-family][data-has-params]');
+          if (!row) return;
+          e.preventDefault();
+          setMenu({ key: row.dataset.family!, row });
+        }}>
+        <Command.Root<ModelFamily> items={groups ?? families} value={cur ?? null} itemToStringLabel={f => [f.name, f.source].filter(Boolean).join(' ')}
+          itemToStringValue={f => f.key} isItemEqualToValue={(a, b) => a.key === b.key}>
+          <Command.Input visible={modelSearch(families, fold)} action={add} />
+          <Command.Empty />
+          <Command.List searchable={modelSearch(families, fold)}>
+            {grouped(groups, (f: ModelFamily) => {
+              const view = views.get(f.key)!;
+              const params = !lone && viewHasParams(f, view);
+              return <Command.Item key={f.key} value={f} title={f.description} data-family={f.key} data-has-params={params ? '' : undefined}
+                data-params={menu?.key === f.key ? '' : undefined} className={cn('group/row', twoLine && 'min-h-0 py-1.5')}
+                onClick={() => { onSelect(view.variant.id); close(); }}>
+                <OptionContent icon={<ModelMark family={f.name} brand={f.brand} />} description={familySource(f) ? undefined : f.source}
+                  trail={<RowTrail checked={f === cur} label={params ? t('composer.modelParams', { model: f.name }) : undefined}
+                    onOpen={params ? row => setMenu(m => (m?.key === f.key ? undefined : { key: f.key, row })) : undefined} />}>
+                  <span className="flex min-w-0 items-baseline gap-1"><span className={f.fusion ? 'shrink-0' : 'truncate'}>{f.name}</span>{!lone && <RowParams family={f} view={view} />}</span>
+                </OptionContent>
+              </Command.Item>;
+            })}
+          </Command.List>
+        </Command.Root>
+      </div>
+      {opened && openedView && menu.row.isConnected && <ParamsMenu anchor={menu.row} onClose={closeMenu}>
+        <FamilyParams family={opened} view={openedView} hidden={hiddenConfig}
+          // Another model's parameter is picked together with the model: the engine sets it once the model has landed
+          onSelect={onSelect}
+          setParam={(id, value) => (openedView.live ? onSetConfig?.(id, value) : onSelect(openedView.variant.id, { ...openedView.picks, [id]: value }))} />
+      </ParamsMenu>}
+      {lone && <LoneParams {...props} />}
+    </>
+  );
+}
+
+// A lone model's parameters, under its row: a short effort scale fits on one row
+function LoneParams({ cur, curVar, onSelect, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig }: ModelPanelProps) {
   const shown = reasoning.filter(reasoningVisible);
   const showParams = !!(cur && curVar && cur.variants.length > 1);
-  const twoLine = families.some(f => f.source);
   const nativeFast = modelConfig.find(isFastControl);
   const fast: FastState | undefined = showParams && cur!.hasFast
     ? (cur!.fusion ? fusionFast(cur!, curVar!, onSelect) : variantFast(cur!, curVar!, onSelect))
     : nativeFast && nativeFastState(nativeFast, hiddenConfig?.[nativeFast.id], value => onSetConfig?.(nativeFast.id, value));
   const usedNative = fast && !(showParams && cur!.hasFast) ? nativeFast : undefined;
-  // The Fast toggle sits in the first effort header; with no scale to sit on it stays a switch row
-  const embeddedScale = showParams && (cur!.fusion ? fusionEfforts(cur!, curVar!).length > 1 : variantScale(cur!));
-  const reasoningScale = shown.findIndex(control => presentReasoning(control).efforts.length > 1);
-  const owner = !fast ? undefined : embeddedScale ? 'embedded' : reasoningScale >= 0 ? 'reasoning' : 'row';
-  const toggle = fast && <FastToggle fast={fast} />;
   const rest = modelConfig.filter(control => control !== usedNative);
-  const hasParams = showParams || shown.length > 0 || modelConfig.length > 0;
-  // One model and something to set: a lone effort scale fits on one row
-  const lone = isLone({ families, cur, curVar, reasoning, modelConfig, fold, onSelect, close });
-  const inline = lone && (showParams ? 1 : 0) + shown.length + rest.length + (owner === 'row' ? 1 : 0) === 1;
+  const inline = (showParams ? 1 : 0) + shown.length + rest.length + (fast ? 1 : 0) === 1;
   return (
-    <>
-      {/* Always listed, a lone model too: its checked row is what the panel is about */}
-      <Command.Root items={families} value={cur ?? null} itemToStringLabel={f => [f.name, f.source].filter(Boolean).join(' ')}
-        itemToStringValue={f => f.key} isItemEqualToValue={(a, b) => a.key === b.key}>
-        <Command.Input visible={modelSearch(families, fold)} action={add} />
-        <Command.Empty />
-        <Command.List searchable={modelSearch(families, fold)}>
-          {(f: ModelFamily) => <Command.Item key={f.key} value={f} title={f.description} onClick={() => pickFamily(f.key)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
-            <OptionContent icon={<ModelMark family={f.name} brand={f.brand} />} description={f.source} checked={f === cur} checkSlot={!!cur}>{f.name}</OptionContent>
-          </Command.Item>}
-        </Command.List>
-      </Command.Root>
-      {hasParams && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
-        {showParams && (cur!.fusion
-          ? <FusionParams family={cur!} variant={curVar!} onSelect={onSelect} actions={owner === 'embedded' ? toggle : undefined} />
-          : <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} actions={owner === 'embedded' ? toggle : undefined} inline={inline} />)}
-        {shown.map((control, i) => <ReasoningParams key={control.id} control={control} onChange={value => onSetConfig?.(control.id, value)}
-          actions={owner === 'reasoning' && i === reasoningScale ? toggle : undefined} inline={inline} />)}
-        {owner === 'row' && <SwitchRow label="Fast" checked={fast!.on} disabled={fast!.disabled} onChange={fast!.set} />}
-        {rest.map(control => <ModelConfigParams key={control.id} control={control} hidden={hiddenConfig?.[control.id]} onChange={value => onSetConfig?.(control.id, value)} />)}
-      </div>}
-    </>
+    <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
+      {showParams && (cur!.fusion
+        ? <FusionParams family={cur!} variant={curVar!} onSelect={onSelect} />
+        : <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} inline={inline} />)}
+      {shown.map(control => <ReasoningParams key={control.id} control={control} onChange={value => onSetConfig?.(control.id, value)} inline={inline} />)}
+      {fast && <FastRow fast={fast} />}
+      {rest.map(control => <ModelConfigParams key={control.id} control={control} hidden={hiddenConfig?.[control.id]} onChange={value => onSetConfig?.(control.id, value)} />)}
+    </div>
   );
 }
 
@@ -392,7 +541,7 @@ function ModelConfigParams({ control, hidden, onChange }: { control: ConfigContr
   const options = visibleOptions(control.options, hidden, control.value);
   if (isFastControl(control)) {
     const fast = nativeFastState(control, hidden, onChange);
-    return <SwitchRow label="Fast" checked={fast.on} disabled={fast.disabled} onChange={fast.set} />;
+    return <FastRow fast={fast} />;
   }
   // An ACP boolean arrives as a synthetic Off/On pair; the panel shows it as the switch it really is
   if (control.type === 'boolean') {
@@ -401,10 +550,10 @@ function ModelConfigParams({ control, hidden, onChange }: { control: ConfigContr
   return <SelectRow label={control.name} options={options.map(option => ({ value: option.id, label: option.name }))} value={control.value ?? ''} onChange={onChange} />;
 }
 
-// Devin's Fusion pair as its own picker's controls: Lead (menu), Effort (segments of what that lead offers), Sidekick (menu); the pair's
-// Fast toggle rides in the effort header. Every change resolves to a real option through findFusionVariant, so a combination the agent
+// Devin's Fusion pair as its own picker's controls, three rows each opening a menu: Lead, Effort (what that lead offers),
+// Sidekick. Every change resolves to a real option through findFusionVariant, so a combination the agent
 // doesn't offer lands on the nearest one instead of failing; a sidekick the current lead cannot take is disabled rather than hidden
-function FusionParams({ family: f, variant: v, onSelect, actions }: { family: ModelFamily; variant: ModelVariant; onSelect: (id: string) => void; actions?: ReactNode }) {
+function FusionParams({ family: f, variant: v, onSelect }: { family: ModelFamily; variant: ModelVariant; onSelect: (id: string) => void }) {
   const { leads, sidekicks } = f.fusion!;
   const lead = v.lead ?? leads[0] ?? '';
   const ofLead = f.variants.filter(x => x.lead === lead);
@@ -417,93 +566,111 @@ function FusionParams({ family: f, variant: v, onSelect, actions }: { family: Mo
   return (
     <div className="flex flex-col">
       <SelectRow label={t('composer.lead')} options={leads.map(l => ({ value: l, label: l }))} value={lead} onChange={l => pick({ lead: l })} />
-      {efforts.length > 1 && <EffortField options={efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={e => pick({ effort: e })} actions={actions} />}
+      {efforts.length > 1 && <SelectRow label={t('composer.effort')} options={efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={e => pick({ effort: e })} />}
       <SelectRow label={t('composer.sidekick')} options={sidekicks.map(s => ({ value: s, label: s, disabled: !offers(s) }))} value={v.sidekick ?? ''} onChange={s => pick({ sidekick: s })} />
     </div>
   );
 }
 
-// The built-in agent's sidekick side: none, or any model the model list offers (its source on the second line), then the
-// sidekick's own effort scale while its model has levels. A pick keeps the panel open, since the effort is set right below.
-// The side fills the lead's height (`.pair-view`), its list taking what the scale leaves: the scale slides in under the list
-// once a model with levels is picked and back out for none, keeping the last levels while it closes
+// The built-in agent's sidekick side: none, or any model the model list offers (its source on the second line). The
+// picked one carries its level and Fast on its row like a lead does, and opens them in the menu beside it; a pick keeps
+// the panel open, since the level is set from that row. The side fills the lead's height (`.pair-view`)
 function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { control: ConfigControl; effort?: ConfigControl; fast?: ConfigControl; onSetConfig: (id: string, value: string) => void }) {
   const cur = control.options.find(o => o.id === (control.value ?? NO_SIDEKICK));
-  const live = effort && reasoningVisible(effort) ? effort : undefined;
-  const [last, setLast] = useState(live);
-  if (live && live !== last) setLast(live);
-  const scale = live ?? last;
-  // The sidekick's Fast sits where the lead's does: in the effort scale's header, else a switch row of its own
-  const fast = fastControl && nativeFastState(fastControl, undefined, value => onSetConfig(fastControl.id, value));
-  const onScale = !!fast && !!live && presentReasoning(live).efforts.length > 1;
-  const twoLine = control.options.some(o => o.description);
+  const [menu, setMenu] = useState<HTMLElement>();
+  const list = useRef<HTMLDivElement>(null);
+  const picked = cur && cur.id !== NO_SIDEKICK ? cur : undefined;
+  const view: FamilyView | undefined = picked && {
+    variant: { id: picked.id, name: picked.name, effort: '', fast: false, long: false },
+    reasoning: effort && reasoningVisible(effort) ? [effort] : [], modelConfig: fastControl ? [fastControl] : [], live: true,
+  };
+  const family: ModelFamily | undefined = picked && { key: picked.id, name: picked.name, variants: [view!.variant], efforts: [], hasFast: false, hasLong: false };
+  const params = !!view && viewHasParams(family!, view);
+  const groups = useMemo(() => bySource(control.options, o => o.description), [control.options]);
+  const closeMenu = () => {
+    setMenu(undefined);
+    requestAnimationFrame(() => (list.current?.querySelector<HTMLElement>('input') ?? list.current?.querySelector<HTMLElement>('[role="listbox"]'))?.focus({ preventScroll: true }));
+  };
   return <>
-    <Command.Root items={control.options} value={cur ?? null} itemToStringValue={o => o.id} isItemEqualToValue={(a, b) => a.id === b.id}
-      itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, o.description].filter(Boolean).join(' '))}>
-      <Command.Input visible={control.options.length >= SEARCH_FROM} />
-      <Command.Empty />
-      <Command.List searchable={control.options.length >= SEARCH_FROM} fill>
-        {(o: ConfigControl['options'][number]) => <Command.Item key={o.id} value={o} onClick={() => onSetConfig(control.id, o.id)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
-          {o.id === NO_SIDEKICK
-            ? <OptionContent icon={<span aria-hidden />} checked={o === cur} checkSlot={!!cur}>{t('composer.sidekickNone')}</OptionContent>
-            : <OptionContent icon={<ModelMark family={o.name} brand={optionBrand(o)} />} description={o.description} checked={o === cur} checkSlot={!!cur}>{o.name}</OptionContent>}
-        </Command.Item>}
-      </Command.List>
-    </Command.Root>
-    <Collapsible.Section open={!!live || !!fast} className="shrink-0">
-      {(scale || fast) && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
-        {scale && (live || !fast) && <ReasoningParams control={scale} onChange={value => onSetConfig(scale.id, value)} actions={onScale ? <FastToggle fast={fast!} /> : undefined} />}
-        {fast && !onScale && <SwitchRow label="Fast" checked={fast.on} disabled={fast.disabled} onChange={fast.set} />}
-      </div>}
-    </Collapsible.Section>
+    <div ref={list} className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={e => {
+        const input = e.target instanceof HTMLInputElement ? e.target : undefined;
+        if (e.key !== 'ArrowRight' || (input && input.selectionStart !== input.value.length)) return;
+        const row = list.current?.querySelector<HTMLElement>('[data-highlighted][data-family][data-has-params]');
+        if (!row) return;
+        e.preventDefault();
+        setMenu(row);
+      }}>
+      <Command.Root<SidekickOption> items={groups ?? control.options} value={cur ?? null} itemToStringValue={o => o.id} isItemEqualToValue={(a, b) => a.id === b.id}
+        itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, o.description].filter(Boolean).join(' '))}>
+        <Command.Input visible={control.options.length >= SEARCH_FROM} />
+        <Command.Empty />
+        <Command.List searchable={control.options.length >= SEARCH_FROM} fill>
+          {grouped(groups, (o: SidekickOption) => {
+            const own = o === picked && params;
+            return <Command.Item key={o.id} value={o} data-family={o.id} data-has-params={own ? '' : undefined} data-params={own && menu ? '' : undefined}
+              onClick={() => onSetConfig(control.id, o.id)} className="group/row">
+              {o.id === NO_SIDEKICK
+                ? <OptionContent icon={<Ban className="text-fg-3" strokeWidth={1.75} />} checked={o === cur} checkSlot={!!cur}>{t('composer.sidekickNone')}</OptionContent>
+                : <OptionContent icon={<ModelMark family={o.name} brand={optionBrand(o)} />} description={groups ? undefined : o.description}
+                  trail={<RowTrail checked={o === cur} label={own ? t('composer.modelParams', { model: o.name }) : undefined}
+                    onOpen={own ? row => setMenu(m => (m ? undefined : row)) : undefined} />}>
+                  <span className="flex min-w-0 items-baseline gap-1"><span className="truncate">{o.name}</span>{o === picked && <RowParams family={family!} view={view!} />}</span>
+                </OptionContent>}
+            </Command.Item>;
+          })}
+        </Command.List>
+      </Command.Root>
+    </div>
+    {menu && view && menu.isConnected && <ParamsMenu anchor={menu} onClose={closeMenu}>
+      <FamilyParams family={family!} view={view} onSelect={() => {}} setParam={onSetConfig} />
+    </ParamsMenu>}
   </>;
 }
 
 // Params of the current family as a small form under the list: reasoning levels as one segmented scale (every level spelled out, one click),
-// Fast as a toggle in its header. A lone Standard / Thinking pair is a Thinking switch. Every change applies immediately; 1M variants are
+// Fast as a switch row below it. A lone Standard / Thinking pair is a Thinking switch. Every change applies immediately; 1M variants are
 // not offered (a level change keeps the standard context), and a Fast the current level lacks is disabled rather than hidden
-function ModelParams({ family: f, variant: v, onSelect, actions, inline }: { family: ModelFamily; variant: ModelVariant; onSelect: (id: string) => void; actions?: ReactNode; inline?: boolean }) {
+function ModelParams({ family: f, variant: v, onSelect, inline }: { family: ModelFamily; variant: ModelVariant; onSelect: (id: string) => void; inline?: boolean }) {
   const pickEffort = (e: string) => { const hit = findVariant(f, e, v.fast, false); if (hit) onSelect(hit.id); };
   return (
     <div className="flex flex-col">
       {variantScale(f) && (
-        <EffortField options={f.efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={pickEffort} actions={actions} inline={inline && fitsRow(f.efforts.length, actions)} />
+        <EffortField options={f.efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={pickEffort} inline={inline && fitsRow(f.efforts.length)} />
       )}
       {thinkingOnly(f) && (
-        <SwitchRow label="Thinking" checked={v.effort === 'Thinking'} disabled={!findVariant(f, v.effort === 'Thinking' ? '' : 'Thinking', v.fast, false)} onChange={on => pickEffort(on ? 'Thinking' : '')} />
+        <SwitchRow label="Thinking" icon={thinkingIcon} checked={v.effort === 'Thinking'} disabled={!findVariant(f, v.effort === 'Thinking' ? '' : 'Thinking', v.fast, false)} onChange={on => pickEffort(on ? 'Thinking' : '')} />
       )}
     </div>
   );
 }
 
 // Native thought_level: effort segments (Codex's Ultra tinted as the last one), plus a Thinking switch when the agent can turn it off.
-function ReasoningParams({ control, onChange, actions, inline }: { control: ConfigControl; onChange: (value: string) => void; actions?: ReactNode; inline?: boolean }) {
+function ReasoningParams({ control, onChange, inline }: { control: ConfigControl; onChange: (value: string) => void; inline?: boolean }) {
   const p = presentReasoning(control);
   const turnOn = p.efforts.find(o => o.id === 'high')?.id ?? p.efforts[0]?.id ?? p.onId;
   return (
     <div className="flex flex-col">
-      {p.offId && <SwitchRow label="Thinking" checked={!p.off} onChange={on => { if (on) { if (turnOn) onChange(turnOn); } else onChange(p.offId!); }} />}
+      {p.offId && <SwitchRow label="Thinking" icon={thinkingIcon} checked={!p.off} onChange={on => { if (on) { if (turnOn) onChange(turnOn); } else onChange(p.offId!); }} />}
       {p.efforts.length > 1 && (
-        <EffortField options={p.efforts.map(o => ({ value: o.id, label: o.name, ultra: isUltraLevel(o.name) }))} value={p.off ? '' : (p.value ?? '')} onChange={onChange} actions={actions} inline={inline && !p.offId && fitsRow(p.efforts.length, actions)} />
+        <EffortField options={p.efforts.map(o => ({ value: o.id, label: o.name, ultra: isUltraLevel(o.name) }))} value={p.off ? '' : (p.value ?? '')} onChange={onChange} inline={inline && !p.offId && fitsRow(p.efforts.length)} />
       )}
     </div>
   );
 }
 
-// One row holds the label and four segments at the panel's width, or three beside a header action (the Fast toggle);
-// longer scales keep the label above them
-const fitsRow = (levels: number, actions?: ReactNode) => levels + (actions ? 1 : 0) <= 4;
+// One row holds the label and four segments at the panel's width; a longer scale stands alone, unlabelled
+const fitsRow = (levels: number) => levels <= 4;
 
-// Shared ordinal field for embedded variants, Fusion leads and native thought_level: one segmented scale for any level count
-function EffortField({ options, value, onChange, actions, inline, label = t('composer.effort') }: {
+// Shared ordinal field for embedded variants, Fusion leads and native thought_level: one segmented scale for any level count.
+// Under a lone model's row the levels name themselves, so the scale carries no label unless it shares a row with it (`inline`)
+function EffortField({ options, value, onChange, inline }: {
   options: { value: string; label: string; ultra?: boolean }[];
   value: string;
   onChange: (value: string) => void;
-  actions?: ReactNode;
   inline?: boolean;
-  label?: string;
 }) {
-  return <SegmentScale label={label} options={options} value={value} onChange={onChange} actions={actions} inline={inline} />;
+  return <SegmentScale label={t('composer.effort')} options={options} value={value} onChange={onChange} inline={inline} bare={!inline} />;
 }
 
 // Flat configOption menu; long lists are searchable. Vendor marks only appear when at least one option has a known brand

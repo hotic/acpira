@@ -11,7 +11,7 @@ use acpira_shared::transcript::*;
 use super::{ATTENTION_SETTLE, Attention, AttentionKind, SessionManager};
 use crate::accounts::account_manager::AccountHooks;
 use crate::acp::session::{AcpSession, CompactionPolicy, SessionAccountHooks, SessionDeps, SessionPolicy};
-use acpira_shared::model_shapes::ModelShapes;
+use acpira_shared::model_shapes::{ModelMemory, ModelShapes};
 use crate::store::record::RecordSource;
 use crate::store::transcript_store::sort_index;
 
@@ -221,6 +221,10 @@ impl SessionPolicy for ManagerPolicy {
 
   fn model_shapes(&self, agent: &str) -> Option<ModelShapes> {
     self.me.upgrade().and_then(|m| m.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned()))
+  }
+
+  fn model_memory(&self, agent: &str) -> Option<ModelMemory> {
+    self.me.upgrade().and_then(|m| m.state.lock().prefs.model_memory.get(agent).cloned())
   }
 
   fn claim(&self, session: &str) -> Option<Result<u64, String>> {

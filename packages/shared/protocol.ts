@@ -526,7 +526,8 @@ export type WebviewMsg =
   | { type: 'buildPlan'; sessionId: string; planId: string; optionId?: string; model?: { configId: string; value: string } }
   | { type: 'openPlan'; sessionId: string; planId: string }
   | { type: 'setMode'; sessionId?: string; id: string }
-  | { type: 'setConfig'; sessionId?: string; configId: string; value: string }
+  // also: parameters to set once the first pick has landed: a model picked together with its level
+  | { type: 'setConfig'; sessionId?: string; configId: string; value: string; also?: Record<string, string> }
   | { type: 'selectSession'; id: string }
   // The view stops showing `id` without showing another (a phone back on its session list, or its app in the background),
   // so a turn ending there is no longer watched from it and gets its unread mark. Ignored unless `id` is what the view shows

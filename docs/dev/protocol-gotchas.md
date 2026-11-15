@@ -80,6 +80,8 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 
 - `sessions/prefs.json` remembers only the user's own mode / config picks; a mode the agent switches itself (Devin's bypass answer, Kimi leaving plan) never touches it.
 - New sessions replay remembered values (model before effort) and hold prompts until done: a first prompt never runs on defaults. They hold even with nothing remembered, so a pick made during start (iOS) defers, never drops.
+- Model memory (`modelMemory`): per model, the user's picks of its own parameters only (reasoning level, `model_config`), never approval, sidekick or modes. A model pick replays it once the switch has landed, effort carry-over included; a failed replay never fails the switch.
+- A model picked with its level is one `setConfig` with `also` (it wins over the memory): view messages run concurrently, so two could land in either order.
 - **Restored sessions** keep persisted controls, not the restore answer's (claude-agent-acp 0.83.0 answers resume with defaults): `load_session` captures `TurnSettings` before `start` and replays them.
 - Accounts bind per session (one process, one credential); a switch resumes the same `acpSessionId` under the new login. Never clear the native id or serialize the UI transcript into a prompt: long histories overflow.
 - Quota auto-switch reserves the session under the turn-settling lock; parked exhausted accounts make repeats walk the list instead of looping; unbound sessions never switch.

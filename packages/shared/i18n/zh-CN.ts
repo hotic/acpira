@@ -386,6 +386,7 @@ export const zhCN = {
   'composer.modeShort.plan': '计划模式',
   'composer.modeShort.raw': '原始模式',
   'composer.modeShort.team': '协作模式',
+  'composer.modelParams': '{model} 的参数',
   'composer.modeShort.autoEdit': '自动编辑',
   'composer.modeShort.auto': '自动审批',
   'composer.modeShort.smart': '智能审批',
