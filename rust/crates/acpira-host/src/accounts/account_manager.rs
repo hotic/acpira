@@ -50,15 +50,12 @@ pub fn quota_failure(err: &anyhow::Error, prev: Option<&QuotaFailure>, now: i64)
   QuotaFailure { issue, at_ms: now, until_ms: now + QUOTA_MAX_AGE_MS, rate_limits: 0 }
 }
 
-/// A cancel that fires by itself after `after`; the handle stops the timer
-fn cancel_after(after: Duration) -> (Cancel, tokio::task::JoinHandle<()>) {
-  let cancel = Cancel::new();
-  let timer_cancel = cancel.clone();
-  let timer = tokio::spawn(async move {
+/// Fire `cancel` after `after`; the handle stops the timer without cancelling the caller.
+fn cancel_after(after: Duration, cancel: Cancel) -> tokio::task::JoinHandle<()> {
+  tokio::spawn(async move {
     tokio::time::sleep(after).await;
-    timer_cancel.cancel();
-  });
-  (cancel, timer)
+    cancel.cancel();
+  })
 }
 
 pub type RunInTerminal = Arc<dyn Fn(String, String, Vec<String>, Option<std::collections::BTreeMap<String, Option<String>>>) + Send + Sync>;
@@ -479,24 +476,41 @@ impl AccountManager {
   }
 
   /// The "+" in the menu: import the local login once, otherwise log a new one in a terminal
-  pub async fn add(self: &Arc<Self>, agent: &str) -> Result<Option<AccountInfo>> {
+  pub async fn add(self: &Arc<Self>, agent: &str, cancel: Cancel) -> Result<Option<AccountInfo>> {
     let draft = self.provider(agent)?.import_local().await;
+    if cancel.is_cancelled() {
+      return Ok(None);
+    }
     if let Some(d) = draft
       && !self.list().iter().any(|a| a.agent == agent && a.label == d.label)
     {
       return Ok(Some(self.store_draft(agent, d, "imported", "host.imported").await?));
     }
-    self.login(agent).await
+    self.login(agent, cancel).await
   }
 
   /// Open a terminal for the isolated login and wait for it to write to disk
-  pub async fn login(self: &Arc<Self>, agent: &str) -> Result<Option<AccountInfo>> {
+  pub async fn login(self: &Arc<Self>, agent: &str, cancel: Cancel) -> Result<Option<AccountInfo>> {
     let flow = self.provider(agent)?.login().await?;
-    (self.run_in_terminal)(tp("host.loginTerminalTitle", &[("agent", agent)]), flow.command, flow.args, Some(flow.env));
-    (self.toast)("info", &t("host.finishLoginInTerminal"));
-    let (cancel, timer) = cancel_after(LOGIN_TIMEOUT);
-    let draft = (flow.collect)(cancel).await;
+    let waiting = Cancel::new();
+    let timer = cancel_after(LOGIN_TIMEOUT, waiting.clone());
+    if !cancel.is_cancelled() {
+      (self.run_in_terminal)(tp("host.loginTerminalTitle", &[("agent", agent)]), flow.command, flow.args, Some(flow.env));
+      (self.toast)("info", &t("host.finishLoginInTerminal"));
+    }
+    // Always let collect finish: providers remove their unfinished private login directory on cancellation.
+    let mut collecting = (flow.collect)(waiting.clone());
+    let draft = tokio::select! {
+      draft = &mut collecting => draft,
+      _ = cancel.cancelled() => {
+        waiting.cancel();
+        collecting.await
+      }
+    };
     timer.abort();
+    if cancel.is_cancelled() {
+      return Ok(None);
+    }
     let Some(draft) = draft else {
       (self.toast)("info", &t("host.loginIncomplete"));
       return Ok(None);
@@ -523,7 +537,8 @@ impl AccountManager {
       self.set_locked(agent, true);
       (self.run_in_terminal)(tp("host.unlockTerminalTitle", &[("agent", agent)]), command, args, None);
       (self.toast)("info", &t("host.finishUnlockInTerminal"));
-      let (cancel, timer) = cancel_after(UNLOCK_TIMEOUT);
+      let cancel = Cancel::new();
+      let timer = cancel_after(UNLOCK_TIMEOUT, cancel.clone());
       let opened = poll_until(&cancel, || {
         let still = locked();
         async move { (!still.await).then_some(()) }

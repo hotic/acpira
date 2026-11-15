@@ -44,6 +44,7 @@ use crate::acp::agents::probe_controls::ProbeResult;
 use crate::acp::agents::registry::AgentRegistry;
 use crate::acp::session::errors::error_text;
 use crate::acp::session::{AcpSession, CompactionPolicy, StartOutcome};
+use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::bus::{Bus, BusPeer};
 use crate::i18n::{t, tp};
@@ -251,6 +252,8 @@ struct State {
   // Keep a bus-only entry visible until its delete has reached the trash and its undo is ready.
   deleting: HashMap<String, SessionSummary>,
   account_actions: Vec<AccountAction>,
+  // A new sign-in or import can supersede a terminal wait even when its shell never reports the terminal closing.
+  account_attempts: HashMap<String, Cancel>,
   probed: HashMap<String, ProbeResult>,
   health: HashMap<String, AgentHealth>,
   health_seen: HashMap<String, StartOutcome>,
@@ -406,6 +409,7 @@ impl SessionManager {
           loading: HashMap::new(),
           deleting: HashMap::new(),
           account_actions: vec![],
+          account_attempts: HashMap::new(),
           probed: HashMap::new(),
           health: HashMap::new(),
           health_seen: HashMap::new(),
