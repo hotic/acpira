@@ -1,6 +1,6 @@
 import { cloneElement, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
-import { AppWindow, Archive, ArchiveRestore, ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Mail, MailCheck, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import { AppWindow, Archive, ArchiveRestore, ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, Layers, LetterText, Link, Mail, MailCheck, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import type { ExportFormat } from '@acpira/shared/protocol';
 import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
 import { t } from '../i18n';
@@ -16,6 +16,9 @@ export interface MoveProject {
   current: boolean;
   // The SSH host's name for a project on one; a local project has none
   hint?: string;
+  // The user section (SessionSection) this project sits in, when one exists
+  sectionId?: string;
+  sectionName?: string;
 }
 
 export interface SessionMenuItemsProps {
@@ -71,7 +74,7 @@ export function Submenu({ icon, label, value, side = 'inline-start', children }:
         <ChevronRight className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />
       </DropdownMenu.SubmenuTrigger>
       <DropdownMenu.Portal><DropdownMenu.Positioner side={side} align="start" width="md"><DropdownMenu.Popup>
-        {children}
+        <div className="scroll-thin flex max-h-pop min-h-0 flex-col overflow-y-auto">{children}</div>
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.SubmenuRoot>
   );
@@ -85,6 +88,7 @@ export const isUnread = (s: SessionSummary) => s.state === 'unread' || !!s.unrea
 // An item only renders when its handler exists; a separator only between two non-empty groups
 // `inWindow`: the desktop app, where "open in editor" opens the session in a window of its own
 function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onUnread, onArchive, onMove, projects = [], onMoveTo, onExport, onCopy, onDelete, categories = [], onFile, onNewCategory }: SessionMenuItemsProps, inWindow = false): ReactElement[] {
+  const subSide = inWindow ? 'inline-end' : 'inline-start';
   const top: ReactElement[] = [];
   if (onOpenInEditor) {
     top.push(<DropdownMenu.Item key="editor" onClick={onOpenInEditor}><OptionContent icon={inWindow ? <AppWindow strokeWidth={1.5} /> : <SquareArrowOutUpRight strokeWidth={1.5} />}>{t(inWindow ? 'session.openInWindow' : 'session.openInEditor')}</OptionContent></DropdownMenu.Item>);
@@ -97,7 +101,7 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onUnread, 
   }
   if (onFile && !session.pinned) {
     const filed = categories.some(c => c.id === session.category);
-    top.push(<Submenu key="file" icon={<Inbox strokeWidth={1.5} />} label={t('session.category.moveTo')}>{[
+    top.push(<Submenu key="file" side={subSide} icon={<Inbox strokeWidth={1.5} />} label={t('session.category.moveTo')}>{[
       ...categories.map(c => (
         <DropdownMenu.Item key={c.id} onClick={() => onFile(c.id)}>
           <OptionContent icon={<Inbox strokeWidth={1.5} />} checked={c.id === session.category} checkSlot={filed}>{c.name}</OptionContent>
@@ -109,9 +113,10 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onUnread, 
     ]}</Submenu>);
   }
   // Each project is a one-line row like every other menu option: folder name, and at the row's end the host's name for an
-  // SSH project and "current" as quiet text; the full path is the tooltip
+  // SSH project and "current" as quiet text; the full path is the tooltip. Projects filed into custom sections gather
+  // under each section's own submenu first, followed by unsectioned projects
   if (onMoveTo && projects.length) {
-    top.push(<Submenu key="project" icon={<FolderInput strokeWidth={1.5} />} label={t('session.moveToProject')}>{projects.map(p => (
+    const projectItem = (p: MoveProject) => (
       <DropdownMenu.Item key={p.cwd} title={p.cwd} onClick={() => onMoveTo(p.cwd)}>
         <OptionContent icon={<Folder strokeWidth={1.5} />}>
           {p.name}
@@ -124,14 +129,40 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onUnread, 
           </span>
         )}
       </DropdownMenu.Item>
-    ))}</Submenu>);
+    );
+    const bySection = new Map<string, { id: string; name: string; items: MoveProject[] }>();
+    const loose: MoveProject[] = [];
+    for (const p of projects) {
+      if (p.sectionId) {
+        let group = bySection.get(p.sectionId);
+        if (!group) {
+          group = { id: p.sectionId, name: p.sectionName || t('session.section.untitled'), items: [] };
+          bySection.set(p.sectionId, group);
+        }
+        group.items.push(p);
+      } else {
+        loose.push(p);
+      }
+    }
+    const groups = [...bySection.values()];
+    const items = groups.length
+      ? [
+        ...groups.map(g => (
+          <Submenu key={`sec:${g.id}`} side={subSide} icon={<Layers strokeWidth={1.5} />} label={g.name} value={String(g.items.length)}>
+            {g.items.map(projectItem)}
+          </Submenu>
+        )),
+        ...(loose.length ? [separator('sep-project-sec'), ...loose.map(projectItem)] : []),
+      ]
+      : projects.map(projectItem);
+    top.push(<Submenu key="project" side={subSide} icon={<FolderInput strokeWidth={1.5} />} label={t('session.moveToProject')}>{items}</Submenu>);
   } else if (onMove) {
     top.push(<DropdownMenu.Item key="move" onClick={onMove}><OptionContent icon={<FolderInput strokeWidth={1.5} />}>{t('session.move')}</OptionContent></DropdownMenu.Item>);
   }
   const middle: ReactElement[] = [];
   // Copy leads the middle group; link and folder are written inside the click, the Markdown is fetched (Shell copySession)
   if (onCopy) {
-    middle.push(<Submenu key="copy" icon={<Copy strokeWidth={1.5} />} label={t('session.copy')}>{[
+    middle.push(<Submenu key="copy" side={subSide} icon={<Copy strokeWidth={1.5} />} label={t('session.copy')}>{[
       <DropdownMenu.Item key="link" onClick={() => onCopy('link')}><OptionContent icon={<Link strokeWidth={1.5} />}>{t('session.copy.link')}</OptionContent></DropdownMenu.Item>,
       <DropdownMenu.Item key="markdown" onClick={() => onCopy('markdown')}><OptionContent icon={<FileText strokeWidth={1.5} />}>{t('session.copy.markdown')}</OptionContent></DropdownMenu.Item>,
       ...session.cwd ? [<DropdownMenu.Item key="cwd" title={session.cwd} onClick={() => onCopy('cwd')}><OptionContent icon={<Folder strokeWidth={1.5} />}>{t('session.copy.cwd')}</OptionContent></DropdownMenu.Item>] : [],
@@ -139,7 +170,7 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onUnread, 
   }
   // Export: one submenu like Copy; plain text keeps only what was said (prompts and replies, no tools or thinking)
   if (onExport) {
-    middle.push(<Submenu key="export" icon={<FileDown strokeWidth={1.5} />} label={t('session.export')}>{[
+    middle.push(<Submenu key="export" side={subSide} icon={<FileDown strokeWidth={1.5} />} label={t('session.export')}>{[
       <DropdownMenu.Item key="md" onClick={() => onExport('markdown')}><OptionContent icon={<FileText strokeWidth={1.5} />}>{t('session.export.markdown')}</OptionContent></DropdownMenu.Item>,
       <DropdownMenu.Item key="json" onClick={() => onExport('json')}><OptionContent icon={<FileJson strokeWidth={1.5} />}>{t('session.export.json')}</OptionContent></DropdownMenu.Item>,
       <DropdownMenu.Item key="text" title={t('session.export.textHint')} onClick={() => onExport('text')}><OptionContent icon={<LetterText strokeWidth={1.5} />}>{t('session.export.text')}</OptionContent></DropdownMenu.Item>,
