@@ -494,11 +494,6 @@ struct TurnActions: View {
   @State private var stats = false
   /// A screenshot is being drawn: a second tap waits for it
   @State private var sharing = false
-  /// The row's width, which with the message's sides is the thread's: the screenshot card takes it
-  @State private var row = RowWidth()
-
-  /// Written on layout and read on a tap, so measuring redraws nothing
-  private final class RowWidth { var value: CGFloat = 0 }
 
   var body: some View {
     let content = hasTurnContent(turn)
@@ -531,7 +526,6 @@ struct TurnActions: View {
     }
     .frame(maxWidth: .infinity, minHeight: WebMetrics.ctlSm, maxHeight: WebMetrics.ctlSm, alignment: .trailing)
     .padding(.top, -Metrics.gap)
-    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { row.value = $0 }
     .task(id: copied) {
       // The check stands for a moment, then the copy glyph returns
       guard copied else { return }
@@ -552,15 +546,14 @@ struct TurnActions: View {
     }
   }
 
-  /// The reply as a watermarked picture, opened in the chat's Lightbox: its share button saves, copies or sends it
+  /// The reply as a watermarked picture at the desktop reading width, opened framed in the chat's Lightbox
   private func share() {
     #if canImport(UIKit)
-    guard !sharing, let lightbox = media.lightbox, row.value > 0 else { return }
+    guard !sharing, let lightbox = media.lightbox else { return }
     let view = media.session.flatMap { model?.views[$0] }
     let meta = shareMeta(title: view?.title ?? "", agent: agent?.id ?? view?.agent ?? "", agentName: agent?.name ?? "",
                          usage: turn.usage, settings: settings, controls: context.controls)
     let card = ShareCard(meta: meta, content: ShareContent(turn))
-    let width = min(row.value + Metrics.pad * 2, Metrics.contentW)
     // The window's own style: a hosted cell's environment can still hold the launch scheme (ios-ui.md)
     let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
     let scheme: ColorScheme = window?.traitCollection.userInterfaceStyle == .light ? .light : .dark
@@ -573,9 +566,9 @@ struct TurnActions: View {
         only.turns = [.agent(turn)]
         await media.loader.preload(only)
       }
-      guard let image = await ShareCapture.render(card, width: width, scheme: scheme, scale: displayScale, media: media,
-                                                  accent: accent) else { return }
-      lightbox.open(LightboxItem(image: image, name: meta.title.isEmpty ? nil : meta.title))
+      guard let image = await ShareCapture.render(card, width: Metrics.contentW, scheme: scheme, scale: displayScale,
+                                                  media: media, accent: accent) else { return }
+      lightbox.open(LightboxItem(image: image, name: meta.title.isEmpty ? nil : meta.title, framed: true))
     }
     #endif
   }

@@ -208,14 +208,7 @@ export struct SharePreview {
   @Local saved: boolean = false;
 
   build() {
-    Stack({ alignContent: Alignment.Top }) {
-      if (this.picture !== undefined) {
-        Image(this.picture)
-          .objectFit(ImageFit.Contain)
-          .width('100%')
-          .height('100%')
-          .onClick(() => this.onClose())
-      }
+    Column() {
       Row() {
         Stack() {
           Lucide({ name: 'x', tint: Color.White, extent: Metrics.icon })
@@ -251,6 +244,20 @@ export struct SharePreview {
       }
       .padding({ left: Metrics.pad, right: Metrics.pad, top: Metrics.s2 })
       .width('100%')
+
+      Stack() {
+        if (this.picture !== undefined) {
+          Image(this.picture)
+            .objectFit(ImageFit.Contain)
+            .width('100%')
+            .height('100%')
+            .onClick(() => this.onClose())
+        }
+      }
+      .padding({ left: Metrics.pad, right: Metrics.pad, top: Metrics.gap, bottom: Metrics.pad })
+      .width('100%')
+      .layoutWeight(1)
+      .onClick(() => this.onClose())
     }
     .width('100%')
     .height('100%')

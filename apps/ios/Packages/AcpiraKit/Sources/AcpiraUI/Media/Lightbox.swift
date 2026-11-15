@@ -38,6 +38,20 @@ nonisolated enum LightboxGeometry {
     CGSize(width: max(0, (bounds.width - content.width) / 2), height: max(0, (bounds.height - content.height) / 2))
   }
 
+  /// Asymmetric stage insets at rest (`top`, `left`, `bottom`, `right`), relaxing smoothly to zero once zoomed content
+  /// grows past the screen's own edges
+  static func centering(_ content: CGSize, in bounds: CGSize, top: CGFloat, left: CGFloat, bottom: CGFloat,
+                        right: CGFloat) -> (top: CGFloat, left: CGFloat, bottom: CGFloat, right: CGFloat) {
+    let cx = (bounds.width + left - right) / 2
+    let cy = (bounds.height + top - bottom) / 2
+    return (
+      top: max(0, cy - content.height / 2),
+      left: max(0, cx - content.width / 2),
+      bottom: max(0, bounds.height - cy - content.height / 2),
+      right: max(0, bounds.width - cx - content.width / 2)
+    )
+  }
+
   /// The deepest zoom: `minMaxZoom`, or further while a screen pixel still meets a picture pixel
   static func maxZoom(pixels: CGSize, fitted: CGSize, screenScale: CGFloat) -> CGFloat {
     guard fitted.width > 0, screenScale > 0 else { return minMaxZoom }
@@ -75,6 +89,7 @@ struct LightboxPage: Equatable {
   var source: MediaSource?
   var name: String?
   var image: DecodedImage?
+  var framed = false
 }
 
 extension LightboxItem {
@@ -82,7 +97,7 @@ extension LightboxItem {
   /// pixels and name its view gave it (a file row names its path). One not among them (no source or session, a photo
   /// not yet sent) stands alone
   func gallery(in view: SessionView?) -> (pages: [LightboxPage], start: Int) {
-    let tapped = LightboxPage(source: source, name: name, image: image)
+    let tapped = LightboxPage(source: source, name: name, image: image, framed: framed)
     guard let source, let view else { return ([tapped], 0) }
     var pages = MediaLoader.entries(in: view).map { LightboxPage(source: $0.source, name: $0.name) }
     guard let start = pages.firstIndex(where: { $0.source == source }) else { return ([tapped], 0) }
@@ -117,7 +132,7 @@ struct Lightbox: View {
     self.loader = loader
     self.session = session
     self.onClose = onClose
-    _pages = State(initialValue: [LightboxPage(source: item.source, name: item.name, image: item.image)])
+    _pages = State(initialValue: [LightboxPage(source: item.source, name: item.name, image: item.image, framed: item.framed)])
     _current = State(initialValue: item.image)
   }
 
@@ -326,7 +341,7 @@ final class PagerView: UIView, UIScrollViewDelegate {
   private func makeSlot(_ i: Int) -> UIView {
     let page = pages[i]
     if let image = page.image ?? held[i] ?? page.source.flatMap({ loader.peek($0) }) {
-      let zoom = ZoomView(decoded: image)
+      let zoom = ZoomView(decoded: image, framed: page.framed)
       zoom.motion = motion
       zoom.onPull = { [weak self] in self?.onPull($0) }
       zoom.onClose = { [weak self] in self?.onClose() }
@@ -431,6 +446,7 @@ final class ZoomView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate 
   var onClose: () -> Void = {}
   var onTap: () -> Void = {}
   var motion = true
+  let framed: Bool
   /// A streamed animation's bytes, played while the view is in a window
   var stream: Data?
   /// The pixels shown, for the share button
@@ -442,7 +458,8 @@ final class ZoomView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate 
   /// The size the picture was last fitted to; a new one (rotation) fits it again
   private var fitted: CGSize = .zero
 
-  init(image: UIImage) {
+  init(image: UIImage, framed: Bool = false) {
+    self.framed = framed
     picture = UIImageView(image: image)
     super.init(frame: .zero)
     scroll.delegate = self
@@ -466,12 +483,12 @@ final class ZoomView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate 
     [double, single, pan].forEach(addGestureRecognizer)
   }
 
-  convenience init(decoded image: DecodedImage) {
+  convenience init(decoded image: DecodedImage, framed: Bool = false) {
     // An animation plays in UIImageView itself; its frames are already on an even beat
     let picture = image.animated
       ? UIImage.animatedImage(with: image.frames.map { UIImage(cgImage: $0) }, duration: image.loopDuration)
       : nil
-    self.init(image: picture ?? UIImage(cgImage: image.cgImage))
+    self.init(image: picture ?? UIImage(cgImage: image.cgImage), framed: framed)
     decoded = image
     stream = image.stream
   }
@@ -484,29 +501,51 @@ final class ZoomView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate 
     player.play(stream) { [weak self] in self?.picture.image = UIImage(cgImage: $0) }
   }
 
+  private var stageInsets: UIEdgeInsets {
+    guard framed else { return .zero }
+    let safe = window?.safeAreaInsets ?? safeAreaInsets
+    return UIEdgeInsets(top: safe.top + Metrics.navBar + Metrics.gap,
+                        left: safe.left + Metrics.pad,
+                        bottom: max(safe.bottom, Metrics.pad) + Metrics.gap,
+                        right: safe.right + Metrics.pad)
+  }
+
+  override func safeAreaInsetsDidChange() {
+    super.safeAreaInsetsDidChange()
+    if framed {
+      fitted = .zero
+      setNeedsLayout()
+    }
+  }
+
   override func layoutSubviews() {
     super.layoutSubviews()
     // A transformed view's frame is undefined; changing it during a pull shifts the picture toward a corner.
     scroll.bounds.size = bounds.size
     scroll.center = CGPoint(x: bounds.midX, y: bounds.midY)
-    guard bounds.size != fitted, bounds.width > 0, let size = picture.image?.size else { return }
+    let insets = stageInsets
+    let stage = bounds.inset(by: insets).size
+    guard bounds.size != fitted, stage.width > 0, stage.height > 0, let size = picture.image?.size else { return }
     fitted = bounds.size
     scroll.zoomScale = 1
-    let fit = LightboxGeometry.fit(size, in: bounds.size)
+    let fit = LightboxGeometry.fit(size, in: stage)
     picture.frame = CGRect(origin: .zero, size: fit)
     scroll.contentSize = fit
     scroll.maximumZoomScale = LightboxGeometry.maxZoom(
       pixels: CGSize(width: size.width * (picture.image?.scale ?? 1), height: size.height * (picture.image?.scale ?? 1)),
       fitted: fit, screenScale: traitCollection.displayScale)
     center()
+    scroll.contentOffset = CGPoint(x: -scroll.contentInset.left, y: -scroll.contentInset.top)
   }
 
   func viewForZooming(in scrollView: UIScrollView) -> UIView? { picture }
   func scrollViewDidZoom(_ scrollView: UIScrollView) { center() }
 
   private func center() {
-    let inset = LightboxGeometry.centering(scroll.contentSize, in: bounds.size)
-    scroll.contentInset = UIEdgeInsets(top: inset.height, left: inset.width, bottom: inset.height, right: inset.width)
+    let insets = stageInsets
+    let c = LightboxGeometry.centering(scroll.contentSize, in: bounds.size, top: insets.top, left: insets.left,
+                                       bottom: insets.bottom, right: insets.right)
+    scroll.contentInset = UIEdgeInsets(top: c.top, left: c.left, bottom: c.bottom, right: c.right)
   }
 
   /// The pull only starts at rest and downward, so a zoomed picture pans and a sideways drag turns the page
