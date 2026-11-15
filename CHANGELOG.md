@@ -11,6 +11,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.2] - 2026-11-15
+
+### Added
+
+- **Keyboard shortcuts can be customized.** A Shortcuts settings page records, unbinds and resets every shortcut, and the desktop menu follows the same bindings. New shortcuts find text in the conversation, quick open files, go to the next or previous session and to the next one needing attention. The desktop menu gains Quick Open, Close, Terminal and All Changes, Close closes the current tab before the window, and CmdOrCtrl+B toggles the left column.
+- VS Code and IntelliJ get a Focus Chat Input command (Cmd/Ctrl+Esc) that moves between the editor and the chat input; Alt+K adds the editor selection to the chat.
+- Appearance settings choose which process steps show (thinking, commentary, reads, commands, edits, other tools), can keep the process open once a turn ends, can draw steps as beads without icons, set the chat width from narrow to full, and wrap long lines in code blocks. Folded projects can show the agent marks their sessions use most.
+- Each model remembers its own parameters: switching back to a model restores its reasoning level and other picks, and the model panel shows every row's level and Fast with a menu of its parameters.
+- Plan, Raw, Team and Compact lead the `/` menu and run at once, and Shift+Tab cycles the working mode. An agent whose approval is its own control shows it as one chip with a shield per level, and a working mode shows as a removable pill.
+- The phone apps (iOS, Android and HarmonyOS) create, rename, fold, reorder and delete project sections like the desktop, falling back to a local copy offline. Folder pickers and Move to project list the custom sections first, and an empty section stays listed so a project can be filed into it.
+- Settings fields carry a one-line description.
+- Tab lists and radio groups are one tab stop and move with the arrow keys.
+- The file viewer marks changed lines with signs and tints like the transcript diff.
+- Thinking Machines and Recursive models show their vendors' marks.
+
+### Changed
+
+- **Antigravity runs the Antigravity CLI's own `agy acp`** instead of Google's separate `agy_acp_server` package. Acpira installs `agy` with Google's install script and signs in through the CLI's terminal login, which shares the login of the interactive `agy` CLI. The managed `agy_acp_server` install and `acpira install-agent` are gone.
+- On the phone, a reply screenshot is drawn at the desktop width and opens framed in the image viewer, clear of the bars and screen edges until zoomed.
+- Buttons share one outline look, with the primary one firmer, on the desktop and the phone apps. Alerts, notices, permission and question cards share one layout and move their actions to a footer strip when narrow; Allow once reads as Allow.
+- The transcript's rows, lists and replies sit closer together.
+- Steering is described as joining the running turn, on Acpira, Claude and Codex.
+- The HarmonyOS app builds against SDK 26 and uses the system's immersive material for its glass bars.
+- Shimmer, beam and ring glow animations cost less in WebKit.
+
+### Fixed
+
+- An Antigravity turn that fails ends with its error instead of a reply, a command row keeps only the command's output, and a session `agy` cannot resume gets a fresh native session.
+- An in-app install of an npm agent no longer fails on a stale npm backup folder left by an earlier run.
+- A reply screenshot shows the reply's body and media whatever folds the reader left open.
+- A markdown image shows its file name until the image has been read, instead of an empty box.
+- Over remote access, the host keeps its own model sources when a client syncs its list.
+- Opening a session on an SSH host waits briefly for its first view instead of starting empty.
+- The HarmonyOS app reads the desktop's dotted pairing code.
+
 ## [2.1.1] - 2026-11-13
 
 ### Added
