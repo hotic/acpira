@@ -41,6 +41,7 @@ scripts/eval/tasks/ledger-*/
 
 # Lab playground (local only): pages, the shared kit (lab/kit) and its Vite config
 lab/
+/vite.lab.config.ts
 
 # Playwright scratch output
 .playwright-cli/
