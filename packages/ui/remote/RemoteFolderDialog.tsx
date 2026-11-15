@@ -80,14 +80,15 @@ export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; o
 }
 
 // The way back up: the home (its name beside the house) or the root, then each folder down to the one shown. Earlier
-// crumbs give way first when the row runs out of room, so the folder shown stays readable
+// crumbs give way first when the row runs out of room, so the folder shown stays readable. Crumbs take the folder rows'
+// inset and icon gap, so the house sits on the folder icons' column and its name on the folder names' edge
 function Crumbs({ path, home, onGo }: { path?: string; home?: string; onGo: (to: string) => void }) {
   const inHome = home !== undefined && path !== undefined && (path === home || path.startsWith(`${home}/`));
   const segments = path === undefined ? [] : (inHome ? path.slice(home!.length) : path).split('/').filter(Boolean);
-  const crumb = 'inline-flex h-ctl-sm min-w-0 items-center gap-1 rounded-md px-1.5 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1';
+  const crumb = 'inline-flex h-ctl-sm min-w-0 items-center gap-gap rounded-md px-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1';
   let at = inHome ? home! : '';
   return (
-    <div className="flex h-ctl min-w-0 items-center gap-0.5 px-1 text-2 text-fg-2">
+    <div className="flex h-ctl min-w-0 items-center gap-0.5 text-2 text-fg-2">
       {home !== undefined && (
         <button type="button" title={home} aria-label={home} onClick={() => onGo(home)} className={cn(crumb, 'shrink-1000', inHome && !segments.length && 'text-fg-1')}>
           <House className="size-icon shrink-0" strokeWidth={1.5} />
