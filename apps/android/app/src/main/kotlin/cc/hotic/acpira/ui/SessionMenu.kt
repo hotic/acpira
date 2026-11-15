@@ -22,6 +22,7 @@ import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.isUnread
 import cc.hotic.acpira.model.ExportFormat
+import cc.hotic.acpira.model.SessionSection
 import cc.hotic.acpira.store.AppModel
 import cc.hotic.acpira.store.Screen
 import cc.hotic.acpira.store.SessionCopy
@@ -138,48 +139,86 @@ fun SessionMenu(
         AppMenuItem(t("session.export.text"), onClick = { pick { lists.export(id, ExportFormat.text) } }, icon = { MenuGlyph("textAlignStart") }, modifier = Modifier.testTag("menu.export.text"))
       }
       MOVE -> {
-        // The new session's folder menu: this computer's folders, each SSH host's, then a folder typed in
-        val (local, hosts) = places(cwd, projects, inChat)
+        // Custom sections first, then remaining folders on this computer and each SSH host, then a folder typed in
+        val grouped = groupedPlaces(cwd, projects, lists.sections, inChat)
         AppMenuBack(t("session.moveToProject"), onClick = { level = null })
         AppMenuGap()
-        if (local.isNotEmpty()) {
+        for ((sec, _) in grouped.sections) {
+          AppMenuItem(
+            sec.name.ifEmpty { t("session.section.untitled") },
+            onClick = { level = SECTION_FOLDERS + sec.id },
+            icon = { MenuGlyph("chevronRight") },
+            modifier = Modifier.testTag("menu.move.section:${sec.id}"),
+          )
+        }
+        if (grouped.sections.isNotEmpty() && (grouped.local.isNotEmpty() || grouped.hosts.isNotEmpty())) AppMenuGap()
+        if (grouped.local.isNotEmpty()) {
           AppMenuItem(t("mobile.projects.local"), onClick = { level = FOLDERS + LOCAL }, icon = { MenuGlyph("chevronRight") }, modifier = Modifier.testTag("menu.move.local"))
         }
-        for (h in hosts.keys) {
+        for (h in grouped.hosts.keys) {
           AppMenuItem(h, subtitle = t("mobile.projects.remote"), onClick = { level = FOLDERS + h }, icon = { MenuGlyph("chevronRight") })
         }
-        if (local.isNotEmpty() || hosts.isNotEmpty()) AppMenuGap()
+        if (grouped.sections.isNotEmpty() || grouped.local.isNotEmpty() || grouped.hosts.isNotEmpty()) AppMenuGap()
         AppMenuItem(t("mobile.projects.add"), onClick = { pick(onAddFolder) }, icon = { MenuGlyph("folderPlus") }, modifier = Modifier.testTag("menu.move.add"))
       }
       else -> {
-        // One machine's folders; the session's own is ticked, so picking it moves nothing
-        val host = at.removePrefix(FOLDERS)
-        val (local, hosts) = places(cwd, projects, inChat)
-        val folders = if (host == LOCAL) local else hosts[host].orEmpty()
-        AppMenuBack(if (host == LOCAL) t("mobile.projects.local") else host, onClick = { level = MOVE })
-        AppMenuGap()
-        for (p in folders) {
-          AppMenuItem(
-            folderLabel(p), subtitle = folderSubtitle(p), checked = !inChat && p == cwd,
-            onClick = { pick { if (p != cwd) lists.move(id, p) } },
-            icon = { MenuGlyph(if (host == LOCAL) "folder" else "globe") }, modifier = Modifier.testTag("menu.move.to:$p"),
-          )
+        val grouped = groupedPlaces(cwd, projects, lists.sections, inChat)
+        if (at.startsWith(SECTION_FOLDERS)) {
+          val secId = at.removePrefix(SECTION_FOLDERS)
+          val run = grouped.sections.firstOrNull { it.first.id == secId }
+          AppMenuBack(run?.first?.name?.ifEmpty { t("session.section.untitled") }.orEmpty(), onClick = { level = MOVE })
+          AppMenuGap()
+          for (p in run?.second.orEmpty()) {
+            val alias = remoteAlias(p)
+            val sub = folderSubtitle(p).let { if (alias != null) "$alias · $it" else it }
+            AppMenuItem(
+              folderLabel(p), subtitle = sub, checked = !inChat && p == cwd,
+              onClick = { pick { if (p != cwd) lists.move(id, p) } },
+              icon = { MenuGlyph(if (alias == null) "folder" else "globe") }, modifier = Modifier.testTag("menu.move.to:$p"),
+            )
+          }
+        } else {
+          // One machine's folders; the session's own is ticked, so picking it moves nothing
+          val host = at.removePrefix(FOLDERS)
+          val folders = if (host == LOCAL) grouped.local else grouped.hosts[host].orEmpty()
+          AppMenuBack(if (host == LOCAL) t("mobile.projects.local") else host, onClick = { level = MOVE })
+          AppMenuGap()
+          for (p in folders) {
+            AppMenuItem(
+              folderLabel(p), subtitle = folderSubtitle(p), checked = !inChat && p == cwd,
+              onClick = { pick { if (p != cwd) lists.move(id, p) } },
+              icon = { MenuGlyph(if (host == LOCAL) "folder" else "globe") }, modifier = Modifier.testTag("menu.move.to:$p"),
+            )
+          }
         }
       }
     }
   }
 }
 
+private class GroupedPlaces(
+  val sections: List<Pair<SessionSection, List<String>>>,
+  val local: List<String>,
+  val hosts: Map<String, List<String>>,
+)
+
 /**
- * The folders a session can move to (NativeProjectMenu.places): its own first unless it is a chat, then the known
- * projects; this computer's, and each SSH host's by alias in the order they first turn up
+ * The folders a session can move to (NativeProjectMenu.grouped): its own first unless it is a chat, then the known
+ * projects; custom sections first, then remaining folders on this computer and each SSH host by alias
  */
-private fun places(cwd: String, projects: List<String>, chat: Boolean): Pair<List<String>, Map<String, List<String>>> {
+private fun groupedPlaces(cwd: String, projects: List<String>, sections: List<SessionSection>, chat: Boolean): GroupedPlaces {
   val folders = ((if (chat) emptyList() else listOf(cwd)) + projects).filter { it.isNotEmpty() }.distinct()
-  val local = folders.filter { remoteAlias(it) == null }
+  val known = folders.toSet()
+  val filed = HashSet<String>()
+  val sectionRuns = sections.mapNotNull { sec ->
+    val items = sec.projects.filter { it in known && filed.add(it) }
+    if (items.isEmpty()) null else sec to items
+  }
+  val rest = folders.filter { it !in filed }
+  val local = rest.filter { remoteAlias(it) == null }
   val hosts = LinkedHashMap<String, MutableList<String>>()
-  for (f in folders) remoteAlias(f)?.let { hosts.getOrPut(it) { mutableListOf() } += f }
-  return local to hosts
+  for (f in rest) remoteAlias(f)?.let { hosts.getOrPut(it) { mutableListOf() } += f }
+  return GroupedPlaces(sectionRuns, local, hosts)
 }
 
 /** `ssh://<alias>/<path>`'s alias (apps/ios RemoteFolder.parse); null for a local folder */
@@ -274,9 +313,33 @@ fun ChatMenuButton(model: AppModel, id: String, chat: ChatEntries? = null) {
   AddProject(model, adding, onClose = { adding = false }, onAdded = { model.lists.move(id, it) })
 }
 
+/** A custom project section's name, typed on create or rename */
+@Composable
+fun SectionPromptDialog(dialogTitle: String, initial: String, allowBlank: Boolean, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+  var name by remember { mutableStateOf(initial) }
+  val canSave = allowBlank || name.isNotBlank()
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(dialogTitle) },
+    text = {
+      Column(Modifier.semantics { testTagsAsResourceId = true }) {
+        TextInput(name, { name = it }, t("session.section.untitled"), tag = "section.field", boxed = true, onDone = { if (canSave) { onSave(name); onDismiss() } })
+      }
+    },
+    confirmButton = {
+      TextButton(onClick = { onSave(name); onDismiss() }, enabled = canSave, modifier = Modifier.semantics { testTagsAsResourceId = true }.testTag("section.save")) {
+        Text(t("mobile.save"), color = if (canSave) Palette.fg1 else Palette.fg3)
+      }
+    },
+    dismissButton = { TextButton(onClick = onDismiss) { Text(t("mobile.cancel"), color = Palette.fg1) } },
+  )
+}
+
 private const val COPY = "copy"
 private const val EXPORT = "export"
 private const val MOVE = "move"
+/** A custom section's folders under the move menu */
+private const val SECTION_FOLDERS = "sec:"
 /** A machine's folders under the move menu: this prefix and the host's alias ("" this computer) */
 private const val FOLDERS = "move:"
 private const val LOCAL = ""

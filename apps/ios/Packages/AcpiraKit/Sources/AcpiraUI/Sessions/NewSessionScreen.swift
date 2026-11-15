@@ -59,7 +59,7 @@ struct NewSessionScreen: View {
               .transition(.opacity)
           }
           NewSessionHero(agent: agent, cwd: draft.cwd, agents: model.agents,
-                         recent: model.projects, chat: model.startsChat(draft.cwd), onAgent: pickAgent,
+                         recent: model.projects, sections: model.sections, chat: model.startsChat(draft.cwd), onAgent: pickAgent,
                          onProject: { draft.cwd = $0 }, onAdd: { model.addProject($0); draft.cwd = $0 },
                          // An empty folder is a chat (AppModel.startsChat); offered where the engine keeps chats
                          onChat: model.chatRoot == nil ? nil : { draft.cwd = "" }, ring: $ring)
@@ -198,6 +198,7 @@ struct NewSessionHero: View {
   let cwd: String
   var agents: [AgentInfo] = []
   var recent: [String] = []
+  var sections: [SessionSection] = []
   /// The session starts as a chat, in no project: the capsule says so instead of a folder
   var chat = false
   var onAgent: (AgentId) -> Void = { _ in }
@@ -253,7 +254,7 @@ struct NewSessionHero: View {
       Button { folders = true } label: { capsule }
         .buttonStyle(.plain)
         .popover(isPresented: $folders) {
-          ProjectPopover(cwd: cwd, recent: recent, chat: chat,
+          ProjectPopover(cwd: cwd, recent: recent, sections: sections, chat: chat,
                          onSelect: { folders = false; onProject($0) },
                          onAdd: { folders = false; adding = true },
                          onChat: onChat.map { chosen in { folders = false; chosen() } })
@@ -266,7 +267,7 @@ struct NewSessionHero: View {
         }
     } else {
       Menu {
-        NativeProjectMenu(cwd: cwd, recent: recent, chat: chat, onSelect: onProject, onAdd: { adding = true },
+        NativeProjectMenu(cwd: cwd, recent: recent, sections: sections, chat: chat, onSelect: onProject, onAdd: { adding = true },
                           onChat: onChat)
       } label: { capsule }
       .menuStyle(.button)

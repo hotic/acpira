@@ -345,12 +345,49 @@ final class AppModel {
          action: ToastAction(label: t("common.undo")) { [weak self] in self?.addProject(cwd) })
   }
 
-  /// Files a folder into one of the desktop's sections at its end, or takes it out (`section` nil): the desktop project
-  /// menu's "Move to section"
+  /// Files a folder into a section at its end, or takes it out (`section` nil): the project menu's "Move to section"
   func setProjectSection(_ cwd: String, _ section: String?) {
     if post(.categoryOp(op: .setProjectSection(cwd: cwd, section: section))) { return }
     for i in sections.indices { sections[i].projects.removeAll { $0 == cwd } }
     if let section, let at = sections.firstIndex(where: { $0.id == section }) { sections[at].projects.append(cwd) }
+  }
+
+  /// Creates a custom project section, optionally filing `project` into it in the same edit
+  func createSection(_ name: String, project: String? = nil) {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let label = trimmed.isEmpty ? t("session.section.untitled") : trimmed
+    let id = "sec-\(UUID().uuidString.prefix(8).lowercased())"
+    if post(.categoryOp(op: .createSection(id: id, name: label, project: project))) { return }
+    if let project {
+      for i in sections.indices { sections[i].projects.removeAll { $0 == project } }
+    }
+    sections.append(SessionSection(id: id, name: label, projects: project.map { [$0] } ?? []))
+  }
+
+  func renameSection(_ id: String, to name: String) {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    if post(.categoryOp(op: .renameSection(id: id, name: trimmed))) { return }
+    if let at = sections.firstIndex(where: { $0.id == id }) { sections[at].name = trimmed }
+  }
+
+  /// Deletes a section; its projects remain on the list under "Projects"
+  func deleteSection(_ id: String) {
+    if post(.categoryOp(op: .deleteSection(id: id))) { return }
+    sections.removeAll { $0.id == id }
+  }
+
+  func collapseSection(_ id: String, _ collapsed: Bool) {
+    if post(.categoryOp(op: .collapseSection(id: id, collapsed: collapsed))) { return }
+    if let at = sections.firstIndex(where: { $0.id == id }) { sections[at].collapsed = collapsed ? true : nil }
+  }
+
+  func reorderSection(_ id: String, before: String?) {
+    if post(.categoryOp(op: .reorderSection(id: id, before: before))) { return }
+    guard let from = sections.firstIndex(where: { $0.id == id }) else { return }
+    let moving = sections.remove(at: from)
+    let at = before.flatMap { anchor in sections.firstIndex { $0.id == anchor } } ?? sections.endIndex
+    sections.insert(moving, at: at)
   }
 
   /// A dragged folder dropped in the list (SessionList.tsx `placeProject`): filed in `section` before `before` (at its

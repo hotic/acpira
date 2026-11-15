@@ -15,6 +15,7 @@ export class PromptArgs {
   secondInitial: string = '';
   hint: string = '';
   save: string = '';
+  allowBlank: boolean = false;
   onSave: (text: string, second: string) => void = () => {};
   close: () => void = () => {};
 }
@@ -31,7 +32,7 @@ struct TextPrompt {
   }
 
   submit(): void {
-    if (this.text.trim().length === 0) {
+    if (!this.args.allowBlank && this.text.trim().length === 0) {
       return;
     }
     this.args.close();
@@ -87,7 +88,7 @@ struct TextPrompt {
           .id('prompt.save')
           .fontSize(Type.text1)
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.text.trim().length > 0 ? $r('app.color.fg_strong') : $r('app.color.fg3'))
+          .fontColor((this.args.allowBlank || this.text.trim().length > 0) ? $r('app.color.fg_strong') : $r('app.color.fg3'))
           .textAlign(TextAlign.Center)
           .layoutWeight(1)
           .height(Metrics.ctl)

@@ -53,7 +53,7 @@ struct NativeSessionMenu: View {
         Menu {
           // The new session's folder menu: this computer's folders, each SSH host's, then a folder typed in. The
           // session's own folder is the ticked one, so picking it moves nothing
-          NativeProjectMenu(cwd: actions.cwd, recent: actions.projects, chat: actions.chat,
+          NativeProjectMenu(cwd: actions.cwd, recent: actions.projects, sections: actions.sections, chat: actions.chat,
                             onSelect: { if $0 != actions.cwd { move($0) } }, onAdd: actions.addFolder)
         } label: {
           // SF Symbols has no folder.badge.arrow.forward: an unknown name draws no icon at all
@@ -113,11 +113,12 @@ struct NativeSessionMenu: View {
 
 // MARK: - Project / agent
 
-/// Native project menus: local folders, or an SSH host's folders, then Add (the caller raises its alert; none without
-/// `onAdd`). The new session's folder picker and the session menu's "Move to project".
+/// Native project menus: custom sections first, then remaining local folders or an SSH host's folders, then Add (the
+/// caller raises its alert; none without `onAdd`). The new session's folder picker and the session menu's "Move to project".
 struct NativeProjectMenu: View {
   let cwd: String
   let recent: [String]
+  var sections: [SessionSection] = []
   /// `cwd` is a chat's (or the draft is one): no folder is ticked, and the chat option is where offered
   var chat = false
   var onSelect: (String) -> Void
@@ -125,19 +126,34 @@ struct NativeProjectMenu: View {
   /// The new session's chat: a session in no project, ahead of the folders; nil where a session moves
   var onChat: (() -> Void)?
 
-  /// The folders the menu offers: this computer's, and each SSH host's in the order they first turn up
-  static func places(cwd: String, recent: [String], chat: Bool) -> (local: [String], remote: [String], hosts: [String]) {
+  /// The folders the menu offers: custom sections first, then the remaining folders on this computer and each SSH host
+  static func grouped(cwd: String, recent: [String], chat: Bool, sections: [SessionSection] = [])
+    -> (sections: [(section: SessionSection, projects: [String])], local: [String], remote: [String], hosts: [String])
+  {
     var seen = Set<String>()
     let folders = ((chat ? [] : [cwd]) + recent).filter { !$0.isEmpty && seen.insert($0).inserted }
-    let local = folders.filter { RemoteFolder.parse($0) == nil }
-    let remote = folders.filter { RemoteFolder.parse($0) != nil }
+    let known = Set(folders)
+    var filed = Set<String>()
+    let runs: [(section: SessionSection, projects: [String])] = sections.compactMap { s in
+      let items = s.projects.filter { known.contains($0) && filed.insert($0).inserted }
+      return items.isEmpty ? nil : (s, items)
+    }
+    let rest = folders.filter { !filed.contains($0) }
+    let local = rest.filter { RemoteFolder.parse($0) == nil }
+    let remote = rest.filter { RemoteFolder.parse($0) != nil }
     var seenHosts = Set<String>()
     let hosts = remote.compactMap { RemoteFolder.parse($0)?.alias }.filter { seenHosts.insert($0).inserted }
-    return (local, remote, hosts)
+    return (runs, local, remote, hosts)
+  }
+
+  /// The folders the menu offers: this computer's, and each SSH host's in the order they first turn up
+  static func places(cwd: String, recent: [String], chat: Bool) -> (local: [String], remote: [String], hosts: [String]) {
+    let g = grouped(cwd: cwd, recent: recent, chat: chat)
+    return (g.local, g.remote, g.hosts)
   }
 
   var body: some View {
-    let (local, remote, hosts) = Self.places(cwd: cwd, recent: recent, chat: chat)
+    let (runs, local, remote, hosts) = Self.grouped(cwd: cwd, recent: recent, chat: chat, sections: sections)
     if let onChat {
       Section {
         // Checked while the draft is a chat; picking it again keeps it
@@ -146,37 +162,54 @@ struct NativeProjectMenu: View {
         }
       }
     }
-    Section {
-      Menu {
-        projects(local)
-      } label: {
-        Label(t("mobile.projects.local"), systemImage: "desktopcomputer")
-      }
-      .disabled(local.isEmpty)
-      Menu {
-        ForEach(hosts, id: \.self) { host in
+    if !runs.isEmpty {
+      Section {
+        ForEach(runs, id: \.section.id) { run in
           Menu {
-            projects(remote.filter { RemoteFolder.parse($0)?.alias == host })
+            projects(run.projects, showHost: true)
           } label: {
-            Label { Text(verbatim: host) } icon: { Image(systemName: "server.rack") }
+            Label(run.section.name.isEmpty ? t("session.section.untitled") : run.section.name, systemImage: "square.stack")
           }
         }
-      } label: {
-        Label(t("mobile.projects.remote"), systemImage: "globe")
       }
-      .disabled(remote.isEmpty)
+    }
+    if runs.isEmpty || !local.isEmpty || !remote.isEmpty {
+      Section {
+        if runs.isEmpty || !local.isEmpty {
+          Menu {
+            projects(local)
+          } label: {
+            Label(t("mobile.projects.local"), systemImage: "desktopcomputer")
+          }
+          .disabled(local.isEmpty)
+        }
+        if runs.isEmpty || !remote.isEmpty {
+          Menu {
+            ForEach(hosts, id: \.self) { host in
+              Menu {
+                projects(remote.filter { RemoteFolder.parse($0)?.alias == host })
+              } label: {
+                Label { Text(verbatim: host) } icon: { Image(systemName: "server.rack") }
+              }
+            }
+          } label: {
+            Label(t("mobile.projects.remote"), systemImage: "globe")
+          }
+          .disabled(remote.isEmpty)
+        }
+      }
     }
     if let onAdd { Button(action: onAdd) { Label(t("mobile.projects.add"), systemImage: "folder.badge.plus") } }
   }
 
-  private func projects(_ folders: [String]) -> some View {
+  private func projects(_ folders: [String], showHost: Bool = false) -> some View {
     Picker(selection: Binding(get: { cwd }, set: { onSelect($0) })) {
       ForEach(folders, id: \.self) { folder in
         let remote = RemoteFolder.parse(folder)
         Button {} label: {
           Text(verbatim: folderName(remote?.path ?? folder))
           // Menu labels become native actions; keep their subtitle short before UIKit lays it out.
-          Text(verbatim: Self.subtitle(folder))
+          Text(verbatim: Self.subtitle(folder, showHost: showHost))
           Image(systemName: remote == nil ? "folder" : "globe")
         }
         .tag(folder)
@@ -187,24 +220,28 @@ struct NativeProjectMenu: View {
     .pickerStyle(.inline)
   }
 
-  /// The title names the project and its menu names the machine, leaving the parent path as the only subtitle.
-  static func subtitle(_ folder: String) -> String {
+  /// The title names the project and its menu names the machine (unless inside a custom section, where `showHost` adds
+  /// an SSH host's alias), leaving the parent path as the subtitle.
+  static func subtitle(_ folder: String, showHost: Bool = false) -> String {
     let remote = RemoteFolder.parse(folder)
     let path = remote?.path ?? folder
     let parent = folderOf(path.hasSuffix("/") && path != "/" ? String(path.dropLast()) : path)
     let parts = parent.split(whereSeparator: { $0 == "/" || $0 == "\\" })
     let tail = parts.suffix(2).joined(separator: "/")
-    return tail.isEmpty ? (path.hasPrefix("/") ? "/" : ".")
+    let short = tail.isEmpty ? (path.hasPrefix("/") ? "/" : ".")
       : parts.count > 2 ? "…/\(tail)" : parent
+    if showHost, let alias = remote?.alias { return "\(alias) · \(short)" }
+    return short
   }
 }
 
 /// NativeProjectMenu as a popover, for regular width: it stands centred under its button, where a system menu opens
-/// from one of the button's edges and reads crooked under the new session's centred mark. The menu's per-machine
-/// submenus become sections
+/// from one of the button's edges and reads crooked under the new session's centred mark. The menu's custom sections
+/// and per-machine submenus become sections
 struct ProjectPopover: View {
   let cwd: String
   let recent: [String]
+  var sections: [SessionSection] = []
   var chat = false
   var onSelect: (String) -> Void
   var onAdd: (() -> Void)?
@@ -212,10 +249,14 @@ struct ProjectPopover: View {
   @State private var height = Metrics.popLg
 
   var body: some View {
-    let (local, remote, hosts) = NativeProjectMenu.places(cwd: cwd, recent: recent, chat: chat)
+    let (runs, local, remote, hosts) = NativeProjectMenu.grouped(cwd: cwd, recent: recent, chat: chat, sections: sections)
     let list = VStack(alignment: .leading, spacing: 0) {
       if let onChat {
         row(t("session.group.chats"), symbol: "bubble.left.and.bubble.right", on: chat, action: onChat)
+      }
+      ForEach(runs, id: \.section.id) { run in
+        header(run.section.name.isEmpty ? t("session.section.untitled") : run.section.name)
+        ForEach(run.projects, id: \.self) { folder($0, showHost: true) }
       }
       if !local.isEmpty {
         header(t("mobile.projects.local"))
@@ -246,9 +287,9 @@ struct ProjectPopover: View {
       .padding(.bottom, Metrics.s1)
   }
 
-  private func folder(_ folder: String) -> some View {
+  private func folder(_ folder: String, showHost: Bool = false) -> some View {
     let remote = RemoteFolder.parse(folder)
-    return row(folderName(remote?.path ?? folder), detail: NativeProjectMenu.subtitle(folder),
+    return row(folderName(remote?.path ?? folder), detail: NativeProjectMenu.subtitle(folder, showHost: showHost),
                symbol: remote == nil ? "folder" : "globe", on: !chat && folder == cwd) { onSelect(folder) }
   }
 

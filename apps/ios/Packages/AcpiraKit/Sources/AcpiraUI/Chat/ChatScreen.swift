@@ -176,6 +176,7 @@ struct ChatScreen: View {
     actions.subagentCounts = countsLabel(helpers)
     actions.cwd = session.cwd
     actions.projects = model.projects
+    actions.sections = model.sections
     actions.chat = model.isChat(session.cwd)
     return actions
   }
@@ -282,9 +283,10 @@ struct HeaderActions {
   /// The files the session changed (panel.changes)
   var changes: (() -> Void)?
   var copy: (SessionCopy) -> Void = { _ in }
-  /// The session's folder and the others it can move to
+  /// The session's folder, the others it can move to, and the custom sections grouping them
   var cwd = ""
   var projects: [String] = []
+  var sections: [SessionSection] = []
   /// The session is a chat: its own folder is no project to tick in the move menu
   var chat = false
   var move: ((String) -> Void)?

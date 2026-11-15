@@ -1,4 +1,4 @@
-import { AgentBlock, SessionSummary, SessionView, Turn } from '../wire/Wire';
+import { AgentBlock, SessionSection, SessionSummary, SessionView, Turn } from '../wire/Wire';
 import { t } from './L10n';
 
 // Pure pieces of the session list, its menus and exports: apps/ios Logic/SessionListRows.swift, SessionSearch.swift,
@@ -247,29 +247,58 @@ export function folderSubtitle(folder: string): string {
   return parts.length > 2 ? `…/${tail}` : (path.startsWith('/') ? '/' : '') + tail;
 }
 
-/** Folders split by machine: this computer's, and each SSH host's by alias in the order they first turn up */
+/** A folder's subtitle naming its SSH host when inside a custom section */
+export function folderSubtitleWithHost(folder: string): string {
+  const alias = remoteAlias(folder);
+  const sub = folderSubtitle(folder);
+  return alias === undefined ? sub : `${alias} · ${sub}`;
+}
+
+export class SectionPlaces {
+  id: string = '';
+  name: string = '';
+  projects: string[] = [];
+}
+
+/** Folders split by custom section first, then remaining folders on this computer and each SSH host by alias */
 export class Places {
+  sections: SectionPlaces[] = [];
+  filed: Set<string> = new Set<string>();
   local: string[] = [];
   hosts: string[] = [];
   byHost: Map<string, string[]> = new Map<string, string[]>();
 
-  static of(folders: string[]): Places {
+  static of(folders: string[], sections: SessionSection[] = []): Places {
     const out = new Places();
+    const unique: string[] = [];
     for (const f of folders) {
-      if (f.length === 0) {
+      if (f.length > 0 && !unique.includes(f)) {
+        unique.push(f);
+      }
+    }
+    for (const sec of sections) {
+      const items = sec.projects.filter((p: string) => unique.includes(p) && !out.filed.has(p));
+      if (items.length === 0) {
+        continue;
+      }
+      items.forEach((p: string) => out.filed.add(p));
+      const sp = new SectionPlaces();
+      sp.id = sec.id;
+      sp.name = sec.name;
+      sp.projects = items;
+      out.sections.push(sp);
+    }
+    for (const f of unique) {
+      if (out.filed.has(f)) {
         continue;
       }
       const alias = remoteAlias(f);
       if (alias === undefined) {
-        if (!out.local.includes(f)) {
-          out.local.push(f);
-        }
+        out.local.push(f);
         continue;
       }
       const list = out.byHost.get(alias) ?? [];
-      if (!list.includes(f)) {
-        list.push(f);
-      }
+      list.push(f);
       out.byHost.set(alias, list);
       if (!out.hosts.includes(alias)) {
         out.hosts.push(alias);

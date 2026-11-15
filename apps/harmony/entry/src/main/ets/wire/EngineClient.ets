@@ -38,6 +38,9 @@ export interface WebviewMsg {
   key?: string;
   value?: Object;
   op?: string;
+  name?: string;
+  project?: string;
+  collapsed?: boolean;
   before?: string;
   section?: string;
   fresh?: boolean;

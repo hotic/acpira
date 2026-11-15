@@ -129,6 +129,13 @@ public struct SessionSection: Codable, Hashable, Sendable, Identifiable {
   /// Project folders in list order
   public var projects: [String]
   public var collapsed: Bool?
+
+  public init(id: String, name: String, projects: [String] = [], collapsed: Bool? = nil) {
+    self.id = id
+    self.name = name
+    self.projects = projects
+    self.collapsed = collapsed
+  }
 }
 
 /// Every category in list order plus the project list's own state; shared by every window on the machine
@@ -193,7 +200,7 @@ public enum ExportFormat: String, TolerantEnum, CaseIterable {
 }
 
 /// One edit of the category list, applied by the engine to what is on disk so concurrent windows compose (transcript.ts
-/// CategoryOp), as the subset the phone sends: the project list's own ops
+/// CategoryOp), as the subset the phone sends: the project list's and sections' ops
 public enum CategoryOp: Codable, Hashable, Sendable {
   /// Register a folder at the end of the project list (undoing a removal)
   case addProject(cwd: String)
@@ -202,13 +209,23 @@ public enum CategoryOp: Codable, Hashable, Sendable {
   /// Move a folder before `before`, or to the end
   case reorderProject(cwd: String, before: String? = nil)
   case collapseProject(cwd: String, collapsed: Bool)
-  /// File a folder into a desktop section before `before` (at its end without one), or take it out (`section` nil)
+  /// Create a top-level section, optionally filing `project` into it in the same edit
+  case createSection(id: String, name: String, project: String? = nil)
+  case renameSection(id: String, name: String)
+  case deleteSection(id: String)
+  case collapseSection(id: String, collapsed: Bool)
+  /// Move section `id` before `before`, or to the end
+  case reorderSection(id: String, before: String? = nil)
+  /// File a folder into a section before `before` (at its end without one), or take it out (`section` nil)
   case setProjectSection(cwd: String, section: String? = nil, before: String? = nil)
   /// An op this build does not know (decoding only)
   case unknown(String)
 
   /// The `op` literals this build mirrors
-  public static let ops = ["addProject", "removeProject", "reorderProject", "collapseProject", "setProjectSection"]
+  public static let ops = [
+    "addProject", "removeProject", "reorderProject", "collapseProject",
+    "createSection", "renameSection", "deleteSection", "collapseSection", "reorderSection", "setProjectSection",
+  ]
 
   /// The wire `op`
   public var op: String {
@@ -217,20 +234,33 @@ public enum CategoryOp: Codable, Hashable, Sendable {
     case .removeProject: "removeProject"
     case .reorderProject: "reorderProject"
     case .collapseProject: "collapseProject"
+    case .createSection: "createSection"
+    case .renameSection: "renameSection"
+    case .deleteSection: "deleteSection"
+    case .collapseSection: "collapseSection"
+    case .reorderSection: "reorderSection"
     case .setProjectSection: "setProjectSection"
     case .unknown(let op): op
     }
   }
 
-  private enum Keys: String, CodingKey { case op, cwd, before, collapsed, section }
+  private enum Keys: String, CodingKey { case op, id, name, project, cwd, before, collapsed, section }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: Keys.self)
     func cwd() throws -> String { try c.decode(String.self, forKey: .cwd) }
+    func id() throws -> String { try c.decode(String.self, forKey: .id) }
     switch try c.decode(String.self, forKey: .op) {
     case "addProject": self = .addProject(cwd: try cwd())
     case "removeProject": self = .removeProject(cwd: try cwd())
     case "reorderProject": self = .reorderProject(cwd: try cwd(), before: try c.decodeIfPresent(String.self, forKey: .before))
     case "collapseProject": self = .collapseProject(cwd: try cwd(), collapsed: try c.decode(Bool.self, forKey: .collapsed))
+    case "createSection":
+      self = .createSection(id: try id(), name: try c.decode(String.self, forKey: .name),
+                            project: try c.decodeIfPresent(String.self, forKey: .project))
+    case "renameSection": self = .renameSection(id: try id(), name: try c.decode(String.self, forKey: .name))
+    case "deleteSection": self = .deleteSection(id: try id())
+    case "collapseSection": self = .collapseSection(id: try id(), collapsed: try c.decode(Bool.self, forKey: .collapsed))
+    case "reorderSection": self = .reorderSection(id: try id(), before: try c.decodeIfPresent(String.self, forKey: .before))
     case "setProjectSection":
       self = .setProjectSection(cwd: try cwd(), section: try c.decodeIfPresent(String.self, forKey: .section),
                                 before: try c.decodeIfPresent(String.self, forKey: .before))
@@ -249,6 +279,21 @@ public enum CategoryOp: Codable, Hashable, Sendable {
     case let .collapseProject(cwd, collapsed):
       try c.encode(cwd, forKey: .cwd)
       try c.encode(collapsed, forKey: .collapsed)
+    case let .createSection(id, name, project):
+      try c.encode(id, forKey: .id)
+      try c.encode(name, forKey: .name)
+      try c.encodeIfPresent(project, forKey: .project)
+    case let .renameSection(id, name):
+      try c.encode(id, forKey: .id)
+      try c.encode(name, forKey: .name)
+    case .deleteSection(let id):
+      try c.encode(id, forKey: .id)
+    case let .collapseSection(id, collapsed):
+      try c.encode(id, forKey: .id)
+      try c.encode(collapsed, forKey: .collapsed)
+    case let .reorderSection(id, before):
+      try c.encode(id, forKey: .id)
+      try c.encodeIfPresent(before, forKey: .before)
     case let .setProjectSection(cwd, section, before):
       try c.encode(cwd, forKey: .cwd)
       try c.encodeIfPresent(section, forKey: .section)

@@ -11,6 +11,7 @@ import { AgentMark, Lucide } from '../components/Glyphs';
 import { StateMark } from '../components/StateMark';
 import { SessionMenu } from '../components/SessionMenu';
 import { MenuCaption, MenuCard, MenuGap, MenuRow, menuOptions, MenuBack } from '../components/Menu';
+import { openTextPrompt, PromptArgs } from '../components/Dialogs';
 import { connectionNote, ConnectionBanner, GlassButton, topFade } from '../components/Chrome';
 import { PairBar } from './Pairing';
 
@@ -36,8 +37,11 @@ class ListEntry {
   divider: boolean = false;
   nested: boolean = false;
   cwd: string = '';
+  sectionId: string = '';
   open: boolean = false;
   first: boolean = false;
+  canMoveUp: boolean = false;
+  canMoveDown: boolean = false;
   sessions: SessionSummary[] = [];
   rest: SessionSummary[] = [];
 }
@@ -113,7 +117,7 @@ export struct SessionList {
   /** Listed folders alone keep the filter too: from another view its menu is the way back to them */
   showsFilter(): boolean {
     return searchTerms(this.query).length === 0 &&
-      !(this.model.summaries.length === 0 && this.model.lists.listedProjects().length === 0);
+      !(this.model.summaries.length === 0 && this.model.lists.listedProjects().length === 0 && this.model.lists.sections.length === 0);
   }
 
   // The entries
@@ -170,7 +174,7 @@ export struct SessionList {
     };
 
     // By project, the chats' group still stands (its "new chat" row) when nothing else does
-    if (ordered.length === 0 && !(byProject && (listedProjects.length > 0 || model.chatRoot !== undefined))) {
+    if (ordered.length === 0 && !(byProject && (listedProjects.length > 0 || lists.sections.length > 0 || model.chatRoot !== undefined))) {
       simple('empty', `empty:${this.emptyNote(searching, snippets !== undefined)}`, this.emptyNote(searching, snippets !== undefined));
     }
 
@@ -250,19 +254,26 @@ export struct SessionList {
         }
       };
       const runs = lists.sections.map((s: SessionSection) => s.projects.filter((c: string) => listedProjects.includes(c)));
-      if (runs.every((r: string[]) => r.length === 0)) {
+      if (lists.sections.length === 0) {
         listedProjects.forEach((c: string) => project(c));
       } else {
         const filed = new Set<string>();
         lists.sections.forEach((section: SessionSection, i: number) => {
-          if (runs[i].length === 0) {
-            return;
+          runs[i].forEach((c: string) => filed.add(c));
+          const open = section.collapsed !== true;
+          const label = section.name.length > 0 ? section.name : t('session.section.untitled');
+          const sec = simple('sectionHeader', `section:${section.id}:${open}:${label}:${i}:${lists.sections.length}`, label);
+          sec.sectionId = section.id;
+          sec.open = open;
+          sec.canMoveUp = i > 0;
+          sec.canMoveDown = i < lists.sections.length - 1;
+          if (open) {
+            if (runs[i].length === 0) {
+              simple('sectionEmpty', `sectionEmpty:${section.id}`, t('session.section.empty'));
+            } else {
+              runs[i].forEach((c: string) => project(c));
+            }
           }
-          simple('caption', `section:${section.id}`, section.name.length > 0 ? section.name : t('session.section.untitled'));
-          runs[i].forEach((c: string) => {
-            filed.add(c);
-            project(c);
-          });
         });
         const rest = listedProjects.filter((c: string) => !filed.has(c));
         if (rest.length > 0) {
@@ -474,6 +485,13 @@ export struct SessionList {
           text: t('session.view.pinned.project'), checked: this.model.lists.pinPlace === 'project', icon: 'folder', tag: 'view.pin.project',
           onTap: () => { this.model.lists.pickPinPlace('project'); this.viewMenu = false; }
         })
+        if (!this.archivedOnly) {
+          MenuGap()
+          MenuRow({
+            text: t('session.section.newEllipsis'), checked: false, icon: 'plus', tag: 'view.newSection',
+            onTap: () => { this.viewMenu = false; this.promptCreateSection(undefined); }
+          })
+        }
       }
       MenuGap()
       MenuRow({
@@ -494,9 +512,36 @@ export struct SessionList {
     this.viewMenu = false;
   }
 
+  promptCreateSection(project: string | undefined): void {
+    const ui = this.getUIContext();
+    const lists = this.model.lists;
+    const args = new PromptArgs();
+    args.title = t('session.section.new');
+    args.placeholder = t('session.section.untitled');
+    args.allowBlank = true;
+    args.onSave = (text: string) => lists.createSection(text, project);
+    openTextPrompt(ui, args);
+  }
+
   @Builder
   entry(e: ListEntry) {
-    if (e.kind === 'caption') {
+    if (e.kind === 'sectionHeader') {
+      SectionCaptionHeader({
+        model: this.model,
+        sectionId: e.sectionId,
+        label: e.text,
+        open: e.open,
+        canMoveUp: e.canMoveUp,
+        canMoveDown: e.canMoveDown
+      })
+    } else if (e.kind === 'sectionEmpty') {
+      Text(e.text)
+        .fontSize(Type.text3)
+        .fontColor($r('app.color.fg3'))
+        .padding({ left: Metrics.pad, right: Metrics.pad })
+        .constraintSize({ minHeight: ListMetrics.sheetRow })
+        .width('100%')
+    } else if (e.kind === 'caption') {
       Text(e.text)
         .fontSize(Type.text3)
         .fontWeight(FontWeight.Medium)
@@ -955,10 +1000,7 @@ export struct ProjectMenu {
         if (!this.first) {
           MenuRow({ text: t('mobile.project.moveTop'), icon: 'arrowUp', tag: 'project.top', onTap: () => this.pick(() => this.model.lists.moveProjectToTop(this.cwd)) })
         }
-        // Sections are made on the desktop; the entry shows once there is one
-        if (this.model.lists.sections.length > 0) {
-          MenuRow({ text: t('session.section.moveTo'), icon: 'chevronRight', tag: 'project.section', onTap: () => { this.sections = true; } })
-        }
+        MenuRow({ text: t('session.section.moveTo'), icon: 'chevronRight', tag: 'project.section', onTap: () => { this.sections = true; } })
         MenuRow({ text: t('session.project.copyPath'), icon: 'copy', tag: 'project.copyPath', onTap: () => this.pick(() => this.model.lists.copyPath(this.cwd)) })
         MenuGap()
         MenuRow({ text: t('session.project.remove'), icon: 'minus', tag: 'project.remove', onTap: () => this.pick(() => this.model.lists.removeProject(this.cwd)) })
@@ -976,11 +1018,120 @@ export struct ProjectMenu {
             })
           })
         }, (s: SessionSection) => s.id)
-        if (this.current() !== undefined) {
+        if (this.model.lists.sections.length > 0) {
           MenuGap()
+        }
+        MenuRow({ text: t('session.section.newEllipsis'), checked: false, icon: 'plus', tag: 'project.section.new', onTap: () => this.createSection() })
+        if (this.current() !== undefined) {
           MenuRow({ text: t('session.section.remove'), checked: false, icon: 'minus', onTap: () => this.pick(() => this.model.lists.setProjectSection(this.cwd, undefined)) })
         }
       }
     }
+  }
+
+  createSection(): void {
+    const ui = this.getUIContext();
+    const lists = this.model.lists;
+    const cwd = this.cwd;
+    const args = new PromptArgs();
+    args.title = t('session.section.new');
+    args.placeholder = t('session.section.untitled');
+    args.allowBlank = true;
+    args.onSave = (text: string) => lists.createSection(text, cwd);
+    this.pick(() => openTextPrompt(ui, args));
+  }
+}
+
+/** A custom project section's caption: taps fold or unfold its projects, a long press renames, reorders or deletes it */
+@ComponentV2
+struct SectionCaptionHeader {
+  @Require @Param model: AppModel;
+  @Param sectionId: string = '';
+  @Param label: string = '';
+  @Param open: boolean = true;
+  @Param canMoveUp: boolean = false;
+  @Param canMoveDown: boolean = false;
+
+  closeMenu(): void {
+    this.getUIContext().getContextMenuController().close();
+  }
+
+  rename(): void {
+    const ui = this.getUIContext();
+    const lists = this.model.lists;
+    const id = this.sectionId;
+    const initial = lists.sections.find((s: SessionSection) => s.id === id)?.name ?? '';
+    const args = new PromptArgs();
+    args.title = t('common.rename');
+    args.initial = initial;
+    args.placeholder = t('session.section.untitled');
+    args.onSave = (text: string) => lists.renameSection(id, text);
+    this.closeMenu();
+    openTextPrompt(ui, args);
+  }
+
+  moveUp(): void {
+    const secs = this.model.lists.sections;
+    const at = secs.findIndex((s: SessionSection) => s.id === this.sectionId);
+    this.closeMenu();
+    if (at > 0) {
+      this.model.lists.reorderSection(this.sectionId, secs[at - 1].id);
+    }
+  }
+
+  moveDown(): void {
+    const secs = this.model.lists.sections;
+    const at = secs.findIndex((s: SessionSection) => s.id === this.sectionId);
+    this.closeMenu();
+    if (at >= 0 && at < secs.length - 1) {
+      this.model.lists.reorderSection(this.sectionId, at + 2 < secs.length ? secs[at + 2].id : undefined);
+    }
+  }
+
+  @Builder
+  menu() {
+    MenuCard() {
+      MenuRow({ text: t('common.rename'), icon: 'pencil', tag: 'section.rename', onTap: () => this.rename() })
+      if (this.canMoveUp) {
+        MenuRow({ text: t('session.section.moveUp'), icon: 'arrowUp', tag: 'section.up', onTap: () => this.moveUp() })
+      }
+      if (this.canMoveDown) {
+        MenuRow({ text: t('session.section.moveDown'), icon: 'arrowDown', tag: 'section.down', onTap: () => this.moveDown() })
+      }
+      MenuGap()
+      MenuRow({
+        text: t('session.section.delete'), icon: 'trash2', danger: true, tag: 'section.delete',
+        onTap: () => {
+          this.closeMenu();
+          this.model.lists.deleteSection(this.sectionId);
+        }
+      })
+    }
+  }
+
+  build() {
+    Row({ space: ListMetrics.s1_5 }) {
+      Text(this.label)
+        .fontSize(Type.text3)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.fg3'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .flexShrink(1)
+      Lucide({ name: 'chevronRight', tint: $r('app.color.fg3'), extent: ListMetrics.chevron })
+        .rotate({ angle: this.open ? 90 : 0 })
+        .animation({ duration: this.model.motion ? ListMetrics.motionMs : 0 })
+      Blank()
+    }
+    .id(`section:${this.sectionId}`)
+    .alignItems(VerticalAlign.Bottom)
+    .padding({ left: Metrics.pad, right: Metrics.pad, bottom: Metrics.s1 })
+    .constraintSize({ minHeight: ListMetrics.groupCaption })
+    .width('100%')
+    .backgroundColor($r('app.color.bg0'))
+    .onClick(() => this.model.lists.collapseSection(this.sectionId, this.open))
+    .bindContextMenu(this.menu(), ResponseType.LongPress, {
+      preview: MenuPreviewMode.NONE, enableArrow: false, backgroundColor: Color.Transparent, backgroundBlurStyle: BlurStyle.NONE
+    })
   }
 }

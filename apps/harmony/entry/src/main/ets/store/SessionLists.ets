@@ -248,16 +248,77 @@ export class SessionLists {
     });
   }
 
-  /** Files a folder into one of the desktop's sections at its end, or takes it out (`section` undefined) */
+  /** Files a folder into a section at its end, or takes it out (`section` undefined) */
   setProjectSection(cwd: string, section: string | undefined): void {
     if (this.host.postLive({ type: 'categoryOp', op: 'setProjectSection', cwd: cwd, section: section })) {
       return;
     }
     this.sections = this.sections.map((s: SessionSection) => {
       const rest = s.projects.filter((c: string) => c !== cwd);
-      const next: SessionSection = { id: s.id, name: s.name, projects: s.id === section ? rest.concat([cwd]) : rest };
+      const next: SessionSection = { id: s.id, name: s.name, projects: s.id === section ? rest.concat([cwd]) : rest, collapsed: s.collapsed };
       return next;
     });
+  }
+
+  /** Creates a custom project section, optionally filing `project` into it in the same edit */
+  createSection(name: string, project: string | undefined): void {
+    const trimmed = name.trim();
+    const label = trimmed.length > 0 ? trimmed : t('session.section.untitled');
+    const id = `sec-${Date.now().toString(36)}-${Math.floor(Math.random() * 65536).toString(16)}`;
+    if (this.host.postLive({ type: 'categoryOp', op: 'createSection', id: id, name: label, project: project })) {
+      return;
+    }
+    const base = project === undefined ? this.sections : this.sections.map((s: SessionSection) => {
+      const updated: SessionSection = { id: s.id, name: s.name, projects: s.projects.filter((c: string) => c !== project), collapsed: s.collapsed };
+      return updated;
+    });
+    const created: SessionSection = { id: id, name: label, projects: project === undefined ? [] : [project] };
+    this.sections = base.concat([created]);
+  }
+
+  renameSection(id: string, name: string): void {
+    const trimmed = name.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    if (this.host.postLive({ type: 'categoryOp', op: 'renameSection', id: id, name: trimmed })) {
+      return;
+    }
+    this.sections = this.sections.map((s: SessionSection) => {
+      const next: SessionSection = { id: s.id, name: s.id === id ? trimmed : s.name, projects: s.projects, collapsed: s.collapsed };
+      return next;
+    });
+  }
+
+  deleteSection(id: string): void {
+    if (this.host.postLive({ type: 'categoryOp', op: 'deleteSection', id: id })) {
+      return;
+    }
+    this.sections = this.sections.filter((s: SessionSection) => s.id !== id);
+  }
+
+  collapseSection(id: string, collapsed: boolean): void {
+    if (this.host.postLive({ type: 'categoryOp', op: 'collapseSection', id: id, collapsed: collapsed })) {
+      return;
+    }
+    this.sections = this.sections.map((s: SessionSection) => {
+      const next: SessionSection = { id: s.id, name: s.name, projects: s.projects, collapsed: s.id === id ? (collapsed ? true : undefined) : s.collapsed };
+      return next;
+    });
+  }
+
+  reorderSection(id: string, before: string | undefined): void {
+    if (this.host.postLive({ type: 'categoryOp', op: 'reorderSection', id: id, before: before })) {
+      return;
+    }
+    const moving = this.sections.find((s: SessionSection) => s.id === id);
+    if (moving === undefined) {
+      return;
+    }
+    const rest = this.sections.filter((s: SessionSection) => s.id !== id);
+    const at = before === undefined ? rest.length : rest.findIndex((s: SessionSection) => s.id === before);
+    const pos = at >= 0 ? at : rest.length;
+    this.sections = rest.slice(0, pos).concat([moving]).concat(rest.slice(pos));
   }
 
   copyPath(cwd: string): void {

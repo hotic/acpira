@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import cc.hotic.acpira.model.SessionControls
+import cc.hotic.acpira.model.SessionSection
 import androidx.compose.runtime.mutableStateMapOf
 import cc.hotic.acpira.logic.editTurnConfig
 import androidx.compose.runtime.LaunchedEffect
@@ -247,6 +248,7 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
           // An empty folder is a chat; offered where the engine keeps chats
           chats = model.chatRoot != null,
           projects = projects,
+          sections = model.lists.sections,
           name = model::placeName,
           onDismiss = { pickFolder = false },
           onPick = { pickedCwd = it; picked = true; pickFolder = false },
@@ -314,17 +316,25 @@ private fun FolderMenu(
   chat: Boolean,
   chats: Boolean,
   projects: List<String>,
+  sections: List<SessionSection>,
   name: (String) -> String,
   onDismiss: () -> Unit,
   onPick: (String?) -> Unit,
   onAdd: () -> Unit,
 ) {
-  // null: the top level; "" this computer's projects; a host alias: that host's
+  // null: the top level; "sec:<id>" a custom section; "" this computer's projects; a host alias: that host's
   var level by remember { mutableStateOf<String?>(null) }
-  // The draft's own folder first, then the known ones, each once (NativeProjectMenu.places); a chat's folder is no project
+  // The draft's own folder first, then the known ones, each once (NativeProjectMenu.grouped); a chat's folder is no project
   val folders = ((if (chat || cwd == null) emptyList() else listOf(cwd)) + projects).filter { it.isNotEmpty() }.distinct()
-  val local = folders.filter { remoteHost(it) == null }
-  val remote = folders.filter { remoteHost(it) != null }
+  val known = folders.toSet()
+  val filed = HashSet<String>()
+  val sectionRuns = sections.mapNotNull { sec ->
+    val items = sec.projects.filter { it in known && filed.add(it) }
+    if (items.isEmpty()) null else sec to items
+  }
+  val rest = folders.filter { it !in filed }
+  val local = rest.filter { remoteHost(it) == null }
+  val remote = rest.filter { remoteHost(it) != null }
   val hosts = remote.mapNotNull(::remoteHost).distinct()
   // A folder ticks only while the draft is not a chat
   val folder = cwd.takeUnless { chat }
@@ -343,33 +353,58 @@ private fun FolderMenu(
           )
           AppMenuGap()
         }
+        for ((sec, items) in sectionRuns) {
+          AppMenuItem(
+            sec.name.ifEmpty { t("session.section.untitled") },
+            onClick = { level = FOLDER_SECTION + sec.id },
+            checked = folder != null && folder in items,
+            icon = { MenuGlyph("chevronRight") },
+            modifier = Modifier.testTag("folder.section:${sec.id}"),
+          )
+        }
+        if (sectionRuns.isNotEmpty() && (local.isNotEmpty() || hosts.isNotEmpty())) AppMenuGap()
         if (local.isNotEmpty()) {
           AppMenuItem(
-            t("mobile.projects.local"), onClick = { level = "" }, checked = folder != null && remoteHost(folder) == null,
+            t("mobile.projects.local"), onClick = { level = "" }, checked = folder != null && folder !in filed && remoteHost(folder) == null,
             icon = { MenuGlyph("chevronRight") }, modifier = Modifier.testTag("folder.local"),
           )
         }
         for (h in hosts) {
           AppMenuItem(
-            h, subtitle = t("mobile.projects.remote"), onClick = { level = h }, checked = folder?.let(::remoteHost) == h,
+            h, subtitle = t("mobile.projects.remote"), onClick = { level = h }, checked = folder != null && folder !in filed && remoteHost(folder) == h,
             icon = { MenuGlyph("chevronRight") },
           )
         }
         // After the folders, as the iOS menu ends: a folder of the computer picked by hand
-        AppMenuGap()
+        if (sectionRuns.isNotEmpty() || local.isNotEmpty() || hosts.isNotEmpty()) AppMenuGap()
         AppMenuItem(
           t("mobile.projects.add"), onClick = { onAdd(); level = null }, checked = false,
           icon = { MenuGlyph("folderPlus") }, modifier = Modifier.testTag("folder.add"),
         )
       }
       else -> {
-        AppMenuBack(if (at.isEmpty()) t("mobile.projects.local") else at, onClick = { level = null })
-        AppMenuGap()
-        for (p in if (at.isEmpty()) local else remote.filter { remoteHost(it) == at }) {
-          AppMenuItem(
-            name(p), subtitle = parentOf(p), onClick = { onPick(p); level = null }, checked = p == folder,
-            icon = { MenuGlyph(if (at.isEmpty()) "folder" else "globe") },
-          )
+        if (at.startsWith(FOLDER_SECTION)) {
+          val secId = at.removePrefix(FOLDER_SECTION)
+          val run = sectionRuns.firstOrNull { it.first.id == secId }
+          AppMenuBack(run?.first?.name?.ifEmpty { t("session.section.untitled") }.orEmpty(), onClick = { level = null })
+          AppMenuGap()
+          for (p in run?.second.orEmpty()) {
+            val host = remoteHost(p)
+            val sub = parentOf(p).let { if (host != null) "$host · $it" else it }
+            AppMenuItem(
+              name(p), subtitle = sub, onClick = { onPick(p); level = null }, checked = p == folder,
+              icon = { MenuGlyph(if (host == null) "folder" else "globe") },
+            )
+          }
+        } else {
+          AppMenuBack(if (at.isEmpty()) t("mobile.projects.local") else at, onClick = { level = null })
+          AppMenuGap()
+          for (p in if (at.isEmpty()) local else remote.filter { remoteHost(it) == at }) {
+            AppMenuItem(
+              name(p), subtitle = parentOf(p), onClick = { onPick(p); level = null }, checked = p == folder,
+              icon = { MenuGlyph(if (at.isEmpty()) "folder" else "globe") },
+            )
+          }
         }
       }
     }
@@ -393,6 +428,7 @@ private fun parentOf(folder: String): String {
   return if (parts.size > 2) "…/$tail" else (if (path.startsWith("/")) "/" else "") + tail
 }
 
+private const val FOLDER_SECTION = "sec:"
 private const val SSH = "ssh://"
 /** The menu's height in rows before it scrolls */
 private const val MENU_ROWS = 8.5f
