@@ -632,7 +632,8 @@ sealed interface WebviewMsg {
   /** Build a reviewed plan: optionId picks the card's option (build / revise …), model the model it is built with */
   data class BuildPlan(val sessionId: String, val planId: String, val optionId: String? = null, val model: ModelPick? = null) : WebviewMsg
   data class SetMode(val sessionId: String?, val id: String) : WebviewMsg
-  data class SetConfig(val sessionId: String?, val configId: String, val value: String) : WebviewMsg
+  /** [also]: further control picks applied with this one (a model with its own reasoning level) */
+  data class SetConfig(val sessionId: String?, val configId: String, val value: String, val also: Map<String, String>? = null) : WebviewMsg
   data class SelectSession(val id: String) : WebviewMsg
   /** The list is on top or the app went to the background: the chat no longer counts as watched */
   data class DeselectSession(val id: String) : WebviewMsg
@@ -872,7 +873,10 @@ sealed interface WebviewMsg {
         m.model?.let { put("model", WireJson.encodeToJsonElement(ModelPick.serializer(), it)) }
       }
       is SetMode -> { opt("sessionId", m.sessionId); put("id", m.id) }
-      is SetConfig -> { opt("sessionId", m.sessionId); put("configId", m.configId); put("value", m.value) }
+      is SetConfig -> {
+        opt("sessionId", m.sessionId); put("configId", m.configId); put("value", m.value)
+        m.also?.let { put("also", JsonObject(it.mapValues { (_, v) -> JsonPrimitive(v) })) }
+      }
       is SelectSession -> put("id", m.id)
       is DeselectSession -> put("id", m.id)
       is NewSession -> { opt("agent", m.agent); opt("category", m.category); opt("cwd", m.cwd); m.chat?.let { put("chat", it) } }

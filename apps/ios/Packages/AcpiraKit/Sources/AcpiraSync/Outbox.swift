@@ -44,7 +44,7 @@ extension WebviewMsg {
   /// The session a replayable action acts on; the engine refuses one for a session its view does not show
   public var sessionTarget: String? {
     switch self {
-    case .send(let id, _, _, _, _), .stop(let id, _), .setMode(let id, _), .setConfig(let id, _, _): id
+    case .send(let id, _, _, _, _), .stop(let id, _), .setMode(let id, _), .setConfig(let id, _, _, _): id
     case .permission(let id, _, _, _), .answer(let id, _, _, _, _, _), .steerQueued(let id, _, _), .sendQueued(let id, _): id
     default: nil
     }

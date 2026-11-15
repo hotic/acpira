@@ -158,7 +158,8 @@ class ContractTest {
       assertTrue(fields.toSet().containsAll(leftOut), "$name leaves out fields TypeScript does not have: ${(leftOut - fields.toSet()).sorted()}")
       if (!subset) assertEquals(fields.toSet() - leftOut, kotlin, "$name does not mirror ${(fields.toSet() - leftOut - kotlin).sorted()}")
     }
-    check(SessionView.serializer(), TS.interfaceFields(transcript, "SessionView"))
+    // modelMemory stays engine-side: the engine replays a model's own picks itself
+    check(SessionView.serializer(), TS.interfaceFields(transcript, "SessionView"), setOf("modelMemory"))
     // completedAt / question feed the page's plugin style hooks; the phone has none
     check(SessionSummary.serializer(), TS.interfaceFields(transcript, "SessionSummary"), setOf("completedAt", "question"))
     check(AgentInfo.serializer(), TS.interfaceFields(transcript, "AgentInfo"))
@@ -365,7 +366,7 @@ private object Samples {
     WebviewMsg.Answer("s1", "q1", mapOf("a" to JsonPrimitive("notes"), "b" to JsonArray(listOf(JsonPrimitive("docs")))), skip = false, clientId = "c4", images = mapOf("a" to listOf(drafts[0]))),
     WebviewMsg.BuildPlan("s1", "p1", "build", ModelPick("model", "opus")),
     WebviewMsg.SetMode("s1", "plan"),
-    WebviewMsg.SetConfig("s1", "effort", "high"),
+    WebviewMsg.SetConfig("s1", "effort", "high", mapOf("model" to "m1")),
     WebviewMsg.SelectSession("s1"),
     WebviewMsg.DeselectSession("s1"),
     WebviewMsg.NewSession("claude", "/w", chat = true, category = "c1"),
