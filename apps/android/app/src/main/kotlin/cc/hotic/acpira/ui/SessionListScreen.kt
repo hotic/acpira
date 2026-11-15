@@ -11,6 +11,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -136,6 +137,7 @@ fun SessionListScreen(model: AppModel) {
   // The session the rename dialog and the move menu's "Add folder" are for
   var renaming by remember { mutableStateOf<String?>(null) }
   var movingTo by remember { mutableStateOf<String?>(null) }
+  var sectionPrompt by remember { mutableStateOf<SectionPrompt?>(null) }
   val drag = remember { ListDrag() }
   val listState = rememberLazyListState()
   val terms = searchTerms(query)
@@ -144,7 +146,7 @@ fun SessionListScreen(model: AppModel) {
   val pairing = LocalPairing.current
   val covered = pairing != null && covers(pairing, model)
   // Listed folders alone keep the filter too: from another view its menu is the way back to them
-  val filter = !covered && terms.isEmpty() && !(model.summaries.isEmpty() && lists.listedProjects.isEmpty())
+  val filter = !covered && terms.isEmpty() && !(model.summaries.isEmpty() && lists.listedProjects.isEmpty() && lists.sections.isEmpty())
   // Standing in a wide window's sidebar (ui/Root.kt Split), and how to put it away there
   val inSidebar = model.listInSidebar
   val hide = LocalSidebarHide.current
@@ -164,6 +166,7 @@ fun SessionListScreen(model: AppModel) {
       archived = archivedOnly, onArchived = { archivedOnly = it },
       unread = model.summaries.any { it.unread == true || it.state == SessionState.unread },
       onMarkAllRead = lists::markAllRead,
+      onNewSection = { sectionPrompt = SectionPrompt.Create() },
     )
   }
   Scaffold(
@@ -218,7 +221,7 @@ fun SessionListScreen(model: AppModel) {
     val scene = ListScene(
       model = model, drag = drag, terms = terms, archivedOnly = archivedOnly, swiped = swiped, moreShown = moreShown,
       onSwiped = { swiped = it }, onMore = { cwd, n -> moreShown = if (n == null) moreShown - cwd else moreShown + (cwd to n) },
-      onRename = { renaming = it }, onAddFolder = { movingTo = it },
+      onRename = { renaming = it }, onAddFolder = { movingTo = it }, onSectionPrompt = { sectionPrompt = it },
     )
     // Rows leave under the bar through a fade, once the list has moved off its top
     val scrolled by remember(listState) { derivedStateOf { listState.canScrollBackward } }
@@ -237,6 +240,24 @@ fun SessionListScreen(model: AppModel) {
   renaming?.let { id ->
     val title = model.summaries.firstOrNull { it.id == id }?.title.orEmpty()
     RenameDialog(title, onDismiss = { renaming = null }) { lists.rename(id, it) }
+  }
+  sectionPrompt?.let { prompt ->
+    when (prompt) {
+      is SectionPrompt.Create -> SectionPromptDialog(
+        dialogTitle = t("session.section.new"),
+        initial = "",
+        allowBlank = true,
+        onDismiss = { sectionPrompt = null },
+        onSave = { lists.createSection(it, prompt.project) },
+      )
+      is SectionPrompt.Rename -> SectionPromptDialog(
+        dialogTitle = t("common.rename"),
+        initial = prompt.section.name,
+        allowBlank = false,
+        onDismiss = { sectionPrompt = null },
+        onSave = { lists.renameSection(prompt.section.id, it) },
+      )
+    }
   }
   // The move menu's "Add folder", as in the new session's folder menu: the folder joins the list, the session moves in
   AddProject(model, movingTo != null, onClose = { movingTo = null }, onAdded = { folder -> movingTo?.let { lists.move(it, folder) } })
@@ -257,6 +278,7 @@ private class ListScene(
   val onMore: (String, Int?) -> Unit,
   val onRename: (String) -> Unit,
   val onAddFolder: (String) -> Unit,
+  val onSectionPrompt: (SectionPrompt) -> Unit,
 ) {
   val lists = model.lists
   val now: Instant = model.now()
@@ -285,7 +307,7 @@ private class ListScene(
 
   fun content(scope: LazyListScope) = with(scope) {
     // By project, the chats' group still stands (its "new chat" row) when nothing else does
-    if (ordered.isEmpty() && !(byProject && (listedProjects.isNotEmpty() || model.chatRoot != null))) {
+    if (ordered.isEmpty() && !(byProject && (listedProjects.isNotEmpty() || lists.sections.isNotEmpty() || model.chatRoot != null))) {
       item(key = "empty") { EmptyNote(model, searching, snippets != null) }
     }
     for (group in groups()) group(group)
@@ -343,26 +365,109 @@ private class ListScene(
   }
 
   /**
-   * The by-project view's projects: the desktop app's sections first, each under its name with its projects in its own
-   * order, then the projects in none under "Projects"; without sections, the projects alone. Sections are made and
-   * filled on the desktop; one with nothing listed here is left out
+   * The by-project view's projects: the user's sections first, each under its name with its projects in its own
+   * order, then the projects in none under "Projects"; without sections, the projects alone
    */
   private fun LazyListScope.projectGroups() {
-    val runs = lists.sections.map { it to it.projects.filter(listedProjects::contains) }.filter { it.second.isNotEmpty() }
+    val runs = lists.sections.map { it to it.projects.filter(listedProjects::contains) }
     if (runs.isEmpty()) {
       for (cwd in listedProjects) projectGroup(cwd, null, listedProjects)
       return
     }
     val filed = runs.flatMap { it.second }.toSet()
     val rest = listedProjects.filter { it !in filed }
-    for ((section, projects) in runs) {
+    runs.forEachIndexed { index, (section, projects) ->
+      val open = section.collapsed != true
       // A project dropped on a section's caption joins the end of that section
-      item(key = "section:${section.id}") { SectionCaption(section.name.ifEmpty { t("session.section.untitled") }, section.id) }
-      for (cwd in projects) projectGroup(cwd, section.id, projects)
+      item(key = "section:${section.id}") {
+        SectionHeader(
+          section = section,
+          open = open,
+          canMoveUp = index > 0,
+          canMoveDown = index < runs.lastIndex,
+          onToggle = { if (!closeSwipe()) lists.collapseSection(section.id, open) },
+          onRename = { onSectionPrompt(SectionPrompt.Rename(section)) },
+          onMoveUp = { lists.reorderSection(section.id, runs[index - 1].first.id) },
+          onMoveDown = { lists.reorderSection(section.id, runs.getOrNull(index + 2)?.first?.id) },
+          onDelete = { lists.deleteSection(section.id) },
+        )
+      }
+      if (open) {
+        if (projects.isEmpty()) {
+          item(key = "section-empty:${section.id}") { SectionEmptyRow(section.id) }
+        } else {
+          for (cwd in projects) projectGroup(cwd, section.id, projects)
+        }
+      }
     }
     if (rest.isNotEmpty()) {
       item(key = "section:") { SectionCaption(t("session.group.projects"), null) }
       for (cwd in rest) projectGroup(cwd, null, rest)
+    }
+  }
+
+  @Composable
+  private fun SectionEmptyRow(section: String) {
+    Box(
+      Modifier
+        .fillMaxWidth()
+        .heightIn(min = Metrics.sheetRow)
+        .dropZone(drag, "section-empty:$section") { item, _, _ -> if (item is ListDragItem.Project) ListDropTarget.Slot(section, null) else null }
+        .padding(horizontal = Metrics.pad),
+      contentAlignment = Alignment.CenterStart,
+    ) {
+      Text(t("session.section.empty"), color = Palette.fg3, fontSize = Type.text3, lineHeight = Type.text3Line)
+    }
+  }
+
+  @Composable
+  private fun SectionHeader(
+    section: SessionSection,
+    open: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onToggle: () -> Unit,
+    onRename: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit,
+  ) {
+    var menu by remember { mutableStateOf(false) }
+    val turn by animateFloatAsState(if (open) CHEVRON_OPEN else 0f, tween(if (LocalMotion.current) MOTION_EASE_MS else 0), label = "secChevron")
+    Box(Modifier.dropZone(drag, "caption:${section.id}") { item, _, _ -> if (item is ListDragItem.Project) ListDropTarget.Slot(section.id, null) else null }) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Metrics.s1_5),
+        modifier = Modifier
+          .fillMaxWidth()
+          .heightIn(min = Metrics.groupCaption)
+          .combinedClickable(onClick = onToggle, onLongClick = { menu = true })
+          .semantics { heading(); onLongClick(t("session.section.more")) { menu = true; true } }
+          .padding(horizontal = Metrics.pad)
+          .padding(bottom = Metrics.s1)
+          .testTag("section:${section.id}"),
+      ) {
+        Text(
+          section.name.ifEmpty { t("session.section.untitled") },
+          color = Palette.fg3, fontSize = Type.text3, lineHeight = Type.text3Line, fontWeight = FontWeight.Medium,
+          maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+        )
+        Lucide("chevronRight", Palette.fg3, Modifier.rotate(turn), size = Metrics.chevron)
+      }
+      AppMenu(expanded = menu, onDismiss = { menu = false }) {
+        AppMenuItem(t("common.rename"), onClick = { menu = false; onRename() }, icon = { MenuGlyph("pencil") }, modifier = Modifier.testTag("section.rename"))
+        if (canMoveUp) {
+          AppMenuItem(t("session.section.moveUp"), onClick = { menu = false; onMoveUp() }, icon = { MenuGlyph("arrowUp") }, modifier = Modifier.testTag("section.up"))
+        }
+        if (canMoveDown) {
+          AppMenuItem(t("session.section.moveDown"), onClick = { menu = false; onMoveDown() }, icon = { MenuGlyph("arrowDown") }, modifier = Modifier.testTag("section.down"))
+        }
+        AppMenuGap()
+        AppMenuItem(
+          t("session.section.delete"), onClick = { menu = false; onDelete() }, danger = true,
+          icon = { MenuGlyph("trash2", danger = true) }, modifier = Modifier.testTag("section.delete"),
+        )
+      }
     }
   }
 
@@ -406,6 +511,7 @@ private class ListScene(
           insert = if (insert == DropEdge.Top || (lastRow == null && !paged)) insert else null,
         ),
         onToggle = { if (!closeSwipe()) lists.toggleOpen(cwd) },
+        onNewSection = { onSectionPrompt(SectionPrompt.Create(cwd)) },
         drag = drag, onDrop = ::drop,
       )
     }
@@ -603,6 +709,7 @@ private fun ListViewMenu(
   onArchived: (Boolean) -> Unit,
   unread: Boolean,
   onMarkAllRead: () -> Unit,
+  onNewSection: (() -> Unit)? = null,
 ) {
   var open by remember { mutableStateOf(false) }
   Box {
@@ -623,6 +730,10 @@ private fun ListViewMenu(
         AppMenuCaption(t("session.view.pinned"))
         AppMenuItem(t("session.view.pinned.top"), onClick = { onPinPlace(PinPlace.top); open = false }, checked = pinPlace == PinPlace.top, icon = { MenuGlyph("pin") }, modifier = Modifier.testTag("view.pin.top"))
         AppMenuItem(t("session.view.pinned.project"), onClick = { onPinPlace(PinPlace.project); open = false }, checked = pinPlace == PinPlace.project, icon = { MenuGlyph("folder") }, modifier = Modifier.testTag("view.pin.project"))
+        if (!archived && onNewSection != null) {
+          AppMenuGap()
+          AppMenuItem(t("session.section.newEllipsis"), onClick = { open = false; onNewSection() }, icon = { MenuGlyph("plus") }, modifier = Modifier.testTag("view.newSection"))
+        }
       }
       AppMenuGap()
       AppMenuItem(
@@ -751,6 +862,7 @@ private fun ProjectHeader(
   sessions: List<SessionSummary>,
   modifier: Modifier,
   onToggle: () -> Unit,
+  onNewSection: () -> Unit,
   drag: ListDrag,
   onDrop: (ListDragItem, ListDropTarget) -> Unit,
 ) {
@@ -795,15 +907,20 @@ private fun ProjectHeader(
         if (!open) pressing(sessions)?.let { (state, unread) -> StateMark(state, unread) }
       }
     }
-    ProjectMenu(model, cwd, first, menu, onDismiss = { menu = false })
+    ProjectMenu(model, cwd, first, menu, onDismiss = { menu = false }, onNewSection = onNewSection)
   }
+}
+
+private sealed interface SectionPrompt {
+  data class Create(val project: String? = null) : SectionPrompt
+  data class Rename(val section: SessionSection) : SectionPrompt
 }
 
 /** The project header's menu (the desktop project menu, less revealing the folder on the computer) */
 @Composable
-private fun ProjectMenu(model: AppModel, cwd: String, first: Boolean, expanded: Boolean, onDismiss: () -> Unit) {
+private fun ProjectMenu(model: AppModel, cwd: String, first: Boolean, expanded: Boolean, onDismiss: () -> Unit, onNewSection: () -> Unit) {
   val lists = model.lists
-  // null: the top level; SECTIONS: the desktop's sections
+  // null: the top level; SECTIONS: the user's sections
   var level by remember { mutableStateOf<String?>(null) }
   val close = { onDismiss(); level = null }
   AppMenu(expanded = expanded, onDismiss = close) {
@@ -816,16 +933,13 @@ private fun ProjectMenu(model: AppModel, cwd: String, first: Boolean, expanded: 
         if (!first) {
           AppMenuItem(t("mobile.project.moveTop"), onClick = { close(); lists.moveProjectToTop(cwd) }, icon = { MenuGlyph("arrowUp") }, modifier = Modifier.testTag("project.top"))
         }
-        // Sections are made on the desktop; the entry shows once there is one
-        if (sections.isNotEmpty()) {
-          AppMenuItem(t("session.section.moveTo"), onClick = { level = SECTIONS }, icon = { MenuGlyph("chevronRight") }, modifier = Modifier.testTag("project.section"))
-        }
+        AppMenuItem(t("session.section.moveTo"), onClick = { level = SECTIONS }, icon = { MenuGlyph("chevronRight") }, modifier = Modifier.testTag("project.section"))
         AppMenuItem(t("session.project.copyPath"), onClick = { close(); lists.copyPath(cwd) }, icon = { MenuGlyph("copy") }, modifier = Modifier.testTag("project.copyPath"))
         AppMenuGap()
         AppMenuItem(t("session.project.remove"), onClick = { close(); lists.removeProject(cwd) }, icon = { MenuGlyph("minus") }, modifier = Modifier.testTag("project.remove"))
       }
       else -> {
-        // The sections as a ticked choice, the folder's own ticked, then "Remove from section" while it is in one
+        // The sections as a ticked choice, the folder's own ticked, then "New section…" and "Remove from section"
         AppMenuBack(t("session.section.moveTo"), onClick = { level = null })
         AppMenuGap()
         for (s in sections) {
@@ -834,8 +948,9 @@ private fun ProjectMenu(model: AppModel, cwd: String, first: Boolean, expanded: 
             onClick = { close(); if (s.id != current) lists.setProjectSection(cwd, s.id) },
           )
         }
+        if (sections.isNotEmpty()) AppMenuGap()
+        AppMenuItem(t("session.section.newEllipsis"), checked = false, onClick = { close(); onNewSection() }, icon = { MenuGlyph("plus") }, modifier = Modifier.testTag("project.section.new"))
         if (current != null) {
-          AppMenuGap()
           AppMenuItem(t("session.section.remove"), checked = false, onClick = { close(); lists.setProjectSection(cwd, null) }, icon = { MenuGlyph("minus") })
         }
       }

@@ -637,6 +637,11 @@ enum ContractSamples {
     .removeProject(cwd: "/w/a"),
     .reorderProject(cwd: "/w/a", before: "/w/b"),
     .collapseProject(cwd: "/w/a", collapsed: true),
+    .createSection(id: "s1", name: "Work", project: "/w/a"),
+    .renameSection(id: "s1", name: "Work"),
+    .deleteSection(id: "s1"),
+    .collapseSection(id: "s1", collapsed: true),
+    .reorderSection(id: "s1", before: "s2"),
     .setProjectSection(cwd: "/w/a", section: "s1", before: "/w/b"),
   ]
 

@@ -32,6 +32,9 @@ struct SessionListScreen: View {
   @State private var query = UserDefaults.standard.string(forKey: "search") ?? ""
   @State private var renaming: SessionSummary?
   @State private var newTitle = ""
+  /// Creating or renaming a custom project section
+  @State private var sectionPrompt: SectionPrompt?
+  @State private var sectionName = ""
   /// The session whose move menu asked for a folder typed in
   @State private var movingTo: SessionSummary?
   /// The row standing swiped open, Delete bared (SwipeToDelete.swift)
@@ -59,12 +62,13 @@ struct SessionListScreen: View {
     // over both, so the hero giving way to the list moves nothing in it
     let covered = pairing.map { PairHeroList.covers($0, model) } ?? false
     // Listed folders alone keep the filter too: from another view its menu is the way back to them
-    let filter = !covered && searchTerms(query).isEmpty && !(model.summaries.isEmpty && model.listedProjects.isEmpty)
+    let filter = !covered && searchTerms(query).isEmpty && !(model.summaries.isEmpty && model.listedProjects.isEmpty && model.sections.isEmpty)
     PairListGate(pairing: pairing) { list }
       .modifier(ListTopBar(filter: filter ? ListViewMenu(view: $view, pinPlace: $pinPlace,
                                                          archived: $archivedOnly,
                                                          unread: model.summaries.contains { $0.unread == true || $0.state == .unread },
-                                                         onMarkAllRead: model.markAllRead) : nil,
+                                                         onMarkAllRead: model.markAllRead,
+                                                         onNewSection: { sectionName = ""; sectionPrompt = .create(project: nil) }) : nil,
                            onSettings: { model.settingsOpen = true }))
   }
 
@@ -96,7 +100,7 @@ struct SessionListScreen: View {
     ScrollView(.vertical) {
       LazyVStack(alignment: .leading, spacing: 0) {
         // By project, the chats' group still stands (its "new chat" row) when nothing else does
-        if ordered.isEmpty && !(byProject && (!model.listedProjects.isEmpty || model.chatRoot != nil)) {
+        if ordered.isEmpty && !(byProject && (!model.listedProjects.isEmpty || !model.sections.isEmpty || model.chatRoot != nil)) {
           // Waiting on the conversation search, the empty list says so rather than "no match"
           // The whole list is empty, not one project's ("session.noneWorkspace" is the IDE's workspace-scoped list)
           Text(web: searching ? t(snippets == nil ? "session.searching" : "session.noMatch") : t("session.none"))
@@ -130,6 +134,19 @@ struct SessionListScreen: View {
       Button(t("mobile.cancel"), role: .cancel) {}
       Button(t("mobile.save")) { if let s = renaming { model.rename(s.id, to: newTitle) } }
     }
+    .alert(sectionPrompt?.title ?? "", isPresented: Binding(get: { sectionPrompt != nil }, set: { if !$0 { sectionPrompt = nil } })) {
+      TextField(text: $sectionName) { Text(web: t("session.section.untitled")) }
+      Button(t("mobile.cancel"), role: .cancel) {}
+      Button(t("mobile.save")) {
+        guard let prompt = sectionPrompt else { return }
+        withAnimation(Motion.ease) {
+          switch prompt {
+          case .create(let project): model.createSection(sectionName, project: project)
+          case .rename(let section): model.renameSection(section.id, to: sectionName)
+          }
+        }
+      }
+    }
     // The move menu's "Add folder", as in the new session's folder menu: the folder joins the list, the session moves in
     .modifier(AddProjectPicker(isPresented: Binding(get: { movingTo != nil }, set: { if !$0 { movingTo = nil } })) { folder in
       guard let s = movingTo else { return }
@@ -160,24 +177,44 @@ struct SessionListScreen: View {
     }
   }
 
-  /// The by-project view's projects: the desktop app's sections first, each under its name with its projects in its own
-  /// order, then the projects in none under "Projects" (the desktop list's layout); without sections, the projects
-  /// alone. Sections are made and filled on the desktop; one with nothing listed here is left out
+  /// The by-project view's projects: the user's sections first, each under its name with its projects in its own order,
+  /// then the projects in none under "Projects" (the desktop list's layout); without sections, the projects alone
   @ViewBuilder
   private func projectGroups(pinsInProject: Bool, projects: [String]) -> some View {
     let listed = model.listedProjects
-    let runs = model.sections.map { SectionRun(section: $0, projects: $0.projects.filter(listed.contains)) }.filter { !$0.projects.isEmpty }
+    let runs = model.sections.map { SectionRun(section: $0, projects: $0.projects.filter(listed.contains)) }
     if runs.isEmpty {
       ForEach(listed, id: \.self) { projectGroup($0, section: nil, run: listed, pinsInProject: pinsInProject, projects: projects) }
     } else {
       let filed = Set(runs.flatMap(\.projects))
       let rest = listed.filter { !filed.contains($0) }
-      ForEach(runs) { run in
-        // A project dropped on a section's caption joins the end of that section
-        Caption(text: run.section.name.isEmpty ? t("session.section.untitled") : run.section.name)
-          .modifier(captionZone(section: run.section.id))
-        ForEach(run.projects, id: \.self) {
-          projectGroup($0, section: run.section.id, run: run.projects, pinsInProject: pinsInProject, projects: projects)
+      ForEach(Array(runs.enumerated()), id: \.element.id) { index, run in
+        let open = run.section.collapsed != true
+        SectionCaptionHeader(
+          section: run.section,
+          open: open,
+          canMoveUp: index > 0,
+          canMoveDown: index < runs.count - 1,
+          onToggle: { if !closeSwipe() { withAnimation(Motion.ease) { model.collapseSection(run.section.id, open) } } },
+          onRename: { sectionName = run.section.name; sectionPrompt = .rename(run.section) },
+          onMoveUp: { withAnimation(Motion.ease) { model.reorderSection(run.section.id, before: runs[index - 1].id) } },
+          onMoveDown: { withAnimation(Motion.ease) { model.reorderSection(run.section.id, before: runs[safe: index + 2]?.id) } },
+          onDelete: { withAnimation(Motion.ease) { model.deleteSection(run.section.id) } }
+        )
+        .modifier(captionZone(section: run.section.id))
+        if open {
+          if run.projects.isEmpty {
+            Text(web: t("session.section.empty"), paragraph: false)
+              .textStyle(TypeScale.text3)
+              .foregroundStyle(Palette.fg3)
+              .padding(.horizontal, Metrics.pad)
+              .frame(maxWidth: .infinity, minHeight: Metrics.sheetRow, alignment: .leading)
+              .modifier(captionZone(section: run.section.id))
+          } else {
+            ForEach(run.projects, id: \.self) {
+              projectGroup($0, section: run.section.id, run: run.projects, pinsInProject: pinsInProject, projects: projects)
+            }
+          }
         }
       }
       if !rest.isEmpty {
@@ -222,6 +259,7 @@ struct SessionListScreen: View {
                     onRemove: { withAnimation(Motion.ease) { model.removeProject(cwd) } },
                     onNew: { show(.new(agent: nil, cwd: cwd)) },
                     onSection: { section in withAnimation(Motion.ease) { model.setProjectSection(cwd, section) } },
+                    onNewSection: { sectionName = ""; sectionPrompt = .create(project: cwd) },
                     onCopyPath: { model.copyPath(cwd) })
       .listDrag(filing ? .project(cwd) : nil, onStart: { held = $0 }) {
         ListDragPreview(title: projectName(cwd)) {
@@ -320,7 +358,7 @@ struct SessionListScreen: View {
         export: { model.export(s.id, format: $0) },
         exportJSON: model.holdsView(s.id),
         copy: { kind in Task { await model.copy(s.id, kind) } },
-        cwd: s.cwd, projects: projects, chat: model.isChat(s.cwd),
+        cwd: s.cwd, projects: projects, sections: model.sections, chat: model.isChat(s.cwd),
         move: { model.move(s.id, to: $0) },
         addFolder: { movingTo = s }))
     }
@@ -445,6 +483,7 @@ struct ListViewMenu: View {
   @Binding var archived: Bool
   var unread = false
   var onMarkAllRead: () -> Void = {}
+  var onNewSection: (() -> Void)?
 
   private func name(_ view: SessionListView) -> String { t("mobile.view.\(view.rawValue)") }
 
@@ -469,6 +508,11 @@ struct ListViewMenu: View {
         Section(t("session.view.pinned")) {
           choice(.top, of: $pinPlace, t("session.view.pinned.top"), "pin")
           choice(.project, of: $pinPlace, t("session.view.pinned.project"), "folder")
+        }
+        if !archived, let onNewSection {
+          Section {
+            Button(t("session.section.newEllipsis"), systemImage: "plus", action: onNewSection)
+          }
         }
       }
       Section {
@@ -632,7 +676,65 @@ private struct LegacyListFoot: View {
   }
 }
 
-/// One of the desktop app's sections with the projects of it the list shows
+enum SectionPrompt {
+  case create(project: String?)
+  case rename(SessionSection)
+
+  var title: String {
+    switch self {
+    case .create: t("session.section.new")
+    case .rename: t("common.rename")
+    }
+  }
+}
+
+/// A custom project section's caption in the by-project view: taps fold or unfold its projects, a long press renames,
+/// reorders or deletes it
+struct SectionCaptionHeader: View {
+  let section: SessionSection
+  let open: Bool
+  let canMoveUp: Bool
+  let canMoveDown: Bool
+  var onToggle: () -> Void
+  var onRename: () -> Void
+  var onMoveUp: () -> Void
+  var onMoveDown: () -> Void
+  var onDelete: () -> Void
+
+  var body: some View {
+    Button(action: onToggle) {
+      HStack(spacing: Metrics.s1_5) {
+        Text(web: section.name.isEmpty ? t("session.section.untitled") : section.name, paragraph: false)
+          .lineLimit(1)
+          .truncationMode(.tail)
+          .textStyle(TypeScale.text3, weight: .medium)
+          .foregroundStyle(Palette.fg3)
+        Icon(.chevronRight, size: Metrics.chevron, strokeWidth: 2)
+          .foregroundStyle(Palette.fg3)
+          .rotationEffect(.degrees(open ? 90 : 0))
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, Metrics.pad)
+      .frame(maxWidth: .infinity, minHeight: Metrics.groupCaption, alignment: .bottomLeading)
+      .padding(.bottom, Metrics.s1)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(.isHeader)
+    .contextMenu {
+      Section {
+        Button(t("common.rename"), systemImage: "pencil", action: onRename)
+        if canMoveUp { Button(t("session.section.moveUp"), systemImage: "arrow.up", action: onMoveUp) }
+        if canMoveDown { Button(t("session.section.moveDown"), systemImage: "arrow.down", action: onMoveDown) }
+      }
+      Section {
+        Button(t("session.section.delete"), systemImage: "trash", role: .destructive, action: onDelete)
+      }
+    }
+  }
+}
+
+/// One of the user's sections with the projects of it the list shows
 struct SectionRun: Identifiable {
   let section: SessionSection
   let projects: [String]
@@ -790,6 +892,7 @@ struct ProjectHeader: View {
   var onNew: () -> Void
   /// Files the folder into a section, or takes it out (nil)
   var onSection: (String?) -> Void = { _ in }
+  var onNewSection: () -> Void = {}
   var onCopyPath: () -> Void = {}
 
   var body: some View {
@@ -837,26 +940,31 @@ struct ProjectHeader: View {
       Section { Button(t("session.project.newSession"), systemImage: "square.and.pencil", action: onNew) }
       Section {
         if !first { Button(t("mobile.project.moveTop"), systemImage: "arrow.up.to.line", action: onMoveTop) }
-        if !sections.isEmpty { sectionMenu }
+        sectionMenu
         Button(t("session.project.copyPath"), systemImage: "doc.on.doc", action: onCopyPath)
       }
       Section { Button(t("session.project.remove"), systemImage: "minus.circle", action: onRemove) }
     }
   }
 
-  /// The sections as a checked picker, the folder's own ticked, then "Remove from section" while it is in one
+  /// The sections as a checked picker, the folder's own ticked, then "New section…" and "Remove from section"
   private var sectionMenu: some View {
     let current = sections.first { $0.projects.contains(cwd) }?.id
     return Menu {
-      Picker(selection: Binding(get: { current }, set: { if let id = $0, id != current { onSection(id) } })) {
-        ForEach(sections) { section in
-          Text(verbatim: section.name.isEmpty ? t("session.section.untitled") : section.name).tag(Optional(section.id))
+      if !sections.isEmpty {
+        Picker(selection: Binding(get: { current }, set: { if let id = $0, id != current { onSection(id) } })) {
+          ForEach(sections) { section in
+            Text(verbatim: section.name.isEmpty ? t("session.section.untitled") : section.name).tag(Optional(section.id))
+          }
+        } label: {
+          EmptyView()
         }
-      } label: {
-        EmptyView()
+        .pickerStyle(.inline)
       }
-      .pickerStyle(.inline)
-      if current != nil { Button(t("session.section.remove"), systemImage: "minus.circle") { onSection(nil) } }
+      Section {
+        Button(t("session.section.newEllipsis"), systemImage: "plus", action: onNewSection)
+        if current != nil { Button(t("session.section.remove"), systemImage: "minus.circle") { onSection(nil) } }
+      }
     } label: {
       Label(t("session.section.moveTo"), systemImage: "square.stack")
     }

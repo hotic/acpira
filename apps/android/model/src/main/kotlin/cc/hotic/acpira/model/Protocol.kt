@@ -233,7 +233,14 @@ sealed interface CategoryOp {
   /** Move a folder before `before`, or to the end */
   data class ReorderProject(val cwd: String, val before: String? = null) : CategoryOp
   data class CollapseProject(val cwd: String, val collapsed: Boolean) : CategoryOp
-  /** File a folder into a desktop section before `before` (at its end without one), or take it out (`section` null) */
+  /** Create a top-level section, optionally filing `project` into it in the same edit */
+  data class CreateSection(val id: String, val name: String, val project: String? = null) : CategoryOp
+  data class RenameSection(val id: String, val name: String) : CategoryOp
+  data class DeleteSection(val id: String) : CategoryOp
+  data class CollapseSection(val id: String, val collapsed: Boolean) : CategoryOp
+  /** Move section `id` before `before`, or to the end */
+  data class ReorderSection(val id: String, val before: String? = null) : CategoryOp
+  /** File a folder into a section before `before` (at its end without one), or take it out (`section` null) */
   data class SetProjectSection(val cwd: String, val section: String? = null, val before: String? = null) : CategoryOp
 
   /** The wire `op` */
@@ -243,6 +250,11 @@ sealed interface CategoryOp {
       is RemoveProject -> "removeProject"
       is ReorderProject -> "reorderProject"
       is CollapseProject -> "collapseProject"
+      is CreateSection -> "createSection"
+      is RenameSection -> "renameSection"
+      is DeleteSection -> "deleteSection"
+      is CollapseSection -> "collapseSection"
+      is ReorderSection -> "reorderSection"
       is SetProjectSection -> "setProjectSection"
     }
 
@@ -254,13 +266,21 @@ sealed interface CategoryOp {
       is RemoveProject -> into.put("cwd", cwd)
       is ReorderProject -> { into.put("cwd", cwd); into.opt("before", before) }
       is CollapseProject -> { into.put("cwd", cwd); into.put("collapsed", collapsed) }
+      is CreateSection -> { into.put("id", id); into.put("name", name); into.opt("project", project) }
+      is RenameSection -> { into.put("id", id); into.put("name", name) }
+      is DeleteSection -> into.put("id", id)
+      is CollapseSection -> { into.put("id", id); into.put("collapsed", collapsed) }
+      is ReorderSection -> { into.put("id", id); into.opt("before", before) }
       is SetProjectSection -> { into.put("cwd", cwd); into.opt("section", section); into.opt("before", before) }
     }
   }
 
   companion object {
     /** The `op` literals this build sends */
-    val ops = listOf("addProject", "removeProject", "reorderProject", "collapseProject", "setProjectSection")
+    val ops = listOf(
+      "addProject", "removeProject", "reorderProject", "collapseProject",
+      "createSection", "renameSection", "deleteSection", "collapseSection", "reorderSection", "setProjectSection",
+    )
   }
 }
 

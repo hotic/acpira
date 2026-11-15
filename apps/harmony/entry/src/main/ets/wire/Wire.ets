@@ -215,6 +215,7 @@ export interface SessionSection {
   id: string;
   name: string;
   projects: string[];
+  collapsed?: boolean;
 }
 
 /** transcript.ts SessionCategories: only the project shell's parts the phone reads */

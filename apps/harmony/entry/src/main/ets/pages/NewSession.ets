@@ -4,7 +4,7 @@ import { GLASS_BARE } from '../design/Glass';
 import { ListMetrics, Metrics, RingMetrics, Type } from '../design/Tokens';
 import { AppModel } from '../store/AppModel';
 import { t } from '../store/L10n';
-import { folderLabel, folderSubtitle, Places } from '../store/SessionLogic';
+import { folderLabel, folderSubtitle, folderSubtitleWithHost, Places, remoteAlias, SectionPlaces } from '../store/SessionLogic';
 import { AgentMark, Lucide } from '../components/Glyphs';
 import { Composer } from '../components/Composer';
 import { Lead, LeadButton } from '../components/ChatBar';
@@ -303,9 +303,18 @@ export struct NewSession {
   }
 
   /**
-   * The folder capsule's menu (apps/ios NativeProjectMenu): the chats on top, then this computer's projects and the SSH
-   * hosts' as submenus, so a long project list never opens as one tall menu; a folder typed in at the end
+   * The folder capsule's menu (apps/ios NativeProjectMenu): the chats on top, custom sections, then remaining projects
+   * on this computer and each SSH host as submenus, and a folder typed in at the end
    */
+  folderPlaces(): Places {
+    return Places.of(this.projects(), this.model.lists.sections);
+  }
+
+  folderSectionTitle(secId: string): string {
+    const name = this.folderPlaces().sections.find((s: SectionPlaces) => s.id === secId)?.name ?? '';
+    return name.length > 0 ? name : t('session.section.untitled');
+  }
+
   @Builder
   folderCard() {
     MenuCard() {
@@ -314,27 +323,57 @@ export struct NewSession {
           MenuRow({ text: t('session.group.chats'), checked: this.cwd() === undefined, icon: 'messagesSquare', onTap: () => this.pickFolder(undefined) })
           MenuGap()
         }
-        if (Places.of(this.projects()).local.length > 0) {
+        ForEach(this.folderPlaces().sections, (s: SectionPlaces) => {
           MenuRow({
-            text: t('mobile.projects.local'), checked: this.cwd() !== undefined && !(this.cwd() ?? '').startsWith('ssh://'),
+            text: s.name.length > 0 ? s.name : t('session.section.untitled'),
+            checked: this.cwd() !== undefined && s.projects.includes(this.cwd() ?? ''),
+            icon: 'chevronRight',
+            tag: `folder.section:${s.id}`,
+            onTap: () => { this.folderLevel = `sec:${s.id}`; }
+          })
+        }, (s: SectionPlaces) => s.id)
+        if (this.folderPlaces().sections.length > 0 && (this.folderPlaces().local.length > 0 || this.folderPlaces().hosts.length > 0)) {
+          MenuGap()
+        }
+        if (this.folderPlaces().local.length > 0) {
+          MenuRow({
+            text: t('mobile.projects.local'),
+            checked: this.cwd() !== undefined && !this.folderPlaces().filed.has(this.cwd() ?? '') && !(this.cwd() ?? '').startsWith('ssh://'),
             icon: 'chevronRight', tag: 'folder.local', onTap: () => { this.folderLevel = ''; }
           })
         }
-        ForEach(Places.of(this.projects()).hosts, (h: string) => {
+        ForEach(this.folderPlaces().hosts, (h: string) => {
           MenuRow({
-            text: h, subtitle: t('mobile.projects.remote'), checked: (this.cwd() ?? '').startsWith(`ssh://${h}/`), icon: 'chevronRight',
+            text: h, subtitle: t('mobile.projects.remote'),
+            checked: this.cwd() !== undefined && !this.folderPlaces().filed.has(this.cwd() ?? '') && (this.cwd() ?? '').startsWith(`ssh://${h}/`),
+            icon: 'chevronRight',
             onTap: () => { this.folderLevel = h; }
           })
         }, (h: string) => h)
-        MenuGap()
+        if (this.folderPlaces().sections.length > 0 || this.folderPlaces().local.length > 0 || this.folderPlaces().hosts.length > 0) {
+          MenuGap()
+        }
         MenuRow({ text: t('mobile.projects.add'), checked: false, icon: 'folderPlus', tag: 'folder.add', onTap: () => this.addFolder() })
+      } else if (this.folderLevel.startsWith('sec:')) {
+        MenuBack({
+          title: this.folderSectionTitle(this.folderLevel.substring(4)),
+          onTap: () => { this.folderLevel = undefined; }
+        })
+        MenuGap()
+        ForEach(this.folderPlaces().sections.find((s: SectionPlaces) => s.id === (this.folderLevel ?? '').substring(4))?.projects ?? [],
+          (p: string) => {
+            MenuRow({
+              text: folderLabel(p), subtitle: folderSubtitleWithHost(p), checked: p === this.cwd(),
+              icon: remoteAlias(p) === undefined ? 'folder' : 'globe', onTap: () => this.pickFolder(p)
+            })
+          }, (p: string) => p)
       } else {
         MenuBack({
           title: this.folderLevel.length === 0 ? t('mobile.projects.local') : this.folderLevel,
           onTap: () => { this.folderLevel = undefined; }
         })
         MenuGap()
-        ForEach(this.folderLevel.length === 0 ? Places.of(this.projects()).local : (Places.of(this.projects()).byHost.get(this.folderLevel) ?? []),
+        ForEach(this.folderLevel.length === 0 ? this.folderPlaces().local : (this.folderPlaces().byHost.get(this.folderLevel) ?? []),
           (p: string) => {
             MenuRow({
               text: folderLabel(p), subtitle: folderSubtitle(p), checked: p === this.cwd(),

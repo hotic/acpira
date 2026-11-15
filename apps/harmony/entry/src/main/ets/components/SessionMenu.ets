@@ -1,7 +1,7 @@
 import { SessionSummary } from '../wire/Wire';
 import { AppModel } from '../store/AppModel';
 import { ExportFormat, SessionCopy } from '../store/SessionLists';
-import { folderLabel, folderSubtitle, isUnread, Places } from '../store/SessionLogic';
+import { folderLabel, folderSubtitle, folderSubtitleWithHost, isUnread, Places, remoteAlias, SectionPlaces } from '../store/SessionLogic';
 import { t } from '../store/L10n';
 import { MenuBack, MenuCard, MenuGap, MenuRow } from './Menu';
 import { confirmDestructive, openTextPrompt, PromptArgs } from './Dialogs';
@@ -27,6 +27,8 @@ export class ChatEntries {
 const COPY: string = 'copy';
 const EXPORT: string = 'export';
 const MOVE: string = 'move';
+/** A custom section's folders under the move menu */
+const SECTION_FOLDERS: string = 'sec:';
 /** A machine's folders under the move menu: this prefix and the host's alias ("" this computer) */
 const FOLDERS: string = 'move:';
 
@@ -64,7 +66,7 @@ export struct SessionMenu {
   places(): Places {
     const cwd = this.cwd();
     const own: string[] = this.model.isChat(cwd) ? [] : [cwd];
-    return Places.of(own.concat(this.model.lists.projects()));
+    return Places.of(own.concat(this.model.lists.projects()), this.model.lists.sections);
   }
 
   rename(): void {
@@ -113,6 +115,8 @@ export struct SessionMenu {
         this.exportLevel()
       } else if (this.level === MOVE) {
         this.moveLevel()
+      } else if (this.level.startsWith(SECTION_FOLDERS)) {
+        this.sectionFoldersLevel(this.level.substring(SECTION_FOLDERS.length))
       } else {
         this.foldersLevel(this.level.substring(FOLDERS.length))
       }
@@ -223,16 +227,53 @@ export struct SessionMenu {
   moveLevel() {
     MenuBack({ title: t('session.moveToProject'), onTap: () => { this.level = ''; } })
     MenuGap()
+    ForEach(this.places().sections, (s: SectionPlaces) => {
+      MenuRow({
+        text: s.name.length > 0 ? s.name : t('session.section.untitled'),
+        icon: 'chevronRight',
+        tag: `menu.move.section:${s.id}`,
+        onTap: () => { this.level = SECTION_FOLDERS + s.id; }
+      })
+    }, (s: SectionPlaces) => s.id)
+    if (this.places().sections.length > 0 && (this.places().local.length > 0 || this.places().hosts.length > 0)) {
+      MenuGap()
+    }
     if (this.places().local.length > 0) {
       MenuRow({ text: t('mobile.projects.local'), icon: 'chevronRight', tag: 'menu.move.local', onTap: () => { this.level = FOLDERS; } })
     }
     ForEach(this.places().hosts, (h: string) => {
       MenuRow({ text: h, subtitle: t('mobile.projects.remote'), icon: 'chevronRight', onTap: () => { this.level = FOLDERS + h; } })
     }, (h: string) => h)
-    if (this.places().local.length > 0 || this.places().hosts.length > 0) {
+    if (this.places().sections.length > 0 || this.places().local.length > 0 || this.places().hosts.length > 0) {
       MenuGap()
     }
     MenuRow({ text: t('mobile.projects.add'), icon: 'folderPlus', tag: 'menu.move.add', onTap: () => this.addFolder() })
+  }
+
+  /** One custom section's folders; the session's own is ticked */
+  @Builder
+  sectionFoldersLevel(secId: string) {
+    MenuBack({ title: this.sectionTitle(secId), onTap: () => { this.level = MOVE; } })
+    MenuGap()
+    ForEach(this.places().sections.find((s: SectionPlaces) => s.id === secId)?.projects ?? [], (p: string) => {
+      MenuRow({
+        text: folderLabel(p),
+        subtitle: folderSubtitleWithHost(p),
+        checked: !this.model.isChat(this.cwd()) && p === this.cwd(),
+        icon: remoteAlias(p) === undefined ? 'folder' : 'globe',
+        tag: `menu.move.to:${p}`,
+        onTap: () => this.pick(() => {
+          if (p !== this.cwd()) {
+            this.model.lists.move(this.sessionId, p);
+          }
+        })
+      })
+    }, (p: string) => p)
+  }
+
+  sectionTitle(secId: string): string {
+    const name = this.places().sections.find((s: SectionPlaces) => s.id === secId)?.name ?? '';
+    return name.length > 0 ? name : t('session.section.untitled');
   }
 
   /** One machine's folders; the session's own is ticked, so picking it moves nothing */

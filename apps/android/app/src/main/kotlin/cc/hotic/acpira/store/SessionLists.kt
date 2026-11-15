@@ -289,13 +289,49 @@ class SessionLists(private val model: AppModel, private val context: Context, pr
     if (!model.live) removedProjects = removedProjects - cwd
   }
 
-  /** Files a folder into one of the desktop's sections at its end, or takes it out ([section] null) */
+  /** Files a folder into a section at its end, or takes it out ([section] null) */
   fun setProjectSection(cwd: String, section: String?) {
     if (model.post(WebviewMsg.CategoryOp(CategoryOp.SetProjectSection(cwd, section)))) return
     sections = sections.map { s ->
       val rest = s.projects.filter { it != cwd }
       s.copy(projects = if (s.id == section) rest + cwd else rest)
     }
+  }
+
+  /** Creates a custom project section, optionally filing [project] into it in the same edit */
+  fun createSection(name: String, project: String? = null) {
+    val label = name.trim().ifEmpty { t("session.section.untitled") }
+    val id = "sec-${java.util.UUID.randomUUID().toString().take(8)}"
+    if (model.post(WebviewMsg.CategoryOp(CategoryOp.CreateSection(id, label, project)))) return
+    val base = if (project == null) sections else sections.map { it.copy(projects = it.projects.filter { p -> p != project }) }
+    sections = base + SessionSection(id = id, name = label, projects = listOfNotNull(project))
+  }
+
+  fun renameSection(id: String, name: String) {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return
+    if (model.post(WebviewMsg.CategoryOp(CategoryOp.RenameSection(id, trimmed)))) return
+    sections = sections.map { if (it.id == id) it.copy(name = trimmed) else it }
+  }
+
+  /** Deletes a section; its projects remain on the list under "Projects" */
+  fun deleteSection(id: String) {
+    if (model.post(WebviewMsg.CategoryOp(CategoryOp.DeleteSection(id)))) return
+    sections = sections.filter { it.id != id }
+  }
+
+  fun collapseSection(id: String, collapsed: Boolean) {
+    if (model.post(WebviewMsg.CategoryOp(CategoryOp.CollapseSection(id, collapsed)))) return
+    sections = sections.map { if (it.id == id) it.copy(collapsed = collapsed.takeIf { c -> c }) else it }
+  }
+
+  fun reorderSection(id: String, before: String?) {
+    if (model.post(WebviewMsg.CategoryOp(CategoryOp.ReorderSection(id, before)))) return
+    val moving = sections.firstOrNull { it.id == id } ?: return
+    val rest = sections.filter { it.id != id }.toMutableList()
+    val at = before?.let { anchor -> rest.indexOfFirst { it.id == anchor } }?.takeIf { it >= 0 } ?: rest.size
+    rest.add(at, moving)
+    sections = rest
   }
 
   /**
