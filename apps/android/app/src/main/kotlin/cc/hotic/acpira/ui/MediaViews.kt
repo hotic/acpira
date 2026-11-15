@@ -89,8 +89,11 @@ import java.nio.ByteBuffer
 // loaded, so nothing below moves when its pixels land (only the card's width follows the picture); a tap opens it in
 // the Lightbox (ui/Lightbox.kt).
 
-/** The image the Lightbox shows, its name when it has a real one, and its source among the session's images */
-class LightboxItem(val image: DecodedImage, val name: String?, val source: MediaSource?)
+/**
+ * The image the Lightbox shows, its name when it has a real one, and its source among the session's images.
+ * [framed] keeps a rendered card (ShareCard) clear of the bars and screen edges at rest
+ */
+class LightboxItem(val image: DecodedImage, val name: String?, val source: MediaSource?, val framed: Boolean = false)
 
 /** Opens and closes a chat's Lightbox: a holder in the scope rather than a callback, so image views do not redraw with it */
 @Stable

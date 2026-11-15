@@ -40,6 +40,8 @@ struct LightboxItem: Identifiable {
   var image: DecodedImage
   var name: String?
   var source: MediaSource?
+  /// A rendered card (ShareCard) keeps clear of the bars and screen edges at rest
+  var framed = false
 }
 
 /// Opens and closes a chat's Lightbox. A class in the environment rather than a closure, so the image views do not

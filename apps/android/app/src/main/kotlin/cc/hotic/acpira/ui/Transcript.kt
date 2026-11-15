@@ -452,17 +452,13 @@ private fun TurnActions(
   val media = LocalMedia.current
   val scope = rememberCoroutineScope()
   val shareable = remember(turn) { ShareContent(turn) }
-  // The screenshot being drawn: its watermark and the card's width
+  // The screenshot being drawn: its watermark and the card's desktop reading width
   var sharing by remember { mutableStateOf<Pair<ShareMeta, Int>?>(null) }
-  // The row's width, which with the message's sides is the thread's; read on a tap, so measuring redraws nothing
-  val rowWidth = remember { intArrayOf(0) }
-  val sides = with(LocalDensity.current) { (Metrics.pad * 2).roundToPx() }
-  val widest = with(LocalDensity.current) { Metrics.contentW.roundToPx() }
+  val cardWidth = with(LocalDensity.current) { Metrics.contentW.roundToPx() }
   // Hugs the reply (-mt-gap): the row gives a gap of its height back to the column's spacing
   Row(
     Modifier.fillMaxWidth().layout { measurable, constraints ->
       val row = measurable.measure(constraints)
-      rowWidth[0] = row.width
       val pull = Metrics.gap.roundToPx()
       layout(row.width, maxOf(row.height - pull, 0)) { row.place(0, -pull) }
     },
@@ -481,22 +477,21 @@ private fun TurnActions(
     if (lightbox != null && !shareable.isEmpty) {
       Box {
         ActionButton("image", t("turn.share"), "turn.share") {
-          if (sharing != null || rowWidth[0] <= 0) return@ActionButton
+          if (sharing != null) return@ActionButton
           haptics.play(Haptic.Copy)
           val view = media.session?.let { media.model?.views?.get(it) }
           val agent = view?.agent.orEmpty()
           val meta = shareMeta(context, view?.title.orEmpty(), agent, media.model?.agent(agent)?.name ?: agent, turn.usage, settings, controls)
-          val width = minOf(rowWidth[0] + sides, widest)
           scope.launch {
             // The turn's images at hand before the card is drawn, so it settles in its first frames
             view?.let { media.loader.preload(it.copy(turns = listOf(turn))) }
-            sharing = meta to width
+            sharing = meta to cardWidth
           }
         }
         sharing?.let { (meta, width) ->
           ShareCapture(width, onDone = { picture ->
             sharing = null
-            if (picture != null) lightbox.open(LightboxItem(picture, meta.title.ifBlank { null }, null))
+            if (picture != null) lightbox.open(LightboxItem(picture, meta.title.ifBlank { null }, null, framed = true))
           }) { ShareCard(meta, shareable) }
         }
       }

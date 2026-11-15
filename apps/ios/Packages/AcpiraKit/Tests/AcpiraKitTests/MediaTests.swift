@@ -323,6 +323,16 @@ struct LightboxGeometryTests {
     #expect(LightboxGeometry.fit(CGSize(width: 10, height: 20), in: CGSize(width: 400, height: 800)) == CGSize(width: 400, height: 800))
     #expect(LightboxGeometry.centering(CGSize(width: 400, height: 200), in: CGSize(width: 400, height: 800)) == CGSize(width: 0, height: 300))
     #expect(LightboxGeometry.centering(CGSize(width: 900, height: 900), in: CGSize(width: 400, height: 800)) == .zero)
+    // Framed cards rest inside the bar/safe-area stage and unlock the whole screen once zoomed
+    let atStage = LightboxGeometry.centering(CGSize(width: 370, height: 700), in: CGSize(width: 402, height: 874),
+                                             top: 126, left: 16, bottom: 48, right: 16)
+    #expect(atStage == (top: 126, left: 16, bottom: 48, right: 16))
+    let shorter = LightboxGeometry.centering(CGSize(width: 370, height: 400), in: CGSize(width: 402, height: 874),
+                                             top: 126, left: 16, bottom: 48, right: 16)
+    #expect(shorter == (top: 276, left: 16, bottom: 198, right: 16))
+    let zoomed = LightboxGeometry.centering(CGSize(width: 1000, height: 1200), in: CGSize(width: 402, height: 874),
+                                            top: 126, left: 16, bottom: 48, right: 16)
+    #expect(zoomed == (top: 0, left: 0, bottom: 0, right: 0))
     // Never a rounding error past the screen, which would let the unzoomed picture scroll sideways
     let screen = CGSize(width: 402, height: 874)
     for width in stride(from: 1000.0, to: 4000.0, by: 7.0) {

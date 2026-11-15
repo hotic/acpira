@@ -23,11 +23,14 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +64,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -119,6 +123,21 @@ object LightboxGeometry {
     return min(boundW, w * scale) to min(boundH, h * scale)
   }
 
+  /**
+   * Asymmetric stage insets at rest (`top`, `left`, `bottom`, `right`), relaxing smoothly to zero once zoomed content
+   * grows past the screen's own edges
+   */
+  fun centering(contentW: Float, contentH: Float, boundW: Float, boundH: Float, top: Float, left: Float, bottom: Float, right: Float): FloatArray {
+    val cx = (boundW + left - right) / 2f
+    val cy = (boundH + top - bottom) / 2f
+    return floatArrayOf(
+      max(0f, cy - contentH / 2f),
+      max(0f, cx - contentW / 2f),
+      max(0f, boundH - cy - contentH / 2f),
+      max(0f, boundW - cx - contentW / 2f),
+    )
+  }
+
   /** The deepest zoom: [MIN_MAX_ZOOM], or further while a screen pixel still meets a picture pixel */
   fun maxZoom(pixelW: Float, fittedW: Float): Float = if (fittedW <= 0) MIN_MAX_ZOOM else max(MIN_MAX_ZOOM, pixelW / fittedW)
 
@@ -131,14 +150,14 @@ object LightboxGeometry {
 }
 
 /** One page of the Lightbox: its pixels when already at hand (the tapped picture), else where to load them */
-class LightboxPage(val source: MediaSource?, val name: String?, val image: DecodedImage?)
+class LightboxPage(val source: MediaSource?, val name: String?, val image: DecodedImage?, val framed: Boolean = false)
 
 /**
  * The pages the Lightbox swipes through: the session's images in reading order, opened at this one, which keeps the
  * pixels and name its view gave it. One not among them (no source or session, a photo not yet sent) stands alone
  */
 fun gallery(item: LightboxItem, view: SessionView?): Pair<List<LightboxPage>, Int> {
-  val tapped = LightboxPage(item.source, item.name, item.image)
+  val tapped = LightboxPage(item.source, item.name, item.image, item.framed)
   val source = item.source ?: return listOf(tapped) to 0
   view ?: return listOf(tapped) to 0
   val pages = MediaLoader.entries(view).map { LightboxPage(it.source, it.name, null) }.toMutableList()
@@ -266,7 +285,7 @@ private fun LightboxPageView(
   }
   val shown = image
   when {
-    shown != null -> ZoomPage(shown, motion, onZoom, onPull, onClose, onTap)
+    shown != null -> ZoomPage(shown, page.framed, motion, onZoom, onPull, onClose, onTap)
     else -> Box(
       Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { onTap() }) }
         .semantics { if (failed) contentDescription = t("attach.loadFailed", "name" to (page.name ?: t("common.image"))) },
@@ -284,13 +303,32 @@ private fun LightboxPageView(
  * pager
  */
 @Composable
-private fun ZoomPage(image: DecodedImage, motion: Boolean, onZoom: (Boolean) -> Unit, onPull: (Float) -> Unit, onClose: () -> Unit, onTap: () -> Unit) {
+private fun ZoomPage(
+  image: DecodedImage,
+  framed: Boolean,
+  motion: Boolean,
+  onZoom: (Boolean) -> Unit,
+  onPull: (Float) -> Unit,
+  onClose: () -> Unit,
+  onTap: () -> Unit,
+) {
   val scope = rememberCoroutineScope()
   val density = LocalDensity.current
+  val direction = LocalLayoutDirection.current
+  val bars = WindowInsets.systemBars
   BoxWithConstraints(Modifier.fillMaxSize()) {
     val w = constraints.maxWidth.toFloat()
     val h = constraints.maxHeight.toFloat()
-    val (fw, fh) = LightboxGeometry.fit(image.width.toFloat(), image.height.toFloat(), w, h)
+    val padPx = with(density) { Metrics.pad.toPx() }
+    val gapPx = with(density) { Metrics.gap.toPx() }
+    val barPx = with(density) { (Metrics.barCtl + Metrics.s2).toPx() }
+    val inTop = if (framed) bars.getTop(density) + barPx + gapPx else 0f
+    val inBottom = if (framed) max(bars.getBottom(density).toFloat(), padPx) + gapPx else 0f
+    val inLeft = if (framed) bars.getLeft(density, direction) + padPx else 0f
+    val inRight = if (framed) bars.getRight(density, direction) + padPx else 0f
+    val sw = max(1f, w - inLeft - inRight)
+    val sh = max(1f, h - inTop - inBottom)
+    val (fw, fh) = LightboxGeometry.fit(image.width.toFloat(), image.height.toFloat(), sw, sh)
     val maxZoom = LightboxGeometry.maxZoom(image.width.toFloat(), fw)
     val closeSpeed = with(density) { LightboxGeometry.CLOSE_SPEED.dp.toPx() }
     var scale by remember(image) { mutableFloatStateOf(1f) }
@@ -298,43 +336,43 @@ private fun ZoomPage(image: DecodedImage, motion: Boolean, onZoom: (Boolean) -> 
     var pullAt by remember(image) { mutableStateOf(Offset.Zero) }
 
     fun clamp(o: Offset, s: Float): Offset {
-      val mx = max(0f, (fw * s - w) / 2)
-      val my = max(0f, (fh * s - h) / 2)
-      return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
+      val cw = fw * s
+      val ch = fh * s
+      val c = LightboxGeometry.centering(cw, ch, w, h, inTop, inLeft, inBottom, inRight)
+      val ax = c[1] + cw / 2f - w / 2f
+      val bx = w / 2f - c[3] - cw / 2f
+      val ay = c[0] + ch / 2f - h / 2f
+      val by = h / 2f - c[2] - ch / 2f
+      return Offset(o.x.coerceIn(min(ax, bx), max(ax, bx)), o.y.coerceIn(min(ay, by), max(ay, by)))
     }
+    val placed = clamp(offset, scale)
+
     fun zoomTo(target: Float, focus: Offset) {
       val from = scale
-      val fromOffset = offset
+      val fromOffset = clamp(offset, from)
       // The tapped point comes to the middle, as UIScrollView.zoom(to:) shows the rect around it
       val content = (focus - Offset(w / 2, h / 2) - fromOffset) / from
-      val toOffset = if (target <= 1f) Offset.Zero else clamp(-content * target, target)
+      val toOffset = if (target <= 1f) clamp(Offset.Zero, 1f) else clamp(-content * target, target)
       scope.launch {
         animate(0f, 1f, animationSpec = if (motion) spring(stiffness = RowMotion.foldStiffness) else tween(0)) { p, _ ->
           scale = from + (target - from) * p
           offset = fromOffset + (toOffset - fromOffset) * p
         }
+        if (target <= 1f) offset = Offset.Zero
         onZoom(scale > 1f)
       }
     }
 
-    Picture(
-      image,
+    Box(
       Modifier
         .fillMaxSize()
-        .graphicsLayer {
-          val shrink = 1 - LightboxGeometry.pull(pullAt.y, h) * LightboxGeometry.PULL_SHRINK
-          scaleX = scale * shrink
-          scaleY = scale * shrink
-          translationX = offset.x + pullAt.x
-          translationY = offset.y + pullAt.y
-        }
-        .pointerInput(image, w, h) {
+        .pointerInput(image, w, h, inTop, inBottom, inLeft, inRight) {
           detectTapGestures(
             onDoubleTap = { p -> zoomTo(if (scale > 1f) 1f else min(maxZoom, LightboxGeometry.DOUBLE_TAP_ZOOM), p) },
             onTap = { onTap() },
           )
         }
-        .pointerInput(image, w, h) {
+        .pointerInput(image, w, h, inTop, inBottom, inLeft, inRight) {
           awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false)
             // undecided, a pinch or pan of the picture, the pull, or a drag left to the pager
@@ -350,7 +388,8 @@ private fun ZoomPage(image: DecodedImage, motion: Boolean, onZoom: (Boolean) -> 
                 val pan = event.calculatePan()
                 val focus = event.calculateCentroid(useCurrent = true) - Offset(w / 2, h / 2)
                 val next = (scale * zoom).coerceIn(1f, maxZoom)
-                offset = clamp(focus - (focus - offset) * (next / scale) + pan, next)
+                val cur = clamp(offset, scale)
+                offset = clamp(focus - (focus - cur) * (next / scale) + pan, next)
                 scale = next
                 event.changes.forEach { it.consume() }
               } else if (pressed.size == 1) {
@@ -366,7 +405,7 @@ private fun ZoomPage(image: DecodedImage, motion: Boolean, onZoom: (Boolean) -> 
                   mode == Gesture.Pass -> {}
                   scale > 1f -> {
                     mode = Gesture.Transform
-                    offset = clamp(offset + delta, scale)
+                    offset = clamp(clamp(offset, scale) + delta, scale)
                     change.consume()
                   }
                   mode == Gesture.Undecided -> {
@@ -406,7 +445,19 @@ private fun ZoomPage(image: DecodedImage, motion: Boolean, onZoom: (Boolean) -> 
           }
         }
         .testTag("lightbox.page"),
-    )
+      contentAlignment = Alignment.Center,
+    ) {
+      Picture(
+        image,
+        with(density) { Modifier.size(fw.toDp(), fh.toDp()) }.graphicsLayer {
+          val shrink = 1 - LightboxGeometry.pull(pullAt.y, h) * LightboxGeometry.PULL_SHRINK
+          scaleX = scale * shrink
+          scaleY = scale * shrink
+          translationX = placed.x + pullAt.x
+          translationY = placed.y + pullAt.y
+        },
+      )
+    }
   }
 }
 
