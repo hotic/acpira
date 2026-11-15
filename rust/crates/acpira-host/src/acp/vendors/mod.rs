@@ -156,6 +156,11 @@ impl Vendor {
       && tool_call.get("rawInput").is_none_or(|r| r.is_null() || r.as_object().is_some_and(|o| o.is_empty()))
   }
 
+  /// A finished command row carries a timing receipt around its output (`antigravity::tidy_command`)
+  pub fn command_receipt(self) -> bool {
+    self == Vendor::Antigravity
+  }
+
   /// A failed turn arrives as the reply's last text with `end_turn` (`antigravity::reply_error`)
   pub fn reply_error(self, text: &str) -> Option<(usize, antigravity::ReplyError)> {
     if self == Vendor::Antigravity { antigravity::reply_error(text) } else { None }

@@ -13,7 +13,7 @@ use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_t
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
-use crate::acp::vendors::{claude_autonomous, claude_wakeup, claude_window, goal, hermes, steering};
+use crate::acp::vendors::{antigravity, claude_autonomous, claude_wakeup, claude_window, goal, hermes, steering};
 use crate::util::now_ms;
 
 const RUNNING_KINDS: [&str; 6] =
@@ -176,6 +176,9 @@ impl AcpSession {
       if let Some(w) = claude_window::correct(c.account_id.as_deref(), &c.state.controls, size, &crate::model_catalog::current()) {
         u["size"] = w.into();
       }
+    }
+    if self.vendor.command_receipt() && matches!(kind.as_str(), "tool_call" | "tool_call_update") {
+      antigravity::tidy_command(&mut u);
     }
     if self.vendor.hermes_output() {
       if matches!(kind.as_str(), "tool_call" | "tool_call_update") {
