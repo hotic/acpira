@@ -142,26 +142,24 @@
   [data-tree] .tree-block { content-visibility: auto; contain-intrinsic-size: auto calc(var(--tree-block-rows) * var(--row)); }
   [data-tree] .tree-block[data-pending] { height: calc(var(--tree-block-rows) * var(--row)); }
 
-  /* The viewer's lines: added lines tinted, removed ones put back and dimmed, a picked range in the focus colour */
+  /* The viewer's lines: tinted and signed like the transcript's diff rows (tokens.css --diff-add / --diff-del strength, the
+     signs-only diff style drops the tint too), a picked range in the focus colour */
   [data-viewer] {
     --code-num-fg: color-mix(in srgb, var(--fg-3) 70%, transparent);
-    --code-num-add-fg: color-mix(in srgb, var(--ok) 80%, var(--fg-3));
-    --code-add-bg: color-mix(in srgb, var(--ok) 10%, transparent);
-    --code-del-bg: color-mix(in srgb, var(--danger) 11%, transparent);
+    --code-add-bg: color-mix(in srgb, var(--ok) 6%, transparent);
+    --code-del-bg: color-mix(in srgb, var(--danger) 8%, transparent);
     --code-sel-bg: color-mix(in srgb, var(--focus) 17%, transparent);
   }
+  [data-diff="signs"] [data-viewer] { --code-add-bg: transparent; --code-del-bg: transparent; }
   [data-viewer] .code-row { --row-bg: transparent; background: var(--row-bg); }
   [data-viewer] .code-row[data-kind="add"] { --row-bg: var(--code-add-bg); }
   [data-viewer] .code-row[data-kind="del"] { --row-bg: var(--code-del-bg); }
-  [data-viewer] .code-row[data-kind="del"] .code-text { opacity: .72; }
-  [data-viewer] .code-row[data-kind="add"] .code-bar { background: var(--ok); }
-  [data-viewer] .code-row[data-kind="del"] .code-bar { background: var(--danger); }
   [data-viewer] .code-row.is-selected { --row-bg: var(--code-sel-bg); }
   [data-viewer] .code-row.is-selected .code-bar { background: var(--focus); }
   /* The numbers stay put while the code scrolls sideways, painted over it only when horizontally scrolled */
   [data-viewer] .code-num { color: var(--code-num-fg); }
   [data-viewer] [data-code][data-scrolled-x] .code-num { position: sticky; left: 0; z-index: 1; background: linear-gradient(var(--row-bg), var(--row-bg)), var(--panel-bg); }
-  [data-viewer] .code-row[data-kind="add"] .code-num { color: var(--code-num-add-fg); }
+  [data-viewer] [data-code][data-scrolled-x] .code-sign { position: sticky; left: var(--code-gutter); z-index: 1; background: linear-gradient(var(--row-bg), var(--row-bg)), var(--panel-bg); }
   [data-viewer] .code-row.is-selected .code-num, [data-viewer] .code-row:hover .code-num { color: var(--fg-1); }
   /* A long file is laid out a block at a time: blocks out of sight keep their last size and skip layout and paint */
   [data-viewer] [data-code] { contain: strict; }
