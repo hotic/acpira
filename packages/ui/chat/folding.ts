@@ -5,6 +5,37 @@ import { getLocale, t } from '../i18n';
 import { commandDuration } from './commandDuration';
 import { planApprovalTitle } from './permissionOptions';
 import { visibleToolContents } from './toolDetails';
+import { isImageResultBlock } from '@acpira/shared/imageTools';
+import type { Appearance } from '@acpira/shared/appearance';
+
+// The kinds of process step the reader can leave out of a turn (Appearance `show*`). Everything else always shows:
+// plans, questions, notices, steered prompts, delegations, and a call whose result is a picture or a widget
+export type StepKind = 'thought' | 'commentary' | 'read' | 'command' | 'edit' | 'other';
+
+// `text` counts as commentary: callers pass process blocks only, never the reply
+export function stepKind(b: AgentBlock): StepKind | undefined {
+  if (b.type === 'thought') return 'thought';
+  if (b.type === 'text') return 'commentary';
+  if (b.type !== 'tool_call' || b.subagentId !== undefined) return;
+  const shown: boolean = isImageResultBlock(b);
+  if (shown) return;
+  if (b.kind === 'think') return 'thought';
+  if (b.kind === 'read' || b.kind === 'search' || b.kind === 'fetch' || isSessionTool(b)) return 'read';
+  if (b.kind === 'execute' || b.verbKey === 'verb.wait') return 'command';
+  if (b.kind === 'edit' || b.kind === 'delete' || b.kind === 'move') return 'edit';
+  return 'other';
+}
+
+const STEP_AXES: [StepKind, 'showThoughts' | 'showCommentary' | 'showReads' | 'showCommands' | 'showEdits' | 'showOtherTools'][] = [
+  ['thought', 'showThoughts'], ['commentary', 'showCommentary'], ['read', 'showReads'], ['command', 'showCommands'], ['edit', 'showEdits'], ['other', 'showOtherTools'],
+];
+
+// The process blocks left after the hidden kinds; the same array when nothing is hidden, so memo chains hold
+export function visibleSteps<B extends AgentBlock>(blocks: B[], a: Appearance): B[] {
+  const hidden = STEP_AXES.filter(([, axis]) => a[axis] === 'off').map(([kind]) => kind);
+  if (!hidden.length) return blocks;
+  return blocks.filter(b => { const kind = stepKind(b); return !kind || !hidden.includes(kind); });
+}
 
 // Thinking and to-do bookkeeping between closing paragraphs do not end the reply; in a foldable turn they join
 // the process fold instead, so a summary followed by one more thought and a short coda stays visible as a whole.

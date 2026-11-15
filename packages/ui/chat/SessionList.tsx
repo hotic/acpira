@@ -20,11 +20,13 @@ import { imeKey } from '../ui/ime';
 import { dateFormat, getLocale, t, useLocale } from '../i18n';
 import { macOS, shortcutLabel, useDesktop, windowsOS } from '../desktop';
 import { AgentMark } from './AgentMark';
+import { useAppearance } from '../appearance';
 import { CategoryAddIcon } from './CategoryIcon';
 import { ModelMark } from './ModelMark';
 import { RowContextMenu, SessionContextMenu, Submenu, type MoveProject, type SessionCopyKind, type SessionMenuItemsProps } from './SessionMenu';
 import { setWebviewState, webviewState } from '../vscodeApi';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
+import { needsAttention } from './sessionNav';
 import { NAV_LEAD, NAV_ROW, NavEmpty, NavHint, NavSearch } from './NavRows';
 import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, projectOf as projectOfMeta, projectSessions, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
@@ -53,7 +55,6 @@ const MORE_PAGE = 10;
 // Pure running / background work stays outside "more" up to this many; sessions needing attention have no cap.
 const LIVE_KEEP = 5;
 const isLive = (s: SessionSummary) => s.state === 'working' || s.state === 'background';
-const needsAttention = (s: SessionSummary) => !!s.unread || s.state === 'unread' || s.state === 'waiting' || s.state === 'error';
 
 // Ring and dots share one fixed slot so every mark sits on the same centre line, and each names its meaning on hover.
 // The ring is drawn smaller than the slot: at full size its arc outweighed even an 8 px dot
@@ -351,6 +352,7 @@ function perKey<T>(compute: (key: string) => T): (key: string) => T {
 export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onArchive, onUnread, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onAddRemote, onEditProject, onRevealPath, onCopyPath, fresh, onMarkAllRead, chats, onNewChat }: SessionListProps) {
   const locale = useLocale();
   const desktop = useDesktop();
+  const projectMarks = useAppearance().projectMarks === 'on';
   // The SSH hosts the add menu offers folders on; undefined until the engine answered for them
   const connections = useConnections();
   const remoteHosts = onAddRemote ? connections : undefined;
@@ -468,20 +470,41 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     workspace, grouped, filtering, expand: !!q, registered, removed, pinInProject, isChat, projectOf,
   });
   const pinnedHere = (s: SessionSummary) => !!s.pinned && pinInProject;
-  // Every project the list knows (the sessions' folders, the categories' own and the registered ones, not those off the
-  // list), the window's first, then the most recently used: the "move to project" destinations. Taken from all sessions,
-  // not the filtered view, so a search does not hide one. Kept while equal: every push brings a new session list
+  // Every project the list knows (the sessions' folders, the categories' own, the sections' and the registered ones, not
+  // those off the list): custom sections first in their own order, then the remaining projects (the window's first, then
+  // registered order, then most recently used). Taken from all sessions, not the filtered view, so a search does not hide
+  // one. Kept while equal: every push brings a new session list
   const projects = useReused(useMemo<MoveProject[]>(() => {
     const latest = new Map<string, string>();
     for (const s of sessions) { const cwd = projectOf(s.cwd); if (cwd && (latest.get(cwd) ?? '') < s.updatedAt) latest.set(cwd, s.updatedAt); }
     for (const c of categoryState?.categories ?? []) if (c.cwd && !latest.has(c.cwd)) latest.set(c.cwd, '');
     for (const cwd of registered ?? []) if (!latest.has(cwd)) latest.set(cwd, '');
-    const cwds = [...latest.keys()].filter(c => !offList(c, registered, removed) && !(desktop && isChatFolder(chats, c))).sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest.get(b)!.localeCompare(latest.get(a)!));
+    for (const sec of categoryState?.sections ?? []) for (const cwd of sec.projects) if (cwd && !latest.has(cwd)) latest.set(cwd, '');
+    const valid = new Set([...latest.keys()].filter(c => !offList(c, registered, removed) && !(desktop && isChatFolder(chats, c))));
     // A project on an SSH host carries the host's name; a local one carries nothing (its full path is the row's tooltip)
-    return cwds.map(cwd => {
+    const toMove = (cwd: string, sec?: SessionSection): MoveProject => {
       const alias = parseRemoteFolder(cwd)?.alias;
-      return { cwd, name: meta?.[cwd]?.name || projectName(cwd), current: cwd === workspace, ...(alias ? { hint: alias } : {}) };
-    });
+      return {
+        cwd,
+        name: meta?.[cwd]?.name || projectName(cwd),
+        current: cwd === workspace,
+        ...(alias ? { hint: alias } : {}),
+        ...(sec ? { sectionId: sec.id, sectionName: sec.name } : {}),
+      };
+    };
+    const placed = new Set<string>();
+    const sectioned: MoveProject[] = [];
+    for (const sec of categoryState?.sections ?? []) {
+      for (const cwd of sec.projects) {
+        if (valid.has(cwd) && !placed.has(cwd)) {
+          placed.add(cwd);
+          sectioned.push(toMove(cwd, sec));
+        }
+      }
+    }
+    const rank = (cwd: string) => { const i = registered?.indexOf(cwd) ?? -1; return i < 0 ? Infinity : i; };
+    const cwds = [...valid].filter(c => !placed.has(c)).sort((a, b) => Number(b === workspace) - Number(a === workspace) || rank(a) - rank(b) || latest.get(b)!.localeCompare(latest.get(a)!));
+    return [...sectioned, ...cwds.map(cwd => toMove(cwd))];
   }, [sessions, categoryState, registered, removed, workspace, desktop, chats, projectOf, meta]));
   // A row's slices of the menus' lists, one array per project, so a row gets the same one on every render
   const projectsBesides = useMemo(() => perKey(cwd => projects.filter(p => p.cwd !== cwd)), [projects]);
@@ -686,7 +709,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       archivable={!!onArchive}
       markable={!!onUnread}
       fileable={filing && !desktop}
-      projects={projectsBesides(s.cwd)}
+      projects={projectsBesides(projectOf(s.cwd))}
       categories={categoriesIn(s.cwd)}
     />
   );
@@ -834,9 +857,9 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   // `list`: the run the project sits in (a section's or the unsectioned ones), whose previous entry sets the spacing
   const renderProject = (p: ProjectNode, i: number, list: ProjectNode[]) => {
     const all = [...p.pinned, ...p.categories.flatMap(n => n.sessions), ...p.loose];
-    // Preview the most-used agents across the folded project's sessions, including idle ones.
+    // Preview the most-used agents across the folded project's sessions, including idle ones; off by default (Appearance `projectMarks`)
     const counts = new Map<AgentId, number>();
-    if (!p.open) for (const s of all) counts.set(s.agent, (counts.get(s.agent) ?? 0) + 1);
+    if (!p.open && projectMarks) for (const s of all) counts.set(s.agent, (counts.get(s.agent) ?? 0) + 1);
     const marks = [...counts].sort((a, b) => b[1] - a[1]).slice(0, MORE_MARKS);
     // A session of another project dropped anywhere on the group (its categories keep their own zones) moves here: the
     // group is framed (`data-group`); a held project's insert line sits on its edge

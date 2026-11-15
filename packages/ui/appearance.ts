@@ -12,6 +12,8 @@ export function appearanceDataAttrs(a: Appearance) {
     'data-font': a.font,
     'data-accent': a.accent,
     'data-motion': a.motion,
+    'data-chat-width': a.chatWidth,
+    'data-code-wrap': a.codeWrap,
   } as const;
 }
 

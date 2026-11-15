@@ -149,7 +149,7 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const usable = language && colored?.language === language && colored.theme === theme ? colored : undefined;
   // The wrapper carries the hover group and anchors the copy button outside the scrolling <pre>,
   // so the button stays pinned to the top-right corner while long lines scroll sideways
-  return <div ref={root} className="group/code-output relative min-w-0">
+  return <div ref={root} className="code-fence group/code-output relative min-w-0">
     <OutputCopy text={code} label={t('code.copyCode')} />
     <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable) : plainLines(code)}</code></CodeSurface>
   </div>;

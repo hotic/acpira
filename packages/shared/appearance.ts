@@ -24,6 +24,23 @@ export interface Appearance {
   autoExpand: 'on' | 'off';
   // Pointing at a call in the context report lights its row in the transcript and dims the rest
   reportLink: 'on' | 'off';
+  // A folded project's row previews its most-used agents' marks
+  projectMarks: 'on' | 'off';
+  // A turn's process fold stays open once the turn is done, instead of closing to its head row
+  keepProcess: 'off' | 'on';
+  // The kinds of process step a turn lists (`chat/folding.ts` `stepKind`); the reply itself always shows
+  showThoughts: 'on' | 'off';
+  showCommentary: 'on' | 'off';
+  showReads: 'on' | 'off';
+  showCommands: 'on' | 'off';
+  showEdits: 'on' | 'off';
+  showOtherTools: 'on' | 'off';
+  // Cap of the transcript column in a wide window
+  chatWidth: 'standard' | 'narrow' | 'wide' | 'full';
+  // Long lines of a reply's code block wrap instead of scrolling sideways
+  codeWrap: 'off' | 'on';
+  // Process rows lead with an icon; `off` leaves the words alone, flush with the reply, and drops the rails that hang from the icons
+  stepIcons: 'on' | 'off';
 }
 
 export type AxisKey = keyof Appearance;
@@ -35,7 +52,7 @@ export interface AxisDef<K extends AxisKey = AxisKey> {
   options: { value: Appearance[K]; label: string }[];
 }
 
-// Axis labels are English-source and LAB-only; the production settings page exposes just `motion`, `autoExpand` and `reportLink` (with their own i18n labels), the rest are design decisions
+// Axis labels are English-source and LAB-only; the production settings page exposes `motion`, `reportLink`, `projectMarks` and the conversation axes from `autoExpand` on (with their own i18n labels), the rest are design decisions
 export const AXES: AxisDef[] = [
   { key: 'density', label: 'Density', group: 'Structure', options: [{ value: 'cozy', label: 'Cozy' }, { value: 'compact', label: 'Compact' }, { value: 'airy', label: 'Airy' }] },
   { key: 'radius', label: 'Radius', group: 'Structure', options: [{ value: '12', label: '12' }, { value: '8', label: '8' }, { value: '16', label: '16' }] },
@@ -54,6 +71,17 @@ export const AXES: AxisDef[] = [
   { key: 'fold', label: 'Folding', group: 'Conversation', options: [{ value: 'codex', label: 'Whole process' }, { value: 'cursor', label: 'Read-only only' }] },
   { key: 'autoExpand', label: 'Auto-expand details', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
   { key: 'reportLink', label: 'Report lights transcript', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
+  { key: 'projectMarks', label: 'Project agent marks', group: 'Structure', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
+  { key: 'keepProcess', label: 'Keep process open', group: 'Conversation', options: [{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }] },
+  { key: 'showThoughts', label: 'Show thinking', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
+  { key: 'showCommentary', label: 'Show commentary', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
+  { key: 'showReads', label: 'Show reads', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
+  { key: 'showCommands', label: 'Show commands', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
+  { key: 'showEdits', label: 'Show edits', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
+  { key: 'showOtherTools', label: 'Show other tools', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
+  { key: 'chatWidth', label: 'Chat width', group: 'Conversation', options: [{ value: 'standard', label: 'Standard' }, { value: 'narrow', label: 'Narrow' }, { value: 'wide', label: 'Wide' }, { value: 'full', label: 'Full' }] },
+  { key: 'codeWrap', label: 'Code wrap', group: 'Conversation', options: [{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }] },
+  { key: 'stepIcons', label: 'Step icons', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
 ];
 
 // Combo code ↔ Appearance: one option index digit per axis
@@ -70,12 +98,14 @@ export function decodeAppearance(code: string, fallback: Appearance): Appearance
   return out as unknown as Appearance;
 }
 
-// Baseline: finalized as 20111020030210011
-export const BASE_APPEARANCE: Appearance = decodeAppearance('20111020030210011', {
+// Baseline: finalized as 2011102003021001110000000000
+export const BASE_APPEARANCE: Appearance = decodeAppearance('2011102003021001110000000000', {
   density: 'airy', radius: '12', surface: 'tonal', font: 'inter',
   userMessage: 'block', toolLine: 'icon', thought: 'orb', sessions: 'dropdown',
   composer: 'island', beam: 'full', beamColor: 'mono', send: 'metal',
-  accent: 'agent', motion: 'on', fold: 'codex', autoExpand: 'off', reportLink: 'off',
+  accent: 'agent', motion: 'on', fold: 'codex', autoExpand: 'off', reportLink: 'off', projectMarks: 'off',
+  keepProcess: 'off', showThoughts: 'on', showCommentary: 'on', showReads: 'on', showCommands: 'on', showEdits: 'on', showOtherTools: 'on',
+  chatWidth: 'standard', codeWrap: 'off', stepIcons: 'on',
 });
 
 // Builds an Appearance from a bag of setting values (acpira.appearance.<axis>); invalid values fall back to the baseline

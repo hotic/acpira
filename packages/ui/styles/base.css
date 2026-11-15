@@ -80,6 +80,10 @@
   display: block; width: max-content; min-width: 100%; box-sizing: content-box;
   padding-inline-end: var(--pad); margin-inline-end: calc(-1 * var(--pad));
 }
+/* Appearance `codeWrap`: a reply's fenced code (CodeBlock's `.code-fence`) wraps instead of scrolling sideways, so its
+   <code> gives up the longest line's width and the end padding that came with it */
+.acp-shell[data-code-wrap="on"] .code-fence pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.acp-shell[data-code-wrap="on"] .code-fence pre code { width: auto; min-width: 0; padding-inline-end: 0; margin-inline-end: 0; }
 .acp-shell kbd {
   font-family: var(--font-mono); font-size: var(--text-mono); color: var(--fg-2);
   background: var(--hover); border: 1px solid var(--line-strong); border-radius: var(--r-sm);

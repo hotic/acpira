@@ -80,8 +80,13 @@ export function useEntranceEnd(on: boolean, ref: RefObject<Element | null>, name
   }, [on]);
 }
 
+// False where rows drop their lead icon (Appearance `stepIcons` off, set around a turn's process): a row then renders
+// as one given no lead, and a Disclosure neither indents its body nor draws a rail
+export const RowLeadsContext = createContext(true);
+
 // The one shared "row": thought / plan / tool / status / session items all grow on this row.
-// Row height --row; lead slot --lead (icon 14 or Orb 20 centered); label area gap --gap; trailing meta right-aligned.
+// Row height --row; lead slot --lead (icon 14 or Orb 20 centered); label area gap --gap, or the scope's --row-gap
+// (the transcript's tighter step, chat.css); trailing meta right-aligned.
 export interface RowProps extends Omit<HTMLAttributes<HTMLElement>, 'children'> {
   ref?: Ref<HTMLElement>;
   lead?: ReactNode;
@@ -94,7 +99,7 @@ export interface RowProps extends Omit<HTMLAttributes<HTMLElement>, 'children'> 
   tone?: 'action';
 }
 
-const rowVariants = cva('flex items-center gap-gap text-2 text-fg-2 select-none list-none text-left', {
+const rowVariants = cva('flex items-center gap-(--row-gap,var(--gap)) text-2 text-fg-2 select-none list-none text-left', {
   variants: {
     tone: { action: 'action-row' },
     dense: { true: 'min-h-row-dense', false: 'min-h-row' },
@@ -103,8 +108,9 @@ const rowVariants = cva('flex items-center gap-gap text-2 text-fg-2 select-none 
   },
 });
 
-export function Row({ lead, trailing, children, interactive, as = 'div', className, dense, tone, ref, ...rest }: RowProps) {
+export function Row({ lead: given, trailing, children, interactive, as = 'div', className, dense, tone, ref, ...rest }: RowProps) {
   const Tag = as;
+  const lead = useContext(RowLeadsContext) || given === undefined ? given : <span className="row-bead" />;
   const live = useContext(RowEntranceContext);
   const quiet = useContext(QuietEntranceContext);
   // A row mounted while the page is hidden (window occluded or behind another app, a background tab) gets no
