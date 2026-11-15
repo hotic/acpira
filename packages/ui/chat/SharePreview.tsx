@@ -120,7 +120,9 @@ export function SharePreviewDialog({ payload, onClose }: {
           const el = cardRef.current;
           if (cancelled || !el) return;
           const rect = el.getBoundingClientRect();
-          setRenderedImg({ src, width: Math.max(1, Math.ceil(rect.width) || el.offsetWidth), height: Math.max(1, Math.ceil(rect.height) || el.offsetHeight) });
+          const width = Math.max(1, Math.ceil(rect.width) || el.offsetWidth);
+          // The SVG's natural layout may be taller than the live card; keep the finished PNG's aspect ratio.
+          setRenderedImg({ src, width, height: width * probe.naturalHeight / probe.naturalWidth });
         })
         .catch(() => {});
     });
