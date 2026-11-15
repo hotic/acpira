@@ -1,6 +1,7 @@
 {
   "acpira.conf.agents.deprecated": "Agent 啟動設定已由 Acpira 管理，儲存在 Agent 所在機器的 agents.json 中，可從 Acpira 設定頁開啟。本地舊設定僅遷移一次，遠端連線不遷移 IDE 的 Agent 設定。",
   "acpira.cmd.openView": "開啟聊天",
+  "acpira.cmd.focusInput": "聚焦聊天輸入框",
   "acpira.cmd.newSession": "新建工作階段",
   "acpira.cmd.openInEditor": "在編輯區開啟",
   "acpira.cmd.openInEditorColumns": "在編輯區多欄開啟",

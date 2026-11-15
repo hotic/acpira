@@ -23,6 +23,13 @@
         <action id="Acpira.AddSelection" class="com.github.hotic.acpira.editor.AddSelectionAction"
                 text="Add to Chat" description="Add the selected lines to the Acpira chat">
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="alt K"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt K"/>
+        </action>
+        <action id="Acpira.FocusInput" class="com.github.hotic.acpira.editor.FocusInputAction"
+                text="Focus Chat Input" description="Toggle focus between the editor and the Acpira chat input">
+            <keyboard-shortcut keymap="$default" first-keystroke="control ESCAPE"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta ESCAPE"/>
         </action>
     </actions>
 

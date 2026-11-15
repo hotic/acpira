@@ -70,6 +70,11 @@
         "category": "Acpira"
       },
       {
+        "command": "acpira.focusInput",
+        "title": "%acpira.cmd.focusInput%",
+        "category": "Acpira"
+      },
+      {
         "command": "acpira.newSession",
         "title": "%acpira.cmd.newSession%",
         "category": "Acpira",
@@ -170,6 +175,26 @@
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "acpira.focusInput",
+        "key": "ctrl+escape",
+        "mac": "cmd+escape",
+        "when": "focusedView != 'acpira.chat'"
+      },
+      {
+        "command": "workbench.action.focusActiveEditorGroup",
+        "key": "ctrl+escape",
+        "mac": "cmd+escape",
+        "when": "focusedView == 'acpira.chat'"
+      },
+      {
+        "command": "acpira.addSelection",
+        "key": "alt+k",
+        "mac": "alt+k",
+        "when": "editorTextFocus && resourceScheme == file"
+      }
+    ],
     "configuration": {
       "title": "Acpira",
       "properties": {
