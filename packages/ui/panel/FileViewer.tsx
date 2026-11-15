@@ -21,8 +21,9 @@ import { useNearBlocks } from './nearBlocks';
 import { previewParts } from './previewParts';
 import { FileGlyph, dirOf, nameOf, refreshMediaUrl, type MediaKind } from './files';
 
-// The Files tab's viewer: one file as it is now with the changes against a base marked (added lines tinted, removed ones
-// put back where they stood), a change navigator, soft wrap with a hanging indent, and line numbers that pick a range for
+// The Files tab's viewer: one file as it is now with the changes against a base marked the way DiffBlock marks them (a
+// +/− sign after the number and a tinted row, removed lines put back where they stood), a change navigator, optional soft
+// wrap with a hanging indent, and line numbers that pick a range for
 // the chat. The review lays every changed file out in the transcript's own diff blocks
 
 // A line of the viewer: the file as it is now, with the removed lines put back in place
@@ -375,13 +376,16 @@ const CodeRows = memo(function CodeRows({ rows, start, hunkStart, wrap, light, s
       <div key={i} ref={selected && r.line === selEnd ? barRow : undefined}
         data-kind={r.kind} data-line={r.line} data-hunk-start={first ? r.hunk : undefined}
         className={cn('code-row group/line relative flex min-h-code-line leading-code-output', selected && 'is-selected')}>
-        {(r.kind !== 'ctx' || selected) && <span className="code-bar absolute inset-y-0 left-0 w-code-bar" aria-hidden />}
+        {selected && <span className="code-bar absolute inset-y-0 left-0 w-code-bar" aria-hidden />}
         {/* A span, not a button: a button centres its text, which put the number in the middle of a wrapped line */}
         <span aria-hidden onClick={e => r.line && onPick(r.line, e.shiftKey)}
-          className="code-num w-code-gutter shrink-0 cursor-pointer self-stretch pr-[1ch] text-right tabular-nums select-none">{r.line ?? ''}</span>
+          className="code-num w-code-gutter shrink-0 cursor-pointer self-stretch text-right tabular-nums select-none">{r.line ?? ''}</span>
+        {/* The change's sign after the number, as in the transcript's DiffBlock; a context line keeps the column empty */}
+        <span aria-hidden className={cn('code-sign w-diff-sign shrink-0 text-center select-none', r.kind === 'add' ? 'text-ok' : 'text-danger')}>
+          {r.kind === 'add' ? '+' : r.kind === 'del' ? '\u2212' : ''}</span>
         {/* Not a <code>: the shell's inline-code chip (base.css) would fill and round every line */}
-        <span className={cn('code-text code-syntax block min-w-0 flex-1 pr-pad', wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre pl-[1ch]')}
-          style={wrap ? { paddingLeft: `${hang + 1}ch`, textIndent: `-${hang}ch` } : undefined}><Code tokens={r.tokens} text={r.text} light={light} /></span>
+        <span className={cn('code-text code-syntax block min-w-0 flex-1 pr-pad', wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre')}
+          style={wrap ? { paddingLeft: `${hang}ch`, textIndent: `-${hang}ch` } : undefined}><Code tokens={r.tokens} text={r.text} light={light} /></span>
       </div>
     );
   })}</>;
@@ -467,8 +471,8 @@ export function FileViewer(p: FileViewerProps) {
     const near = hunks.findIndex(h => h.at + Math.max(h.add, 1) > initialTarget);
     return near < 0 ? 0 : near;
   });
-  // Soft wrap is the default in a side panel; a continuation line hangs two columns past the line's own indentation
-  const [wrap, setWrap] = useState(true);
+  // Unwrapped by default, like the transcript's diff blocks; wrapped, a continuation line hangs two columns past the line's own indentation
+  const [wrap, setWrap] = useState(false);
   const markdown = isMarkdown(p.path) || p.text !== undefined;
   // An SVG opens drawn, whatever Markdown was last left in
   const svg = !markdown && isSvg(p.path);
@@ -609,7 +613,7 @@ export function FileViewer(p: FileViewerProps) {
         if (num) ro.observe(num);
         watched = num;
       }
-      const text = num?.nextElementSibling as HTMLElement | null | undefined;
+      const text = num?.parentElement?.querySelector<HTMLElement>('.code-text');
       // A viewer out of the layout (a narrow window's panel, closed) has no width: the columns it had hold
       if (!num || !text || !text.clientWidth) return;
       const ch = num.getBoundingClientRect().width / (parseFloat(getComputedStyle(num).getPropertyValue('--code-gutter')) || 6);
