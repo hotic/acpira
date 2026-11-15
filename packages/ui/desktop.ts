@@ -74,6 +74,7 @@ const queuedCommands: ShellCommand[] = [];
 
 export function runShellCommand(command: ShellCommand) {
   if (commandSink) commandSink(command);
+  else if (command === 'close') postWindowControl('close');
   else queuedCommands.push(command);
 }
 

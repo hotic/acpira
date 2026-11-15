@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { Archive, Check, CircleAlert, Folder, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
-import type { ModelShapes } from '@acpira/shared/modelShapes';
+import type { ModelMemory, ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@acpira/shared/settings';
 import type { AccountAction, AddAccountVia, EditTurnRequest, ExportFormat, FileHit, NativeSessionsState, SessionHit, ShellCommand } from '@acpira/shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, useAppearance, type Appearance } from '../appearance';
@@ -19,6 +19,7 @@ import { useScrollReveal } from '../ui/useScrollReveal';
 import { useStableList } from '../ui/useStableList';
 import { useMergedRefs } from '../ui/mergeRefs';
 import { QuietEntranceContext } from '../ui/Row';
+import { imeKey } from '../ui/ime';
 import { FollowContext, useBottomFollow } from './useBottomFollow';
 import { captureSliceScroll, landSlice, readerScrolling, type SliceScroll } from './sliceScroll';
 import { useExchangeSkip } from './exchangeSkip';
@@ -55,9 +56,14 @@ import { agentsForFolder, launchable } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder, SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ProjectDialog } from './ProjectDialog';
-import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, macOS, pageCaption, useShellCommands, useShellToasts } from '../desktop';
+import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postWindowControl, useShellCommands, useShellToasts } from '../desktop';
+import { hitShortcut } from '../keybindings';
 import { droppedPathResolver, hostDragPaths, setWebviewState, webviewState } from '../vscodeApi';
-import { moveDraft } from './useComposerDraft';
+import { focusMainComposer, mainComposerEmpty, moveDraft } from './useComposerDraft';
+import { pendingQuickPermission } from './permissionOptions';
+import { nextAttentionSession, orderedSessions, stepSession } from './sessionNav';
+import { ChatFind, type ThreadSearchBridge } from './ChatFind';
+import { QuickOpen } from '../panel/QuickOpen';
 import { ProjectPick, StartPicker, usePresence } from './StartPage';
 import { AppMenu, NoProject, ShellToastItems, ShellToasts, TitleRow, TitleSpace, useSessionHistory, type QuickSettings } from './DesktopFrame';
 import type { SettingsPage } from '../settings/Nav';
@@ -75,7 +81,8 @@ import { ToolPanelDock, MOVE_MS, holdToolPanelWidth, openPlanInPanel, projectPat
 import { preferMarkdownPreview } from '../panel/FileViewer';
 import { markShellResize } from '../panel/api';
 import { FilesLayout } from '../panel/FilesLayout';
-import { panel, usePanelValue } from '../panel/store';
+import { panel, panelState, usePanelValue } from '../panel/store';
+import { terminalView } from '../panel/terminals';
 import { useChatPanel } from '../panel/chat';
 import { SubagentGraph } from './subagents/SubagentGraph';
 import { SidekickModelsContext, isSidekick, useSidekickModels } from './subagents/SidekickRelay';
@@ -118,7 +125,7 @@ export interface ShellHandlers {
   // An agent-emitted image's blob file opens in the editor by its store name (the host resolves the absolute path)
   openBlob?: (sessionId: string, name: string) => void;
   setMode: (id: string) => void;
-  setConfig: (configId: string, value: string) => void;
+  setConfig: (configId: string, value: string, also?: Record<string, string>) => void;
   selectSession: (id: string) => void;
   // Without an agent the host falls back to the configured defaultAgent; with a category the new session is filed there;
   // `cwd` (a project shell, the desktop app) starts it in that folder; `chat` in a fresh folder of its own (no project)
@@ -233,6 +240,8 @@ export interface ShellProps {
   controls: SessionControls;
   // Remembered per-model parameters, so a model switch in the history editor shows that model's own
   modelShapes?: ModelShapes;
+  // What the user last ran each model with (the model panel's rows)
+  modelMemory?: ModelMemory;
   usage?: Usage;
   // The slash commands the agent advertised for this session (available_commands_update): the composer's / menu,
   // and the context panel only gets a compact button when `compact` is among them
@@ -768,21 +777,196 @@ export function Shell(p: ShellProps) {
   const rightSide = files ? toggleSessions : () => panel.toggle();
   // ⌘B: the column at the left edge. The explorer in the files layout, else the session column (a narrow window's drawer)
   const leftSide = files ? () => panel.toggleExplorer() : () => (canDock ? hideColumn(!columnHidden) : drawerOpen ? closeDrawer() : openDrawer());
-  const keys = useRef({ newIn, addProject, focusSearch, leftSide, rightSide, back: trail.back, forward: trail.forward });
-  keys.current = { newIn, addProject, focusSearch, leftSide, rightSide, back: trail.back, forward: trail.forward };
+  const searchBridge = useRef<ThreadSearchBridge | undefined>(undefined);
+  const [chatFind, setChatFind] = useState<{ seq: number; query?: string }>();
+  const [quickOpen, setQuickOpen] = useState(false);
+  useEffect(() => setQuickOpen(false), [p.activeSessionId]);
+  const openChatFind = useCallback(() => {
+    if (p.noProject || startPage || !p.turns.length) return;
+    const sel = window.getSelection();
+    const raw = sel && !sel.isCollapsed && threadContent.current?.contains(sel.anchorNode) ? sel.toString().trim() : '';
+    const query = raw && !raw.includes('\n') ? raw : undefined;
+    setChatFind(cur => ({ seq: (cur?.seq ?? 0) + 1, query: query ?? cur?.query }));
+  }, [p.noProject, startPage, p.turns.length]);
+  const panelCwd = p.noProject || p.sample ? undefined : p.cwd;
+  const toggleTerminal = useCallback(() => {
+    if (!panelCwd) return;
+    const s = panelState();
+    if (!s.terminal) return;
+    const active = s.tabs.find(t => t.id === s.tab);
+    if ((s.open || files) && active?.kind === 'terminal') {
+      if (!document.activeElement?.closest('.xterm')) terminalView(active.id)?.focus();
+      else if (!files) { panel.toggle(false); focusMainComposer(); }
+      else focusMainComposer();
+      return;
+    }
+    const existing = s.tabs.find(t => t.kind === 'terminal');
+    if (existing) panel.select(existing.id);
+    else panel.openTerminal(panelCwd);
+  }, [panelCwd, files]);
+  const openChanges = useCallback(() => {
+    if (panelCwd && filesOn) panel.openReview(panelCwd);
+  }, [panelCwd, filesOn]);
+  const toggleBrowser = useCallback(() => {
+    if (panelCwd) panel.toggleBrowser(files);
+  }, [panelCwd, files]);
+  const toggleQuickOpen = useCallback(() => {
+    if (!p.noProject && !p.sample && p.activeSessionId) setQuickOpen(o => !o);
+  }, [p.noProject, p.sample, p.activeSessionId]);
+  const closePanelOrWindow = useCallback(() => {
+    if (!panel.closeActive(files)) postWindowControl('close');
+  }, [files]);
+  const keys = useRef({
+    newIn, addProject, focusSearch, leftSide, rightSide, back: trail.back, forward: trail.forward,
+    toggleTerminal, openChanges, toggleBrowser, toggleQuickOpen, closePanelOrWindow,
+  });
+  keys.current = {
+    newIn, addProject, focusSearch, leftSide, rightSide, back: trail.back, forward: trail.forward,
+    toggleTerminal, openChanges, toggleBrowser, toggleQuickOpen, closePanelOrWindow,
+  };
   const openSettings = p.onOpenSettings;
+  // Cross-shell shortcuts: session cycling (⌃Tab / ⌘⇧[ / ] / ⌘⌥A), find in chat (⌘F), permission quick approval (Enter / Esc), and Esc to stop
+  const escStopArmed = useRef(0);
+  useEffect(() => { escStopArmed.current = 0; dropToast('esc-stop'); }, [p.running, p.activeSessionId, dropToast]);
+  const shellKeys = useRef({
+    sessions: p.sessions, categories: p.categories, activeSessionId: p.activeSessionId, pendingSessionId: p.pendingSessionId,
+    workspace: p.workspace, sessionScope: p.sessionScope, chats: p.chats,
+    running: p.running, turns: p.turns, subagents: p.subagents, hasQuestion: !!question,
+    overlayInspect, chatFindOpen: !!chatFind,
+    selectSession: (id: string) => { on.selectSession(id); closeDrawer(); },
+    stop: on.stop, permission: on.permission, openChatFind, focusSearch, openSettings,
+    hasSessionPanel: position !== 'hidden',
+  });
+  shellKeys.current = {
+    sessions: p.sessions, categories: p.categories, activeSessionId: p.activeSessionId, pendingSessionId: p.pendingSessionId,
+    workspace: p.workspace, sessionScope: p.sessionScope, chats: p.chats,
+    running: p.running, turns: p.turns, subagents: p.subagents, hasQuestion: !!question,
+    overlayInspect, chatFindOpen: !!chatFind,
+    selectSession: (id: string) => { on.selectSession(id); closeDrawer(); },
+    stop: on.stop, permission: on.permission, openChatFind, focusSearch, openSettings,
+    hasSessionPanel: position !== 'hidden',
+  };
+  useEffect(() => {
+    if (p.sample) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (imeKey(e) || e.defaultPrevented) return;
+      const cur = shellKeys.current;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const inDialog = !!document.querySelector('[data-settings-dialog], [data-quick-open], [role="menu"]');
+      const inXterm = !!target?.closest('.xterm');
+
+      if (!inDialog && cur.openSettings && hitShortcut(e, 'openShortcuts')) {
+        e.preventDefault();
+        cur.openSettings({ kind: 'shortcuts' });
+        return;
+      }
+
+      if (!inDialog && !inXterm && hitShortcut(e, 'focusComposer')) {
+        e.preventDefault();
+        focusMainComposer();
+        return;
+      }
+
+      if (!inDialog && !desktop && cur.hasSessionPanel && hitShortcut(e, 'searchSessions')) {
+        e.preventDefault();
+        cur.focusSearch();
+        return;
+      }
+
+      // ⌃Tab / ⌃⇧Tab, and on macOS ⌘⇧[ / ⌘⇧]: cycle sessions in the visible list order
+      const isPrevSession = !inDialog && hitShortcut(e, 'prevSession');
+      const isNextSession = !inDialog && !isPrevSession && hitShortcut(e, 'nextSession');
+      if (isPrevSession || isNextSession) {
+        const list = orderedSessions({
+          sessions: cur.sessions, categories: cur.categories, activeId: cur.activeSessionId,
+          workspace: cur.workspace, scope: desktop ? 'all' : cur.sessionScope, desktop, chats: desktop ? cur.chats : undefined,
+        });
+        const next = stepSession(list, cur.pendingSessionId ?? cur.activeSessionId, isPrevSession ? -1 : 1);
+        if (next) { e.preventDefault(); cur.selectSession(next); }
+        return;
+      }
+
+      // ⌘⌥A (Ctrl+Alt+A elsewhere): jump to the next session needing attention (waiting / unread / error)
+      if (!inDialog && hitShortcut(e, 'nextAttention')) {
+        const list = orderedSessions({
+          sessions: cur.sessions, categories: cur.categories, activeId: cur.activeSessionId,
+          workspace: cur.workspace, scope: desktop ? 'all' : cur.sessionScope, desktop, chats: desktop ? cur.chats : undefined,
+        });
+        const next = nextAttentionSession(list, cur.pendingSessionId ?? cur.activeSessionId);
+        if (next) { e.preventDefault(); cur.selectSession(next); }
+        return;
+      }
+
+      // ⌘F / Ctrl+F: find in the active conversation (terminals keep their own find bar)
+      if (!inDialog && !inXterm && hitShortcut(e, 'findInChat')) {
+        if (!cur.overlayInspect && cur.turns.length > 0) {
+          e.preventDefault();
+          cur.openChatFind();
+        }
+        return;
+      }
+
+      if (inDialog || inXterm) return;
+
+      // Enter: approve the unambiguous pending permission card while the main composer is empty
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat) {
+        if (!cur.running || !cur.activeSessionId || cur.hasQuestion || !mainComposerEmpty()) return;
+        const onInteractive = target?.closest('button, a, input, select, [contenteditable="true"], [role="button"], [role="menuitem"], [role="option"], [role="tab"]');
+        const onOtherTextarea = target?.tagName === 'TEXTAREA' && !target.hasAttribute('data-main-composer');
+        if (onInteractive || onOtherTextarea) return;
+        const quick = pendingQuickPermission(cur.turns, cur.subagents);
+        if (quick?.primaryId) {
+          e.preventDefault();
+          cur.permission(cur.activeSessionId, quick.blockId, quick.primaryId);
+        }
+        return;
+      }
+
+      // Escape: close chat find -> close overlay inspector -> reject pending permission (empty composer) -> stop running turn
+      if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat) {
+        if (target?.matches('input, select, [contenteditable="true"]') || (target?.tagName === 'TEXTAREA' && !target.hasAttribute('data-main-composer'))) return;
+        if (cur.chatFindOpen) { e.preventDefault(); setChatFind(undefined); focusMainComposer(); return; }
+        if (cur.overlayInspect) { e.preventDefault(); setInspect(undefined); return; }
+        if (cur.running && cur.activeSessionId && !cur.hasQuestion && mainComposerEmpty()) {
+          const quick = pendingQuickPermission(cur.turns, cur.subagents);
+          if (quick?.rejectId) {
+            e.preventDefault();
+            cur.permission(cur.activeSessionId, quick.blockId, quick.rejectId);
+            return;
+          }
+        }
+        if (cur.running) {
+          e.preventDefault();
+          if (mainComposerEmpty() || Date.now() - escStopArmed.current < 1500) {
+            escStopArmed.current = 0;
+            dropToast('esc-stop');
+            cur.stop();
+          } else {
+            escStopArmed.current = Date.now();
+            pushToast({ key: 'esc-stop', text: t('composer.escAgainToStop'), ttl: 1500 });
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [desktop, p.sample, dropToast, pushToast]);
   useEffect(() => {
     if (!desktop) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(macOS ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing) return;
-      const key = e.key.toLowerCase();
-      const step = key === '[' ? keys.current.back : key === ']' ? keys.current.forward : undefined;
-      if (key === 'n') keys.current.newIn();
-      else if (key === 'k') keys.current.focusSearch();
-      else if (key === 'b') keys.current.leftSide();
-      else if (key === 'o' && on.pickFolder) keys.current.addProject();
-      else if (key === ',' && openSettings) openSettings();
-      else if (step) step();
+      if (e.isComposing || e.defaultPrevented) return;
+      if (hitShortcut(e, 'toggleTerminal')) keys.current.toggleTerminal();
+      else if (hitShortcut(e, 'openChanges')) keys.current.openChanges();
+      else if (hitShortcut(e, 'toggleBrowser')) keys.current.toggleBrowser();
+      else if (hitShortcut(e, 'newSession')) keys.current.newIn();
+      else if (hitShortcut(e, 'searchSessions')) keys.current.focusSearch();
+      else if (hitShortcut(e, 'toggleSidebar')) keys.current.leftSide();
+      else if (hitShortcut(e, 'quickOpen')) keys.current.toggleQuickOpen();
+      else if (hitShortcut(e, 'closeTab')) keys.current.closePanelOrWindow();
+      else if (on.pickFolder && hitShortcut(e, 'openFolder')) keys.current.addProject();
+      else if (openSettings && hitShortcut(e, 'openSettings')) openSettings();
+      else if (hitShortcut(e, 'back')) keys.current.back?.();
+      else if (hitShortcut(e, 'forward')) keys.current.forward?.();
       else return;
       e.preventDefault();
     };
@@ -794,9 +978,13 @@ export function Shell(p: ShellProps) {
     if (command === 'newSession') keys.current.newIn();
     else if (command === 'search') keys.current.focusSearch();
     else if (command === 'openFolder') keys.current.addProject();
+    else if (command === 'quickOpen') keys.current.toggleQuickOpen();
+    else if (command === 'close') keys.current.closePanelOrWindow();
     else if (command === 'sidebar') keys.current.leftSide();
     else if (command === 'toolPanel') keys.current.rightSide();
-    else if (command === 'browser') panel.openBrowser();
+    else if (command === 'terminal') keys.current.toggleTerminal();
+    else if (command === 'changes') keys.current.openChanges();
+    else if (command === 'browser') keys.current.toggleBrowser();
   }, []);
   useShellCommands(desktop ? runCommand : undefined);
   // A folder dragged in from the OS onto the column joins the projects (the first one opens); only a drop carries the
@@ -920,10 +1108,14 @@ export function Shell(p: ShellProps) {
     onSend: reviseBlock && reviseChoice && p.activeSessionId ? (text: string, attachments: Draft[]) => {
       on.permission(p.activeSessionId!, reviseBlock, reviseChoice);
       on.send(text, attachments);
-    } : steering ? (text: string, attachments: Draft[]) => on.send(text, attachments, true) : on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
-    onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas,
+    } : (text: string, attachments: Draft[], invertSteer?: boolean) => {
+      const steerNow = p.running ? (invertSteer ? !steering : steering) : false;
+      if (steerNow) on.send(text, attachments, true);
+      else on.send(text, attachments);
+    }, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
+    onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas, modelMemory: p.modelMemory, modelShapes: p.modelShapes,
     onAddModel: p.onOpenSettings ? () => p.onOpenSettings!({ kind: 'agent', id: p.agent.id, tab: p.agent.id === BUILTIN_AGENT_ID ? 'sources' : 'models' }) : undefined,
-  }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings]);
+  }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings, p.modelMemory, p.modelShapes]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const plans = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PlanDocumentBlock => b.type === 'plan_document') : []), [p.turns]));
@@ -1283,6 +1475,16 @@ export function Shell(p: ShellProps) {
               {/* The overlay inspector replaces this block visually; it stays mounted (scroll + draft survive) but inert */}
               <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className={cn('flex min-h-0 flex-1 flex-col', desktop && p.noProject && 'hidden')}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
+                  {chatFind && (
+                    <ChatFind
+                      root={threadContent}
+                      sessionId={p.activeSessionId}
+                      initialQuery={chatFind.query}
+                      focusSeq={chatFind.seq}
+                      bridge={searchBridge}
+                      onClose={() => setChatFind(undefined)}
+                    />
+                  )}
                   <QuoteToolbar root={threadContent} onShare={shareSelection} />
                   <PlanDocumentContext.Provider value={planDoc}>
                     <HistoryContext.Provider value={history}>
@@ -1294,7 +1496,7 @@ export function Shell(p: ShellProps) {
                           <Thread key={p.activeSessionId} session={p.activeSessionId} fontSizes={p.look && `${p.look.uiFontSize}/${p.look.codeFontSize}`} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             onSetGoal={setGoal} goalRoom={goalRoom} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             forkedFrom={p.forkedFrom} agents={p.agents} agentId={p.agent.id}
-                            onPermission={onPermission} />
+                            onPermission={onPermission} searchBridge={searchBridge} />
                           </SidekickModelsContext.Provider>
                         </TurnActionsContext.Provider>
                       </WidgetPromptContext.Provider>
@@ -1304,7 +1506,7 @@ export function Shell(p: ShellProps) {
                   </PlanDocumentContext.Provider>
                   <div
                     data-plan-dock
-                    className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
+                    className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--chat-w)+2*var(--page))]')}
                   >
                     {/* A held prompt already owns a Working row; the floating startup row would duplicate and overlap it. */}
                     {!held.running && <ConnectingNotice status={p.status} agent={p.agent} />}
@@ -1329,7 +1531,7 @@ export function Shell(p: ShellProps) {
                   )}
                 </div>
                 {/* Every surface under the thread (question, alert, notice, queue, composer) shares the DockStack rhythm; none carries its own outer margin */}
-                <DockStack className={cn(wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')} data-start-dock={desktop || undefined}>
+                <DockStack className={cn(wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--chat-w)+2*var(--page))]')} data-start-dock={desktop || undefined}>
                   {/* Pick who answers before handling that agent's notice. Keep it mounted across empty-session switches. */}
                   {start.mounted && <StartPicker open={start.shown} agents={startAgents} current={p.agent.id} onPick={agent => startOver(agent)} />}
                   {question && on.answer && p.activeSessionId && <Questions key={question.id} block={question} subtitle={questionSubtitle} onAnswer={(blockId, answers, skip, images) => on.answer!(p.activeSessionId!, blockId, answers, skip, images)} />}
@@ -1455,6 +1657,20 @@ export function Shell(p: ShellProps) {
         {editingProject && on.categoryOp && <ProjectDialog cwd={editingProject} meta={p.categories?.projectMeta?.[editingProject]} home={p.home}
           onPickFolder={on.pickFolder} onSave={op => on.categoryOp?.(op)} onRemove={() => on.categoryOp?.({ op: 'removeProject', cwd: editingProject })}
           onClose={() => setEditingProject(undefined)} />}
+        {quickOpen && (
+          <QuickOpen
+            searchFiles={on.searchFiles}
+            onOpenFile={path => {
+              if (filePanelRoot) {
+                if (/\.plan\.md$/i.test(path)) preferMarkdownPreview();
+                panel.openFile(filePanelRoot, path);
+              } else if (openToolFile) {
+                openToolFile(path);
+              }
+            }}
+            onClose={() => setQuickOpen(false)}
+          />
+        )}
       </DiffSourceContext.Provider>
       </CommandStopContext.Provider>
       </AsyncTaskStopContext.Provider>
@@ -1500,6 +1716,7 @@ interface ThreadProps {
   onSetGoal?: (objective: string) => void;
   // The button is expected once the starting agent reports its goal capability: keep its room meanwhile
   goalRoom?: boolean;
+  searchBridge?: RefObject<ThreadSearchBridge | undefined>;
 }
 
 // The thread's tail clearance under the floating plan dock: the dock's height on top of the message gap, so the
@@ -1585,7 +1802,7 @@ function useExchangeWindow(
 // Whether each agent's last ready session offered "Set as goal" (see goalRoom in Shell)
 const goalSetByAgent = new Map<AgentId, boolean>();
 
-const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal, goalRoom }: ThreadProps) {
+const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal, goalRoom, searchBridge }: ThreadProps) {
   const locale = useLocale();
   const appearance = useAppearance();
   const ref = useRef<HTMLDivElement>(null);
@@ -1639,6 +1856,9 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
     exchangeSlots[exchangeSlots.length - 1]!.items.push({ ti, index });
   });
   const window = useExchangeWindow(exchangeSlots.length, ref, follow, opening);
+  if (searchBridge) {
+    searchBridge.current = { mountAll: () => window.showFrom(0), releaseFollow: () => follow.release() };
+  }
   const starts = exchangeSlots.map(e => e.key);
   useSessionOutline(ref, session, turns, starts, running, { mount: turn => window.showFrom(starts.indexOf(turn)), release: () => follow.release() });
   // The context report's hover or pick lights its calls' rows here and dims the rest (chat/reportLink.ts)

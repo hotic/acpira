@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, RotateCcw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { AgentInventory } from '@acpira/shared/inventory';
@@ -15,7 +15,9 @@ import { ShellLayerContext } from '../ui/Popover';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { agentUpdates, appUpdatePending } from '../ui/UpdateDot';
 import { LocaleContext, t } from '../i18n';
-import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, macOS, pageCaption, postUpdate, useUpdateState } from '../desktop';
+import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postUpdate, useUpdateState } from '../desktop';
+import { hitShortcut } from '../keybindings';
+import { ShortcutsPage } from './ShortcutsPage';
 import { AboutPage } from './AboutPage';
 import { webviewState } from '../vscodeApi';
 import { ShellToasts, TitleRow } from '../chat/DesktopFrame';
@@ -37,7 +39,7 @@ import type { StorageAction, StorageDetail } from '@acpira/shared/storage';
 import type { SharedAction } from '@acpira/shared/sharedConfig';
 import type { ProviderAction, ProviderProbe } from '@acpira/shared/providers';
 import type { ProvidersState } from './ProvidersSection';
-import { Page, PageHeader } from './controls';
+import { Page, PageHeader, SectionAction } from './controls';
 
 // Every action the settings page sends to the host; the LAB implements these with a fake host, the real page with postMessage
 export interface SettingsHandlers {
@@ -135,13 +137,18 @@ export function SettingsShell(p: SettingsShellProps) {
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
   // An agent's dialog sits on the Models page: the page behind keeps its title and action
   const title = page.kind === 'agent' || page.kind === 'models' ? t('settings.nav.models') : page.kind === 'plugins' ? t('settings.nav.plugins') : page.kind === 'appearance' ? t('settings.appearance.title')
-    : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
+    : page.kind === 'shortcuts' ? t('settings.shortcuts.title') : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
     : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' ? t('settings.nav.connections')
     : page.kind === 'about' ? t('settings.nav.about') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
   // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
   const [storageRefresh, setStorageRefresh] = useState(0);
-  const action = (page.kind === 'shared' || page.kind === 'storage') && (
+  const hasCustomShortcuts = Object.keys(p.settings.keybindings ?? {}).length > 0;
+  const action = page.kind === 'shortcuts' ? (
+    <SectionAction icon={<RotateCcw />} disabled={!hasCustomShortcuts} onClick={() => p.on.setSetting('keybindings', {})}>
+      {t('settings.shortcuts.resetAll')}
+    </SectionAction>
+  ) : (page.kind === 'shared' || page.kind === 'storage') && (
     <IconButton title={t('common.refresh')} aria-label={t('common.refresh')}
       onClick={() => page.kind === 'shared' ? p.on.shared?.() : (setStorageRefresh(n => n + 1), p.on.storage?.())}>
       <RefreshCw strokeWidth={1.5} />
@@ -164,23 +171,22 @@ export function SettingsShell(p: SettingsShellProps) {
   const [opening] = useState(() => desktop && webviewState(COLUMN_HIDDEN_KEY) === true);
   const trail = usePageTrail(page, p.onPage, p.onBack);
   // The rail's search over the pages this shell shows (About lives in the desktop rail only)
-  const searchPages: SearchPage[] = ['general', 'appearance', 'models', 'subagents', 'plugins', 'shared',
+  const searchPages: SearchPage[] = ['general', 'appearance', 'shortcuts', 'models', 'subagents', 'plugins', 'shared',
     ...(remote || access ? ['connections' as const] : []), 'storage', ...(desktop ? ['about' as const] : [])];
   const index = useMemo(() => searchIndex(p.agents, searchPages, desktop), [p.agents, searchPages.join(), desktop, p.locale]);
   const search = useRef<HTMLInputElement>(null);
   // Desktop: ⌘[ / ⌘] (Ctrl elsewhere) step through the trail as the title row's buttons do; back past the first page is the chat.
-  // ⌘K focuses the rail's search
+  // ⌘K focuses the rail's search; ⌘/ jumps straight to the Shortcuts page
   const keys = useRef(trail);
   keys.current = trail;
   useEffect(() => {
-    if (!desktop) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(macOS ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing) return;
-      const key = e.key.toLowerCase();
-      if (key === '[') keys.current.back();
-      else if (key === ']') keys.current.forward?.();
-      // ⌘K: the rail's search, as in the chat's column
-      else if (key === 'k') search.current?.focus();
+      if (e.isComposing || e.defaultPrevented) return;
+      if (hitShortcut(e, 'openShortcuts')) { keys.current.go({ kind: 'shortcuts' }); e.preventDefault(); return; }
+      if (!desktop) return;
+      if (hitShortcut(e, 'back')) keys.current.back();
+      else if (hitShortcut(e, 'forward')) keys.current.forward?.();
+      else if (hitShortcut(e, 'searchSessions')) search.current?.focus();
       else return;
       e.preventDefault();
     };
@@ -212,11 +218,12 @@ export function SettingsShell(p: SettingsShellProps) {
                 marks={{ models: agentUpdates(p.agents), about: appUpdatePending(update) }} />
               {/* No header on this sheet: its top strip is the title bar all the same (the desktop shell reads data-drag-top) */}
               <div data-sheet={desktop || undefined} data-drag-top={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
-              <main key={page.kind === 'agent' ? 'models' : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
+              <main key={page.kind === 'agent' ? 'models' : page.kind} className="scroll-none min-h-0 min-w-0 flex-1 overflow-y-auto">
                 <Page>
                   <PageHeader title={title} action={action} />
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} onTour={desktop ? undefined : p.onTour} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
+                  {page.kind === 'shortcuts' && <ShortcutsPage settings={p.settings} on={p.on} />}
                   {(page.kind === 'models' || page.kind === 'agent') && <ModelsPage agents={p.agents} inventories={p.inventories}
                     onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
                     onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])}

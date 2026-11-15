@@ -4,7 +4,7 @@ import { Layers, PanelRight, Plus } from 'lucide-react';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
-import { macOS } from '../desktop';
+import { hitShortcut } from '../keybindings';
 import { TitleSpace } from '../chat/DesktopFrame';
 import { InspectorSplitter, clamp, fitPaneBounds, type PaneBounds } from '../chat/subagents/InspectorSplitter';
 import { FileTree } from './FileTree';
@@ -75,7 +75,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
   toggleSessions.current = p.onToggleSessions;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'KeyB' || !e.altKey || !(macOS ? e.metaKey : e.ctrlKey) || e.shiftKey || e.isComposing) return;
+      if (e.isComposing || e.defaultPrevented || !hitShortcut(e, 'toggleToolPanel')) return;
       e.preventDefault();
       toggleSessions.current();
     };

@@ -7,6 +7,7 @@ import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { revealInline, useRoving } from '../ui/roving';
 import { macOS } from '../desktop';
+import { hitShortcut } from '../keybindings';
 import { vscodeApi } from '../vscodeApi';
 import { fileUriOf } from '../chat/drafts';
 import { sameRange, selectionDraft, setEditorSelection } from '../chat/editorContext';
@@ -194,7 +195,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
   // ⌥⌘B, VS Code's secondary side bar key (⌘B stays with the session column)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'KeyB' || !e.altKey || !(macOS ? e.metaKey : e.ctrlKey) || e.shiftKey || e.isComposing) return;
+      if (e.isComposing || e.defaultPrevented || !hitShortcut(e, 'toggleToolPanel')) return;
       e.preventDefault();
       panel.toggle();
     };

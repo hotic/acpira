@@ -7,6 +7,7 @@ import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { Base64, ClipboardAddon } from '@xterm/addon-clipboard';
 import { t } from '../i18n';
 import { macOS } from '../desktop';
+import { hitShortcut } from '../keybindings';
 import { readClipboardText } from '../vscodeApi';
 
 // The terminal tabs' front end: xterm.js, the terminal VS Code runs, with its addons for fitting the frame, the GPU
@@ -316,6 +317,8 @@ export class XtermView {
   // copy and paste, since Ctrl+C interrupts. ⌥←/→ and ⌥⌫ xterm already sends as word moves
   private key(e: KeyboardEvent): boolean {
     if (e.type !== 'keydown' || e.isComposing) return true;
+    // Let app-level terminal toggle (⌃`) and session switch (⌃Tab / ⌃⇧Tab) bubble to the shell without writing to the PTY
+    if (hitShortcut(e, 'toggleTerminal') || hitShortcut(e, 'nextSession') || hitShortcut(e, 'prevSession')) return false;
     const take = () => { e.preventDefault(); e.stopPropagation(); return false; };
     const send = (seq: string) => { this.hooks.input(seq); return take(); };
     if (macOS && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {

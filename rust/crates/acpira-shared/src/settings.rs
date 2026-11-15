@@ -9,6 +9,7 @@ use crate::i18n::{LANGUAGE_TAGS, Language, Locale};
 use crate::transcript::AgentId;
 
 pub type HiddenMap = BTreeMap<AgentId, BTreeMap<String, Vec<String>>>;
+pub type KeybindingMap = BTreeMap<String, String>;
 
 pub const UI_FONT_SIZE: (i64, i64, i64) = (10, 20, 13);
 pub const CODE_FONT_SIZE: (i64, i64, i64) = (9, 20, 12);
@@ -29,7 +30,7 @@ pub const DEFAULT_DESKTOP_LAYOUT: &str = "chat";
 pub const PANEL_SCOPES: [&str; 3] = ["project", "session", "global"];
 pub const DEFAULT_PANEL_SCOPE: &str = "project";
 
-pub const SETTING_KEYS: [&str; 30] = [
+pub const SETTING_KEYS: [&str; 31] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -60,6 +61,7 @@ pub const SETTING_KEYS: [&str; 30] = [
   "panelFiles",
   "panelTerminal",
   "panelBrowser",
+  "keybindings",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,6 +128,9 @@ pub struct SettingsView {
   pub panel_terminal: bool,
   #[serde(default = "default_panel_files")]
   pub panel_browser: bool,
+  /// User-customized keyboard shortcuts (missing: default, "": unbound)
+  #[serde(default)]
+  pub keybindings: KeybindingMap,
 }
 
 fn default_ssh_local_agents() -> Vec<AgentId> {
@@ -289,8 +294,131 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "agentOrder" | "disabledAgents" | "planAutoApprove" => Value::from(id_list(value)),
     "sshLocalAgents" => Value::from(ssh_local_agents(value)),
     "subagents" => serde_json::to_value(crate::subagents::sanitize_personas(value)).unwrap_or(Value::Array(vec![])),
+    "keybindings" => sanitize_keybindings(value),
     _ => Value::Null,
   }
+}
+
+const SHORTCUT_DEFAULTS: [(&str, &str); 20] = [
+  ("openSettings", "CmdOrCtrl+,"),
+  ("openShortcuts", "CmdOrCtrl+/"),
+  ("openFolder", "CmdOrCtrl+O"),
+  ("quickOpen", "CmdOrCtrl+P"),
+  ("toggleSidebar", "CmdOrCtrl+B"),
+  ("back", "CmdOrCtrl+["),
+  ("forward", "CmdOrCtrl+]"),
+  ("closeTab", "CmdOrCtrl+W"),
+  ("focusComposer", "Ctrl+L"),
+  ("cycleMode", "Shift+Tab"),
+  ("openModelPicker", "CmdOrCtrl+Shift+M"),
+  ("invertSteerSend", "CmdOrCtrl+Enter"),
+  ("findInChat", "CmdOrCtrl+F"),
+  ("findNext", "CmdOrCtrl+G"),
+  ("findPrev", "CmdOrCtrl+Shift+G"),
+  ("newSession", "CmdOrCtrl+N"),
+  ("searchSessions", "CmdOrCtrl+K"),
+  ("nextSession", "Ctrl+Tab"),
+  ("prevSession", "Ctrl+Shift+Tab"),
+  ("nextAttention", "Alt+CmdOrCtrl+A"),
+];
+
+const PANEL_SHORTCUT_DEFAULTS: [(&str, &str); 4] = [
+  ("toggleToolPanel", "Alt+CmdOrCtrl+B"),
+  ("toggleTerminal", "Ctrl+`"),
+  ("openChanges", "CmdOrCtrl+Shift+D"),
+  ("toggleBrowser", "CmdOrCtrl+Shift+B"),
+];
+
+pub fn normalize_accelerator(raw: &str) -> Option<String> {
+  let trimmed = raw.trim();
+  if trimmed.is_empty() {
+    return None;
+  }
+  let mut parts: Vec<&str> = trimmed.split('+').map(str::trim).filter(|s| !s.is_empty()).collect();
+  let key_raw = parts.pop()?;
+  let key = if key_raw.len() == 1 {
+    let ch = key_raw.chars().next()?;
+    if ch.is_ascii_alphabetic() {
+      ch.to_ascii_uppercase().to_string()
+    } else if ch.is_ascii_digit() || matches!(ch, '`' | '-' | '=' | '[' | ']' | '\\' | ';' | '\'' | ',' | '.' | '/') {
+      ch.to_string()
+    } else {
+      return None;
+    }
+  } else {
+    let upper = key_raw.to_ascii_uppercase();
+    if upper.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=12).contains(&n)) {
+      upper
+    } else {
+      match key_raw.to_ascii_lowercase().as_str() {
+        "enter" => "Enter".into(),
+        "tab" => "Tab".into(),
+        "space" => "Space".into(),
+        "backspace" => "Backspace".into(),
+        "delete" => "Delete".into(),
+        "escape" | "esc" => "Escape".into(),
+        "up" | "arrowup" => "Up".into(),
+        "down" | "arrowdown" => "Down".into(),
+        "left" | "arrowleft" => "Left".into(),
+        "right" | "arrowright" => "Right".into(),
+        _ => return None,
+      }
+    }
+  };
+  let mut ctrl = false;
+  let mut alt = false;
+  let mut shift = false;
+  let mut cmd_or_ctrl = false;
+  for m in parts {
+    match m.to_ascii_lowercase().as_str() {
+      "ctrl" | "control" => ctrl = true,
+      "alt" | "option" => alt = true,
+      "shift" => shift = true,
+      "cmdorctrl" | "commandorcontrol" | "cmd" | "command" | "meta" => cmd_or_ctrl = true,
+      _ => return None,
+    }
+  }
+  let is_fn = key.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=12).contains(&n));
+  let has_primary = cmd_or_ctrl || ctrl || alt;
+  let allowed_shift_only = shift && (key == "Tab" || key == "Enter" || is_fn);
+  if !has_primary && !allowed_shift_only && !is_fn {
+    return None;
+  }
+  let mut out = vec![];
+  if ctrl {
+    out.push("Ctrl");
+  }
+  if alt {
+    out.push("Alt");
+  }
+  if shift {
+    out.push("Shift");
+  }
+  if cmd_or_ctrl {
+    out.push("CmdOrCtrl");
+  }
+  out.push(&key);
+  Some(out.join("+"))
+}
+
+pub fn sanitize_keybindings(value: &Value) -> Value {
+  let Some(obj) = value.as_object() else { return Value::Object(Default::default()) };
+  let mut out = serde_json::Map::new();
+  for (id, raw) in obj {
+    let Some(default) = SHORTCUT_DEFAULTS.iter().chain(PANEL_SHORTCUT_DEFAULTS.iter()).find(|(k, _)| k == id).map(|(_, d)| *d) else {
+      continue;
+    };
+    let Some(s) = raw.as_str() else { continue };
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+      out.insert(id.clone(), Value::String(String::new()));
+    } else if let Some(norm) = normalize_accelerator(trimmed)
+      && norm != default
+    {
+      out.insert(id.clone(), Value::String(norm));
+    }
+  }
+  Value::Object(out)
 }
 
 /// Whether a session belongs to the workspace shown

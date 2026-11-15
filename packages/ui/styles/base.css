@@ -4,6 +4,9 @@
   .acp-shell ::selection { background: color-mix(in srgb, var(--focus) 35%, transparent); }
   /* A quote being commented on keeps its selection paint while focus is in the comment field (chat/QuoteToolbar) */
   ::highlight(acpira-quote) { background: color-mix(in srgb, var(--focus) 35%, transparent); }
+  /* In-conversation search matches and the active match (chat/ChatFind) */
+  ::highlight(acpira-find) { background: color-mix(in srgb, var(--warn) 28%, transparent); }
+  ::highlight(acpira-find-active) { background: color-mix(in srgb, var(--warn) 62%, transparent); color: var(--fg-strong); }
   .acp-shell summary::-webkit-details-marker { display: none; }
   .acp-shell textarea { field-sizing: content; }
   /* Native scrollbars and form controls follow the shell theme, not the host's. */

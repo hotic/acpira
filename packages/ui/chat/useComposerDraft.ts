@@ -6,17 +6,28 @@ import type { Draft } from '@acpira/shared/transcript';
 const DRAFTS = new Map<string, { text: string; drafts: Draft[] }>();
 
 type Update = (drafts: Draft[]) => Draft[];
-interface Sink { update: (u: Update) => void; focus: () => void; write?: (text: string, replace: boolean) => void; key?: string }
+interface Sink { update: (u: Update) => void; focus: () => void; empty?: () => boolean; write?: (text: string, replace: boolean) => void; key?: string }
 
 // The main composer (never an inline history / queue editor) also takes drafts from outside it: the editor's "Add to chat" and quotes
 // picked in the transcript. Updates made while no main composer is mounted wait for the next one
 let sink: Sink | undefined;
 const pending: Update[] = [];
+let pendingFocus = false;
 
 export function updateMainComposer(update: Update, focus = false) {
-  if (!sink) { pending.push(update); return; }
+  if (!sink) { pending.push(update); if (focus) pendingFocus = true; return; }
   sink.update(update);
   if (focus) sink.focus();
+}
+
+export function focusMainComposer() {
+  if (sink) sink.focus();
+  else pendingFocus = true;
+}
+
+// Whether the main composer currently holds neither typed text nor staged attachments (permission quick-approve check)
+export function mainComposerEmpty(): boolean {
+  return sink?.empty ? sink.empty() : true;
 }
 
 // Text for the main composer from a plugin's process (`ui/composer`): at the caret, or in place of the draft. With a
@@ -33,7 +44,7 @@ export function parkDraftText(draftKey: string, text: string) {
   DRAFTS.set(draftKey, { text, drafts: DRAFTS.get(draftKey)?.drafts ?? [] });
 }
 
-export function useComposerDraft(draftKey?: string, editText?: string, main?: { focus: () => void; write?: (text: string, replace: boolean) => void }) {
+export function useComposerDraft(draftKey?: string, editText?: string, main?: { focus: () => void; empty?: () => boolean; write?: (text: string, replace: boolean) => void }) {
   const parked = draftKey ? DRAFTS.get(draftKey) : undefined;
   // An inline history editor parks under its own key too, so what was typed there outlives a click elsewhere and wins over the
   // original message text on the next open
@@ -45,14 +56,16 @@ export function useComposerDraft(draftKey?: string, editText?: string, main?: { 
   }, [draftKey, text, drafts]);
   const isMain = !!main;
   const focus = main?.focus;
+  const empty = main?.empty;
   const write = main?.write;
   useEffect(() => {
     if (!isMain || !focus) return;
-    const own: Sink = { update: u => setDrafts(u), focus, write, key: draftKey };
+    const own: Sink = { update: u => setDrafts(u), focus, empty, write, key: draftKey };
     sink = own;
     for (const u of pending.splice(0)) setDrafts(u);
+    if (pendingFocus) { pendingFocus = false; focus(); }
     return () => { if (sink === own) sink = undefined; };
-  }, [isMain, focus, write, draftKey]);
+  }, [isMain, focus, empty, write, draftKey]);
   return { text, setText, drafts, setDrafts };
 }
 
