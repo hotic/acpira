@@ -29,10 +29,10 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
   return (
     <>
       <Section title={t('settings.group.basic')}>
-        <Field label={t('settings.language')}>
+        <Field label={t('settings.language')} desc={t('settings.language.desc')}>
           <Select<Language> options={languages} value={settings.language} onChange={v => on.setSetting('language', v)} label={t('settings.language')} />
         </Field>
-        <Field label={t('settings.defaultAgent')}>
+        <Field label={t('settings.defaultAgent')} desc={t('settings.defaultAgent.desc')}>
           <Select options={agentOptions} value={pickDefaultAgent(agents, settings.defaultAgent)} onChange={v => on.setSetting('defaultAgent', v)} label={t('settings.defaultAgent')} />
         </Field>
         {/* The desktop app always lists every project, grouped (rust/crates/acpira-desktop/src/settings.rs seeds `all`) */}
@@ -60,7 +60,7 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
         <Field label={t('settings.autoCompact')} desc={t('settings.autoCompact.desc')}>
           <Switch checked={settings.autoCompact} onChange={v => on.setSetting('autoCompact', v)} label={t('settings.autoCompact')} />
         </Field>
-        <Field label={t('settings.compactAt')}>
+        <Field label={t('settings.compactAt')} desc={t('settings.compactAt.desc')}>
           <CompactAtField value={settings.compactAtTokens} onCommit={v => on.setSetting('compactAtTokens', v)} />
         </Field>
       </Section>

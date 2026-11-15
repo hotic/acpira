@@ -198,7 +198,7 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
               switching back restores them; they are dropped only on save. With no level lit the switch alone sends
               nothing (thinking stays `auto`), so the hint says so rather than implying thinking is on */}
           <div className="flex flex-col">
-            <Field label={t('settings.providers.model.thinking')} desc={thinking !== 'off' ? levelsHint : undefined}>
+            <Field label={t('settings.providers.model.thinking')} desc={thinking !== 'off' ? levelsHint : t('settings.providers.model.thinking.off')}>
               <Switch checked={thinking !== 'off'} onChange={on => setThinking(on ? 'auto' : 'off')} label={t('settings.providers.model.thinking')} />
             </Field>
             {thinking !== 'off' && <div className="pb-(--setting-row-pad)"><ThinkingLevels levels={levels} onChange={setLevels} /></div>}
