@@ -58,8 +58,9 @@ export struct PillButton {
 }
 
 /**
- * A card's action (CardButton): a capsule; the way on is prominent in the send button's ink, and falls back to the plain
- * fill with faint text while it cannot run. One line, never wrapped
+ * A card's action (CardButton): one capsule look for every action, as on the web and iOS: the way on only lifts its
+ * text to the strongest ink, a side action stays one step dimmer, and one that cannot run drops to faint text. One
+ * line, never wrapped
  */
 @ComponentV2
 export struct CardButton {
@@ -79,8 +80,8 @@ export struct CardButton {
       }
       Text(this.label)
         .fontSize(WebType.text2)
-        .fontWeight(this.primary && this.active ? FontWeight.Medium : FontWeight.Normal)
-        .fontColor(this.primary && this.active ? $r('app.color.bg0') : (this.active ? $r('app.color.fg1') : $r('app.color.pop_fg3')))
+        .fontWeight(FontWeight.Medium)
+        .fontColor(!this.active ? $r('app.color.pop_fg3') : (this.primary ? $r('app.color.fg_strong') : $r('app.color.fg2')))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .flexShrink(1)
@@ -91,7 +92,7 @@ export struct CardButton {
     }
     .padding({ left: Metrics.pad, right: Metrics.pad })
     .height(Metrics.ctl)
-    .backgroundColor(this.primary && this.active ? $r('app.color.fg_strong') : $r('app.color.active'))
+    .backgroundColor($r('app.color.active'))
     .borderRadius(Metrics.ctl / 2)
     .onClick(() => {
       if (this.active) {
@@ -575,17 +576,15 @@ export struct TurnActions {
   @Local shot: image.PixelMap | undefined = undefined;
   /** A screenshot is being drawn: a second tap waits for it */
   private sharing: boolean = false;
-  /** The row's width, which with the message's sides is the thread's; read on a tap */
-  private rowWidth: number = 0;
 
   private share(): void {
-    if (this.sharing || this.rowWidth <= 0) {
+    if (this.sharing) {
       return;
     }
     const payload = new SharePayload();
     payload.meta = shareMeta(this.title, this.agent, this.controls, this.turn);
     payload.blocks = shareBlocks(this.turn);
-    payload.cardWidth = Math.min(this.rowWidth + Metrics.pad * 2, Metrics.contentW);
+    payload.cardWidth = Metrics.contentW;
     this.sharing = true;
     captureShare(this.getUIContext(), payload).then((picture: image.PixelMap | undefined) => {
       this.sharing = false;
@@ -715,9 +714,6 @@ export struct TurnActions {
     // Hugs the reply: gives a gap back to the message's spacing
     .margin({ top: -Metrics.gap })
     .width('100%')
-    .onAreaChange((_: Area, area: Area) => {
-      this.rowWidth = Number(area.width);
-    })
     .bindContentCover(this.shot !== undefined, this.sharePreview(), {
       modalTransition: ModalTransition.ALPHA,
       backgroundColor: Color.Black,

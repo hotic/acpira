@@ -8,7 +8,7 @@ export const zhTW = {
   "observation.unknownTool": "執行結果未確認",
   'permission.run': '執行命令',
   'permission.more': '更多授權',
-  'permission.once': '允許一次',
+  'permission.once': '允許',
   'permission.reject': '拒絕',
   'permission.session': '本工作階段內允許',
   'permission.project': '始終允許 {project} 專案',

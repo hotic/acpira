@@ -7,7 +7,7 @@ export const de = {
   "observation.unknownTool": "Ausführungsergebnis nicht bestätigt",
   'permission.run': 'Befehl ausführen',
   'permission.more': 'Weitere Optionen',
-  'permission.once': 'Einmal erlauben',
+  'permission.once': 'Erlauben',
   'permission.reject': 'Ablehnen',
   'permission.session': 'Für diese Sitzung erlauben',
   'permission.project': 'In {project} immer erlauben',

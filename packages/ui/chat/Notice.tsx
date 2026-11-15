@@ -1,14 +1,13 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { ChevronDown, CirclePause, Download, Eye, KeyRound, Laptop, LockKeyhole, RotateCw, SquareTerminal, TriangleAlert, UserRound } from 'lucide-react';
+import { Download, KeyRound, Laptop, RotateCw, SquareTerminal, UserRound } from 'lucide-react';
 import type { AccountInfo, AgentInfo, AuthMethodInfo, SessionStatus } from '@acpira/shared/transcript';
 import type { AccountAction, AddAccountVia } from '@acpira/shared/protocol';
-import { Card } from '../ui/Card';
-import { Button, CARET_TURN, IconButton } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Row, RowEntranceContext } from '../ui/Row';
 import { Orb } from '../effects/Orb';
-import { CopyDetail, DOCK_BUTTON, DOCK_LEAD } from './Alert';
+import { CopyDetail, DOCK_BUTTON, DockCard } from './Alert';
 import { t, tOr } from '../i18n';
 import { planName } from '../ui/AccountLabel';
 
@@ -86,10 +85,10 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
 }
 
 // A bar pinned above the composer while the session isn't ready: login required / error / read-only / closed. Renders nothing when ready or starting.
-// Every state shares chat/Alert's skeleton: glyph + title, then the one primary action, the other ways behind one menu
-// (a single other way stays a plain button), and retry as an icon when it is not the primary; one line of text below,
-// which progress and failure feedback replace instead of stacking more lines. Below the notice container tier the
-// actions drop under the text so the title keeps its width.
+// Every state shares chat/Alert's DockCard: a title and one line of text, then the other ways behind one menu (a single
+// other way stays a plain button), the one primary action last, and retry as an icon when it is not the primary; progress
+// and failure feedback replace the text line instead of stacking more lines. Below the notice container tier the
+// actions drop into a footer strip so the title keeps its width.
 // For agents on the account layer, the main login paths are "import the local CLI login / sign in a new account in the terminal" — credentials from these two are saved;
 // the agent's own login methods only authenticate this one process and aren't saved, so their menu rows say so.
 // Once an import found no local login, signing in in the terminal becomes the primary and import stays greyed out in the menu.
@@ -159,55 +158,39 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   const otherCount = others.reduce((n, g) => n + g.length, 0);
 
   const body = locked
-    ? { icon: KeyRound, title: t('notice.locked.title', { agent: agent.name }), text: t(onUnlock ? 'notice.locked.text' : 'mobile.notice.unlockOnComputer') }
+    ? { title: t('notice.locked.title', { agent: agent.name }), text: t(onUnlock ? 'notice.locked.text' : 'mobile.notice.unlockOnComputer') }
     : status === 'auth_required'
     ? {
-        icon: LockKeyhole,
         title: t('notice.login.title', { agent: agent.name }),
         text: withAccounts ? t('notice.login.accounts') : authMethods?.length ? t('notice.login.methods') : t('notice.login.terminal'),
       }
     : status === 'error' && takeOver
-      ? { icon: TriangleAlert, title: t('notice.takeOver.title'), text: t('notice.takeOver.text') }
+      ? { title: t('notice.takeOver.title'), text: t('notice.takeOver.text') }
     : status === 'readonly'
-      ? { icon: Eye, title: t('notice.readonly.title'), text: error ?? t('notice.readonly.text') }
+      ? { title: t('notice.readonly.title'), text: error ?? t('notice.readonly.text') }
       : status === 'closed'
-        ? { icon: CirclePause, title: t('notice.closed.title'), text: t('notice.closed.text') }
-        : { icon: TriangleAlert, title: t('notice.error.title'), text: error ?? t('notice.error.unknown') };
+        ? { title: t('notice.closed.title'), text: t('notice.closed.text') }
+        : { title: t('notice.error.title'), text: error ?? t('notice.error.unknown') };
   // The agent's own error text (English, whatever the locale) only takes the text line when nothing localized explains the
   // state; next to a localized explanation it sits behind "Copy details" in the title row, as on chat/Alert
   const detail = error && (status === 'auth_required' || (status === 'error' && takeOver)) ? error : undefined;
-  const Glyph = body.icon;
-  // The text line starts at the title's column, under the glyph's lead slot
   // Bound individual methods as well as the group: adapter labels can be arbitrarily long.
   // No vertical padding: a one-line label must stay exactly ctl-sm tall, level with the "other ways" trigger beside it;
   // only a wrapped label grows the button.
   const methodButton = `${DOCK_BUTTON} h-auto min-h-ctl-sm min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere]`;
-  const text = 'm-0 basis-full pl-indent text-3 text-fg-2 [overflow-wrap:anywhere]';
   return (
-    <div className="px-dock">
-      <Card className="@container flex flex-wrap items-center gap-x-gap gap-y-1 px-pad py-2.5">
-        {/* One growing group with a zero basis: a long title shrinks inside it instead of wrapping retry onto a line of its own */}
-        <span className="flex min-h-ctl-sm min-w-0 flex-1 items-center gap-gap">
-          <span className={DOCK_LEAD}><Glyph className="size-icon" strokeWidth={1.75} /></span>
-          <span className="min-w-0 truncate text-2 font-medium text-fg-1" title={body.title}>{body.title}</span>
-        </span>
-        {/* "Copy details" leads the actions: before the buttons on the title row, at the start of the actions row (from the
-            title's column) once they wrap */}
-        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap @max-notice:order-1 @max-notice:basis-full @max-notice:pl-indent">
-          {detail && <span className="mr-auto flex min-w-0"><CopyDetail text={detail} label="" /></span>}
-          <fieldset disabled={busy} aria-busy={busy} className="m-0 flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap border-0 p-0 disabled:opacity-60">
-            {otherCount === 1
-              ? others[0]!.map(w => <Button key={w.key} className={methodButton} title={w.title} disabled={w.disabled} onClick={w.run}>{w.label}</Button>)
-              : otherCount > 1 && <OtherWays groups={others} />}
-            {primary && <Button variant="primary" className={methodButton} title={primary.title} onClick={primary.run}>{primary.label}</Button>}
-          </fieldset>
-        </div>
-        {showRetry && <IconButton size="sm" aria-label={retry.label} title={retry.label} onClick={onRetry} className="-mr-ctl-sm-bleed"><RotateCw strokeWidth={1.5} /></IconButton>}
-        {feedback
-          ? <p role="status" className={text}>{feedback}</p>
-          : <p className={text}>{body.text}</p>}
-      </Card>
-    </div>
+    <DockCard
+      title={body.title}
+      detail={detail && <CopyDetail text={detail} label="" />}
+      text={feedback ?? body.text}
+      textRole={feedback ? 'status' : undefined}
+      busy={busy}
+      alt={otherCount === 1
+        ? others[0]!.map(w => <Button key={w.key} className={methodButton} title={w.title} disabled={w.disabled} onClick={w.run}>{w.label}</Button>)
+        : otherCount > 1 && <OtherWays groups={others} />}
+      actions={primary && <Button variant="primary" className={methodButton} title={primary.title} onClick={primary.run}>{primary.label}</Button>}
+      trail={showRetry && <IconButton size="sm" aria-label={retry.label} title={retry.label} onClick={onRetry}><RotateCw strokeWidth={1.5} /></IconButton>}
+    />
   );
 }
 
@@ -216,7 +199,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
 function OtherWays({ groups }: { groups: Way[][] }) {
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger render={<Button className={`group/chip ${DOCK_BUTTON}`}>{t('notice.moreWays')}<ChevronDown className={`size-3 shrink-0 text-fg-3 ${CARET_TURN}`} strokeWidth={1.75} /></Button>} />
+      <DropdownMenu.Trigger render={<Button caret className={DOCK_BUTTON}>{t('notice.moreWays')}</Button>} />
       <DropdownMenu.Portal><DropdownMenu.Positioner width="lg" align="end"><DropdownMenu.Popup>
         {groups.map((group, i) => <Fragment key={group[0]!.key}>
           {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-line" />}

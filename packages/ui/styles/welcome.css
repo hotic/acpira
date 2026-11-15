@@ -156,7 +156,7 @@
   @keyframes wl-agent { from { opacity: 0; translate: -4px 0; } }
   .wl-actions { margin-top: 38px; display: flex; align-items: center; gap: 22px; animation: wl-rise .6s var(--wl-ease) 1.35s backwards; }
   /* Over Button's own size utilities, which outrank this layer */
-  .wl-cta { height: 34px !important; gap: 10px !important; padding: 0 14px 0 16px !important; }
+  .wl-cta { height: 34px !important; gap: 10px !important; padding: 0 16px !important; }
 
   .wl-bigmark {
     position: absolute; right: var(--wl-mark-crop); top: 50%; height: var(--wl-mark-h); aspect-ratio: 455 / 428; translate: 0 -50%;

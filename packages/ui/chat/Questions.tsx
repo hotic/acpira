@@ -167,16 +167,23 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
       <Card ref={root} tabIndex={-1} role="form" aria-label={t('question.title')} onKeyDown={onKeyDown}
         onPaste={onPaste} onDragOver={onDragOver} onDrop={onDrop} className="flex min-w-0 flex-col overflow-hidden">
         <div className="flex min-h-0 max-h-question-body flex-col">
-          {/* Keep the question and counter outside the answer scrollport and its edge fade. */}
-          <div className="flex shrink-0 flex-col gap-(--question-section-gap) px-pad pt-(--question-top-pad) pb-(--question-section-gap)">
+          {/* The question is the card's head: a band of its own over a hairline, as the actions are under one, so it never
+              reads as the first row of the answers. A text question has no rule: there the question is the field's label,
+              and a rule between a label and its field parts them. The head stays outside the answer scrollport and its fade.
+              One leading line runs down the card: the keys, the field's edge and the footer buttons all stand the footer's
+              8px in, since a label that starts well inside the edge of the box under it reads as a slip. The question's
+              text sits a hair further in than those outlines: flush with a rounded outline, bare text looks outdented. */}
+          <div className={cn('flex shrink-0 flex-col gap-(--question-section-gap) px-2.5 pt-(--question-head-pad)',
+            current.kind !== 'text' && 'border-b border-line pb-(--question-head-pad)')}>
             {subtitle && <div className="text-3 text-fg-3">{subtitle}</div>}
-            {/* No row min height: its slack sat under the text and pushed the answers off centre between it and the footer rule */}
-            <Row dense className="min-h-0 items-start lead-top" lead={<MessageCircleQuestion className="size-icon" strokeWidth={1.5} />}
+            {/* No glyph: it put the question in the answers' text column behind their keys. No row min height either: its
+                slack sat under the text and left the head band taller below the question than above it */}
+            <Row dense className="min-h-0 items-start"
               trailing={<span aria-live="polite">{t('question.of', { n: page + 1, total })}</span>}>
               <h3 id={titleId} className="m-0 min-w-0 text-2 font-medium text-fg-strong [overflow-wrap:anywhere]">{current.text}</h3>
             </Row>
           </div>
-          <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex min-h-0 flex-col gap-(--question-section-gap) overflow-y-auto overscroll-y-contain px-pad pb-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
+          <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex min-h-0 flex-col gap-(--question-section-gap) overflow-y-auto overscroll-y-contain px-2 py-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
             {block.message && page === 0 && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{block.message}</p>}
             <QuestionItem question={current} titleId={titleId} pick={picks[current.id] ?? EMPTY}
               onAttach={accepts ? attach : undefined}
@@ -186,7 +193,7 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
               onText={text => update(current.id, p => ({ ...p, text, ...(current.kind !== 'text' ? { other: true } : {}), ...(current.kind === 'single' ? { options: [] } : {}) }))} />
           </div>
         </div>
-        <div className="flex shrink-0 items-center justify-between gap-gap border-t border-line px-pad py-(--question-section-gap)">
+        <div className="flex shrink-0 items-center justify-between gap-gap border-t border-line p-2">
           <Button variant="secondary" onClick={skip} className={cn(focusRing, 'h-ctl-sm border-line/50')}>{t('question.skip')}</Button>
           <div className="flex items-center gap-gap">
             {page > 0 && <Button variant="secondary" onClick={() => go(page - 1)} className={cn(focusRing, 'h-ctl-sm border-line/50')}>{t('question.prev')}</Button>}
@@ -204,8 +211,10 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
 // One question per page, compact type, shared row alignment and persistent actions.
 // Every focusable control in the card shows the same inset ring; the "other" row lights up while its input has focus.
 const focusRing = 'focus-visible:shadow-[inset_0_0_0_var(--question-focus-width)_var(--fg-2)]';
+// A row's fill bleeds out by its own padding (the group's negative margin), so its key stays on the card's leading line
 const optionRowClass = 'w-full rounded-md p-(--question-option-pad) active:bg-active';
-const optionKeyClass = 'flex size-lead items-center justify-center rounded-sm border border-line-strong text-3 text-fg-2';
+// The key is a hint, one step under the label it stands for
+const optionKeyClass = 'flex size-lead items-center justify-center rounded-sm border border-line text-3 text-fg-3';
 
 interface ItemProps {
   question: Question;
@@ -228,14 +237,13 @@ function QuestionItem({ question: q, titleId, pick, onAttach, onRemoveImages, on
   const thumbs = pick.images.length > 0 && <DraftChips drafts={pick.images} onRemove={onRemoveImages} className="p-0" />;
   return (
     <section className="flex min-w-0 flex-col gap-(--question-section-gap)">
-      {q.kind === 'multiple' && <p className="m-0 text-3 text-fg-2">{t('question.multiple')}</p>}
       {/* A text question has no choices: an empty group would still take a section gap above the field */}
-      {q.kind !== 'text' && <div role={groupRole} aria-labelledby={titleId} className="flex min-w-0 flex-col">
+      {q.kind !== 'text' && <div role={groupRole} aria-labelledby={titleId} className="-mx-(--question-option-pad) flex min-w-0 flex-col">
         {q.options.map((o, i) => (
           <OptionRow key={o.id} keyLabel={KEYS[i] ?? String(i + 1)} selected={pick.options.includes(o.id)}
             role={q.kind === 'multiple' ? 'checkbox' : 'radio'} onClick={() => onChoose(o.id)}>
             <span className="text-fg-1 [overflow-wrap:anywhere]">{o.label}</span>
-            {o.description && <span className="text-3 text-fg-2 [overflow-wrap:anywhere]">{o.description}</span>}
+            {o.description && <span className="text-3 text-fg-3 [overflow-wrap:anywhere]">{o.description}</span>}
           </OptionRow>
         ))}
         {q.other && (
@@ -261,6 +269,7 @@ function QuestionItem({ question: q, titleId, pick, onAttach, onRemoveImages, on
           </Row>
         )}
       </div>}
+      {/* A text question is a labelled field: the question sits right above an outlined box that shows its focus ring */}
       {q.kind === 'text' && !attachButton && (
         <input type="text" value={pick.text} inputMode={q.numeric ? 'decimal' : undefined}
           placeholder={placeholder} aria-labelledby={titleId} onChange={e => onText(e.target.value)}

@@ -1,4 +1,4 @@
-import type { PermissionBlock, PermissionKind } from '@acpira/shared/transcript';
+import type { PermissionBlock, PermissionKind, Turn } from '@acpira/shared/transcript';
 import { LOCALES, translate, type Locale, type MsgKey } from '@acpira/shared/i18n/core';
 import { APPROVAL_WRAPPERS } from '@acpira/shared/i18n/approvalWrappers';
 
@@ -68,6 +68,31 @@ export function quickChoices<T extends { kind: PermissionKind }>(options: T[]): 
 // engine's `ambiguous_allow`
 export function ambiguousChoices<T extends { kind: PermissionKind }>(options: T[]): boolean {
   return !options.some(o => o.kind === 'allow_always') && options.filter(o => o.kind === 'allow_once').length > 1;
+}
+
+function isPlanApproval(block: PermissionBlock): boolean {
+  if (block.planId) return true;
+  if (Object.hasOwn(PLAN_TITLES, block.title)) return true;
+  const heading = WRAPPED_TITLE.exec(block.title)?.[1];
+  return !!heading && Object.hasOwn(PLAN_TITLES, heading);
+}
+
+// First unresolved non-plan, non-ambiguous permission card on screen (the latest turn's own, then summoned children's),
+// with the option IDs that Enter (the emphasized primary button) and Esc (reject) trigger when the composer is empty
+export function pendingQuickPermission(
+  turns: readonly Turn[],
+  subagents?: readonly { permissions?: PermissionBlock[] }[],
+): { blockId: string; primaryId?: string; rejectId?: string } | undefined {
+  const last = turns[turns.length - 1];
+  const root = last?.role === 'agent' ? last.blocks.filter((b): b is PermissionBlock => b.type === 'permission' && !isPlanApproval(b)) : [];
+  const children = subagents?.flatMap(n => n.permissions?.filter(b => !isPlanApproval(b)) ?? []) ?? [];
+  for (const block of [...root, ...children]) {
+    if (ambiguousChoices(block.options)) continue;
+    const { allow, reject } = quickChoices(block.options);
+    const primary = block.defaultToNo ? reject : allow;
+    if (primary || reject) return { blockId: block.id, primaryId: primary?.id, rejectId: reject?.id };
+  }
+  return undefined;
 }
 
 // ACP kinds do not describe command patterns or scope. Only shorten complete,

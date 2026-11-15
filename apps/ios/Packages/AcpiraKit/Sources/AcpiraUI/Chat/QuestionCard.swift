@@ -254,24 +254,21 @@ struct CardSurface: ViewModifier {
   }
 }
 
-/// A dock card's action: the system's glass capsule; the way on is prominent in the send button's ink, and falls
-/// back to plain glass with faint text while it cannot run, so a disabled step never reads as a lit one
+/// A dock card's action: the system's glass capsule, one look for every action as on the web (`ui/Button`): the way on
+/// only lifts its text to the strongest ink, a side action stays one step dimmer, and a way on that cannot run drops to
+/// faint text, so a disabled step never reads as a lit one. No prominent fill: two looks side by side read as two
+/// unrelated controls
 struct CardButton: ViewModifier {
   var primary: Bool
   /// One line at its own width; off for a chip that truncates when the row is short
   var fixed = true
   @Environment(\.isEnabled) private var enabled
   func body(content: Content) -> some View {
-    let lit = primary && enabled
-    let label = content.textStyle(TypeScale.text2, weight: lit ? .medium : .regular)
     // As the web's `h-ctl` buttons: a squeezed footer truncates its chip, never wraps a button
-    if lit {
-      label.glassButtonStyle(prominent: true).tint(Palette.fgStrong).foregroundStyle(Palette.bg0)
-        .fixedSize(horizontal: fixed, vertical: false)
-    } else {
-      label.glassButtonStyle().foregroundStyle(enabled ? Palette.fg1 : Palette.popFg3)
-        .fixedSize(horizontal: fixed, vertical: false)
-    }
+    content.textStyle(TypeScale.text2, weight: .medium)
+      .glassButtonStyle()
+      .foregroundStyle(!enabled ? Palette.popFg3 : primary ? Palette.fgStrong : Palette.fg2)
+      .fixedSize(horizontal: fixed, vertical: false)
   }
 }
 

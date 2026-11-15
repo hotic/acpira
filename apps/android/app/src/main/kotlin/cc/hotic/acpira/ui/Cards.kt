@@ -136,8 +136,10 @@ fun DockCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() 
 }
 
 /**
- * A dock card's action (CardButton): a capsule; the way on is prominent in the send button's ink, and falls back to the
- * plain fill with faint text while it cannot run, so a disabled step never reads as a lit one. One line, never wrapped
+ * A dock card's action (CardButton): one capsule look for every action, as on the web (`ui/Button`) and iOS: the way on
+ * only lifts its text to the strongest ink, a side action stays one step dimmer, and a way on that cannot run drops to
+ * faint text, so a disabled step never reads as a lit one. No prominent fill: two looks side by side read as two
+ * unrelated controls. One line, never wrapped
  */
 @Composable
 fun CardButton(
@@ -149,14 +151,13 @@ fun CardButton(
   lead: (@Composable () -> Unit)? = null,
   trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
-  val lit = primary && enabled
   Button(
     onClick = onClick,
     enabled = enabled,
     shape = CircleShape,
     colors = ButtonDefaults.buttonColors(
-      containerColor = if (lit) Palette.fgStrong else Palette.active,
-      contentColor = if (lit) Palette.bg0 else Palette.fg1,
+      containerColor = Palette.active,
+      contentColor = if (primary) Palette.fgStrong else Palette.fg2,
       disabledContainerColor = Palette.active,
       disabledContentColor = Palette.popFg3,
     ),
@@ -164,7 +165,7 @@ fun CardButton(
     modifier = modifier.heightIn(min = Metrics.ctl),
   ) {
     if (lead != null) { lead(); Spacer(Modifier.width(Metrics.s1_5)) }
-    Text(label, fontSize = Type.text2, fontWeight = if (lit) FontWeight.Medium else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+    Text(label, fontSize = Type.text2, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
     trailing?.invoke(this)
   }
 }

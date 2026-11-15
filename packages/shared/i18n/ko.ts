@@ -7,7 +7,7 @@ export const ko = {
   "observation.unknownTool": "실행 결과 확인 안 됨",
   'permission.run': '명령 실행',
   'permission.more': '추가 옵션',
-  'permission.once': '한 번 허용',
+  'permission.once': '허용',
   'permission.reject': '거부',
   'permission.session': '이 세션 동안 허용',
   'permission.project': '{project}에서 항상 허용',

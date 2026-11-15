@@ -188,6 +188,24 @@
      by as much. Lists follow (prose.css) */
   :is([data-thread], [data-plan-dock]) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2) calc((var(--lead) - var(--icon)) / 2); }
 
+  /* Dock cards (chat/Alert.tsx DockCard): text block, then the actions on its line. Below 30rem (the notice tier) a
+     card that has a way around its primary takes two bands instead: the actions drop into a footer strip that spans the
+     card under a hairline, the alternative at its start and the primary at its end, and the icon control stays on the
+     title's line */
+  .dock-card { container: dock-card / inline-size; }
+  .dock-card-body { --dock-y: 10px; --dock-end: 10px; display: flex; align-items: center; gap: var(--gap); padding: var(--dock-y) var(--dock-end) var(--dock-y) var(--pad); }
+  .dock-card-actions { min-width: 0; margin: 0; padding: 0; border: 0; display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: var(--gap); max-width: 100%; }
+  .dock-card-actions:empty { display: none; }
+  @container dock-card (max-width: 30rem) {
+    .dock-card-body[data-foot] { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--gap); row-gap: 0; }
+    .dock-card-body[data-foot] > .dock-card-trail { grid-area: 1 / 2; align-self: start; }
+    .dock-card-body[data-foot] > .dock-card-actions {
+      grid-area: 2 / 1 / auto / -1; margin: var(--dock-y) calc(-1 * var(--dock-end)) calc(-1 * var(--dock-y)) calc(-1 * var(--pad));
+      max-width: none; padding: 8px; border-top: 1px solid var(--line);
+    }
+    .dock-card-body[data-foot] .dock-card-alt { margin-right: auto; }
+  }
+
   /* Command / summon pill: margin and padding cancel, so glyphs stay where the composer's textarea has them */
   .prompt-mark {
     --mark-reach: max(0px, var(--mark-room, var(--mark-overhang)));

@@ -1,4 +1,5 @@
-import { ChevronDown, Terminal } from 'lucide-react';
+import { useRef, type RefObject } from 'react';
+import { Terminal } from 'lucide-react';
 import type { PermissionBlock } from '@acpira/shared/transcript';
 import { Button } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
@@ -18,20 +19,25 @@ export function Permission({ block, onChoose, compact }: { block: PermissionBloc
   const more = flat ? [] : options.filter(o => o.id !== allow?.id && o.id !== reject?.id);
   const choice = compact ? 'h-ctl-sm max-w-full px-2' : 'h-auto min-h-ctl max-w-full whitespace-normal py-gap-half [overflow-wrap:anywhere]';
   const title = block.command ? t('permission.run') : permissionTitle(block.title, getLocale());
-  const menu = more.length > 0 && (
+  // `over`: open above that element instead of above the trigger
+  const menuWith = (trigger?: string, over?: RefObject<HTMLElement | null>) => (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger render={<Button className={compact ? choice : undefined}>{t('permission.more')}<ChevronDown className="size-icon shrink-0" strokeWidth={1.5} /></Button>} />
-      <DropdownMenu.Portal><DropdownMenu.Positioner width="xl" side="top" collisionAvoidance={{ side: 'flip', align: 'shift' }}><DropdownMenu.Popup>
+      <DropdownMenu.Trigger render={<Button caret className={trigger}>{t('permission.more')}</Button>} />
+      <DropdownMenu.Portal><DropdownMenu.Positioner width="xl" side="top" anchor={over} collisionAvoidance={{ side: 'flip', align: 'shift' }}><DropdownMenu.Popup>
         <PermissionMenu options={more} onChoose={id => onChoose?.(id)} />
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
+  const menu = more.length > 0 && menuWith(compact ? choice : undefined);
+  const card = useRef<HTMLDivElement>(null);
   // The adapter asked for a deny-by-default card: reject is the emphasized button, allow stays plain
+  const rejectHint = reject ? [reject.detail, block.defaultToNo ? '↵ / Esc' : 'Esc'].filter(Boolean).join(' · ') : undefined;
+  const allowHint = allow ? [allow.detail, !block.defaultToNo ? '↵' : undefined].filter(Boolean).join(' · ') || undefined : undefined;
   const choices = flat
     ? options.map(o => <Button key={o.id} className={choice} title={o.detail} onClick={() => onChoose?.(o.id)}>{o.label}</Button>)
     : <>
-      {reject && <Button className={choice} variant={block.defaultToNo ? 'primary' : undefined} onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
-      {allow && <Button className={choice} variant={block.defaultToNo ? undefined : 'primary'} onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
+      {reject && <Button className={choice} title={rejectHint} variant={block.defaultToNo ? 'primary' : undefined} onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
+      {allow && <Button className={choice} title={allowHint} variant={block.defaultToNo ? undefined : 'primary'} onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
     </>;
   const details = <>
     {block.command && <pre className={cn('m-0 whitespace-pre-wrap font-mono text-mono [overflow-wrap:anywhere]', compact ? 'text-fg-2' : 'text-fg-1')}>{block.command}</pre>}
@@ -52,17 +58,45 @@ export function Permission({ block, onChoose, compact }: { block: PermissionBloc
   }
   // Bleed the frame into the message inset so its icon stays on the tool rows' keyline.
   // data-permission-card: the welcome tour's approvals step finds the card by it, whatever frames it.
-  return (
-    <div data-permission-card className="-mx-pad flex min-w-0 flex-col gap-gap rounded-md bg-bg-1 px-pad py-gap shadow-[inset_0_0_0_1px_var(--conversation-line)]">
-      <div className="flex min-w-0 flex-wrap items-center gap-gap">
-        <Row dense className="min-w-0 flex-auto gap-gap-half" lead={block.command ? <Terminal className="size-icon" strokeWidth={1.5} /> : undefined}>
-          <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{title}</span>
-        </Row>
-        {/* Long labels wrap; equal-choice requests keep their options below the details. */}
-        {!flat && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap">{choices}{menu}</div>}
+  // A command takes two bands, as on the question card: the command itself behind its glyph, on the card's full width
+  // however long it is, then a footer under a hairline with the menu at its start and the decision at its end. Buttons
+  // beside a wrapped command squeezed it and hung mid-air. Any other request is one line of title with the same buttons
+  // at its end; equal-choice requests list their answers under the title
+  const foot = 'h-auto min-h-ctl-sm max-w-full whitespace-normal [overflow-wrap:anywhere]';
+  const decide = <>
+    {reject && <Button className={foot} title={rejectHint} variant={block.defaultToNo ? 'primary' : undefined} onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
+    {allow && <Button className={foot} title={allowHint} variant={block.defaultToNo ? undefined : 'primary'} onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
+  </>;
+  const frame = '-mx-pad flex min-w-0 flex-col rounded-md bg-bg-1 shadow-[inset_0_0_0_1px_var(--conversation-line)]';
+  const description = block.description && <p className={cn('m-0 text-3 text-fg-2 [overflow-wrap:anywhere]', block.command && 'pl-indent')}>{block.description}</p>;
+  if (!block.command) {
+    return (
+      <div data-permission-card className={cn(frame, 'gap-gap-half py-2 pr-2 pl-pad')}>
+        <div className="flex min-w-0 flex-wrap items-center gap-gap">
+          <span className="min-w-0 flex-auto font-medium text-fg-1 [overflow-wrap:anywhere]">{title}</span>
+          {!flat && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap">{more.length > 0 && menuWith('h-ctl-sm')}{decide}</div>}
+        </div>
+        {description}
+        {flat && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-gap">{choices}</div>}
       </div>
-      {details}
-      {flat && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-gap">{choices}</div>}
+    );
+  }
+  return (
+    <div ref={card} data-permission-card role="group" aria-label={title} className={frame}>
+      <div className="flex min-w-0 flex-col gap-gap-half px-pad py-gap">
+        <Row className="lead-top min-h-0 min-w-0 items-start text-fg-1 select-text" lead={<Terminal className="size-icon" strokeWidth={1.5} />}>
+          <pre className="m-0 min-w-0 whitespace-pre-wrap font-mono text-mono [overflow-wrap:anywhere]">{block.command}</pre>
+        </Row>
+        {description}
+        {flat && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-gap pt-gap-half">{choices}</div>}
+      </div>
+      {!flat && (
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-gap border-t border-line p-2">
+          {/* The menu opens above the card, so the command it widens stays readable under it */}
+          {more.length > 0 && <span className="mr-auto flex min-w-0">{menuWith('h-ctl-sm', card)}</span>}
+          {decide}
+        </div>
+      )}
     </div>
   );
 }
