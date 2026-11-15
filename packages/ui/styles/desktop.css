@@ -20,8 +20,8 @@
   --sidebar-duration: 320ms;
   --sidebar-fade-duration: 260ms;
   --sidebar-ease: var(--start-ease);
-  /* The sheet header's leading and trailing padding (Header reads them): the dock's margin beside the column and the tool panel */
-  --sheet-lead: var(--start-x);
+  /* Keep the title close to the sheet's leading edge; trailing actions retain the dock's margin. */
+  --sheet-lead: calc(var(--sheet-inset) - 2px);
   --sheet-trail: var(--start-x);
   /* The pinned title row's width (chat/DesktopFrame.tsx TitleRow): the lights' room, back, forward and the column's
      toggle 2 px apart, then a breath */
@@ -52,16 +52,22 @@
 .acp-shell[data-desktop][data-caption] {
   --title-top: 0px;
   --caps-w: calc(3 * var(--caption-w) + var(--gap) - var(--sheet-inset) - var(--start-x));
-  --title-w: calc(var(--gap) + 4 * var(--ctl) + 6px + var(--gap));
+  --title-menu-w: 0px;
+  --title-w: calc(var(--gap) + 3 * var(--ctl) + 4px + var(--title-menu-w) + var(--gap));
 }
-.acp-shell[data-desktop][data-caption][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + 2 * var(--ctl) + 2px + var(--gap)); }
+.acp-shell[data-desktop][data-caption]:has(> [data-title-row] > [data-app-menus]) { --title-menu-w: calc(var(--ctl) + 2px); }
+.acp-shell[data-desktop][data-caption][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + var(--ctl) + var(--title-menu-w) + var(--gap)); }
 /* A sheet header that ends at the window's edge leaves the caption its room; beside a shown tool panel it does not */
 .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
 .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--start-x); }
 /* A page-drawn caption: the stage's rule under its tabs gives way to its card's edge (the card under the title bar, below) */
 .acp-shell[data-desktop][data-caption] [data-stage-body] { --stage-rule: transparent; }
-/* No column beside the sheet (hidden, or a drawer over a narrow window): its header starts after the pinned title row */
-.acp-shell[data-desktop]:not([data-column]) [data-sheet-header] { --sheet-lead: calc(var(--title-w) - var(--sheet-inset)); }
+/* No column beside the sheet: keep the title one small inset beyond the actual title-row controls. */
+.acp-shell[data-desktop]:not([data-column]) [data-sheet-header] { --sheet-lead: calc(var(--title-w) - var(--gap)); }
+/* Optically align the title with the conversation outline, while keeping clear of the controls. */
+.acp-shell[data-desktop].acp-wide:not([data-column]):not([data-layout="files"]) [data-sheet-header] {
+  --sheet-lead: max(calc(var(--title-w) - var(--gap)), calc((100% - var(--chat-w) - 2 * var(--page)) / 2 + var(--start-x) + 2px));
+}
 /* The files layout (acpira.desktopLayout = files, panel/FilesLayout.tsx): the chat lies on the canvas between the stage and
    the session column. Its header starts at the dock's margin whatever folds, and leaves the pinned toggle room once the
    session column folds. Its palette counts from the canvas (palette.css), so cards and the composer keep their contrast
