@@ -1516,7 +1516,7 @@ export function Shell(p: ShellProps) {
                           the measured dock, so the transcript's clearance keeps the last reply's actions clear of them */}
                       <ComposerAbove running={p.running} waiting={waitingOnUser} />
                       {/* The session goal heads the floating to-do card, so the dock keeps one silhouette */}
-                      <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running}
+                      <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} catchingUp={p.catchingUp}
                         goal={p.goal} goalActions={p.goalActions} onGoalAction={goalAction} />
                     </div>
                   </div>

@@ -652,6 +652,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   const manual = choice.key === memoryKey ? choice.manual : undefined;
   const toggle = useCallback((next: boolean) => { setChoice({ key: memoryKey, manual: next }); if (memoryKey) rememberFold(memoryKey, next); }, [memoryKey]);
   const following = useFollowing();
+  const quiet = useContext(QuietEntranceContext);
   const { keepProcess, stepIcons } = useAppearance();
   const held = useRef(false);
   const live = running || replyBusy || (!following && held.current);
@@ -704,11 +705,13 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
       'group flex min-w-0 flex-col transition-[margin-bottom] duration-(--dur-open) ease-out',
       // The root is the reply stack's flex item; an inner margin cannot cancel its sibling gap.
       retired && blocks.length === 0 && '-mb-gap [transition-delay:var(--dur-open)]',
+      quiet.current && 'transition-none',
     )} data-open={open || undefined} data-process-fold>
       {mounted.current && (
         // The clip reserves the head's hit area like the panel below; a flex column stretches the button to the full row
         <div inert={retired} className={cn('-mx-hit grid transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out',
-          retired ? 'grid-rows-[0fr] opacity-0 [transition-delay:var(--dur-open),0s]' : 'grid-rows-[1fr] opacity-100')}>
+          retired ? 'grid-rows-[0fr] opacity-0 [transition-delay:var(--dur-open),0s]' : 'grid-rows-[1fr] opacity-100',
+          quiet.current && 'transition-none')}>
           <div className="flex min-h-0 flex-col overflow-hidden px-hit"><EntranceOnce id="fold-head">{head}</EntranceOnce></div>
         </div>
       )}
@@ -776,6 +779,7 @@ const SETTLE_MS = 400;
 // until that close has run (`settle`); a manual toggle is remembered per row
 function useProcessFolds(items: ProcessItem[], settle: boolean, live: boolean, following: boolean, memoryKey: string | undefined): AutoFoldStore {
   const { autoExpand } = useAppearance();
+  const quiet = useContext(QuietEntranceContext);
   const [rows, setRows] = useState<Record<string, boolean>>({});
   const [store] = useState(() => new AutoFoldStore(() => {}));
   store.toggle = (id, next) => {
@@ -788,11 +792,11 @@ function useProcessFolds(items: ProcessItem[], settle: boolean, live: boolean, f
   const settleUntil = useRef(0);
   const wasLive = useRef(live);
   const now = performance.now();
-  if (wasLive.current && !live && settle) settleUntil.current = now + SETTLE_MS;
+  if (wasLive.current && !live && settle && !quiet.current) settleUntil.current = now + SETTLE_MS;
   wasLive.current = live;
   const running = live || now < settleUntil.current;
-  // Items already finished when the turn mounted count as long done, so opening a live session does not flash them
-  const first = doneAt.current === undefined;
+  // Finished items restored on mount or catch-up are long done, not fresh work to open and close after a dwell.
+  const first = doneAt.current === undefined || quiet.current;
   const { folds, open, wake: due } = foldStates({
     items, now, live: running, autoExpand: autoExpand === 'on', following, doneAt: doneAt.current ??= new Map(), first, held: held.current,
     manual: id => rows[id] ?? (memoryKey ? rememberedFold(`${memoryKey}:${id}`) : undefined),
