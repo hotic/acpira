@@ -37,6 +37,7 @@ scripts/eval/tasks/ledger-*/
 
 # Local agent skills and workspace hooks
 .agents/
+.claude/
 
 # Lab playground (local only): pages, the shared kit (lab/kit) and its Vite config
 lab/
