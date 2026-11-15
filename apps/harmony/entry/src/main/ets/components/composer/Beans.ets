@@ -160,10 +160,9 @@ export function modelBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[]
   }
   if (c.modes.length > 0) {
     const mode = c.mode;
-    const ink = (m: SessionOption | undefined): string => m?.kind === 'full_access' ? 'warn' : 'fg1';
     out.push(bean('mode', t('composer.mode'), mode !== undefined ? modeLabel(mode) : t('composer.mode'),
-      lucideGlyph(mode !== undefined ? modeIcon(mode) : 'circleDashed', ink(mode)),
-      c.modes.map((m: SessionOption) => choice(m.id, modeLabel(m), m.id === mode?.id, lucideGlyph(modeIcon(m), ink(m)), () => {
+      lucideGlyph(mode !== undefined ? modeIcon(mode) : 'circleDashed'),
+      c.modes.map((m: SessionOption) => choice(m.id, modeLabel(m), m.id === mode?.id, lucideGlyph(modeIcon(m)), () => {
         act.setMode(m.id);
         fold();
       })), c.modes.findIndex((m: SessionOption) => m.id === mode?.id)));
