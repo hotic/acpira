@@ -533,9 +533,17 @@ extension View {
   }
 
   /// The back button as the bare chevron, without the previous screen's title
+  @ViewBuilder
   func backWithoutTitle() -> some View {
     #if os(iOS)
-    toolbarRole(.editor).backWithoutMenu()
+    // Before iOS 26 the editor role stays off: the bar places the back indicator differently under it, and the legacy
+    // indicator (`LegacyBackIndicator`) can sit right for one placement only. The title is already gone there, since
+    // the page under hands over an untitled back item (`backWithoutMenu`)
+    if #available(iOS 26, *) {
+      toolbarRole(.editor).backWithoutMenu()
+    } else {
+      backWithoutMenu()
+    }
     #else
     self
     #endif
@@ -554,6 +562,48 @@ extension View {
 }
 
 #if os(iOS)
+/// The system back button's ground before iOS 26. The bar draws a bare chevron there while every other control stands
+/// on a base (the legacy glass circle), so the back indicator becomes that circle with the chevron in it: still the
+/// system's item, with its swipe and its place
+@MainActor
+enum LegacyBackIndicator {
+  static func install() {
+    if #available(iOS 26, *) { return }
+    let image = indicator()
+    UINavigationBar.appearance().backIndicatorImage = image
+    UINavigationBar.appearance().backIndicatorTransitionMaskImage = image
+  }
+
+  /// A template image: the bar tints it with its ink, so the alphas alone make the legacy glass ground in either
+  /// scheme (`Palette.active` and `Palette.line` are that ink at these strengths) under a full-strength chevron
+  private static func indicator() -> UIImage {
+    // The edge is stroked on the circle's outline, half outside it, as `LegacyGlassButtonStyle` strokes its capsule
+    let side = Metrics.ctlSm + Metrics.hairline * 2
+    let box = CGRect(x: 0, y: 0, width: side, height: side)
+    let image = UIGraphicsImageRenderer(size: box.size).image { _ in
+      let circle = UIBezierPath(ovalIn: box.insetBy(dx: Metrics.hairline, dy: Metrics.hairline))
+      UIColor.black.withAlphaComponent(groundAlpha).setFill()
+      circle.fill()
+      UIColor.black.withAlphaComponent(edgeAlpha).setStroke()
+      circle.lineWidth = Metrics.hairline
+      circle.stroke()
+      let font = UIImage.SymbolConfiguration(pointSize: TypeScale.body.size, weight: .semibold)
+      guard let chevron = UIImage(systemName: "chevron.backward", withConfiguration: font)?
+        .withTintColor(.black, renderingMode: .alwaysOriginal) else { return }
+      chevron.draw(at: CGPoint(x: (side - chevron.size.width) / 2, y: (side - chevron.size.height) / 2))
+    }
+    return image.withRenderingMode(.alwaysTemplate).withAlignmentRectInsets(UIEdgeInsets(top: -drop, left: -lead, bottom: drop, right: lead))
+  }
+
+  /// `Palette.active` / `Palette.line` as a share of the ink
+  private static let groundAlpha: CGFloat = 0.08
+  private static let edgeAlpha: CGFloat = 0.06
+  /// How far the image sits from where the bar puts its own chevron, so the circle lines up with the trailing items:
+  /// the same distance from the screen's edge, on the same centre line (measured on iOS 18.2)
+  private static let lead: CGFloat = 7
+  private static let drop: CGFloat = 8
+}
+
 /// A back item UIKit cannot hang the back-stack menu on: the menu it assigns on push is dropped
 private final class MenulessBackItem: UIBarButtonItem {
   override var menu: UIMenu? {
@@ -663,6 +713,7 @@ struct CloseButton: View {
       Button(role: .close, action: action)
     } else {
       Button(action: action) { Image(systemName: "xmark") }
+        .barButtonBase()
         .accessibilityLabel(Text(web: t("common.close")))
     }
   }

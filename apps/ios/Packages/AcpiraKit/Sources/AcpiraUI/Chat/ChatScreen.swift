@@ -329,8 +329,10 @@ struct SystemChatBar: ViewModifier {
           ToolbarItemGroup(placement: .primaryAction) {
             // The pencil's ink sits low in its box: lifted, it reads centred in the glass
             Button(action: actions.new) { Image(systemName: "square.and.pencil").offset(y: -Metrics.pencilLift) }
+              .barButtonBase()
               .accessibilityLabel(Text(web: t("session.new")))
             Menu { NativeSessionMenu(pinned: pinned, unread: unread, archived: archived, actions: actions) } label: { Image(systemName: "ellipsis") }
+              .barButtonBase()
               .accessibilityLabel(Text(web: t("session.more")))
           }
         }

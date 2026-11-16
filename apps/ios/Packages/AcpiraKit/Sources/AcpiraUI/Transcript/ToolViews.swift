@@ -1236,6 +1236,7 @@ struct CodeSheet<Content: View>: View {
             Button { markdownPreview.wrappedValue.toggle() } label: {
               Image(systemName: markdownPreview.wrappedValue ? "book.fill" : "book")
             }
+            .barButtonBase()
             .accessibilityLabel(Text(web: t("panel.markdownPreview")))
             .accessibilityAddTraits(markdownPreview.wrappedValue ? .isSelected : [])
           }
@@ -1254,6 +1255,7 @@ struct CodeSheet<Content: View>: View {
           } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
           }
+          .barButtonBase()
           .accessibilityLabel(Text(web: copied ? t("code.copied") : copyLabel))
           .disabled(!copyEnabled)
         }

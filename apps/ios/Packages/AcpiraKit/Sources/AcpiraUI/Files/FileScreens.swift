@@ -138,6 +138,7 @@ struct FileScreen: View {
           } label: {
             Image(systemName: preview ? "book.fill" : "book")
           }
+          .barButtonBase()
           .accessibilityLabel(Text(web: t("panel.markdownPreview")))
           .accessibilityAddTraits(preview ? .isSelected : [])
         }
@@ -201,8 +202,10 @@ struct FileScreen: View {
         if starts.count > 0 {
           ToolbarItemGroup(placement: .primaryAction) {
             Button { go(-1, starts, proxy) } label: { Image(systemName: "chevron.up") }
+              .barButtonBase()
               .accessibilityLabel(Text(web: t("panel.prevChange")))
             Button { go(1, starts, proxy) } label: { Image(systemName: "chevron.down") }
+              .barButtonBase()
               .accessibilityLabel(Text(web: t("panel.nextChange")))
           }
         }

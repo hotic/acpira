@@ -45,6 +45,7 @@ struct FolderBrowserSheet: View {
 
   private func page(_ folder: String?, up: ((String) -> Void)?) -> some View {
     FolderPage(folder: folder, onUp: up, onPick: pick, onType: { typing = true }, onClose: { dismiss() })
+      .backWithoutMenu()
   }
 
   private func pick(_ folder: String) {
@@ -112,6 +113,7 @@ private struct FolderPage: View {
       if let onUp, case let .folder(_, parent?, _)? = listing {
         ToolbarItem(placement: .cancellationAction) {
           Button { onUp(parent) } label: { Image(systemName: "chevron.up") }
+            .barButtonBase()
             .accessibilityLabel(Text(web: t("mobile.projects.parent")))
         }
       }
