@@ -159,6 +159,28 @@ async fn exec_streams_output_takes_stdin_and_reports_the_exit() {
   assert_eq!(got, b"through stdin");
 }
 
+// A prompt with a dropped file reaches a host's engine as one envelope of many MB: more than one wire line holds
+#[tokio::test]
+async fn stdin_over_one_wire_line_arrives_whole() {
+  let dir = tempfile::tempdir().unwrap();
+  let client = start(dir.path()).await;
+  let bytes: Vec<u8> = (0..5 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+  let mut call = client.request("exec", json!({ "argv": ["cat"], "stdin": true }));
+  call.stdin(&bytes);
+  call.stdin_eof();
+  let mut got = vec![];
+  loop {
+    match call.next().await.unwrap() {
+      Event::Chunk { bytes, .. } => got.extend(bytes),
+      Event::Done(r) => {
+        assert_eq!(r.unwrap()["code"], 0);
+        break;
+      }
+    }
+  }
+  assert!(got == bytes, "{} of {} bytes came back", got.len(), bytes.len());
+}
+
 /// The pid a command printed first
 async fn first_line_pid(call: &mut acpira_host::remote::client::Call) -> i32 {
   let mut text = String::new();

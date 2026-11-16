@@ -446,9 +446,13 @@ impl Call {
     std::task::Poll::Ready(e)
   }
 
-  /// Bytes for an exec's stdin
+  /// Bytes for a call's stdin, in as many frames as they take: a line over `wire::MAX_LINE` ends the helper and with
+  /// it every call on the host, and a peer's envelope (a prompt carrying a dropped file) or a paste into a terminal
+  /// can be far more than one line holds
   pub fn stdin(&self, bytes: &[u8]) {
-    send_counted(&self.client.inner, &Frame::Stdin { id: self.id, b: wire::b64(bytes), eof: false }, bytes.len());
+    for part in bytes.chunks(wire::CHUNK) {
+      send_counted(&self.client.inner, &Frame::Stdin { id: self.id, b: wire::b64(part), eof: false }, part.len());
+    }
   }
 
   pub fn stdin_eof(&self) {
