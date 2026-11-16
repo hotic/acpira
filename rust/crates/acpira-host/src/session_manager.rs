@@ -708,6 +708,9 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::RemoveAccount { session_id, .. }
     | W::UnlockCredentials { session_id, .. }
     | W::RefreshQuota { session_id, .. }
+    | W::InstallAgent { session_id, .. }
+    | W::CancelInstall { session_id, .. }
+    | W::InstallInTerminal { session_id, .. }
     | W::Compact { session_id }
     | W::Login { session_id, .. }
     | W::Retry { session_id }

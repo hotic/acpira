@@ -575,12 +575,12 @@ export type WebviewMsg =
   | { type: 'refreshQuota'; sessionId?: string; agent: AgentId }
   | { type: 'compact'; sessionId?: string }
   | { type: 'login'; sessionId?: string; methodId?: string }
-  // Settings page: run the agent's install line (AgentInfo.install) in the background on the engine's machine
-  | { type: 'installAgent'; agent: AgentId }
+  // Run the agent's install line (AgentInfo.install) in the background on the session's or local engine's machine
+  | { type: 'installAgent'; sessionId?: string; agent: AgentId }
   // Stop that install and its whole process tree
-  | { type: 'cancelInstall'; agent: AgentId }
+  | { type: 'cancelInstall'; sessionId?: string; agent: AgentId }
   // The same install line in an IDE terminal, for an installer that needs a person at the keyboard
-  | { type: 'installInTerminal'; agent: AgentId }
+  | { type: 'installInTerminal'; sessionId?: string; agent: AgentId }
   | { type: 'retry'; sessionId?: string }
   // Send the last user turn again after its agent turn ended in error / a short stop; both turns are dropped from the transcript first
   | { type: 'retryTurn'; sessionId?: string }

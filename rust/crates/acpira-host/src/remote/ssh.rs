@@ -85,6 +85,11 @@ impl Host {
   pub fn terminal_args(&self) -> Vec<String> {
     self.target.args()
   }
+
+  /// Interactive `ssh -t` arguments that allocate a remote pty and run `tail` on the host
+  pub fn interactive_args(&self, tail: impl IntoIterator<Item = String>) -> Vec<String> {
+    std::iter::once("-t".to_owned()).chain(self.target.args()).chain(tail).collect()
+  }
 }
 
 /// `user@host:port` → its parts; None when the text has neither a user nor a port (then it is an alias)
@@ -169,6 +174,10 @@ mod tests {
     assert_eq!(Target::of("box:http"), Target::Alias("box:http".into()));
     assert_eq!(Target::of("u@-oProxyCommand=x"), Target::Alias("u@-oProxyCommand=x".into()));
     assert_eq!(Target::Typed { user: Some("u".into()), host: "h".into(), port: Some(2) }.args(), vec!["-p", "2", "--", "u@h"]);
+    assert_eq!(
+      Host::new("ssh".into(), "u@h:2").interactive_args(["/bin/sh -c 'agy acp --login'".into()]),
+      vec!["-t", "-p", "2", "--", "u@h", "/bin/sh -c 'agy acp --login'"],
+    );
   }
 
   // The quoting is for the SSH host's shell; Windows has no /bin/sh to check it with

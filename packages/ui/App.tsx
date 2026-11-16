@@ -542,6 +542,9 @@ export function App() {
     },
     compact: () => post({ type: 'compact', sessionId: activeId.current }),
     login: methodId => post({ type: 'login', sessionId: activeId.current, methodId }),
+    installAgent: agent => post({ type: 'installAgent', sessionId: activeId.current, agent }),
+    cancelInstall: agent => post({ type: 'cancelInstall', sessionId: activeId.current, agent }),
+    installInTerminal: agent => post({ type: 'installInTerminal', sessionId: activeId.current, agent }),
     retry: () => post({ type: 'retry', sessionId: activeId.current }),
     retryTurn: () => post({ type: 'retryTurn', sessionId: activeId.current }),
     takeOver: () => post({ type: 'takeOverSession', sessionId: activeId.current }),
@@ -735,6 +738,7 @@ export function App() {
       accounts={session?.remoteAuth?.accounts ?? accounts}
       accountId={session?.accountId}
       accountAction={session?.remoteAuth ? session.remoteAuth.action : accountActions.find(action => action.agent === agent.id)}
+      agentInstall={session?.remoteAuth ? session.remoteAuth.install : agentInstalls.find(install => install.agent === agent.id)}
       remoteAuth={!!session?.remoteAuth}
       hostAgents={session?.remoteAuth?.agents}
       hidden={hidden}

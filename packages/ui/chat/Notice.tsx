@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { Download, KeyRound, Laptop, RotateCw, SquareTerminal, UserRound } from 'lucide-react';
 import type { AccountInfo, AgentInfo, AuthMethodInfo, SessionStatus } from '@acpira/shared/transcript';
-import type { AccountAction, AddAccountVia } from '@acpira/shared/protocol';
+import type { AccountAction, AddAccountVia, AgentInstallProgress } from '@acpira/shared/protocol';
 import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
@@ -30,9 +30,16 @@ export interface NoticeProps {
   // SessionView.canTakeOver: an error from a session lock held by another Acpira instance's agent (taking over ends it), or a
   // read-only copy of a session another Acpira engine has open (taking over asks that engine to hand it over)
   onTakeOver?: () => void;
-  // A session on an SSH host's engine whose agent could run on this machine instead (Claude Code): offered beside a
-  // failure or a sign-in, since the host may lack the CLI, its login or a route to the vendor
+  // A session on an SSH host's engine whose agent could run on this machine instead (`SSH_LOCAL_AGENTS`): offered beside
+  // a failure or a sign-in, since the host may lack the CLI, its login or a route to the vendor
   onRunHere?: () => void;
+  // Session runs on an SSH host's engine: terminal auth methods lead browser OAuth, which cannot open on a headless host
+  remoteAuth?: boolean;
+  // Missing-CLI install on whichever engine owns the session (local or SSH host)
+  install?: AgentInstallProgress;
+  onInstall?: () => void;
+  onCancelInstall?: () => void;
+  onInstallInTerminal?: () => void;
 }
 
 // How long a session may be starting before the connecting row shows
@@ -62,6 +69,14 @@ interface Way {
 }
 
 const rowIcon = (Icon: typeof UserRound) => <Icon strokeWidth={1.5} />;
+
+function newestLine(log: string[]): string | undefined {
+  for (let i = log.length - 1; i >= 0; i--) {
+    const line = log[i]!.trim();
+    if (line) return line;
+  }
+  return undefined;
+}
 
 // Floats over the thread's lower edge rather than taking a slot in DockStack, so opening a stored session never shrinks
 // the thread viewport or pushes its history up while the CLI starts
@@ -94,14 +109,17 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
 // Once an import found no local login, signing in in the terminal becomes the primary and import stays greyed out in the menu.
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
-export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock, onTakeOver, onRunHere }: NoticeProps) {
+export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock, onTakeOver, onRunHere, remoteAuth, install, onInstall, onCancelInstall, onInstallInTerminal }: NoticeProps) {
   if (status === 'ready' || status === 'starting') return null;
   const withAccounts = !!agent.accounts;
   const locked = status === 'auth_required' && withAccounts && !!agent.credentialsLocked;
   const action = status === 'auth_required' && accountAction?.agent === agent.id ? accountAction : undefined;
+  const takeOver = status === 'error' || status === 'readonly' ? onTakeOver : undefined;
+  const installCommand = status === 'error' && !takeOver && agent.available === false && onInstall ? agent.install?.command : undefined;
+  const installing = !!installCommand && install?.status === 'running';
   // Terminal waits outlive a closed terminal and page reloads. Keep the ways out usable: another login or import
   // supersedes the old login wait; duplicate imports and unlocks are still ignored by the host.
-  const busy = action?.status === 'pending' && action.via === 'import';
+  const busy = (action?.status === 'pending' && action.via === 'import') || installing;
   const unlockFeedback = (a: AccountAction) => a.status === 'pending' ? t('notice.unlockWaiting')
     : a.status === 'error' ? t('notice.unlockFailed', { error: a.error ?? t('notice.error.unknown') })
       // Success needs no line: the sessions reconnect and this bar goes away
@@ -110,7 +128,6 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     : action.status === 'pending' ? t(action.via === 'import' ? 'notice.importing' : 'notice.loginWaiting')
       : action.status === 'error' ? t('notice.accountFailed', { error: action.error ?? t('notice.error.unknown') })
         : t(`notice.account.${action.status}`));
-  const takeOver = status === 'error' || status === 'readonly' ? onTakeOver : undefined;
   // The protocol names sign-in methods in English; known ones get a localized name, the rest keep what the agent sent
   const methodName = (m: AuthMethodInfo) => tOr(`notice.method.${agent.id}:${m.id}`, m.name);
 
@@ -135,12 +152,15 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     groups = [
       (accounts ?? []).filter(a => a.id !== accountId).map(a => ({ key: `account:${a.id}`, label: a.label, icon: rowIcon(UserRound), hint: a.detail && planName(a.detail), title: a.detail, run: () => onSelectAccount(a.id) })),
       [noLocal ? importWay : terminalWay],
-      (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(KeyRound), hint: t('notice.cliLoginTag'), title: [m.description, t('notice.cliLoginHint')].filter(Boolean).join('\n'), run: () => onLogin(m.id) })),
+      (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(m.terminal ? SquareTerminal : KeyRound), hint: t('notice.cliLoginTag'), title: [m.description, t('notice.cliLoginHint')].filter(Boolean).join('\n'), run: () => onLogin(m.id) })),
       runHere,
     ];
     showRetry = true;
   } else if (status === 'auth_required') {
-    const methods = (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(KeyRound), title: m.description, run: () => onLogin(m.id) }));
+    const ordered = remoteAuth
+      ? [...(authMethods ?? [])].sort((a, b) => Number(!a.terminal) - Number(!b.terminal))
+      : authMethods ?? [];
+    const methods = ordered.map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(m.terminal ? SquareTerminal : KeyRound), title: m.description, run: () => onLogin(m.id) }));
     primary = methods[0] ?? { key: 'login', label: t('notice.goLogin'), run: () => onLogin() };
     groups = [methods.slice(1), runHere];
     showRetry = true;
@@ -150,6 +170,17 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   } else if (takeOver) {
     primary = { key: 'takeOver', label: t('notice.takeOver'), run: takeOver };
     showRetry = true;
+  } else if (installCommand && onInstall) {
+    primary = installing && onCancelInstall
+      ? { key: 'cancelInstall', label: t('settings.install.cancel'), run: onCancelInstall }
+      : { key: 'install', label: t('settings.install.run'), title: installCommand, run: onInstall };
+    groups = [
+      onInstallInTerminal && !installing
+        ? [{ key: 'installTerminal', label: t('settings.install.terminal'), icon: rowIcon(SquareTerminal), title: installCommand, run: onInstallInTerminal }]
+        : [],
+      runHere,
+    ];
+    showRetry = !installing;
   } else {
     primary = retry;
     groups = [runHere];
@@ -166,6 +197,14 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       }
     : status === 'error' && takeOver
       ? { title: t('notice.takeOver.title'), text: t('notice.takeOver.text') }
+    : installCommand
+      ? installing
+        ? { title: t('settings.install.running'), text: newestLine(install.log) ?? installCommand }
+        : install?.status === 'failed'
+          ? { title: t('settings.install.failed'), text: install.error ?? newestLine(install.log) ?? error ?? installCommand }
+          : install?.status === 'cancelled'
+            ? { title: t('settings.install.cancelled'), text: error ?? installCommand }
+            : { title: t('settings.install.title', { agent: agent.name }), text: error ?? installCommand }
     : status === 'readonly'
       ? { title: t('notice.readonly.title'), text: error ?? t('notice.readonly.text') }
       : status === 'closed'
@@ -173,7 +212,8 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
         : { title: t('notice.error.title'), text: error ?? t('notice.error.unknown') };
   // The agent's own error text (English, whatever the locale) only takes the text line when nothing localized explains the
   // state; next to a localized explanation it sits behind "Copy details" in the title row, as on chat/Alert
-  const detail = error && (status === 'auth_required' || (status === 'error' && takeOver)) ? error : undefined;
+  const installLog = installCommand && install?.status === 'failed' && install.log.length > 0 ? install.log.join('\n') : undefined;
+  const detail = installLog ?? (error && (status === 'auth_required' || (status === 'error' && takeOver)) ? error : undefined);
   // Bound individual methods as well as the group: adapter labels can be arbitrarily long.
   // No vertical padding: a one-line label must stay exactly ctl-sm tall, level with the "other ways" trigger beside it;
   // only a wrapped label grows the button.
@@ -183,7 +223,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       title={body.title}
       detail={detail && <CopyDetail text={detail} label="" />}
       text={feedback ?? body.text}
-      textRole={feedback ? 'status' : undefined}
+      textRole={feedback || installing ? 'status' : undefined}
       busy={busy}
       alt={otherCount === 1
         ? others[0]!.map(w => <Button key={w.key} className={methodButton} title={w.title} disabled={w.disabled} onClick={w.run}>{w.label}</Button>)
