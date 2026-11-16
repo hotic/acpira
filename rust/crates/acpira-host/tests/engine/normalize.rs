@@ -1299,6 +1299,22 @@ fn mcp_calls_name_their_server_and_take_the_tools_title_whatever_the_adapter_nam
   let meta = json!({ "acpira/mcp": { "server": "acpira", "tool": "plugin_guide", "title": "Acpira plugin guide" } });
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "g1", "title": "acpira_plugin_guide", "kind": "other", "status": "pending", "_meta": meta }));
   expect_match(block(&s, 0, 6), json!({ "mcpServer": "acpira", "target": "plugin guide" }));
+  // agy acp 1.5.9: `mcp_<server>_<tool>` in `name`, the title `Run <name>`, in every update; the result never arrives
+  let agy = |update: &str, status: &str| {
+    json!({ "sessionUpdate": update, "status": status, "toolCallId": "y1", "name": "mcp_acpira-probe_acpira_probe_ping",
+      "title": "Run mcp_acpira-probe_acpira_probe_ping", "kind": "other", "rawInput": { "toolSummary": "Probe ping check" } })
+  };
+  apply(&mut s, agy("tool_call", "in_progress"));
+  apply(&mut s, agy("tool_call_update", "completed"));
+  expect_match(block(&s, 0, 7), json!({ "mcpServer": "acpira-probe", "kind": "other", "target": "ping", "status": "completed" }));
+  // The same pair on the engine's own tools: show_image stays an image row
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "y2", "name": "mcp_acpira_show_image", "title": "Run mcp_acpira_show_image", "kind": "other",
+    "status": "in_progress", "rawInput": { "path": "/tmp/a.png", "toolSummary": "Show the shot" } }));
+  expect_match(block(&s, 0, 8), json!({ "verbKey": "verb.showImage" }));
+  expect_absent(block(&s, 0, 8), "mcpServer");
+  // A command that merely starts with mcp_ is no MCP call
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "y3", "name": "run_command", "title": "mcp_tool_check --all", "kind": "execute", "status": "pending" }));
+  expect_absent(block(&s, 0, 9), "mcpServer");
 }
 
 #[test]
