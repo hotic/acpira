@@ -265,8 +265,10 @@ function isLone({ families, cur, curVar, reasoning = [], modelConfig = [], fold 
 }
 
 // What a model row stands for: the variant a click on it picks and the parameters it would run with. The current model
-// reads the live controls; another one reads what the engine remembers of it, and offers nothing it has not seen yet
-interface FamilyView { variant: ModelVariant; reasoning: ConfigControl[]; modelConfig: ConfigControl[]; live: boolean; picks?: Record<string, string> }
+// reads the live controls; another one reads the shape the engine remembers of it, or, never seen yet, borrows the live
+// reasoning levels as a guess (`guessed`: menu only, no level on the row). A guessed level the model turns out not to take
+// is dropped by the engine once the switch has landed (protocol-gotchas: queued picks validate after the model answer)
+interface FamilyView { variant: ModelVariant; reasoning: ConfigControl[]; modelConfig: ConfigControl[]; live: boolean; guessed?: boolean; picks?: Record<string, string> }
 
 function familyView(f: ModelFamily, { cur, curVar, reasoning = [], modelConfig = [], model, memory, shapes }: ModelPanelProps): FamilyView {
   if (f === cur && curVar) return { variant: curVar, reasoning: reasoning.filter(reasoningVisible), modelConfig, live: true };
@@ -279,9 +281,13 @@ function familyView(f: ModelFamily, { cur, curVar, reasoning = [], modelConfig =
     : curVar && findVariant(f, curVar.effort, curVar.fast, false);
   const variant = recent ?? carried ?? f.variants[0]!;
   const picks = memory?.picks[variant.id];
-  const shape = picks && model ? shapeFor(shapes, model, variant.id) : undefined;
-  const kept = composerControls((shape ?? []).map(c => (Object.hasOwn(picks!, c.id) && c.options.some(o => o.id === picks![c.id]) ? { ...c, value: picks![c.id] } : c)));
-  return { variant, reasoning: kept.reasoning.filter(reasoningVisible), modelConfig: kept.modelConfig, live: false, picks };
+  const known = model ? shapeFor(shapes, model, variant.id) : undefined;
+  const shape = known ?? reasoning;
+  // The value a switch lands on: the model's own remembered pick, else the live value carried over, else the shape's
+  const live = new Map([...reasoning, ...modelConfig].map(c => [c.id, c.value]));
+  const landed = (c: ConfigControl) => [picks?.[c.id], live.get(c.id)].find(v => v !== undefined && c.options.some(o => o.id === v));
+  const kept = composerControls(shape.map(c => { const value = landed(c); return value === undefined ? c : { ...c, value }; }));
+  return { variant, reasoning: kept.reasoning.filter(reasoningVisible), modelConfig: kept.modelConfig, live: false, guessed: !known, picks };
 }
 
 const viewHasParams = (f: ModelFamily, v: FamilyView) => f.variants.length > 1 || v.reasoning.length > 0 || v.modelConfig.length > 0;
@@ -289,7 +295,8 @@ const viewHasParams = (f: ModelFamily, v: FamilyView) => f.variants.length > 1 |
 // A row's parameters after its name, read as one phrase with it: the level faint on the name's baseline, Fast as its bolt
 function RowParams({ family: f, view }: { family: ModelFamily; view: FamilyView }) {
   if (f.fusion) return <span className="min-w-0 truncate text-3 text-fg-3">{fusionLabel(view.variant)}</span>;
-  const tags = chipTags(f, view.variant, view.reasoning, view.modelConfig, t('composer.standard'));
+  // A guessed shape stays in the menu: the row only spells out what the model is known to run with
+  const tags = view.guessed ? chipTags(f, view.variant, [], [], t('composer.standard')) : chipTags(f, view.variant, view.reasoning, view.modelConfig, t('composer.standard'));
   if (!tags.length) return null;
   return <span className="flex shrink-0 items-baseline gap-0.5 text-3 text-fg-3">
     {tags.map(tag => (tag.fast
