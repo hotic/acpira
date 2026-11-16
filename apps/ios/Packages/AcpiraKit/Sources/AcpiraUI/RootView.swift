@@ -350,6 +350,7 @@ public struct RootView: View {
     .onChange(of: phase) { _, now in
       // Away in the background, back once active; a passing inactive phase (the app switcher, a sheet) changes nothing
       if now == .background { model.setAway(true) } else if now == .active { model.setAway(false) }
+      if now != .inactive { pairing?.front = now == .active }
       // Back from the background, where the service closed the wire: dial the followed computer again
       if now == .active, let pairing, pairing.connection == nil, pairing.selected != nil, pairing.link != .connecting {
         pairing.connectSelected(resuming: true)
@@ -367,13 +368,6 @@ public struct RootView: View {
     }
     .onChange(of: push.opening, initial: true) { _, _ in openNotified() }
     .onChange(of: pairing?.loaded) { _, _ in openNotified() }
-    // A wire ending as suspended once the app is back (a background close that never ran, a dial that lost the race
-    // with the service's return) leaves the link idle: nothing else would dial it
-    .onChange(of: pairing?.link) { _, link in
-      if link == .idle, phase == .active, let pairing, pairing.connection == nil, pairing.selected != nil {
-        pairing.connectSelected(resuming: true)
-      }
-    }
     .task {
       #if DEBUG && canImport(UIKit)
       if let orientation = options.orientation { OrientationProbe.turn(orientation) }

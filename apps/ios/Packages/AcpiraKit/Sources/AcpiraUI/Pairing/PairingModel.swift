@@ -56,6 +56,8 @@ final class PairingModel {
   @ObservationIgnored private var failures = 0
   /// Dialing again after a wire that was up got lost, as opposed to a computer that never answered
   @ObservationIgnored private var reconnecting = false
+  /// The app is in front (RootView's scene phase): a wire or a dial ending as suspended there is dialed again
+  @ObservationIgnored var front = true
   /// When the current wire came up
   @ObservationIgnored private var wiredAt: ContinuousClock.Instant?
   /// Whether the followed computer survives a relaunch (the preview service starts from its scenario every time)
@@ -210,7 +212,16 @@ final class PairingModel {
     // a dial rather than offer Retry on every return. `reconnecting` stays as set above, for that dial
     // (`connectSelected(resuming:)`): the first one on a fresh node often outlasts its deadline on a slow relay
     if error == .suspended {
-      link = .idle
+      // In front it was not the background's close: a dial that ran before the service heard of the return, or a wire
+      // that return closed. Dialed again from here: a view watching the link misses one that went connecting and back
+      // to idle between two renders, which left the screens syncing for good
+      if front, failures < Self.quickRedials.count {
+        failures += 1
+        link = .connecting
+        scheduleRedial(after: Self.quickRedials[failures - 1], quiet: false, id)
+      } else {
+        link = .idle
+      }
       return
     }
     // A lost wire (the network moved, the relay went quiet, no network for a moment) is dialed again at once, then

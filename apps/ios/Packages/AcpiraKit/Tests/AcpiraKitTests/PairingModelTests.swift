@@ -112,8 +112,10 @@ struct PairingModelTests {
     await pairing.load()
     try await until { pairing.link == .online(.relay) }
     service.then([.offline])
+    pairing.front = false
     service.wires.withLock { $0[0] }.end(.suspended)
     try await until { pairing.link == .idle }
+    pairing.front = true
     pairing.connectSelected(resuming: true)
     // Every state the link passes through until the redial is up, so a late wake-up cannot skip past the failed dial
     var seen: [PairLink] = []
@@ -122,6 +124,25 @@ struct PairingModelTests {
       return pairing.link == .online(.relay)
     }
     #expect(seen == [.connecting, .online(.relay)])
+    #expect(service.dials == 3)
+  }
+
+  /// The dial on the way back can run before the service heard of the return and end as suspended at once: it is
+  /// dialed again rather than left idle with the screens syncing
+  @Test func aDialRefusedAsSuspendedInFrontIsDialedAgain() async throws {
+    let service = ScriptedService([])
+    let pairing = PairingModel(service: service, remembers: false)
+    await pairing.load()
+    try await until { pairing.link == .online(.relay) }
+    pairing.front = false
+    service.wires.withLock { $0[0] }.end(.suspended)
+    try await until { pairing.link == .idle }
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(service.dials == 1, "the background's close is not dialed until the app is back")
+    service.then([.suspended])
+    pairing.front = true
+    pairing.connectSelected(resuming: true)
+    try await until { pairing.link == .online(.relay) }
     #expect(service.dials == 3)
   }
 
