@@ -386,11 +386,11 @@
     border-radius: 999px; background: currentColor;
   }
   .pair-plus-badge > svg { width: calc(var(--pair-badge) - 1px); height: calc(var(--pair-badge) - 1px); color: var(--pair-plus-fg, var(--menu-bg, var(--bg-1))); }
-  /* The lead's body sets the panel's height and the sidekick's lies over it (its list scrolling in what is left), so neither a
-     switch nor a pick moves the panel; the side taking over slides in from where its half of the switch sits. The side
+  /* The lead's body sets the panel's height, or the sidekick's list where that is taller (up to the menu's eight rows), and
+     the sidekick's lies over it (its list scrolling in what is left), so neither a switch nor a pick moves the panel; the side taking over slides in from where its half of the switch sits. The side
      leaving fades out in half a --dur and the one taking over starts fading in after it, so the two lists never show through
      each other */
-  .pair-stack { position: relative; }
+  .pair-stack { position: relative; min-height: calc(min(var(--pair-rows, 0), 8) * var(--row)); }
   .pair-view {
     display: flex; flex-direction: column; min-width: 0; opacity: 0; visibility: hidden;
     transition: opacity calc(var(--dur) / 2) ease-out, transform var(--dur-open) ease-out, visibility 0s linear calc(var(--dur) / 2);

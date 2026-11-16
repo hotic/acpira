@@ -4,7 +4,7 @@ import { t } from '../store/L10n';
 // apps/ios Logic/ModelCatalog.swift, Design/Goo.swift ModelChoices and Chat/Composer.swift modeIcon / modeLabel
 // (shared/models.ts, shared/composerControls.ts, modeIcons.ts): the model list rebuilt from flat option names (Devin
 // flattens model × effort × Fast × 1M into one select, and Fusion pairs into "Fusion (lead + sidekick)"), the native
-// reasoning / Fast controls, the built-in agent's sidekick and approval level, and what the model chip offers. The
+// reasoning / Fast controls, the sidekick, the built-in agent's approval level, and what the model chip offers. The
 // wire ids stay untouched; only the presentation is derived.
 
 /** One option of a family: the wire id plus the dimensions parsed from its name */
@@ -600,8 +600,9 @@ function level(id: string, name: string): EffortLevel {
 
 /**
  * What the composer's model chip offers, read from the session's controls (Goo.swift ModelChoices): the model
- * families, the reasoning levels with Fast, the modes, the working mode, the approval level, and the built-in agent's
- * sidekick (or a Fusion pair's two sides). `hidden` is the agent's settings `hiddenOptions` (control id → family keys)
+ * families, the reasoning levels with Fast, the modes, the working mode, the approval level, and the sidekick (the
+ * built-in agent's own or the one the host gives another CLI's session, found by category; or a Fusion pair's two
+ * sides). `hidden` is the agent's settings `hiddenOptions` (control id → family keys)
  */
 export class ModelChoices {
   families: ModelFamily[] = [];
@@ -626,7 +627,10 @@ export class ModelChoices {
       return;
     }
     const split = ComposerControls.split(controls.options);
-    const model = split.models.length > 0 ? ModelChoices.visible(split.models[0], hidden) : undefined;
+    // One list of hidden families, the model control's: the sidekick offers the models the model list does, whatever
+    // its own control is called (`sidekick` in the built-in agent, `host_sidekick` in another CLI's session)
+    const off = split.models.length > 0 ? hidden.get(split.models[0].id) : undefined;
+    const model = split.models.length > 0 ? ModelChoices.visible(split.models[0], off) : undefined;
     this.families = model !== undefined ? ModelCatalog.grouped(model.options) : [];
     this.cur = this.families.find((f: ModelFamily) => f.variants.some((v: ModelVariant) => v.id === model?.value));
     this.curVar = this.cur?.variants.find((v: ModelVariant) => v.id === model?.value);
@@ -638,16 +642,16 @@ export class ModelChoices {
     this.modes = controls.modes.length > 1 ? controls.modes : [];
     this.collaboration = split.collaboration.find((c: ConfigControl) => c.options.length > 1);
     this.access = split.permission.find((c: ConfigControl) => c.options.length > 1);
-    this.sidekick = split.sidekick.length > 0 ? ModelChoices.visible(split.sidekick[0], hidden) : undefined;
+    this.sidekick = split.sidekick.length > 0 ? ModelChoices.visible(split.sidekick[0], off) : undefined;
     this.sidekickEffort = split.sidekickEffort[0];
     this.sidekickFast = split.sidekickFast.length > 0 ? nativeToggle(split.sidekickFast[0], onSetConfig) : undefined;
   }
 
   /** The models the settings left visible (ModelPicker.tsx visibleOptions) */
-  private static visible(c: ConfigControl, hidden: Map<string, string[]>): ConfigControl {
+  private static visible(c: ConfigControl, hidden: string[] | undefined): ConfigControl {
     const out: ConfigControl = {
       id: c.id, name: c.name, category: c.category, type: c.type, value: c.value,
-      options: ModelCatalog.visibleOptions(c.options, hidden.get(c.id), c.value)
+      options: ModelCatalog.visibleOptions(c.options, hidden, c.value)
     };
     return out;
   }

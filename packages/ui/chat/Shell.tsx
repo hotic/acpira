@@ -539,7 +539,7 @@ export function Shell(p: ShellProps) {
   const summoned = useMemo(() => p.subagents?.filter(s => !isSidekick(s)) ?? [], [p.subagents]);
   const helpers = summoned.length;
   const sidekickLive = !!p.subagents?.some(s => isSidekick(s) && s.state === 'running');
-  const sidekickModels = useSidekickModels(p.controls.options);
+  const sidekickModels = useSidekickModels(p.controls.options, p.agent.id);
   // Desktop docking follows the window tier, not the room left after opening another pane.
   // The inspector and the other columns share that room without replacing the main conversation.
   const dockInspector = desktop ? canDock : canDockInspector;

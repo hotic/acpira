@@ -75,10 +75,12 @@ func editTurnConfig(_ editor: SessionControls, live: SessionControls, id: String
   return reshape(next, captureTurnSettings(next), live: live, shapes: shapes)
 }
 
-/// The built-in agent offers the sidekick's level select only once a sidekick is set, so a pick nothing answers (a new
-/// session's draft, the editor) takes it from the picked model's learned shape: its levels, the level held while still
-/// offered, else the one the model last ran at. None, or a model never seen, drops it. Its Fast goes either way: no
-/// learned shape says whether the new model has a fast tier, and the engine refuses a switch it does not offer
+/// The sidekick's level select is offered only once a sidekick is set, so a pick nothing answers (a new session's
+/// draft, the editor) takes it from the picked model's learned shape: its levels, the level held while still offered,
+/// else the one the model last ran at. None, or a model never seen, drops it: so does every pick of the host's select
+/// (an external CLI's session), whose values are `<cli>/<model>` and whose models' shapes belong to other CLIs. Its
+/// Fast goes either way: no learned shape says whether the new model has a fast tier, and the engine refuses a switch
+/// it does not offer
 private func seatSidekickEffort(_ controls: SessionControls, sidekick: String, shapes: ModelShapes?) -> SessionControls {
   var next = controls
   next.options.removeAll { $0.category == ComposerControls.sidekickFastCategory }
@@ -87,10 +89,14 @@ private func seatSidekickEffort(_ controls: SessionControls, sidekick: String, s
   guard sidekick != ComposerControls.noSidekick, let model = controls.options.first(where: isModelControl),
         let scale = shapeFor(shapes, model: model, value: sidekick)?.first(where: ComposerControls.isReasoning),
         scale.options.count > 1 else { return next }
-  var effort = held ?? ConfigControl(id: "sidekick_effort", name: "Sidekick effort", category: ComposerControls.sidekickEffortCategory)
+  let select = next.options.firstIndex { $0.category == ComposerControls.sidekickCategory }
+  // The level select is named after its sidekick select (`sidekick_effort`, the host's `host_sidekick_effort`): the
+  // engine takes a pick by id
+  let id = "\(select.map { next.options[$0].id } ?? sidekickId)_effort"
+  var effort = held ?? ConfigControl(id: id, name: "Sidekick effort", category: ComposerControls.sidekickEffortCategory)
   effort.options = scale.options
   effort.value = held?.value.flatMap { v in scale.options.contains { $0.id == v } ? v : nil } ?? scale.value
-  let at = next.options.firstIndex { $0.category == ComposerControls.sidekickCategory }.map { $0 + 1 } ?? next.options.endIndex
+  let at = select.map { $0 + 1 } ?? next.options.endIndex
   next.options.insert(effort, at: at)
   return next
 }

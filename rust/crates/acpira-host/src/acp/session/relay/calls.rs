@@ -33,10 +33,14 @@ use crate::relay::wire::{AskArgs, AskCallerArgs, HubReply};
 use crate::relay::{MAX_DEPTH, MAX_RUNNING};
 
 impl AcpSession {
-  /// The sidekick this session's built-in agent has picked (its `sidekick` select, picks in flight and a reopened
-  /// record's value included), as the executor the hub lists first for the root: the built-in agent on that model,
-  /// following the caller's mode, at the effort picked for it, in one conversation that later calls continue
+  /// The sidekick picked for this session, as the executor the hub lists first for the root: following the caller's
+  /// mode, at the effort picked for it, in one conversation that later calls continue. The built-in agent's is its own
+  /// `sidekick` select (picks in flight and a reopened record's value included) and runs in the built-in agent; any
+  /// other CLI's is the host's select, whose pick names the CLI it runs in (`host_sidekick.rs`)
   pub(crate) fn sidekick_persona(&self) -> Option<SubagentPersona> {
+    if let Some((agent, model, effort)) = self.host_sidekick() {
+      return Some(self.sidekick_in(agent, model, effort, None));
+    }
     let shapes = self.deps.policy.model_shapes(&self.agent);
     let (pick, effort, fast) = {
       let c = self.core.lock();
@@ -53,14 +57,19 @@ impl AcpSession {
     if pick.is_empty() || pick == NO_SIDEKICK {
       return None;
     }
-    // What the lead is told of it and its standing instructions: the prompts `sidekick/lead` and `sidekick/brief`
+    Some(self.sidekick_in(self.agent.clone(), pick, effort.filter(|e| !e.is_empty()), fast))
+  }
+
+  /// The sidekick persona on `model` of the CLI `agent`. What the lead is told of it and its standing instructions are
+  /// the prompts `sidekick/lead` and `sidekick/brief`
+  fn sidekick_in(&self, agent: String, model: String, effort: Option<String>, fast: Option<bool>) -> SubagentPersona {
     let prompts = self.prompts();
-    Some(SubagentPersona {
+    SubagentPersona {
       id: SIDEKICK_ID.into(),
       name: "Sidekick".into(),
-      agent: self.agent.clone(),
-      model: Some(pick),
-      effort: effort.filter(|e| !e.is_empty()),
+      agent,
+      model: Some(model),
+      effort,
       fast,
       mode: RelayMode::Inherit,
       when: prompts.text("sidekick/lead", acpira_agent::prompt::BASE),
@@ -68,7 +77,7 @@ impl AcpSession {
       enabled: true,
       duty: SubagentDuty::Executor,
       changes: false,
-    })
+    }
   }
 
   /// The session's approval level as picked now (the built-in agent's `approval` select), which its sidekick copies
@@ -359,7 +368,16 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     {
       thread = idle_thread(&self.core.lock(), &p, caller.as_deref());
     }
-    let latest = thread.as_deref().and_then(|th| self.core.lock().tree.relay_latest(th));
+    let mut latest = thread.as_deref().and_then(|th| self.core.lock().tree.relay_latest(th));
+    // A sidekick picked in another CLI since its thread began is another agent: a new task starts its own conversation
+    // there instead of failing on the old one
+    if !prompt.is_empty()
+      && let Some(r) = latest.as_ref().filter(|r| r.harness.persona.as_deref() == Some(SIDEKICK_ID) && r.state != SubagentState::Running)
+      && self.sidekick_persona().is_some_and(|p| p.agent != r.harness.agent)
+    {
+      thread = None;
+      latest = None;
+    }
     if thread.is_some() && latest.is_none() {
       return Err(anyhow!("Unknown thread {}. Start a new one by leaving `thread` out.", thread.unwrap_or_default()));
     }

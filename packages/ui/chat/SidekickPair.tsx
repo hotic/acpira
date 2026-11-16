@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { CircleFadingPlus, Plus } from 'lucide-react';
 import { isUltraLevel, levelShort } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
@@ -72,10 +72,11 @@ function SidekickMark({ name, brand }: { name: string; brand?: string }) {
 }
 
 // Both sides' bodies in one box (`.pair-stack`): the lead's sets the panel's height and the sidekick's fills it from above, so
-// neither a switch nor a pick resizes the open panel; the hidden side is inert
-export function PairViews({ role, lead, sidekick }: { role: PairRole; lead: ReactNode; sidekick: ReactNode }) {
+// neither a switch nor a pick resizes the open panel; the hidden side is inert. `rows` is how many rows the sidekick's list
+// holds: a lead with a short list of its own (a CLI of four models) still leaves the box tall enough to pick from them
+export function PairViews({ role, lead, sidekick, rows }: { role: PairRole; lead: ReactNode; sidekick: ReactNode; rows: number }) {
   return (
-    <div className="pair-stack">
+    <div className="pair-stack" style={{ '--pair-rows': rows } as CSSProperties}>
       <div className="pair-view" data-side="lead" data-on={role === 'lead' ? '' : undefined} inert={role !== 'lead'}>{lead}</div>
       <div className="pair-view" data-side="sidekick" data-on={role === 'sidekick' ? '' : undefined} inert={role !== 'sidekick'}>{sidekick}</div>
     </div>

@@ -86,12 +86,12 @@ pub(super) fn thread_persona(roster: &Roster, sidekick: Option<SubagentPersona>,
 }
 
 /// The built-in agent's sidekick select (`acpira-agent/src/acp.rs`): its id, its custom category and the value for none
-pub(super) const SIDEKICK_CONFIG: &str = "sidekick";
-pub(super) const SIDEKICK_CATEGORY: &str = "_sidekick";
-pub(super) const NO_SIDEKICK: &str = "none";
+pub(crate) const SIDEKICK_CONFIG: &str = "sidekick";
+pub(crate) const SIDEKICK_CATEGORY: &str = "_sidekick";
+pub(crate) const NO_SIDEKICK: &str = "none";
 /// Its effort select, there while the sidekick's model has levels
-pub(super) const SIDEKICK_EFFORT_CONFIG: &str = "sidekick_effort";
-pub(super) const SIDEKICK_EFFORT_CATEGORY: &str = "_sidekick_effort";
+pub(crate) const SIDEKICK_EFFORT_CONFIG: &str = "sidekick_effort";
+pub(crate) const SIDEKICK_EFFORT_CATEGORY: &str = "_sidekick_effort";
 
 /// Its Fast switch, there while the sidekick's model has a fast tier
 pub(super) const SIDEKICK_FAST_CONFIG: &str = "sidekick_fast";

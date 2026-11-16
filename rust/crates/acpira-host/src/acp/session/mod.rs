@@ -23,6 +23,7 @@ pub mod gates;
 pub mod goal;
 pub mod handlers;
 pub mod hooks;
+pub mod host_sidekick;
 pub mod images;
 pub mod late_reply;
 pub mod lifecycle;
@@ -126,6 +127,10 @@ pub trait SessionPolicy: Send + Sync {
   /// What the user last ran each of `agent`'s models with
   fn model_memory(&self, _agent: &str) -> Option<ModelMemory> {
     None
+  }
+  /// The CLIs a host-owned sidekick can run in, with the models each last offered (`host_sidekick.rs`)
+  fn sidekick_sources(&self) -> BoxFuture<Vec<crate::acp::session::host_sidekick::SidekickSource>> {
+    Box::pin(async { vec![] })
   }
   /// Takes the session's cross-engine lease for a turn about to start (`store::session_lease`) and returns its pin; Err:
   /// the notice to show, another engine is running one or the lease could not be taken, and this turn must not start.
@@ -295,6 +300,8 @@ pub(crate) struct Core {
   pub relays: crate::acp::session::relay::Relays,
   /// Claude's host-made Ultra effort level (`ultracode.rs`)
   pub ultracode: crate::acp::session::ultracode::UltracodeState,
+  /// The host's own sidekick select, for a CLI without one (`host_sidekick.rs`)
+  pub sidekick: crate::acp::session::host_sidekick::HostSidekick,
   /// The permission level split off a CLI's modes and the mode the CLI is in (`access.rs`)
   pub access: crate::acp::session::access::AccessState,
   /// Claude workflow agents' sidechain logs being read into their nodes (`workflow_logs.rs`)
@@ -417,6 +424,7 @@ impl AcpSession {
         on: crate::acp::vendors::claude_ultracode::shown_on(&record.controls.options),
         ..Default::default()
       };
+      let sidekick = crate::acp::session::host_sidekick::restored(&record.controls.options);
       let turns = restore_command_receipts(restore_plan_snapshots(record.turns));
       let turns = if seal { restore_interrupted_turns(turns, &record.updated_at) } else { turns };
       let state = NormalizeState {
@@ -495,6 +503,7 @@ impl AcpSession {
           switching: false,
           relays: Default::default(),
           ultracode,
+          sidekick,
           workflow_logs: Default::default(),
           access: Default::default(),
           hooks: Default::default(),

@@ -235,6 +235,12 @@ export struct GooRowView {
           .fontColor($r('app.color.fg3'))
           .maxLines(1)
       } else {
+        if (this.row.source !== undefined && this.row.source.length > 0) {
+          Text(this.row.source)
+            .fontSize(Type.text3)
+            .fontColor($r('app.color.fg3'))
+            .maxLines(1)
+        }
         Lucide({ name: 'check', tint: $r('app.color.fg_strong'), extent: Metrics.icon })
           .opacity(this.row.checked ? 1 : 0)
       }

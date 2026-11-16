@@ -329,6 +329,57 @@ async fn the_built_in_agents_sidekick_is_listed_first_for_the_root_and_keeps_one
   assert!(!ok && text.contains("no sidekick now"), "{text}");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cli_without_a_sidekick_select_gets_the_hosts_whose_pick_names_the_cli_to_run_in() {
+  use acpira_host::acp::session::host_sidekick::SidekickSource;
+  use acpira_shared::transcript::{ConfigControl, SessionOption};
+  let fake = fake_or_skip!();
+  let mut h = Harness::new(&fake, json!({}));
+  let option = |id: &str, name: &str| SessionOption { id: id.into(), name: name.into(), ..Default::default() };
+  let model = ConfigControl { id: "model".into(), name: "Model".into(), category: Some("model".into()), options: vec![option("m1", "Model 1"), option("m2", "Model 2")], ..Default::default() };
+  h.deps.policy = Arc::new(crate::support::TestPolicy { sidekick: vec![SidekickSource { agent: "fake".into(), name: "Fake CLI".into(), model, shapes: None }], ..Default::default() });
+  // The select goes only to a CLI that is handed Acpira's MCP server, which `ask_agent` lives in
+  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("acpira"));
+  let roster = roster(h.dir.path()).await;
+  let hub = RelayHub::start(roster.clone(), Arc::new(|_: &str| {})).await.unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let token = hub.env(&s.0, None, 0)[1]["value"].as_str().unwrap().to_owned();
+  let ids = |list: &[Value]| list.iter().map(|p| p["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+  let select = |s: &Disposing| view(&s.0)["controls"]["options"].as_array().unwrap().iter().find(|o| o["category"] == "_sidekick").cloned().expect("the host's select");
+
+  let shown = select(&s);
+  expect_match(&shown, json!({ "id": "host_sidekick", "value": "none" }));
+  expect_match(&shown["options"][2], json!({ "id": "fake/m2", "name": "Model 2", "description": "Fake CLI" }));
+  assert_eq!(ids(&listed(&hub, token.clone()).await), ["fake-review", "fake-worker"], "none picked yet");
+
+  // The pick stays here (the fake would refuse a config id it does not offer) and survives the agent's next answer
+  s.0.set_config("host_sidekick".into(), "fake/m2".into()).await.unwrap();
+  s.0.set_config("model".into(), "m2".into()).await.unwrap();
+  assert_eq!(select(&s)["value"], "fake/m2");
+  let root = listed(&hub, token).await;
+  assert_eq!(ids(&root), ["sidekick", "fake-review", "fake-worker"]);
+  expect_match(&root[0], json!({ "name": "Sidekick", "agent": "fake", "model": "m2", "mode": "inherit", "duty": "executor" }));
+
+  // The lead hears of it ahead of the user's next prompt, once
+  prompt(&s.0, "echo-text alpha").await;
+  let reply = |s: &Disposing| last_turn(&view(&s.0))["blocks"].as_array().and_then(|b| b.last()).and_then(|b| b["markdown"].as_str()).unwrap_or_default().to_owned();
+  let said = reply(&s);
+  assert!(said.contains("<sidekick>") && said.contains("Model 2 in Fake CLI") && said.contains("agent \"sidekick\""), "{said}");
+  prompt(&s.0, "echo-text beta").await;
+  assert!(!reply(&s).contains("<sidekick>"), "told once");
+
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("sidekick", "relay: rename the helper")).await);
+  assert!(ok, "{text}");
+  expect_match(&nodes(&s)[0], json!({ "role": "Sidekick", "model": "Model 2", "harness": { "agent": "fake", "persona": "sidekick", "round": 1 } }));
+
+  s.0.set_config("host_sidekick".into(), "none".into()).await.unwrap();
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("sidekick", "relay: more")).await);
+  assert!(!ok && text.contains("No subagent named"), "{text}");
+  prompt(&s.0, "echo-text gamma").await;
+  assert!(reply(&s).contains("You no longer have a sidekick"), "{}", reply(&s));
+}
+
 /// A shell that shows pages: every URL it is asked for, and the forwarded address it answers with
 struct FakeBrowser {
   can: bool,

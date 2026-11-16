@@ -462,7 +462,13 @@ impl AcpSession {
       c.hooks.config = cfg.clone();
       (first_of(&c), !carried)
     };
-    let Some(cfg) = cfg else { return Ok(TurnContext { lead: vec![], tail, plugins }) };
+    // The host's sidekick, picked, changed or dropped since the agent last heard (`host_sidekick.rs`). A slash command
+    // must stay the prompt's only text, so the note waits for the next prompt
+    let sidekick: Vec<Value> = match origin {
+      Origin::User | Origin::Goal if command_name(text).is_none() => self.host_sidekick_note().map(|note| json!({ "type": "text", "text": note })).into_iter().collect(),
+      _ => vec![],
+    };
+    let Some(cfg) = cfg else { return Ok(TurnContext { lead: sidekick, tail, plugins }) };
     if fresh
       && cfg.tracks_changes()
       && let Some(h) = host.as_ref()
@@ -470,10 +476,11 @@ impl AcpSession {
       let snap = h.snapshot(&cfg.watch).await;
       self.core.lock().hooks.before = Some(snap);
     }
-    let lead = match (&host, first) {
+    let mut lead = match (&host, first) {
       (Some(h), true) => self.context_blocks(h, &cfg).await,
       _ => vec![],
     };
+    lead.extend(sidekick);
     Ok(TurnContext { lead, tail, plugins })
   }
 

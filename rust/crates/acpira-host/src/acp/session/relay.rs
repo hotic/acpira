@@ -34,7 +34,7 @@ use crate::relay::wire::HubReply;
 
 mod calls;
 mod controls;
-mod personas;
+pub(crate) mod personas;
 mod round;
 mod texts;
 mod tracking;
@@ -485,6 +485,32 @@ mod tests {
     // Without one (or with an unknown one) it is the caller's access
     assert_eq!(round_mode(Inherit, None, || Bypass), Bypass);
     assert_eq!(round_mode(Inherit, Some("yolo"), || Work), Work);
+  }
+
+  #[test]
+  fn a_read_only_sidekick_round_is_refused_where_its_cli_has_no_read_only_mode() {
+    use RelayMode::*;
+    let persona = |id: &str| SubagentPersona {
+      id: id.into(),
+      name: id.into(),
+      agent: "antigravity".into(),
+      model: None,
+      effort: None,
+      fast: None,
+      mode: Inherit,
+      when: String::new(),
+      brief: None,
+      enabled: true,
+      duty: SubagentDuty::Executor,
+      changes: false,
+    };
+    let plain = json!({ "modes": { "currentModeId": "default", "availableModes": [{ "id": "default" }] } });
+    let claude = json!({ "modes": { "currentModeId": "default", "availableModes": [{ "id": "default" }, { "id": "plan" }] } });
+    assert!(controls::sidekick_unbound(&plain, &persona("sidekick"), Consult).is_some());
+    assert!(controls::sidekick_unbound(&plain, &persona("sidekick"), Work).is_none());
+    assert!(controls::sidekick_unbound(&claude, &persona("sidekick"), Consult).is_none());
+    // Any other persona's consult goes on with a note
+    assert!(controls::sidekick_unbound(&plain, &persona("reviewer"), Consult).is_none());
   }
 
   #[test]

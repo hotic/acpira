@@ -112,6 +112,19 @@ pub(super) fn stuck_in_bypass(opened: &Value, mode: RelayMode) -> bool {
   mode != RelayMode::Bypass && current_mode(opened).is_some_and(|c| bypass_modes(opened).contains(&c))
 }
 
+/// A sidekick round that may only read, in a CLI without a read-only mode. The sidekick takes the root's access as it
+/// is (`host-agents.md`), so where another persona's consult goes on with a note, this round is not sent: it would hold
+/// more than the root does
+pub(super) fn sidekick_unbound(opened: &Value, persona: &SubagentPersona, mode: RelayMode) -> Option<anyhow::Error> {
+  let unbound = persona.id == acpira_shared::subagents::SIDEKICK_ID && mode == RelayMode::Consult && !mode_ids(opened).iter().any(|m| is_read_only(m));
+  unbound.then(|| {
+    anyhow::anyhow!(
+      "This session is in a read-only mode, and the sidekick's CLI ({}) has no read-only mode to follow it in, so the round was not sent. Do this step yourself, or ask the user to leave the read-only mode.",
+      persona.agent
+    )
+  })
+}
+
 pub(super) fn bypass_modes(opened: &Value) -> Vec<String> {
   let full = |m: &Value| {
     m.pointer("/_meta/kind").or_else(|| m.pointer("/_meta/jetbrains/air/kind")).and_then(Value::as_str) == Some("full_access")

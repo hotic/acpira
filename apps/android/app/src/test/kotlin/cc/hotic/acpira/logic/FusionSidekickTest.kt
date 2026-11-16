@@ -158,5 +158,11 @@ class FusionSidekickTest {
     assertEquals("low", editTurnConfig(low, low, "sidekick", "a/terra", shapes).options[2].value)
     assertEquals(listOf("model", "sidekick", "approval"), editTurnConfig(low, low, "sidekick", "none", shapes).options.map { it.id })
     assertEquals(listOf("model", "sidekick", "approval"), editTurnConfig(low, low, "sidekick", "a/sol", shapes).options.map { it.id })
+    // The host's select for another CLI's session goes by its own id, and so does the level select made beside it
+    val host = controls.copy(options = controls.options.map { if (it.id == "sidekick") it.copy(id = "host_sidekick") else it })
+    assertEquals(
+      listOf("model", "host_sidekick", "host_sidekick_effort", "approval"),
+      editTurnConfig(host, host, "host_sidekick", "a/terra", shapes).options.map { it.id },
+    )
   }
 }

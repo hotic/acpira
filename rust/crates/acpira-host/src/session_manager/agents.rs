@@ -194,7 +194,9 @@ impl SessionManager {
     if s.status() != SessionStatus::Ready {
       return;
     }
-    let controls = s.agent_controls();
+    let mut controls = s.agent_controls();
+    // The host's sidekick selects list other CLIs' models: the session's, not a parameter this model came with
+    controls.options.retain(|o| !crate::acp::session::host_sidekick::ours(o));
     let next = {
       let st = self.state.lock();
       learn_shape(st.prefs.model_shapes.as_ref().and_then(|m| m.get(&s.agent)), &controls)
@@ -357,6 +359,33 @@ impl SessionManager {
       }
     }
     vec![]
+  }
+
+  /// The CLIs a host-owned sidekick can run in (`acp/session/host_sidekick.rs`): every agent that is on and found, with
+  /// the model select its probe, a live session or one of its newest records showed
+  pub async fn sidekick_sources(&self) -> Vec<crate::acp::session::host_sidekick::SidekickSource> {
+    // Records to open per agent before giving up on it: older ones are not worth the reads
+    const RECORDS: usize = 3;
+    let index = self.state.lock().index.clone();
+    let mut out = vec![];
+    for a in self.agents() {
+      if a.disabled == Some(true) || a.available == Some(false) {
+        continue;
+      }
+      let mut options = self.state.lock().probed.get(&a.id).map(|p| p.options.clone()).unwrap_or_default();
+      for s in index.iter().filter(|s| s.agent == a.id).take(RECORDS) {
+        if options.iter().any(is_model_control) {
+          break;
+        }
+        options = match self.live(&s.id) {
+          Some(l) => l.agent_controls().options,
+          None => self.deps.store.load_controls(&s.id).await.map(|c| c.options).unwrap_or_default(),
+        };
+      }
+      let Some(model) = options.into_iter().find(|o| is_model_control(o) && !o.options.is_empty()) else { continue };
+      out.push(crate::acp::session::host_sidekick::SidekickSource { shapes: self.model_shapes(&a.id), agent: a.id, name: a.name, model });
+    }
+    out
   }
 
   /// The slash commands this agent's newest session advertised, for a page with no session of its own yet

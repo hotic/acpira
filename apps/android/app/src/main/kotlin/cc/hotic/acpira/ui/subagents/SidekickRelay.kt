@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material3.Text
@@ -42,6 +43,7 @@ import cc.hotic.acpira.design.LocalMotion
 import cc.hotic.acpira.design.Metrics
 import cc.hotic.acpira.design.Palette
 import cc.hotic.acpira.design.SidekickMotion
+import cc.hotic.acpira.design.SubagentMetrics
 import cc.hotic.acpira.design.VendorMark
 import cc.hotic.acpira.design.WebMetrics
 import cc.hotic.acpira.design.WebType
@@ -72,7 +74,7 @@ import cc.hotic.acpira.ui.RowTarget
 import cc.hotic.acpira.ui.ToolTrailing
 import cc.hotic.acpira.ui.rowButton
 
-// Ported from apps/ios Transcript/SidekickRelay.swift (chat/subagents/SidekickRelay.tsx): a round of the built-in agent's
+// Ported from apps/ios Transcript/SidekickRelay.swift (chat/subagents/SidekickRelay.tsx): a round of the session's
 // sidekick in the transcript. The lead hands over (its mark flips into the sidekick's while a light crosses the row), the
 // sidekick's latest steps stream through a fixed-height window, and the handback lands in the window's last slot with
 // the same light. Nothing changes height while the round runs; the inspector holds the outputs. The marks keep the
@@ -80,22 +82,32 @@ import cc.hotic.acpira.ui.rowButton
 
 /**
  * The lead model and the sidekick's display names, from the session's controls. The handoff's first mark is the lead's,
- * and a round carries only the sidekick select's value
+ * and a round carries only the sidekick's model id: the select's value for the built-in agent, the id inside its CLI
+ * for the host's select, whose values are `<cli>/<model>`. [agent] is the session's CLI: a sidekick running in another
+ * one carries that CLI's mark
  */
-data class SidekickModels(val lead: Lead? = null, val names: Map<String, String> = emptyMap()) {
+data class SidekickModels(val lead: Lead? = null, val names: Map<String, String> = emptyMap(), val agent: String? = null) {
   data class Lead(val name: String, val brand: String?)
+
+  /** A round's model as the select names it, by its id or by `<cli>/<id>`; an id the select no longer lists stays as it is */
+  fun name(node: SubagentSummary): String? {
+    val model = node.model ?: return null
+    val cli = node.harness?.agent?.takeIf { it.isNotEmpty() }
+    return names[model] ?: cli?.let { names["$it/$model"] } ?: model
+  }
+
+  /** The CLI a round runs in while it is not the session's own */
+  fun away(node: SubagentSummary): String? = node.harness?.agent?.takeIf { it.isNotEmpty() && !agent.isNullOrEmpty() && it != agent }
 
   companion object {
     /** The session's model pick and the sidekick select (category `_sidekick`) */
-    fun of(context: Context, controls: SessionControls): SidekickModels {
+    fun of(context: Context, controls: SessionControls, agent: String? = null): SidekickModels {
       val brandOf = { o: SessionOption -> IconStore.brandOf(context, o.id) ?: IconStore.brandOf(context, o.name) }
       val split = ComposerControls.split(controls.options, brandOf)
       val lead = split.models.firstOrNull()?.let { c -> c.options.firstOrNull { it.id == c.value } }?.let { Lead(it.name, brandOf(it)) }
-      val names = controls.options.firstOrNull { it.category == SIDEKICK_CATEGORY }?.options.orEmpty().associate { it.id to it.name }
-      return SidekickModels(lead, names)
+      val names = split.sidekick.firstOrNull()?.options.orEmpty().associate { it.id to it.name }
+      return SidekickModels(lead, names, agent)
     }
-
-    private const val SIDEKICK_CATEGORY = "_sidekick"
   }
 }
 
@@ -163,7 +175,7 @@ fun SidekickRelay(node: SubagentSummary) {
   val context = LocalContext.current
   val memo = remember { RelayMemo() }
   val running = node.state == SubagentState.running
-  val model = node.model?.let { models.names[it] ?: it } ?: t("subagents.untitled")
+  val model = models.name(node) ?: t("subagents.untitled")
   val brand = node.model?.let { IconStore.brandOf(context, it) } ?: IconStore.brandOf(context, model)
   // Entrances play only for what happens on screen in a live turn: restored history stays still
   val live = scope.live && motion
@@ -194,7 +206,7 @@ fun SidekickRelay(node: SubagentSummary) {
       Modifier.fillMaxWidth().semantics { contentDescription = label }.testTag("sidekick.relay"),
       verticalArrangement = Arrangement.spacedBy(WebMetrics.processRowGap),
     ) {
-      Head(node, model, brand, models.lead, memo.handoff, tap)
+      Head(node, model, brand, models.lead, models.away(node), memo.handoff, tap)
       Window(node, items, slots, brand, model, memo, live, tap)
     }
   }
@@ -206,9 +218,13 @@ private fun SidekickGlyph(brand: String?, name: String, modifier: Modifier = Mod
   VendorMark(brand, name, Palette.fg1, modifier, size = WebMetrics.icon)
 }
 
-/** The handoff row: the lead's mark flipping into the sidekick's, "<model> takes <task>", the level and the clock */
+/**
+ * The handoff row: the lead's mark flipping into the sidekick's, "<model> takes <task>", the level and the clock. A
+ * sidekick running in another CLI ([away]) carries that CLI's mark on its corner, where a summoned child's row has it
+ * (subagents.css `.sidekick-flip .sidekick-cli`: the row's slot is [SubagentMetrics.mark] wide round the same mark)
+ */
 @Composable
-private fun Head(node: SubagentSummary, model: String, brand: String?, lead: SidekickModels.Lead?, play: Boolean, tap: Modifier) {
+private fun Head(node: SubagentSummary, model: String, brand: String?, lead: SidekickModels.Lead?, away: String?, play: Boolean, tap: Modifier) {
   val title = subagentTitle(node)
   val waiting = isWaiting(node)
   val status = if (waiting) statusLabel(node) else if (node.state == SubagentState.running) stateLabel(node) else null
@@ -224,7 +240,13 @@ private fun Head(node: SubagentSummary, model: String, brand: String?, lead: Sid
       val angle = flip.value * 180f
       Box(Modifier.size(WebMetrics.icon).graphicsLayer { rotationY = if (angle < 90f) angle else angle - 180f }) {
         if (angle < 90f && lead != null) VendorMark(lead.brand, lead.name, Palette.fg3, size = WebMetrics.icon)
-        else SidekickGlyph(brand, model)
+        else {
+          SidekickGlyph(brand, model)
+          if (away != null) {
+            val out = (SubagentMetrics.mark - WebMetrics.icon) / 2 - SubagentMetrics.badgeInset
+            HarnessBadge(away, Modifier.align(Alignment.BottomEnd).offset(x = out, y = out))
+          }
+        }
       }
     },
     trailing = {

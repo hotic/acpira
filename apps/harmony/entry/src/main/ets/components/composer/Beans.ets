@@ -35,6 +35,8 @@ export interface GooChoice {
   toggle?: Toggle;
   /** Faint text at the row's end (a persona's CLI) */
   note?: string;
+  /** Faint text ahead of the check (the CLI a sidekick model runs in, while the list holds several) */
+  source?: string;
   action: () => void;
 }
 
@@ -239,7 +241,7 @@ function fusionBean(c: ModelChoices, goo: Goo, sidekick: boolean): Bean {
 
 /**
  * The sidekick's own beans, as the lead's read: its model (a list with None first), its reasoning level while the model
- * has levels, and its Fast while the model has a fast tier
+ * has levels, and its Fast while the model has a fast tier. Every pick writes the id of the control found by category
  */
 function sidekickBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[] {
   const sk = c.sidekick;
@@ -251,14 +253,24 @@ function sidekickBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[] {
   };
   const current = sk.value ?? ComposerControls.noSidekick;
   const picked = pickedSidekick(c);
+  // A host sidekick lists the models of every CLI, each option's `description` naming its own: shown once the list
+  // holds two (ModelPicker.tsx bySource), so the same model in two CLIs reads apart
+  const sources = new Set<string>();
+  sk.options.forEach((o: SessionOption) => {
+    if (o.description !== undefined && o.description.length > 0) {
+      sources.add(o.description);
+    }
+  });
   const out: Bean[] = [bean('sidekick.model', t('stats.model'), picked?.name ?? t('composer.sidekickNone'),
     sidekickGlyph(picked), sk.options.map((o: SessionOption) => {
       const none = o.id === ComposerControls.noSidekick;
       const glyph = none ? lucideGlyph('circleFadingPlus', 'fg3') : markGlyph(optionBrand(o), o.name);
-      return choice(o.id, none ? t('composer.sidekickNone') : o.name, o.id === current, glyph, () => {
+      const row = choice(o.id, none ? t('composer.sidekickNone') : o.name, o.id === current, glyph, () => {
         act.setConfig(sk.id, o.id);
         fold();
       });
+      row.source = sources.size > 1 && !none ? o.description : undefined;
+      return row;
     }), sk.options.findIndex((o: SessionOption) => o.id === current))];
   const effort = c.sidekickEffort;
   if (picked !== undefined && effort !== undefined && ComposerControls.reasoningVisible(effort)) {

@@ -2,13 +2,15 @@ import AcpiraDesign
 import AcpiraModels
 import SwiftUI
 
-// chat/subagents/SidekickRelay.tsx: a round of the built-in agent's sidekick in the transcript. The lead hands over (its
+// chat/subagents/SidekickRelay.tsx: a round of the session's sidekick in the transcript. The lead hands over (its
 // mark flips into the sidekick's while a light crosses the row), the sidekick's latest steps stream through a fixed-height
 // window, and the handback lands in the window's last slot with the same light. Nothing changes height while the round
 // runs or ends; the inspector holds the outputs.
 
 /// The lead model and the sidekick's display names, from the session's controls. The handoff's first mark is the
-/// lead's, and a round carries only the sidekick select's value
+/// lead's, and a round carries only the sidekick's model id: the select's value for the built-in agent, the id inside
+/// its CLI for the host's select, whose values are `<cli>/<model>`. `agent` is the session's CLI: a sidekick running in
+/// another one carries that CLI's mark
 struct SidekickModels: Equatable {
   struct Lead: Equatable {
     var name: String
@@ -16,15 +18,29 @@ struct SidekickModels: Equatable {
   }
   var lead: Lead?
   var names: [String: String] = [:]
+  var agent: AgentId?
 
   init() {}
 
-  init(_ controls: SessionControls) {
+  init(_ controls: SessionControls, agent: AgentId? = nil) {
+    self.agent = agent
     let split = ComposerControls.split(controls.options)
     if let control = split.models.first, let picked = control.options.first(where: { $0.id == control.value }) {
       lead = Lead(name: picked.name, brand: ModelCatalog.optionBrand(picked))
     }
     names = Dictionary((split.sidekick.first?.options ?? []).map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+  }
+
+  /// The round's model as the select names it, else as the round reports it
+  func name(_ node: SubagentSummary) -> String? {
+    guard let model = node.model else { return nil }
+    return names[model] ?? node.harness.flatMap { names["\($0.agent)/\(model)"] } ?? model
+  }
+
+  /// The CLI the round runs in, when it is not the session's own
+  func away(_ node: SubagentSummary) -> AgentId? {
+    guard let cli = node.harness?.agent, let agent, cli != agent else { return nil }
+    return cli
   }
 }
 
@@ -99,7 +115,7 @@ struct SidekickRelay: View {
 
   var body: some View {
     let running = node.state == .running
-    let model = node.model.map { models.names[$0] ?? $0 } ?? t("subagents.untitled")
+    let model = models.name(node) ?? t("subagents.untitled")
     let brand = node.model.flatMap { VendorBrand.of($0) } ?? VendorBrand.of(model)
     let live = settle(running: running)
     let kept = memo.keep(node.steps)
@@ -111,7 +127,7 @@ struct SidekickRelay: View {
     let mark = SidekickGlyph(brand: brand, name: model)
 
     VStack(alignment: .leading, spacing: Metrics.processRowGap) {
-      tappable { Head(node: node, model: model, mark: mark, lead: models.lead, play: memo.handoff) }
+      tappable { Head(node: node, model: model, mark: mark, lead: models.lead, away: models.away(node), play: memo.handoff) }
       window(items, slots: slots, mark: mark, live: live)
     }
     .environment(\.rowHeight, WebMetrics.processRow)
@@ -231,15 +247,22 @@ private struct Head: View {
   let model: String
   let mark: SidekickGlyph
   let lead: SidekickModels.Lead?
+  /// The CLI the sidekick runs in, when it is not the session's own
+  let away: AgentId?
   let play: Bool
   @Environment(\.clockOffset) private var offset
   var body: some View {
     let title = subagentTitle(node)
+    // Where a summoned child's row carries it (`SubagentLead`), whose slot is `subagentMark` wide around the same mark
+    // (subagents.css `.sidekick-flip .sidekick-cli`)
+    let reach = (WebMetrics.subagentMark - WebMetrics.icon) / 2 - WebMetrics.subagentBadgeInset
     let waiting = isWaiting(node)
     let status: String? = waiting ? statusLabel(node) : node.state == .running ? stateLabel(node) : nil
     Row {
       FlipMark(from: lead.map { VendorMark(brand: $0.brand, name: $0.name, size: WebMetrics.icon).foregroundStyle(Palette.fg3) },
-               to: mark)
+               to: mark.overlay(alignment: .bottomTrailing) {
+                 if let away { HarnessBadge(agent: away).offset(x: reach, y: reach) }
+               })
         .relayEnter(play, .flip, duration: Motion.sidekickFlip, delay: Motion.sidekickFlipDelay, curve: Motion.sidekickSpring)
     } content: {
       // At phone width the level drops whole first, then the task truncates; the model name and the verb stay

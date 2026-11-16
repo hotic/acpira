@@ -73,10 +73,13 @@ fun editTurnConfig(editor: SessionControls, live: SessionControls, id: String, v
 }
 
 /**
- * The built-in agent offers the sidekick's level select only once a sidekick is set, so a pick nothing answers (a new
- * session's draft, the editor) takes it from the picked model's learned shape: its levels, the level held while still
- * offered, else the one the model last ran at. None, or a model never seen, drops it. Its Fast goes either way: no
- * learned shape says whether the new model has a fast tier, and the engine refuses a switch it does not offer
+ * The sidekick's level select is offered only once a sidekick is set, so a pick nothing answers (a new session's draft,
+ * the editor) takes it from the picked model's learned shape: its levels, the level held while still offered, else the
+ * one the model last ran at. None, or a model never seen, drops it: the host's select for another CLI's session names
+ * its models `<cli>/<model>`, which the session's own shapes never hold, so its level waits for the engine. Its Fast
+ * goes either way: no learned shape says whether the new model has a fast tier, and the engine refuses a switch it does
+ * not offer. A select made here takes the sidekick select's id with `_effort` (`sidekick_effort`, the host's
+ * `host_sidekick_effort`)
  */
 private fun seatSidekickEffort(controls: SessionControls, sidekick: String, shapes: ModelShapes?): SessionControls {
   val held = controls.options.firstOrNull { it.category == ComposerControls.sidekickEffortCategory }
@@ -86,11 +89,12 @@ private fun seatSidekickEffort(controls: SessionControls, sidekick: String, shap
   if (sidekick == ComposerControls.noSidekick || model == null) return next
   val scale = shapeFor(shapes, model, sidekick)?.firstOrNull { ComposerControls.isReasoning(it) }
   if (scale == null || scale.options.size <= 1) return next
-  val effort = (held ?: ConfigControl(id = "sidekick_effort", name = "Sidekick effort", category = ComposerControls.sidekickEffortCategory)).copy(
+  val at = rest.indexOfFirst { it.category == ComposerControls.sidekickCategory }.let { if (it < 0) rest.size else it + 1 }
+  val id = "${rest.getOrNull(at - 1)?.id ?: SIDEKICK_ID}_effort"
+  val effort = (held ?: ConfigControl(id = id, name = "Sidekick effort", category = ComposerControls.sidekickEffortCategory)).copy(
     options = scale.options,
     value = held?.value?.takeIf { v -> scale.options.any { it.id == v } } ?: scale.value,
   )
-  val at = rest.indexOfFirst { it.category == ComposerControls.sidekickCategory }.let { if (it < 0) rest.size else it + 1 }
   return next.copy(options = rest.toMutableList().apply { add(at, effort) })
 }
 

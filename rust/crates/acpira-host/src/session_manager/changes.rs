@@ -227,6 +227,16 @@ impl SessionPolicy for ManagerPolicy {
     self.me.upgrade().and_then(|m| m.state.lock().prefs.model_memory.get(agent).cloned())
   }
 
+  fn sidekick_sources(&self) -> crate::acp::transport::rpc::BoxFuture<Vec<crate::acp::session::host_sidekick::SidekickSource>> {
+    let me = self.me.clone();
+    Box::pin(async move {
+      match me.upgrade() {
+        Some(m) => m.sidekick_sources().await,
+        None => vec![],
+      }
+    })
+  }
+
   fn claim(&self, session: &str) -> Option<Result<u64, String>> {
     Some(self.me.upgrade().map_or(Ok(0), |m| m.claim_turn(session)))
   }

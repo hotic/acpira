@@ -604,9 +604,11 @@ const app = acp.agent({ name: 'fake-agent' })
     const sid = params.sessionId;
     prompted.add(sid);
     const full = params.prompt.map(p => (p.type === 'text' ? p.text : '')).join('');
-    // The commands below match the user's words only: a beforePrompt hook's context rides behind them as blocks of its
-    // own, and its wording must not turn into a command ("…/notes.txt<workspace-hook-context …" as a path, "big" in a rule)
-    const text = params.prompt.map(p => (p.type === 'text' && !p.text.startsWith('<workspace-hook-context') ? p.text : '')).join('');
+    // The commands below match the user's words only: a beforePrompt hook's context and the host's sidekick note ride
+    // along as blocks of their own, and their wording must not turn into a command ("…/notes.txt<workspace-hook-context …"
+    // as a path, "big" in a rule)
+    const hostNote = (t: string): boolean => t.startsWith('<workspace-hook-context') || t.startsWith('<sidekick>');
+    const text = params.prompt.map(p => (p.type === 'text' && !hostNote(p.text) ? p.text : '')).join('');
     // One JSON line per prompt as it reached the agent (after the host's expansion of slash commands and hooks)
     if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, `${JSON.stringify({ sessionId: sid, text: full })}\n`);
     const send = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: sid, update });

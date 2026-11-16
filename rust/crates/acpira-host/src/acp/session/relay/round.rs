@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use acpira_shared::subagents::RelayMode;
 use acpira_shared::transcript::Draft;
 
-use super::controls::{current_mode, relay_approval, relay_controls, relay_mode, running_controls, stuck_in_bypass};
+use super::controls::{current_mode, relay_approval, relay_controls, relay_mode, running_controls, sidekick_unbound, stuck_in_bypass};
 use super::texts::{change_note, compose_brief, round_edits, short, wake_text};
 use super::{MAX_WAKES, NOTE_FILES, Owed, PACK_NAME, RelayHandlers, RelayProc, Round, Starting, route_key};
 use crate::acp::session::attachments::{prepare_prompt, prompt_caps_of};
@@ -248,6 +248,7 @@ impl AcpSession {
       // Still in full access (a refused step down, or no mode to step down to): the prompt would run without the
       // approvals this round asked for
       let stuck = stuck_in_bypass(&opened, r.mode);
+      let unbound = sidekick_unbound(&opened, &r.persona, r.mode);
       let controls = running_controls(&opened);
       if let Some(rp) = self.core.lock().relays.procs.get_mut(thread) {
         rp.opened = opened;
@@ -256,6 +257,9 @@ impl AcpSession {
       }
       if stuck {
         return Err(anyhow!("{} stayed in its full-access mode, so this {:?} round was not sent: {}", r.persona.agent, r.mode, notes.join("; ")));
+      }
+      if let Some(e) = unbound {
+        return Err(e);
       }
       return Ok((proc, sid, controls));
     }
@@ -356,6 +360,9 @@ impl AcpSession {
     // A CLI that starts in full access and cannot leave it gets no prompt for a round that wants approvals
     if stuck_in_bypass(&opened, r.mode) {
       return Err(anyhow!("{} stayed in its full-access mode, so this {:?} round was not sent: {}", r.persona.agent, r.mode, notes.join("; ")));
+    }
+    if let Some(e) = sidekick_unbound(&opened, &r.persona, r.mode) {
+      return Err(e);
     }
     Ok((sid, opened, start_mode, mode_ok))
   }
