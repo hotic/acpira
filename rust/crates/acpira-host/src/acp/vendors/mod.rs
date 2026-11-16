@@ -192,6 +192,16 @@ impl Vendor {
     self == Vendor::Claude
   }
 
+  /// Runs on this machine in a stand-in folder for an SSH workspace, with its project tools routed through `acpira mcp`
+  /// (`claude_remote`)
+  pub fn remote_stand(self) -> Option<claude_remote::Dialect> {
+    match self {
+      Vendor::Claude => Some(claude_remote::Dialect::Claude),
+      Vendor::Antigravity => Some(claude_remote::Dialect::Antigravity),
+      _ => None,
+    }
+  }
+
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
   pub fn plan_exit_in_tool_output(self) -> bool {
     self == Vendor::Kimi

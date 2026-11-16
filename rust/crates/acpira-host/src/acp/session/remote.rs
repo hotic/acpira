@@ -63,10 +63,10 @@ impl AcpSession {
   }
 
   /// Where the agent process starts and reads files of its own (model facts, a warm process): the session folder, or
-  /// for a folder on an SSH host this machine's home; Claude Code there gets its stand-in folder (`remote_claude.rs`)
+  /// for a folder on an SSH host this machine's home; Claude Code and Antigravity there get a stand-in folder
   pub(crate) fn process_cwd(&self) -> String {
-    if let Some(stand) = self.claude_stand() {
-      self.make_claude_stand(&stand);
+    if let Some(stand) = self.remote_stand() {
+      self.make_remote_stand(&stand);
       return stand.local.to_string_lossy().into_owned();
     }
     crate::workspace::process_folder(self.cwd.clone())
@@ -86,10 +86,10 @@ impl AcpSession {
   }
 
   /// Refuse an agent that cannot work in the session's folder: under local run only the built-in agent's tools and
-  /// Claude Code's project tools (`remote_claude.rs`) go to the host
+  /// stand-in agents' project tools (`remote_claude.rs`) go to the host
   pub(crate) fn check_remote_agent(&self, name: &str) -> anyhow::Result<()> {
     match self.remote_folder() {
-      Some(f) if self.agent != crate::acp::agents::registry::SELF_AGENT_ID && self.claude_stand().is_none() => {
+      Some(f) if self.agent != crate::acp::agents::registry::SELF_AGENT_ID && self.remote_stand().is_none() => {
         anyhow::bail!(crate::i18n::tp("host.remoteBuiltinOnly", &[("agent", name), ("host", &f.alias)]))
       }
       _ => Ok(()),

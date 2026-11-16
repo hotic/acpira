@@ -276,7 +276,10 @@ impl AcpSession {
     }
     // Read outside the session lock: the setting lives with the shell
     let plan_auto_on = self.deps.policy.plan_auto_approve(&self.agent);
-    let remote_edit = self.remote_edit(&tool_call_id);
+    let remote_perm = self.remote_perm(&tool_call_id, &tool_call);
+    if remote_perm == crate::acp::session::remote_claude::RemotePerm::BlockedLocalTool {
+      return Ok(rejected_permission(&req));
+    }
     let rx = {
       let mut c = self.core.lock();
       // The epoch tells a request of an ended root turn (or replaced process); a summoned child outlives both, and its
@@ -348,19 +351,22 @@ impl AcpSession {
         && !insist
         && in_plan
         && captured.is_none()
+        && remote_perm != crate::acp::session::remote_claude::RemotePerm::HostEdit
         && tool_call.get("kind").and_then(Value::as_str) != Some("switch_mode")
         && default_to_no(&req) != Some(true)
         && let Some(id) = single_allow_once(&options)
       {
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
       }
-      // Claude Code's remote writes on an SSH host (`remote_claude.rs`) ask where its native ones would not: its plan
-      // file in plan mode, and every write in accept-edits mode. The edit gate has seen them above
+      // Remote tools on an SSH host (`remote_claude.rs`) ask where native ones would not: read-only tools on CLIs without
+      // `allowedTools` (`agy acp`), the CLI's own plan / artifact files here, and host writes in accept-edits mode
       let accept_edits = c.state.controls.mode_id.as_deref() == Some("acceptEdits") || c.access.wire.as_deref() == Some("acceptEdits");
       if root
         && !insist
-        && (remote_edit == crate::acp::session::remote_claude::RemoteEdit::PlanFile
-          || (accept_edits && remote_edit == crate::acp::session::remote_claude::RemoteEdit::Host))
+        && (matches!(
+          remote_perm,
+          crate::acp::session::remote_claude::RemotePerm::ReadOnly | crate::acp::session::remote_claude::RemotePerm::AgentOwnFile
+        ) || (accept_edits && remote_perm == crate::acp::session::remote_claude::RemotePerm::HostEdit))
         && let Some(id) = single_allow_once(&options)
       {
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));

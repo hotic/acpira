@@ -716,11 +716,11 @@ impl AcpSession {
     c.proc.as_ref().is_some_and(|p| crate::acp::vendors::steering::supported(&p.init))
   }
 
-  /// A running command row can be stopped on its own (`stop_command`): Claude Code's project tools on an SSH host are
-  /// the engine's own calls, any other command is found under the agent's process, which needs a Unix process table
+  /// A running command row can be stopped on its own (`stop_command`): stand-in sessions' project tools on an SSH host
+  /// are the engine's own calls, any other command is found under the agent's process, which needs a Unix process table
   pub(crate) fn can_stop_commands_of(&self, c: &Core) -> bool {
     if self.remote_folder().is_some() {
-      return self.vendor == Vendor::Claude;
+      return self.vendor.remote_stand().is_some();
     }
     // A live process to search below: the session's own agent, or a summoned child's while its round runs
     cfg!(unix) && (c.proc.as_ref().is_some_and(|p| p.pid.is_some()) || c.relays.procs.values().any(|rp| rp.proc.pid.is_some()))

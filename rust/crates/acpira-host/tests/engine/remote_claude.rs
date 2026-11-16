@@ -40,8 +40,12 @@ impl Drop for Remote {
 
 impl Remote {
   async fn new(fake: &FakeAgent) -> Remote {
+    Self::for_agent(fake, "claude").await
+  }
+
+  async fn for_agent(fake: &FakeAgent, agent: &str) -> Remote {
     let logs = tempfile::tempdir().unwrap();
-    let mut h = Harness::for_agent(fake, "claude", json!({ "env": { "FAKE_META_LOG": logs.path().join("meta.log") } }));
+    let mut h = Harness::for_agent(fake, agent, json!({ "env": { "FAKE_META_LOG": logs.path().join("meta.log") } }));
     let lab = Lab::new();
     let real = lab.path().join("hostfs");
     std::fs::create_dir_all(real.join("work")).unwrap();
@@ -70,7 +74,11 @@ impl Remote {
 
   /// The stand-in the session runs in: under the engine's data root, which is where its session store lives
   fn stand_in(&self) -> PathBuf {
-    self.h.dir.path().join("remote/hosts/gen1").join(VIRT.trim_start_matches('/')).join("work")
+    self.stand_in_under("remote/hosts")
+  }
+
+  fn stand_in_under(&self, root: &str) -> PathBuf {
+    self.h.dir.path().join(root).join("gen1").join(VIRT.trim_start_matches('/')).join("work")
   }
 }
 
@@ -217,4 +225,63 @@ async fn stop_ends_a_command_running_on_the_host() {
     tokio::time::sleep(Duration::from_millis(20)).await;
   }
   tokio::time::timeout(Duration::from_secs(10), task).await.expect("the turn ends").unwrap();
+}
+
+/// Antigravity (`agy acp`) runs locally in its guarded stand-in with `.agents/hooks.json`, appends remote instructions +
+/// `GEMINI.md` / `AGENTS.md` via `_meta.antigravity.systemPrompt.append`, correlates MCP calls without `toolUseId`,
+/// strips `toolSummary`, auto-approves remote reads, and blocks built-in local workspace tools even in full access.
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_runs_in_its_stand_in_and_routes_mcp_tools_to_the_host() {
+  let fake = crate::fake_or_skip!();
+  let r = Remote::for_agent(&fake, "antigravity").await;
+  std::fs::write(r.real.join("work/GEMINI.md"), "Follow GEMINI rules.\n@AGENTS.md\n").unwrap();
+  std::fs::write(r.real.join("work/AGENTS.md"), "Follow AGENTS rules.\n").unwrap();
+  std::fs::write(r.real.join("work/notes.txt"), "host notes\n").unwrap();
+  let s = r.session().await;
+  assert!(view(&s)["error"].is_null(), "{} {:?}", view(&s)["error"], r.h.logs());
+
+  let stand = r.stand_in_under("remote/antigravity");
+  let req = r.requests().into_iter().find(|q| q["method"] == "new").expect("a session/new");
+  assert_eq!(req["cwd"], json!(stand));
+  let hooks = std::fs::read_to_string(stand.join(".agents/hooks.json")).expect("PreToolUse guard written");
+  assert!(hooks.contains("PreToolUse") && hooks.contains("read_file"), "{hooks}");
+  let append = req["meta"]["antigravity"]["systemPrompt"]["append"].as_str().expect("antigravity systemPrompt.append");
+  assert!(append.contains(&format!("{VIRT}/work")) && append.contains("mcp_acpira_Bash"), "{append}");
+  assert!(append.contains("Follow GEMINI rules.") && append.contains("Follow AGENTS rules."), "{append}");
+  assert!(req["meta"].get("claudeCode").is_none() && req["meta"].get("acpira/remote").is_none());
+
+  let (cards, _reply) = turn(&s, r#"agy-remote-call:Write {"file_path":"hello.txt","content":"hi from agy\n"}"#, "allow_once").await;
+  assert_eq!(cards.len(), 1, "the write asks");
+  let title = cards[0]["title"].as_str().unwrap_or_default();
+  assert!(title.contains("hello.txt") && !title.contains("mcp_acpira_") && !title.contains("toolSummary"), "{title}");
+  assert_eq!(std::fs::read_to_string(r.real.join("work/hello.txt")).unwrap(), "hi from agy\n");
+  assert!(!stand.join("hello.txt").exists());
+  let vw = view(&s);
+  let row = agent_blocks(&vw).into_iter().find(|b| b["type"] == "tool_call").unwrap();
+  expect_match(&row, json!({ "kind": "edit", "status": "completed", "diffStat": { "add": 1 } }));
+  assert!(row.get("mcpServer").is_none_or(Value::is_null), "{row}");
+  assert!(!row.to_string().contains("toolSummary"), "agy's synthetic toolSummary is stripped: {row}");
+
+  let (cards, reply) = turn(&s, r#"agy-remote-call:Bash {"command":"cat hello.txt; pwd"}"#, "allow_once").await;
+  assert_eq!(cards.len(), 1, "the command asks");
+  assert!(result_text(&reply).contains("hi from agy") && result_text(&reply).contains(&format!("{VIRT}/work")), "{reply}");
+  let vw = view(&s);
+  let row = agent_blocks(&vw).into_iter().rfind(|b| b["type"] == "tool_call").unwrap();
+  expect_match(&row, json!({ "kind": "execute", "status": "completed", "target": "cat hello.txt; pwd" }));
+  assert!(row["content"]["text"].as_str().is_some_and(|t| t.starts_with("hi from agy\n") && t.ends_with("/work\n")), "{row}");
+
+  // `agy` asks permission on every MCP tool, including Read; RemotePerm::ReadOnly approves it without a card
+  let stand_notes = stand.join("notes.txt");
+  let (cards, reply) = turn(&s, &format!(r#"agy-remote-call:Read {{"file_path":"{}"}}"#, stand_notes.display()), "allow_once").await;
+  assert!(cards.is_empty(), "remote Read is auto-approved: {cards:?}");
+  assert!(result_text(&reply).contains("host notes"), "{reply}");
+  let vw = view(&s);
+  let row = agent_blocks(&vw).into_iter().rfind(|b| b["type"] == "tool_call").unwrap();
+  expect_match(&row, json!({ "kind": "read", "status": "completed" }));
+
+  // Even under full access, built-in local workspace tools outside `~/.gemini` are auto-rejected before reaching disk
+  let _ = s.set_mode("bypassPermissions".into()).await;
+  let (cards, reply) = turn(&s, "agy-local-tool:read_file /etc/hosts", "allow_once").await;
+  assert!(cards.is_empty(), "blocked local tool never opens a permission card: {cards:?}");
+  assert_eq!(reply["rejected"], true, "{reply}");
 }

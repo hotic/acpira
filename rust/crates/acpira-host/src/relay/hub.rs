@@ -184,7 +184,7 @@ impl RelayHub {
         let session = session.upgrade();
         let remote = session.as_ref().is_some_and(|s| s.remote_folder().is_some());
         // The project tools go to the session's own agent; a summoned child's CLI keeps its own
-        let remote_tools = session.as_ref().filter(|_| caller.is_none()).and_then(|s| s.claude_stand()).map(|st| st.alias);
+        let remote_tools = session.as_ref().filter(|_| caller.is_none()).and_then(|s| s.remote_stand()).map(|st| st.alias);
         let plugins_root = self.plugin_host().map(|p| p.store().root().display().to_string());
         let mut features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools, plugins_root, instructions: None };
         features.instructions = session.as_ref().map(|s| crate::host_mcp::instructions(&s.prompts(), &features));
@@ -220,7 +220,7 @@ impl RelayHub {
         reader.set_limit(1);
         let mut rest = [0u8; 1];
         let r = tokio::select! {
-          r = s.on_claude_remote_tool(&name, arguments, tool_use_id) => r,
+          r = s.on_mcp_remote_tool(&name, arguments, tool_use_id) => r,
           _ = reader.read(&mut rest) => return,
         };
         let r = match r {
