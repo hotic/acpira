@@ -978,7 +978,7 @@ func modeLabel(_ mode: SessionOption) -> String {
   if mode.kind == "full_access" { return t("composer.modeShort.full") }
   if mode.kind == "auto_review" { return t("composer.modeShort.auto") }
   let short: [String: String] = [
-    "default": "composer.modeShort.default", "agent": "composer.modeShort.agent", "build": "composer.modeShort.build",
+    "default": "composer.access.ask", "agent": "composer.modeShort.agent", "build": "composer.modeShort.build",
     "plan": "composer.modeShort.plan", "raw": "composer.modeShort.raw", "team": "composer.modeShort.team", "acceptEdits": "composer.modeShort.autoEdit", "auto_edit": "composer.modeShort.autoEdit",
     "auto": "composer.modeShort.auto", "smart": "composer.modeShort.smart", "bypassPermissions": "composer.modeShort.full",
     "bypass": "composer.modeShort.full", "yolo": "composer.modeShort.full", "agent-full-access": "composer.modeShort.full",

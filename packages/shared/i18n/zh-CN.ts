@@ -382,7 +382,6 @@ export const zhCN = {
   'composer.notReady': '会话未就绪',
   'composer.escAgainToStop': '再按一次 Esc 停止当前轮次',
   'composer.mode': '模式',
-  'composer.modeShort.default': '默认模式',
   'composer.modeShort.agent': '编辑模式',
   'composer.modeShort.plan': '计划模式',
   'composer.modeShort.raw': '原始模式',

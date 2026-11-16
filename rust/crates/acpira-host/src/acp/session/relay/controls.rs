@@ -181,7 +181,7 @@ pub(super) fn caller_access(c: &Core, caller: Option<&str>) -> RelayMode {
     return c.tree.relay_latest(th).map(|r| r.harness.mode).filter(|m| *m != RelayMode::Inherit).unwrap_or(RelayMode::Consult);
   }
   let controls = &c.state.controls;
-  if c.perms.auto_approve || crate::acp::session::controls::in_full_access(controls) {
+  if c.perms.auto_approve || crate::acp::session::controls::in_full_access(controls) || crate::acp::session::AcpSession::access_native_full(c) {
     RelayMode::Bypass
   } else if controls.mode_id.as_deref().is_some_and(is_read_only) {
     RelayMode::Consult

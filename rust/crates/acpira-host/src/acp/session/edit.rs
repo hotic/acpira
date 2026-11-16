@@ -18,6 +18,7 @@ use acpira_shared::turn_settings::capture_turn_settings;
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::session::attachments::{PromptCaps, prepare_prompt, restore_drafts};
 use crate::acp::transcript::normalize::{apply_config_options, apply_goal, config_option_set_value};
+use crate::acp::session::access::{self, AccessState};
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::session::prompt::{Origin, Staged};
 use crate::i18n::{t, tp};
@@ -420,11 +421,23 @@ impl AcpSession {
     proc: &AgentProcess,
     session_id: &str,
     controls: &mut SessionControls,
+    access: &mut AccessState,
     settings: &TurnSettings,
   ) -> Result<()> {
     let live = self.core.lock().acp_session_id.as_deref() == Some(session_id);
+    // A split agent's level goes out as a mode, with the turn's mode (`access.rs`); a turn recorded before the split names
+    // the level's own mode, which picks the level
+    let levels = self.access_levels().filter(|_| !access.offered.is_empty());
+    let mut level_mode = None;
+    if let Some(levels) = &levels {
+      if let Some(l) = settings.config.get(access::APPROVAL).filter(|l| access::offers(access, l)) {
+        access.level = Some(l.clone());
+      }
+      let asked = settings.mode_id.clone().or_else(|| controls.mode_id.clone()).unwrap_or_else(|| access::REST.to_owned());
+      level_mode = Some(access::shown_mode(levels, access, &asked));
+    }
     // A session without modes has none to restore; turns recorded while pi-acp's mirrored modes leaked still carry one
-    let mode_id = settings.mode_id.clone().filter(|_| !controls.modes.is_empty());
+    let mode_id = settings.mode_id.clone().filter(|_| !controls.modes.is_empty() && levels.is_none());
     if let Some(m) = &mode_id
       && !controls.modes.iter().any(|x| &x.id == m)
     {
@@ -435,6 +448,7 @@ impl AcpSession {
     let mut selections: Vec<(String, String)> = settings
       .config
       .iter()
+      .filter(|(k, _)| levels.is_none() || k.as_str() != access::APPROVAL)
       .filter_map(|(k, v)| {
         if !self.vendor.ultracode() || v != crate::acp::vendors::claude_ultracode::LEVEL_ID {
           return Some((k.clone(), v.clone()));
@@ -498,6 +512,19 @@ impl AcpSession {
       controls.mode_id = Some(mode.clone());
       if live && self.synthetic_modes().is_some() {
         self.core.lock().perms.auto_approve = mode == "yolo";
+      }
+    }
+    if let (Some(levels), Some(shown)) = (&levels, level_mode) {
+      let (wire, host) = access::wire_for(levels, access, &shown);
+      if access.wire.as_deref() != Some(wire.as_str()) {
+        self.check_edit_active()?;
+        proc.request("session/set_mode", json!({ "sessionId": session_id, "modeId": wire })).await?;
+        access.wire = Some(wire);
+      }
+      controls.mode_id = Some(shown);
+      access::place(controls, access);
+      if live {
+        self.core.lock().perms.auto_approve = host;
       }
     }
     for (id, value) in &selections {
@@ -681,11 +708,12 @@ impl AcpSession {
             return Err(anyhow!(context_length_hint(&c)));
           }
         }
-        let (sid, mut controls) = {
+        let (sid, mut controls, mut access) = {
           let c = self.core.lock();
-          (c.acp_session_id.clone().unwrap_or_default(), c.state.controls.clone())
+          (c.acp_session_id.clone().unwrap_or_default(), c.state.controls.clone(), c.access.clone())
         };
-        let applied = self.apply_edit_settings(&proc, &sid, &mut controls, &edit.settings).await;
+        let applied = self.apply_edit_settings(&proc, &sid, &mut controls, &mut access, &edit.settings).await;
+        self.core.lock().access = access;
         if applied.is_err() {
           // A later selection failed, yet the earlier ones already landed on the live peer: the view follows that agent truth
           self.core.lock().state.controls = controls.clone();
@@ -774,7 +802,10 @@ impl AcpSession {
         controls.modes = syn;
         controls.mode_id = Some("default".into());
       }
-      if let Err(e) = self.apply_edit_settings(&proc, &fresh_id, &mut controls, &edit.settings).await {
+      // The fresh peer reports its own mode list: split like a start (`access.rs`), keeping the level on screen
+      let mut access = AccessState { level: self.core.lock().access.level.clone(), ..Default::default() };
+      self.split_access(&mut controls, &mut access);
+      if let Err(e) = self.apply_edit_settings(&proc, &fresh_id, &mut controls, &mut access, &edit.settings).await {
         // The live session stays; the fresh one would otherwise keep its query (Claude: a `claude` process) in the adapter
         self.close_replaced(&proc, &fresh_id).await;
         return Err(e);
@@ -791,7 +822,8 @@ impl AcpSession {
         c.state.usage = None;
         c.state.commands = vec![];
         c.compaction.at = None;
-        c.perms.auto_approve = self.synthetic_modes().is_some() && edit.settings.mode_id.as_deref() == Some("yolo");
+        c.access = access;
+        c.perms.auto_approve = (self.synthetic_modes().is_some() && edit.settings.mode_id.as_deref() == Some("yolo")) || self.access_host_full(&c);
         c.phase.editing = false;
         c.phase.running = false;
         c.phase.staging = false;

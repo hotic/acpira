@@ -374,7 +374,6 @@ export const es = {
   'composer.notReady': 'Sesión no lista',
   'composer.escAgainToStop': 'Pulsa Esc de nuevo para detener',
   'composer.mode': 'Modo',
-  'composer.modeShort.default': 'Predeterminado',
   'composer.modeShort.agent': 'Edición',
   'composer.modeShort.plan': 'Plan',
   'composer.modeShort.raw': 'Directo',

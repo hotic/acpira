@@ -1204,8 +1204,10 @@ fun modeIcon(mode: SessionOption): String {
 fun modeLabel(mode: SessionOption): String {
   if (mode.kind == "full_access") return t("composer.modeShort.full")
   if (mode.kind == "auto_review") return t("composer.modeShort.auto")
+  // Every known agent's `default` asks before acting (modeIcons.ts)
+  if (mode.id == "default") return t("composer.access.ask")
   val short = mapOf(
-    "default" to "default", "agent" to "agent", "build" to "build", "plan" to "plan", "raw" to "raw", "team" to "team",
+    "agent" to "agent", "build" to "build", "plan" to "plan", "raw" to "raw", "team" to "team",
     "acceptEdits" to "autoEdit", "auto_edit" to "autoEdit", "auto" to "auto", "smart" to "smart", "bypassPermissions" to "full",
     "bypass" to "full", "yolo" to "full", "agent-full-access" to "full", "read-only" to "readOnly",
     "workspace-write" to "workspace", "ask" to "ask", "code" to "code", "accept-edits" to "code",

@@ -376,7 +376,6 @@ export const ko = {
   'composer.notReady': '세션이 준비되지 않음',
   'composer.escAgainToStop': '중지하려면 Esc를 다시 누르세요',
   'composer.mode': '모드',
-  'composer.modeShort.default': '기본',
   'composer.modeShort.agent': '편집',
   'composer.modeShort.plan': '계획',
   'composer.modeShort.raw': '직접',

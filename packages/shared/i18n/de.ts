@@ -375,7 +375,6 @@ export const de = {
   'composer.notReady': 'Sitzung nicht bereit',
   'composer.escAgainToStop': 'Zum Stoppen erneut Esc drücken',
   'composer.mode': 'Modus',
-  'composer.modeShort.default': 'Standard',
   'composer.modeShort.agent': 'Bearbeiten',
   'composer.modeShort.plan': 'Plan',
   'composer.modeShort.raw': 'Roh',

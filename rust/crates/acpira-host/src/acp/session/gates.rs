@@ -243,7 +243,7 @@ impl AcpSession {
     let insist = if judged {
       let auto = {
         let c = self.core.lock();
-        c.perms.auto_approve || in_full_access(&c.state.controls) || auto_rechecked
+        c.perms.auto_approve || in_full_access(&c.state.controls) || Self::access_native_full(&c) || auto_rechecked
       };
       match self.plugin_permission(&req, row, auto).await {
         PermVerdict::Deny(plugin, reason) => {
@@ -297,7 +297,7 @@ impl AcpSession {
       let synth = c.perms.auto_approve;
       // The built-in agent rechecks waiting actions after a live mode/approval change. It has already applied its
       // mode denies and configuration guard; the host's hooks above still get the final say.
-      let full_access = root && !insist && (synth || in_full_access(&c.state.controls) || auto_rechecked);
+      let full_access = root && !insist && (synth || in_full_access(&c.state.controls) || Self::access_native_full(&c) || auto_rechecked);
       // A summoned child in a bypass round: answered without a card, preferring the one-time allow so nothing lasting
       // lands in that CLI's own settings; a request with no plain allow still gets a card
       let bypass = matches!(&target, Target::Node(id) if c.tree.relay_bypass(id));
@@ -356,7 +356,7 @@ impl AcpSession {
       }
       // Claude Code's remote writes on an SSH host (`remote_claude.rs`) ask where its native ones would not: its plan
       // file in plan mode, and every write in accept-edits mode. The edit gate has seen them above
-      let accept_edits = c.state.controls.mode_id.as_deref() == Some("acceptEdits");
+      let accept_edits = c.state.controls.mode_id.as_deref() == Some("acceptEdits") || c.access.wire.as_deref() == Some("acceptEdits");
       if root
         && !insist
         && (remote_edit == crate::acp::session::remote_claude::RemoteEdit::PlanFile

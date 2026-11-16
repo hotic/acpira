@@ -19,9 +19,7 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 
 - Identity is the option id plus source / group, never the display name (Kimi's `kimi-code/k3` and `gateway/kimi-k3` both read `K3`); keep select groups through normalization.
 - Sources come from each CLI's config (`model_sources.rs`); Pi and OpenCode prefix display names with the provider; it moves into `source.name` once, so a republish never strips twice.
-- New integrations must verify official/custom same-name selection, independent hiding, restoration, config updates.
 - **Effort narrowing** (`model_catalog.rs`): reasoning selects cut to what the model takes. Custom-source models intersect the models.dev catalogue; official ones trust the agent unless it reports native levels (Pi). Unknown models and off-scale labels (`on`, `ultra`) stay. Never narrow the built-in agent: its scale is the settings page's (`builtin-agent.md`).
-- Narrowing also runs after every `set_config_option` answer, so effort restore only picks offered values.
 
 ## Plans
 
@@ -35,7 +33,7 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 ## Permissions
 
 - Requests usually carry only `toolCall.title`; take the verb from the tool call. `_meta.permission` / `_meta.jetbrains.air.permission` v1 (codex / claude) override card text and `defaultToNo`; `rawInput.description` is the model's argument, never shown.
-- Full-access modes auto-approve: host `yolo` prefers `allow_always`; native ones (`bypassPermissions`, `agent-full-access`, `bypass`, `yolo`, or `_meta.kind` / `_meta.jetbrains.air.kind` `full_access`) prefer one `allow_once`, so bypass-immune CLI safety asks write no lasting rules into its settings.
+- Full-access modes auto-approve: host approval (Grok `yolo`, Antigravity full) prefers `allow_always`; native ones (`relay::BYPASS_MODES`, or `_meta.kind` / `_meta.jetbrains.air.kind` `full_access`) prefer one `allow_once`, so bypass-immune CLI safety asks write no lasting rules into its settings.
 - Quick choices take the first `allow_once` / `reject_once` by kind, never labels. Several `allow_once` with no `allow_always` is a list of answers, not a ladder (Antigravity `ask_question`): yolo never auto-picks, options are equals. Codex's permission-profile card (two `allow_once` under an `allow_always`) is one.
 - Under the built-in antigravity id, an `interaction_*` request with empty `rawInput` becomes a single-choice question (`Vendor::question_permission`); skip or withdrawal answers `cancelled`. Questions never ride yolo; plan-approval support does not imply question support.
 
@@ -44,6 +42,7 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 - Nothing is hardcoded into model / mode buckets: every select or boolean configOption is a control; `modes` keep `_meta.kind`.
 - Booleans go out as real `type: 'boolean'` values (a `"false"` string parses truthy on some agents); the client advertises `session.configOptions.boolean` so adapters do not degrade them to selects.
 - A `category=mode` configOption stands in for modes only when none were sent (legacy Grok); beside modes it duplicates.
+- Claude / Antigravity mix permission levels and working modes in one list: `session/access.rs` shows the levels as the `approval` select beside `default` + working modes, so `mode_id` is that view; the CLI's mode is `AccessState::wire`. agy 1.5.9 has no full-access mode over ACP (`--dangerously-skip-permissions` is a process flag): its full access is `auto` plus host approval.
 - User picks overlay the view and revert on failure; `agentControls` / `toRecord()` stay agent truth.
 - Every Fast shape is one switch (`isFastControl`): Devin `speed` select, Codex `fast-mode`, Claude `fast` boolean, model-name variants.
 - Advertising AIR `recommendedValue` makes claude-agent-acp report concrete values, not `default` rows.

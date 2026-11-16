@@ -380,7 +380,6 @@ export const zhTW = {
   'composer.notReady': '工作階段未就緒',
   'composer.escAgainToStop': '再按一次 Esc 停止目前輪次',
   'composer.mode': '模式',
-  'composer.modeShort.default': '預設模式',
   'composer.modeShort.agent': '編輯模式',
   'composer.modeShort.plan': '計畫模式',
   'composer.modeShort.raw': '原始模式',
