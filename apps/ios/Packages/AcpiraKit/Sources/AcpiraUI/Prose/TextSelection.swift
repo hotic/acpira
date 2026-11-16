@@ -101,6 +101,14 @@ struct TextSelectionSurface: UIViewRepresentable {
       guard case .link(let url) = textItem.content else { return defaultAction }
       return UIAction { [weak self] _ in self?.surface.openURL(url) }
     }
+
+    /// This view only carries selection: its glyphs are clear and SwiftUI draws the text underneath, so the
+    /// system's lifted link preview snapshots an empty range and shows a dark blank platter. Keep the menu,
+    /// drop the preview.
+    func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem,
+                  defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? {
+      UITextItem.MenuConfiguration(preview: nil, menu: defaultMenu)
+    }
   }
 }
 
