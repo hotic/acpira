@@ -26,6 +26,8 @@ pub enum Answer {
 
 pub struct Client {
   pub updates: parking_lot::Mutex<Vec<Value>>,
+  /// The session of each of `updates`, in the same order
+  pub update_sessions: parking_lot::Mutex<Vec<String>>,
   pub permissions: parking_lot::Mutex<Vec<Value>>,
   pub answer: parking_lot::Mutex<Answer>,
   pub forms: parking_lot::Mutex<Vec<Value>>,
@@ -38,7 +40,9 @@ pub struct Client {
 impl Inbound for Client {
   fn notification(&self, method: &str, params: Value) {
     if method == "session/update" {
-      self.updates.lock().push(params["update"].clone());
+      let mut updates = self.updates.lock();
+      updates.push(params["update"].clone());
+      self.update_sessions.lock().push(params["sessionId"].as_str().unwrap_or("").to_owned());
     }
   }
   fn request(&self, method: String, params: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
@@ -103,6 +107,7 @@ impl Harness {
     tokio::spawn(async move { acpira_agent::run(agent_r, agent_w, agent_home, "0.0.0-test").await });
     let client = Arc::new(Client {
       updates: Default::default(),
+      update_sessions: Default::default(),
       permissions: Default::default(),
       answer: parking_lot::Mutex::new(Answer::Allow),
       forms: Default::default(),
@@ -159,5 +164,12 @@ impl Harness {
 
   pub fn updates(&self) -> Vec<Value> {
     self.client.updates.lock().clone()
+  }
+
+  /// The updates one session got
+  pub fn updates_of(&self, sid: &str) -> Vec<Value> {
+    let updates = self.client.updates.lock();
+    let sessions = self.client.update_sessions.lock();
+    updates.iter().zip(sessions.iter()).filter(|(_, s)| *s == sid).map(|(u, _)| u.clone()).collect()
   }
 }

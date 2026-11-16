@@ -564,6 +564,8 @@ impl Engine {
         // A paired device may browse this computer's folders (`localDir`) and edit the built-in agent's model sources
         "localDir".into(),
         "providers".into(),
+        // The built-in agent's sessions a peer drives read the settings that peer keeps here (`remote/host_models.rs`)
+        crate::remote::host_models::SET_FEATURE.into(),
       ],
       safe_mode: rt.plugins.loaded().safe_mode,
     }

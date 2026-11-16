@@ -328,6 +328,20 @@ impl SessionManager {
   }
 
   /// The configOptions an agent offered most recently
+  /// The built-in agent's settings were saved here: its processes push their sessions' changed controls at once
+  /// (`acpira_agent::acp::SETTINGS_CHANGED`), each process told once
+  pub fn builtin_settings_saved(&self) {
+    let live: Vec<_> = self.state.lock().live.values().filter(|s| s.agent == crate::acp::agents::registry::SELF_AGENT_ID).cloned().collect();
+    let mut told: Vec<Arc<crate::acp::transport::process::AgentProcess>> = vec![];
+    for s in live {
+      let proc = s.core.lock().proc.clone();
+      if let Some(p) = proc.filter(|p| !told.iter().any(|t| Arc::ptr_eq(t, p))) {
+        p.notify(acpira_agent::acp::SETTINGS_CHANGED, serde_json::json!({}));
+        told.push(p);
+      }
+    }
+  }
+
   pub async fn known_controls(&self, agent: &str) -> Vec<ConfigControl> {
     if let Some(p) = self.state.lock().probed.get(agent).filter(|p| !p.options.is_empty()) {
       return p.options.clone();

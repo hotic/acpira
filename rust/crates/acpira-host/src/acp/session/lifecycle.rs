@@ -30,11 +30,13 @@ const NEW_SESSION_WAIT: Duration = Duration::from_secs(90);
 
 impl AcpSession {
   /// The plugins' prompt folders for a built-in agent session (`acpira_agent::acp::LAYERS_META`), taken as it opens.
-  /// They are this machine's files, which the built-in agent reads here also for a folder on an SSH host
+  /// They are this machine's files, which the built-in agent reads here also for a folder on an SSH host. With them the
+  /// machine whose settings it reads (`with_client_settings`)
   pub(crate) fn with_prompt_layers(&self, req: &mut Value, agent: &str) {
     if agent != crate::acp::agents::registry::SELF_AGENT_ID {
       return;
     }
+    self.with_client_settings(req, agent);
     let layers = self.deps.plugin_prompts.as_ref().map(|f| f()).unwrap_or_default();
     if !layers.is_empty() {
       req["_meta"][acpira_agent::acp::LAYERS_META] = json!(layers);

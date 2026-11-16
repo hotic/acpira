@@ -249,6 +249,7 @@ impl SessionManager {
       copy_of: None,
       client_ids: Vec::new(),
       plugin_menus: Default::default(),
+      settings_from: None,
     };
     if let Err(e) = self.deps.store.flush(Arc::new(record.clone())).await {
       self.log(&format!("import flush failed: {e}"));

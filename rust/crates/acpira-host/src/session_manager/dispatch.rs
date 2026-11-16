@@ -9,8 +9,8 @@ use acpira_shared::protocol::{EditTurnRequest, HostMsg, WebviewMsg};
 use acpira_shared::transcript::*;
 
 use super::{SessionManager, Viewer, is_forwarded, lower_first, session_id_of};
-use crate::acp::session::AcpSession;
 use crate::acp::session::errors::error_text;
+use crate::acp::session::{AcpSession, SentFrom};
 use crate::i18n::{t, tp};
 use crate::store::transcript_store::{UnreadOp, is_session_id};
 
@@ -44,6 +44,21 @@ pub(super) fn is_execution(m: &WebviewMsg) -> bool {
   )
 }
 
+/// A message that sends the agent something, and the session it names (None: the page's current one). A steer counts:
+/// when the turn it meant to join has ended it goes out as a turn of its own
+fn turn_target(m: &WebviewMsg) -> Option<Option<&str>> {
+  use WebviewMsg as W;
+  match m {
+    W::Send { session_id, .. } | W::Compact { session_id } | W::Retry { session_id } | W::RetryTurn { session_id } => Some(session_id.as_deref()),
+    W::BuildPlan { session_id, .. }
+    | W::SendQueued { session_id, .. }
+    | W::SteerQueued { session_id, .. }
+    | W::EditQueued { session_id, .. }
+    | W::Goal { session_id, .. } => Some(Some(session_id)),
+    _ => None,
+  }
+}
+
 /// List edits of one session: written by whichever engine owns it, so forwarded there like its actions
 pub(super) fn list_edit_target(m: &WebviewMsg) -> Option<&str> {
   use WebviewMsg as W;
@@ -68,18 +83,33 @@ impl SessionManager {
     s
   }
 
+  /// "Whoever sends decides": the next turn after a page sends something (a send, a retry, an edit sent again, ...)
+  /// reads the built-in agent settings of the machine the page belongs to (`AcpSession::sent_by`)
+  pub fn turn_sent_by(&self, v: &Viewer, session_id: Option<&str>) {
+    let id = session_id.map(str::to_owned).or_else(|| v.active_id());
+    if let Some(s) = id.and_then(|id| self.live(&id)) {
+      s.sent_by(&v.sent_from());
+    }
+  }
+
   pub async fn edit_turn(self: &Arc<Self>, edit: EditTurnRequest) -> Result<()> {
+    self.edit_turn_from(edit, &SentFrom::Unknown).await
+  }
+
+  /// An edit sends the turn again: like a send, the next turn reads the settings of the machine `from` (`turn_sent_by`)
+  pub async fn edit_turn_from(self: &Arc<Self>, edit: EditTurnRequest, from: &SentFrom) -> Result<()> {
     self.promote_copy(&edit.session_id).await?;
     if let Some(result) = self.edit_on_host(&edit).await {
       return result;
     }
     if let Some(s) = self.live(&edit.session_id) {
+      s.sent_by(from);
       return s.edit_turn(edit).await;
     }
     // Shown here while another engine owns it and pushes its view: the edit runs there, like a send or a stop
     let id = edit.session_id.clone();
     if self.state.lock().remote.get(&id).is_some_and(|r| r.parts.is_some()) {
-      return self.forward(&id, &WebviewMsg::EditTurn { request_id: String::new(), edit }).await;
+      return self.forward(&id, &WebviewMsg::EditTurn { request_id: String::new(), edit }, from).await;
     }
     Err(anyhow!(t("history.unavailable")))
   }
@@ -220,7 +250,7 @@ impl SessionManager {
       && self.live(tid).is_none()
       && self.state.lock().remote.get(tid).is_some_and(|r| r.parts.is_some())
     {
-      return self.forward(tid, &m).await;
+      return self.forward(tid, &m, &v.sent_from()).await;
     }
     // A list edit (rename, pin, file) of a session another engine runs: that engine writes the record and announces the new
     // entry. An owner that cannot take it (off the bus, older) leaves the edit to the refusal below
@@ -229,11 +259,14 @@ impl SessionManager {
       && !self.state.lock().copies.contains(id)
       && self.bus.connected()
       && (self.mirror_of(id).is_some() || self.leases.held_elsewhere(id))
-      && self.forward(id, &m).await.is_ok()
+      && self.forward(id, &m, &v.sent_from()).await.is_ok()
     {
       return Ok(());
     }
     let valid = |id: &str| is_session_id(id);
+    if let Some(id) = turn_target(&m) {
+      self.turn_sent_by(v, id);
+    }
     match m {
       W::Send { session_id, text, attachments, steer, client_id } => {
         if let Some(s) = self.target(v, session_id.as_deref())

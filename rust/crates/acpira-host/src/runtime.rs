@@ -270,6 +270,13 @@ impl HostRuntime {
       },
     );
     *mgr_slot.lock() = Some(Arc::downgrade(&manager));
+    // A settings save reaches the built-in agent's open sessions at once
+    let saved = Arc::downgrade(&manager);
+    providers.on_change(Arc::new(move || {
+      if let Some(m) = saved.upgrade() {
+        m.builtin_settings_saved();
+      }
+    }));
     // What a plugin's process may ask: sessions, page actions, toasts and one-off model calls (`plugins/host_api.rs`)
     let toast_p = platform.clone();
     plugins.runtimes().enable(Some(crate::plugins::host_api::host_call(&manager, Arc::new(move |level: &str, text: &str| toast_p.toast(level, text)), root.clone())));

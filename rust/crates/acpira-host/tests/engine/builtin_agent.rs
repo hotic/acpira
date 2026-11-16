@@ -1550,3 +1550,59 @@ async fn stopping_a_summoned_subagents_command_ends_only_the_childs_command() {
   tokio::time::timeout(Duration::from_secs(10), parent).await.expect("parent did not finish").unwrap();
   assert!(agent_blocks(&view(&s)).iter().any(|b| b["type"] == "text" && b["markdown"] == "Parent stopped."));
 }
+
+/// "Whoever sends decides": a session started or last sent from another machine reads the built-in agent settings that
+/// machine keeps here (`remote/host_models.rs`), its picker and its turns alike; a turn sent from a window here goes back
+/// to this machine's own. The pick is saved with the record
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_reads_the_settings_of_the_machine_that_sent_its_turn() {
+  use acpira_host::acp::session::SentFrom;
+  let env = Env::new();
+  let set = acpira_shared::providers::client_settings_dir(env.root.path(), "mac").unwrap();
+  std::fs::create_dir_all(&set).unwrap();
+  let theirs = json!({ "version": 1, "fastModel": "off", "approval": "full", "providers": [{ "id": "cs", "name": "Client", "format": "openai-chat",
+    "baseUrl": env.server.base_url(), "models": [{ "id": "c1", "context": 64000 }] }] });
+  std::fs::write(set.join("secrets.json"), json!({ "acpira.provider.cs": "sk-client" }).to_string()).unwrap();
+  std::fs::write(set.join("providers.json"), theirs.to_string()).unwrap();
+  let picker = |s: &AcpSession| {
+    let controls = s.agent_controls();
+    let find = |id: &str| controls.options.iter().find(|o| o.id == id).cloned();
+    let models: Vec<String> = find("model").map(|m| m.options.iter().map(|o| o.id.clone()).collect()).unwrap_or_default();
+    (models, find("approval").and_then(|a| a.value).unwrap_or_default())
+  };
+
+  // The manager's policy always names a compaction setting: it rides the same `_meta` as the sender
+  let mut deps = env.deps.clone();
+  deps.policy = Arc::new(crate::support::TestPolicy {
+    compaction: Some(Arc::new(|| acpira_host::acp::session::CompactionPolicy { at_tokens: 0.0, auto: false })),
+    ..Default::default()
+  });
+  let s = Disposing(AcpSession::fresh("acpira", &env.cwd().to_string_lossy(), deps, None));
+  s.sent_by(&SentFrom::Machine("mac".into()));
+  s.adopt_sender();
+  s.start().await;
+  let own = env.session().await;
+  assert_eq!(picker(&s), (vec!["cs/c1".to_owned()], "full".to_owned()));
+  assert_eq!(picker(&own).0, ["mock/m1"]);
+  env.server.push(mock::text("From there."));
+  run(&s, "hello").await;
+  assert_eq!(env.server.requests()[0].body["model"], "c1");
+  assert_eq!(s.to_record().settings_from.as_deref(), Some("mac"));
+
+  // Sent from a window here: this machine's own, from the turn the user starts next. One Acpira starts on its own
+  // (the /compact ahead of a prompt over budget) goes on with what the session reads
+  s.sent_by(&SentFrom::Here);
+  assert_eq!(s.to_record().settings_from.as_deref(), Some("mac"), "noted until a turn starts");
+  env.server.push(mock::text("Summary."));
+  s.compact(true).await.unwrap();
+  assert_eq!(env.server.requests()[1].body["model"], "c1");
+  assert_eq!(s.to_record().settings_from.as_deref(), Some("mac"), "an automatic turn leaves the sender pending");
+  env.server.push(mock::text("From here."));
+  run(&s, "again").await;
+  assert_eq!(env.server.requests()[2].body["model"], "m1");
+  until(|| picker(&s).0 == ["mock/m1"], 5000).await;
+  assert_eq!(s.to_record().settings_from, None);
+  // An action whose sender is not known changes nothing
+  s.sent_by(&SentFrom::Unknown);
+  assert_eq!(s.to_record().settings_from, None);
+}

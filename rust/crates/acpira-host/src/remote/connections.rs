@@ -145,6 +145,13 @@ pub struct Connections {
   changed: tokio::sync::watch::Sender<u64>,
   /// Wakes drivers waiting out a backoff (back from sleep, a network switch)
   kick: tokio::sync::Notify,
+  /// What each host's engine said it takes beyond the protocol (`helloOk.features`), and the helper channel it said
+  /// it through (`session_manager/hosts.rs`). Holds only while that channel is the host's current one and the link
+  /// stays up: the engine that answers next may be an update
+  engine_features: Mutex<std::collections::HashMap<String, (super::client::ClientToken, Vec<String>)>>,
+  /// Where this machine's built-in agent settings last landed on each host (`remote/host_models.rs`): kept apart
+  /// (true) or merged into the host's own (false). Kept while the host is away
+  settings_apart: Mutex<std::collections::HashMap<String, bool>>,
   me: Weak<Connections>,
 }
 
@@ -173,6 +180,8 @@ impl Connections {
       projects: Default::default(),
       changed: tokio::sync::watch::channel(0).0,
       kick: Default::default(),
+      engine_features: Default::default(),
+      settings_apart: Default::default(),
       me: me.clone(),
     })
   }
@@ -221,6 +230,59 @@ impl Connections {
       f(&views);
     }
     self.changed.send_modify(|n| *n += 1);
+  }
+
+  /// What the host's engine said it takes (`helloOk.features`), heard on reaching it through `client`; listeners
+  /// hear of it
+  pub fn set_engine_features(&self, alias: &str, client: &RemoteClient, features: Vec<String>) {
+    let token = client.token();
+    let changed = {
+      let mut known = self.engine_features.lock();
+      let same = known.get(alias).is_some_and(|(t, f)| t.is(client) && *f == features);
+      if !same {
+        known.insert(alias.to_owned(), (token, features));
+      }
+      !same
+    };
+    if changed {
+      self.emit();
+    }
+  }
+
+  /// The host's engine link dropped: what it takes is not known again until it answers anew
+  pub fn forget_engine_features(&self, alias: &str) {
+    if self.engine_features.lock().remove(alias).is_some() {
+      self.emit();
+    }
+  }
+
+  /// Where the last push of this machine's settings landed on the host (`settings_apart`)
+  pub fn set_settings_apart(&self, alias: &str, apart: bool) {
+    self.settings_apart.lock().insert(alias.to_owned(), apart);
+  }
+
+  /// Whether the host keeps this machine's settings apart and reads them for its sessions; None before the first push
+  pub fn settings_apart(&self, alias: &str) -> Option<bool> {
+    self.settings_apart.lock().get(alias).copied()
+  }
+
+  /// Whether this machine's model sources go to the host (its `modelsOff` switch is off)
+  pub fn models_on(&self, alias: &str) -> bool {
+    self.hosts.lock().iter().find(|e| e.saved.alias == alias).is_some_and(|e| !e.saved.models_off)
+  }
+
+  /// Whether the host's engine takes `feature`; None until this engine has reached it through the helper channel
+  /// that is up now (a reconnected helper may lead to an updated engine before the old link has wound down)
+  pub fn engine_offers(&self, alias: &str, feature: &str) -> Option<bool> {
+    self.engine_client(alias, feature).map(|(_, offers)| offers)
+  }
+
+  /// The helper channel up now with whether the engine that answered through it takes `feature`, as one pair: what
+  /// goes through this channel is decided by its own engine's answer even if the helper is replaced meanwhile
+  pub fn engine_client(&self, alias: &str, feature: &str) -> Option<(RemoteClient, bool)> {
+    let current = self.client(alias)?;
+    let offers = self.engine_features.lock().get(alias).filter(|(t, _)| t.is(&current)).map(|(_, f)| f.iter().any(|x| x == feature))?;
+    Some((current, offers))
   }
 
   /// The host's helper channel while it is up

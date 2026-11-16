@@ -101,6 +101,10 @@ pub struct SessionRecord {
   /// What the user picked in plugin command buttons' menus, by command name (`CommandDef::menu_picks`)
   #[serde(default, skip_serializing_if = "PluginMenus::is_empty")]
   pub plugin_menus: PluginMenus,
+  /// The machine whose built-in agent settings the session reads (`AcpSession::settings_from`): the one that sent its
+  /// last turn over SSH; absent, this machine's own
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub settings_from: Option<String>,
 }
 
 /// Menu picks by command name, each a map of group name or toggle id to the pick

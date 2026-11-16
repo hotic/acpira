@@ -65,7 +65,7 @@ impl AcpSession {
     if let Some(n) = handed {
       self.core.lock().relays.notes.entry(r.node.clone()).or_default().push(n);
     }
-    let end = self.relay_prompt(&proc, &sid, &r.node, blocks).await;
+    let end = self.relay_prompt(&proc, &sid, r, blocks).await;
     let end = match end {
       Ok(stop) => self.relay_follow_ups(&proc, &sid, r, stop).await,
       Err(e) => Err(e),
@@ -97,11 +97,14 @@ impl AcpSession {
   }
 
   /// One session/prompt of the round; its token tally goes on the turn it closes in the node's transcript
-  async fn relay_prompt(&self, proc: &AgentProcess, sid: &str, node: &str, blocks: Vec<Value>) -> Result<String> {
-    let answer = proc.request("session/prompt", json!({ "sessionId": sid, "prompt": blocks })).await.map_err(anyhow::Error::new)?;
+  async fn relay_prompt(&self, proc: &AgentProcess, sid: &str, r: &Round, blocks: Vec<Value>) -> Result<String> {
+    let mut params = json!({ "sessionId": sid, "prompt": blocks });
+    // A child reads the settings its caller reads now
+    self.with_client_settings(&mut params, &r.persona.agent);
+    let answer = proc.request("session/prompt", params).await.map_err(anyhow::Error::new)?;
     {
       let mut c = self.core.lock();
-      c.tree.relay_turn_usage(node, turn_usage_of(&answer));
+      c.tree.relay_turn_usage(&r.node, turn_usage_of(&answer));
       self.touch(&mut c);
     }
     Ok(answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned())
@@ -208,7 +211,7 @@ impl AcpSession {
       match text {
         Some(text) => {
           self.log(&format!("relay {}: follow-up {sent} with the rounds it sent off", short(&r.thread)));
-          stop = self.relay_prompt(proc, sid, &r.node, vec![json!({ "type": "text", "text": text })]).await?;
+          stop = self.relay_prompt(proc, sid, r, vec![json!({ "type": "text", "text": text })]).await?;
         }
         None => {
           tokio::select! {

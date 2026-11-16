@@ -111,7 +111,8 @@ impl PeerLink {
       "type": "hello",
       "protocolVersion": SIDECAR_PROTOCOL_VERSION,
       "requestId": "peer-hello",
-      "client": { "name": "acpira-peer", "version": me.version, "capabilities": me.capabilities, "role": "peer" },
+      // `machine`: the host keeps the built-in agent settings this machine brings under it (`remote/host_models.rs`)
+      "client": { "name": "acpira-peer", "version": me.version, "capabilities": me.capabilities, "role": "peer", "machine": super::host_store::this_machine().0 },
       // The host's own home: a peer has no workspace there, and its sessions follow their folders
       "env": { "cwd": client.hello().home, "hostLanguage": me.host_language, "projects": true },
       "settings": {},

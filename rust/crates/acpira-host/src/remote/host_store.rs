@@ -59,7 +59,7 @@ pub(super) async fn body(stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>
 }
 
 /// Send `bytes` as a request's bulk body and wait for its answer
-async fn send_body(client: &RemoteClient, op: &str, a: Value, bytes: &[u8]) -> std::result::Result<Value, RemoteError> {
+pub(super) async fn send_body(client: &RemoteClient, op: &str, a: Value, bytes: &[u8]) -> std::result::Result<Value, RemoteError> {
   let call = client.request(op, a);
   call.send_bulk(bytes).await?;
   Ok(call.collect().await?.value)

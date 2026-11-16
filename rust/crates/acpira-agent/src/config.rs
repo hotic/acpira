@@ -1,6 +1,7 @@
 //! The agent's view of the host-written configuration: `providers.json` and the API keys in `secrets.json`, both under
-//! the data root given as `--home`. Both are re-read when their modification time changes, so a settings edit applies
-//! from the next turn without a handshake; keys never travel over ACP or into logs
+//! the data root given as `--home`, or for a session another machine drives over SSH the settings that machine brought
+//! (`ConfigCache::of_client`). Both are re-read when their modification time changes, so a settings edit applies from
+//! the next turn without a handshake; keys never travel over ACP or into logs
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use acpira_shared::model_catalog::Catalog;
-use acpira_shared::providers::{KEY_ENV_FIELD, PROVIDERS_FILE, Provider, ProviderModel, ProvidersFile, plugin_providers_path, provider_secret_key, web_secret_key};
+use acpira_shared::providers::{
+  KEY_ENV_FIELD, PROVIDERS_FILE, Provider, ProviderModel, ProvidersFile, client_settings_dir, plugin_providers_path, provider_secret_key, web_secret_key,
+};
 
 use crate::permission::Approval;
 
@@ -89,9 +92,10 @@ impl Config {
 }
 
 /// The plugins' sources (`plugins/providers.json`, written by the engine) after the user's own: an id the user's file
-/// has wins. A source's key is the vault's under its id, else the variable its `keyEnv` names. A broken file is
+/// has wins. A source's key is the vault's under its id (`own_keys`: the data root's vault, read when a client's
+/// settings stand in, since the plugins belong to this engine), else the variable its `keyEnv` names. A broken file is
 /// skipped, never in the way of the user's sources
-fn merge_plugin_sources(config: &mut Config, path: &Path) {
+fn merge_plugin_sources(config: &mut Config, path: &Path, own_keys: Option<&HashMap<String, String>>) {
   let Ok(text) = std::fs::read_to_string(path) else { return };
   let Ok(file) = ProvidersFile::parse(&text) else { return };
   for p in file.providers {
@@ -100,7 +104,9 @@ fn merge_plugin_sources(config: &mut Config, path: &Path) {
     }
     let secret = provider_secret_key(&p.id);
     if !config.secrets.get(&secret).is_some_and(|k| !k.is_empty())
-      && let Some(key) = p.extra.get(KEY_ENV_FIELD).and_then(serde_json::Value::as_str).and_then(|v| std::env::var(v).ok()).filter(|k| !k.is_empty())
+      && let Some(key) = own_keys
+        .and_then(|k| k.get(&secret).filter(|k| !k.is_empty()).cloned())
+        .or_else(|| p.extra.get(KEY_ENV_FIELD).and_then(serde_json::Value::as_str).and_then(|v| std::env::var(v).ok()).filter(|k| !k.is_empty()))
     {
       config.secrets.insert(secret, key);
     }
@@ -108,11 +114,24 @@ fn merge_plugin_sources(config: &mut Config, path: &Path) {
   }
 }
 
+/// This agent's keys in a vault file (`secrets.json` is the host's string table): provider and search keys only
+fn read_keys(path: &Path) -> HashMap<String, String> {
+  let Ok(text) = std::fs::read_to_string(path) else { return HashMap::new() };
+  let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&text) else { return HashMap::new() };
+  m.into_iter()
+    .filter(|(k, _)| k.starts_with(acpira_shared::providers::PROVIDER_SECRET_PREFIX) || k.starts_with(acpira_shared::providers::WEB_SECRET_PREFIX))
+    .filter_map(|(k, v)| v.as_str().map(|v| (k, v.to_owned())))
+    .collect()
+}
+
 type Stamp = Option<(SystemTime, u64)>;
 
 pub struct ConfigCache {
   home: PathBuf,
-  state: parking_lot::Mutex<([Stamp; 3], Arc<Config>)>,
+  /// The machine whose settings this reads, and their folder (`client_settings_dir`): while it holds a settings file it
+  /// stands in for the data root's own files. The plugins' sources stay the data root's: they belong to this engine
+  client: Option<(String, PathBuf)>,
+  state: parking_lot::Mutex<([Stamp; 5], Arc<Config>)>,
 }
 
 fn stamp(path: &Path) -> Stamp {
@@ -122,7 +141,19 @@ fn stamp(path: &Path) -> Stamp {
 
 impl ConfigCache {
   pub fn new(home: PathBuf) -> Self {
-    ConfigCache { home, state: parking_lot::Mutex::new(([None, None, None], Arc::new(Config::default()))) }
+    ConfigCache { home, client: None, state: parking_lot::Mutex::new((Default::default(), Arc::new(Config::default()))) }
+  }
+
+  /// The settings `machine` brought for the sessions it drives here over SSH, else the data root's own while it has
+  /// brought none (its setting off there, or nothing arrived yet). None for an id that names no folder
+  pub fn of_client(home: PathBuf, machine: &str) -> Option<Self> {
+    let dir = client_settings_dir(&home, machine)?;
+    Some(ConfigCache { home, client: Some((machine.to_owned(), dir)), state: parking_lot::Mutex::new((Default::default(), Arc::new(Config::default()))) })
+  }
+
+  /// The machine whose settings this reads
+  pub fn client(&self) -> Option<&str> {
+    self.client.as_ref().map(|(m, _)| m.as_str())
   }
 
   pub fn home(&self) -> &Path {
@@ -131,10 +162,17 @@ impl ConfigCache {
 
   /// The current configuration, re-read when any of its files changed since the last call
   pub fn get(&self) -> Arc<Config> {
-    let providers_path = self.home.join(PROVIDERS_FILE);
-    let secrets_path = self.home.join(SECRETS_FILE);
+    let set = self.client.as_ref().map(|(_, dir)| dir.as_path());
+    let (set_file, set_keys) = set.map_or((None, None), |d| (stamp(&d.join(PROVIDERS_FILE)), stamp(&d.join(SECRETS_FILE))));
+    // A client's folder from the moment its settings file lands until it goes, the data root's own otherwise
+    let base = match set {
+      Some(dir) if set_file.is_some() => dir,
+      _ => self.home.as_path(),
+    };
+    let providers_path = base.join(PROVIDERS_FILE);
+    let secrets_path = base.join(SECRETS_FILE);
     let plugins_path = plugin_providers_path(&self.home);
-    let stamps = [stamp(&providers_path), stamp(&secrets_path), stamp(&plugins_path)];
+    let stamps = [set_file, set_keys, stamp(&self.home.join(PROVIDERS_FILE)), stamp(&self.home.join(SECRETS_FILE)), stamp(&plugins_path)];
     let mut st = self.state.lock();
     // The initial state reads as "all absent", which is also the right answer when they are
     if st.0 == stamps {
@@ -149,17 +187,9 @@ impl ConfigCache {
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
       Err(e) => config.error = Some(format!("{}: {e}", providers_path.display())),
     }
-    // secrets.json is the host's string table; only this agent's keys are kept in memory
-    if let Ok(text) = std::fs::read_to_string(&secrets_path)
-      && let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&text)
-    {
-      config.secrets = m
-        .into_iter()
-        .filter(|(k, _)| k.starts_with(acpira_shared::providers::PROVIDER_SECRET_PREFIX) || k.starts_with(acpira_shared::providers::WEB_SECRET_PREFIX))
-        .filter_map(|(k, v)| v.as_str().map(|v| (k, v.to_owned())))
-        .collect();
-    }
-    merge_plugin_sources(&mut config, &plugins_path);
+    config.secrets = read_keys(&secrets_path);
+    let own_keys = (base != self.home.as_path()).then(|| read_keys(&self.home.join(SECRETS_FILE)));
+    merge_plugin_sources(&mut config, &plugins_path, own_keys.as_ref());
     let config = Arc::new(config);
     *st = (stamps, config.clone());
     config
@@ -236,5 +266,37 @@ mod tests {
     std::fs::write(&plugins, "{ broken").unwrap();
     let c = cache.get();
     assert!(c.find("gw/claude").is_none() && c.error.is_none());
+  }
+
+  /// A client's settings stand in for the data root's own while its folder holds a settings file, the plugins' sources
+  /// still joining them; without one the data root's own are read
+  #[test]
+  fn a_clients_settings_stand_in_while_they_are_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    std::fs::write(home.join(PROVIDERS_FILE), json!({ "approval": "full", "providers": [{ "id": "own", "baseUrl": "http://own", "models": [{ "id": "m" }] }] }).to_string()).unwrap();
+    std::fs::write(home.join(SECRETS_FILE), json!({ "acpira.provider.own": "own-key", "acpira.provider.plug": "plug-key" }).to_string()).unwrap();
+    let plugins = plugin_providers_path(home);
+    std::fs::create_dir_all(plugins.parent().unwrap()).unwrap();
+    std::fs::write(&plugins, json!({ "providers": [{ "id": "plug", "baseUrl": "http://plug", "models": [{ "id": "p" }] }] }).to_string()).unwrap();
+    assert!(ConfigCache::of_client(home.to_owned(), "../x").is_none());
+    let cache = ConfigCache::of_client(home.to_owned(), "mac").unwrap();
+    assert_eq!(cache.client(), Some("mac"));
+    let c = cache.get();
+    assert_eq!((c.default_pick().as_deref(), c.approval()), (Some("own/m"), Approval::Full), "nothing brought yet: the data root's own");
+
+    let set = client_settings_dir(home, "mac").unwrap();
+    std::fs::create_dir_all(&set).unwrap();
+    std::fs::write(set.join(SECRETS_FILE), json!({ "acpira.provider.gw": "mac-key" }).to_string()).unwrap();
+    std::fs::write(set.join(PROVIDERS_FILE), json!({ "providers": [{ "id": "gw", "baseUrl": "http://gw", "models": [{ "id": "a" }] }] }).to_string()).unwrap();
+    let c = cache.get();
+    assert_eq!(c.default_pick().as_deref(), Some("gw/a"));
+    assert!(c.find("own/m").is_none(), "the data root's own sources are not this machine's");
+    assert!(c.find("plug/p").is_some(), "the plugins' sources stay");
+    assert_eq!((c.api_key("gw"), c.api_key("own"), c.approval()), (Some("mac-key"), None, Approval::Ask));
+    assert_eq!(c.api_key("plug"), Some("plug-key"), "a plugin source keeps the key this data root holds for it");
+
+    std::fs::remove_dir_all(&set).unwrap();
+    assert_eq!(cache.get().default_pick().as_deref(), Some("own/m"), "gone again: the data root's own");
   }
 }
