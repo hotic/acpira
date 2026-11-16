@@ -6,6 +6,7 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { Row } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { getLocale, t } from '../i18n';
+import { keyHint } from '../keybindings';
 import { ambiguousChoices, permissionOption, permissionTitle, quickChoices } from './permissionOptions';
 
 // Keep common decisions visible; the menu preserves every remaining wire option.
@@ -31,8 +32,9 @@ export function Permission({ block, onChoose, compact }: { block: PermissionBloc
   const menu = more.length > 0 && menuWith(compact ? choice : undefined);
   const card = useRef<HTMLDivElement>(null);
   // The adapter asked for a deny-by-default card: reject is the emphasized button, allow stays plain
-  const rejectHint = reject ? [reject.detail, block.defaultToNo ? '↵ / Esc' : 'Esc'].filter(Boolean).join(' · ') : undefined;
-  const allowHint = allow ? [allow.detail, !block.defaultToNo ? '↵' : undefined].filter(Boolean).join(' · ') || undefined : undefined;
+  const enter = keyHint('Enter');
+  const rejectHint = reject ? [reject.detail, block.defaultToNo ? `${enter} / Esc` : 'Esc'].filter(Boolean).join(' · ') : undefined;
+  const allowHint = allow ? [allow.detail, !block.defaultToNo ? enter : undefined].filter(Boolean).join(' · ') || undefined : undefined;
   const choices = flat
     ? options.map(o => <Button key={o.id} className={choice} title={o.detail} onClick={() => onChoose?.(o.id)}>{o.label}</Button>)
     : <>

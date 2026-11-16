@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { ArrowDown, ArrowUp, Search, X } from 'lucide-react';
-import { hitShortcut } from '../keybindings';
+import { hitShortcut, keyHint } from '../keybindings';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { imeKey } from '../ui/ime';
@@ -214,10 +214,10 @@ export function ChatFind({
         current="now"
         items={[{ key: 'now', text: count }, { key: 'wide', text: '999/999' }, { key: 'none', text: t('terminal.noResults') }]}
       />
-      <IconButton size="sm" title={`${t('terminal.findPrevious')} ⇧↵`} aria-label={t('terminal.findPrevious')} disabled={!state.count} onClick={() => step(true)}>
+      <IconButton size="sm" title={`${t('terminal.findPrevious')} ${keyHint('Shift+Enter')}`} aria-label={t('terminal.findPrevious')} disabled={!state.count} onClick={() => step(true)}>
         <ArrowUp strokeWidth={1.5} />
       </IconButton>
-      <IconButton size="sm" title={`${t('terminal.findNext')} ↵`} aria-label={t('terminal.findNext')} disabled={!state.count} onClick={() => step(false)}>
+      <IconButton size="sm" title={`${t('terminal.findNext')} ${keyHint('Enter')}`} aria-label={t('terminal.findNext')} disabled={!state.count} onClick={() => step(false)}>
         <ArrowDown strokeWidth={1.5} />
       </IconButton>
       <IconButton size="sm" title={`${t('common.close')} Esc`} aria-label={t('common.close')} onClick={close}>

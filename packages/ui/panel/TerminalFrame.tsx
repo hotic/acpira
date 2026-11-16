@@ -10,6 +10,7 @@ import { OptionContent } from '../ui/Panel';
 import { StableText } from '../ui/StableText';
 import { imeKey } from '../ui/ime';
 import { macOS } from '../desktop';
+import { keyHint } from '../keybindings';
 import { mountTerminal, restartTerminal, settleFresh, terminalView, useTerminalInfo, type TerminalTab } from './terminals';
 
 // A terminal tab's frame (picked 2026-10-24): the terminal fills the tab on the panel's own surface, its text set in from
@@ -109,8 +110,8 @@ function FindBar({ id, onClose }: { id: string; onClose: () => void }) {
       {/* As wide as its widest reading, so the buttons never move as the count changes */}
       <StableText className="shrink-0 text-3 text-fg-3 tabular-nums" current="now"
         items={[{ key: 'now', text: count }, { key: 'wide', text: '999/999' }, { key: 'none', text: t('terminal.noResults') }]} />
-      <IconButton size="sm" title={`${t('terminal.findPrevious')} ⇧↵`} aria-label={t('terminal.findPrevious')} disabled={!query} onClick={() => go(true)}><ArrowUp strokeWidth={1.5} /></IconButton>
-      <IconButton size="sm" title={`${t('terminal.findNext')} ↵`} aria-label={t('terminal.findNext')} disabled={!query} onClick={() => go(false)}><ArrowDown strokeWidth={1.5} /></IconButton>
+      <IconButton size="sm" title={`${t('terminal.findPrevious')} ${keyHint('Shift+Enter')}`} aria-label={t('terminal.findPrevious')} disabled={!query} onClick={() => go(true)}><ArrowUp strokeWidth={1.5} /></IconButton>
+      <IconButton size="sm" title={`${t('terminal.findNext')} ${keyHint('Enter')}`} aria-label={t('terminal.findNext')} disabled={!query} onClick={() => go(false)}><ArrowDown strokeWidth={1.5} /></IconButton>
       <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}><X strokeWidth={1.5} /></IconButton>
     </div>
   );

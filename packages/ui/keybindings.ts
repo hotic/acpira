@@ -41,3 +41,6 @@ export function hitShortcut(e: KeyEventLike, id: ShortcutId, mac = macOS): boole
 export function shortcutHint(id: ShortcutId, mac = macOS): string {
   return formatShortcut(effectiveShortcut(id, activeKeybindings), mac);
 }
+
+// A fixed key (not a rebindable shortcut) in the platform's notation: ⇧↵ on macOS, Shift+Enter elsewhere
+export const keyHint = (accel: string, mac = macOS) => formatShortcut(accel, mac);
