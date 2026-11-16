@@ -95,7 +95,10 @@
    inward together from that rest pose and spring back; the new label lands bright before easing to the action colour.
    One shot; Compaction drops the class. */
 .compaction-settle > .row-lead > svg path { animation: acp-compact-snap .55s cubic-bezier(.4, 0, .2, 1) both; }
-.compaction-settle > .row-content > :first-child { animation: acp-compact-label .9s ease-out both; }
+/* The bright label sits on its own layer for the beat, like the shimmer's strong copy before it: a layer's text is
+   antialiased in grey, while in-flow text on Windows gets ClearType, whose colour fringes flare on near-white ink and
+   read as a yellow / red flash as the label fades */
+.compaction-settle > .row-content > :first-child { animation: acp-compact-label .9s ease-out both; will-change: opacity; }
 @keyframes acp-compact-snap {
   0%, 100% { transform: none; }
   40% { transform: translate(calc(var(--compact-x) * -.5), calc(var(--compact-y) * -.5)); }
