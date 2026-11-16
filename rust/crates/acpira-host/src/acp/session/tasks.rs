@@ -65,8 +65,8 @@ impl AcpSession {
   /// processes under the agent's (`platform::process_tree`): under the session's own agent, or under a summoned
   /// child's own process when `subagent` names its node. An error when nothing running that command was found
   pub async fn stop_command(self: &Arc<Self>, tool_call_id: &str, subagent: Option<&str>) -> Result<()> {
-    // Only SSH local-run Claude holds engine-side remote calls, and never for a summoned child's own process
-    if self.claude_stand().is_some()
+    // Only SSH local-run stand-in sessions hold engine-side remote calls, and never for a summoned child's own process
+    if self.remote_stand().is_some()
       && !subagent.is_some_and(|id| self.core.lock().tree.relay_thread_of(id).is_some())
       && self.stop_remote_call(tool_call_id)
     {

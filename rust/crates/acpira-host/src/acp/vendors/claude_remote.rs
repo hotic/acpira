@@ -1,18 +1,57 @@
-//! Claude Code in a folder on an SSH host under local run (docs/dev/remote.md, "Claude Code"). The CLI runs here, on
-//! this machine's login, in a stand-in folder under the data root. Its own file and shell tools are switched off with
-//! `disallowedTools`, which also stops the harness's direct calls (a command's inline shell), and the model gets
-//! Acpira's instead (`host_tools::REMOTE`, served by `acpira mcp` as `mcp__acpira__Read` …). Those run on the host
-//! through its helper, with the built-in agent's tool code. `toolAliases` sends a native name the model still writes
-//! (a skill's text says `Bash`) to the same tools. A path under the stand-in means the host folder; Claude's own files
-//! on this machine (plans, memory and saved outputs under its config folder, its temp folder) stay here. Rows and
-//! permission cards show the calls as the native tools (`view`)
+//! Claude Code and Antigravity in a folder on an SSH host under local run (docs/dev/remote.md). The CLI runs here, on
+//! this machine's login, in a stand-in folder under the data root, and the model gets Acpira's project tools
+//! (`host_tools::REMOTE`, served by `acpira mcp`), which run on the host through its helper with the built-in agent's
+//! tool code. Claude switches its native tools off via `_meta.claudeCode.options.disallowedTools` and aliases them onto
+//! `mcp__acpira__<Name>`; Antigravity denies its built-in workspace and shell tools via `<stand>/.agents/hooks.json`
+//! `PreToolUse` (except its own `~/.gemini` files) and calls `mcp_acpira_<Name>`. A path under the stand-in means the
+//! host folder; the CLI's own files on this machine stay here. Rows and permission cards show the calls as native tools
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-/// How the adapter names a tool of Acpira's server
+/// How claude-agent-acp names a tool of Acpira's server
 pub const PREFIX: &str = "mcp__acpira__";
+/// How Antigravity (`agy acp`) names a tool of Acpira's server
+pub const ANTIGRAVITY_PREFIX: &str = "mcp_acpira_";
+
+/// Which external CLI is running in a local stand-in for an SSH host folder
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dialect {
+  Claude,
+  Antigravity,
+}
+
+impl Dialect {
+  pub fn label(self) -> &'static str {
+    match self {
+      Dialect::Claude => "Claude Code",
+      Dialect::Antigravity => "Antigravity",
+    }
+  }
+
+  pub fn prefix(self) -> &'static str {
+    match self {
+      Dialect::Claude => PREFIX,
+      Dialect::Antigravity => ANTIGRAVITY_PREFIX,
+    }
+  }
+
+  pub fn instruction_files(self) -> &'static [&'static str] {
+    match self {
+      Dialect::Claude => &["CLAUDE.md", "AGENTS.md"],
+      Dialect::Antigravity => &["GEMINI.md", "AGENTS.md"],
+    }
+  }
+
+  fn dir_name(self) -> &'static str {
+    match self {
+      // Kept empty (`docs/dev/remote.md`)
+      Dialect::Claude => "hosts",
+      Dialect::Antigravity => "antigravity",
+    }
+  }
+}
 
 /// Claude Code's tools that touch this machine's files or shell (CLI 2.1.300: the deferred Monitor runs a command, the
 /// worktree tools a git checkout of the folder). Names an older CLI lacks are ignored by it
@@ -35,41 +74,80 @@ pub const DISALLOWED: &[&str] = &[
   "ExitWorktree",
 ];
 
+/// Antigravity's built-in shell, search and directory tools that must never run on this machine for an SSH folder
+const AGY_SHELL_SEARCH_TOOLS: &[&str] = &[
+  "run_command",
+  "command_status",
+  "send_command_input",
+  "grep_search",
+  "find",
+  "find_by_name",
+  "list_dir",
+  "list_directory",
+  "delete_directory",
+  "move",
+];
+
+/// Antigravity's built-in file tools: blocked except on its own `~/.gemini` skills, artifacts and scratch files
+const AGY_FILE_TOOLS: &[&str] = &[
+  "read_file",
+  "view_file",
+  "view_file_outline",
+  "view_code_item",
+  "write_file",
+  "write_to_file",
+  "edit_file",
+  "replace_file_content",
+  "multi_replace_file_content",
+  "code_action",
+];
+
 /// The remote tools allowed without a permission request, as the native read-only ones are
-const READ_ONLY: &[&str] = &["Read", "Grep", "Glob"];
+pub const READ_ONLY: &[&str] = &["Read", "Grep", "Glob"];
 
 /// A session folder on an SSH host and its stand-in folder here
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stand {
+  pub dialect: Dialect,
   pub alias: String,
   /// The folder on the host, absolute
   pub host: String,
-  /// Where the CLI runs here: `<data root>/remote/hosts/<alias>/<host path>`. Empty but for what the CLI keeps itself
+  /// Where the CLI runs here: `<data root>/remote/<hosts|antigravity>/<alias>/<host path>`
   pub local: PathBuf,
 }
 
 impl Stand {
   pub fn new(alias: &str, host: &str, data_root: &Path) -> Stand {
+    Self::for_dialect(Dialect::Claude, alias, host, data_root)
+  }
+
+  pub fn for_dialect(dialect: Dialect, alias: &str, host: &str, data_root: &Path) -> Stand {
     let host = if host.len() > 1 { host.trim_end_matches('/') } else { host };
-    let mut local = data_root.join("remote").join("hosts").join(alias);
+    let mut local = data_root.join("remote").join(dialect.dir_name()).join(alias);
     let rel = host.trim_start_matches('/');
     if !rel.is_empty() {
       local.push(rel);
     }
-    Stand { alias: alias.to_owned(), host: host.to_owned(), local }
+    Stand { dialect, alias: alias.to_owned(), host: host.to_owned(), local }
   }
 
   /// Makes the stand-in. A folder on the way that its owner cannot enter or write (a stray `chmod` on `<data root>/remote`
   /// left every session there failing with `spawn EACCES`) is opened to its owner and the stand-in made again:
-  /// everything from `<data root>/remote` down is the engine's own
+  /// everything from `<data root>/remote` down is the engine's own. Antigravity's stand-in also carries `.agents/hooks.json`
+  /// so `agy acp` denies built-in local workspace and shell tools before running them
   pub fn make(&self, data_root: &Path) -> std::io::Result<()> {
     match std::fs::create_dir_all(&self.local) {
       Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
         self.open_to_owner(data_root);
-        std::fs::create_dir_all(&self.local)
+        std::fs::create_dir_all(&self.local)?;
       }
-      made => made,
+      Err(e) => return Err(e),
+      Ok(()) => {}
     }
+    if self.dialect == Dialect::Antigravity {
+      write_antigravity_hooks(&self.local)?;
+    }
+    Ok(())
   }
 
   /// Top down, so a folder closed inside a closed one is reached once its parent is open
@@ -107,19 +185,68 @@ impl Stand {
   }
 
   /// Whether `p` names the stand-in or something in it
-  fn in_stand(&self, p: &str) -> bool {
+  pub fn in_stand(&self, p: &str) -> bool {
     Path::new(p).starts_with(&self.local)
   }
 }
 
-/// The folders of this machine whose files Claude's tools reach for and must find here: its config folder (plans,
-/// memory, saved tool outputs) and Acpira's data root. Its temp folder (`/tmp/claude-<uid>`) is matched by name
-pub fn here_roots(home: &Path, data_root: &Path) -> Vec<PathBuf> {
-  let mut out = vec![home.join(".claude"), data_root.to_path_buf()];
-  if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
-    out.push(PathBuf::from(dir));
+/// Resolves a path from any stand-in of `(alias, host)` (Claude or Antigravity) or relative to `host`, for `openFile`
+/// and `stageFile` where only the session's folder is known
+pub fn resolve_host_path(alias: &str, host: &str, data_root: &Path, p: &str) -> String {
+  for dialect in [Dialect::Claude, Dialect::Antigravity] {
+    let stand = Stand::for_dialect(dialect, alias, host, data_root);
+    if stand.in_stand(p) {
+      return stand.host_path(p);
+    }
   }
-  out
+  Stand::new(alias, host, data_root).host_path(p)
+}
+
+fn write_antigravity_hooks(local: &Path) -> std::io::Result<()> {
+  let dir = local.join(".agents");
+  std::fs::create_dir_all(&dir)?;
+  let file = dir.join("hooks.json");
+  let shell_matcher = AGY_SHELL_SEARCH_TOOLS.join("|");
+  let file_matcher = AGY_FILE_TOOLS.join("|");
+  #[cfg(unix)]
+  let (shell_cmd, file_cmd) = (
+    r#"printf '%s\n' '{"decision":"deny","reason":"This workspace is on the remote SSH host. Use mcp_acpira_Bash, mcp_acpira_Grep, or mcp_acpira_Glob instead."}'"#,
+    r#"in=$(cat); case "$in" in */.gemini/*|*\\.gemini\\*) exit 0 ;; esac; printf '%s\n' '{"decision":"deny","reason":"This workspace is on the remote SSH host. Use mcp_acpira_Read, mcp_acpira_Write, or mcp_acpira_Edit instead."}'"#,
+  );
+  #[cfg(not(unix))]
+  let (shell_cmd, file_cmd) = (
+    r#"powershell -NoProfile -Command "[Console]::Out.WriteLine('{\"decision\":\"deny\",\"reason\":\"This workspace is on the remote SSH host. Use mcp_acpira_Bash, mcp_acpira_Grep, or mcp_acpira_Glob instead.\"}')""#,
+    r#"powershell -NoProfile -Command "$s=[Console]::In.ReadToEnd(); if ($s -match '[\\/]\.gemini[\\/]') { exit 0 }; [Console]::Out.WriteLine('{\"decision\":\"deny\",\"reason\":\"This workspace is on the remote SSH host. Use mcp_acpira_Read, mcp_acpira_Write, or mcp_acpira_Edit instead.\"}')""#,
+  );
+  let doc = json!({
+    "hooks": {
+      "PreToolUse": [
+        { "matcher": shell_matcher, "hooks": [{ "type": "command", "command": shell_cmd }] },
+        { "matcher": file_matcher, "hooks": [{ "type": "command", "command": file_cmd }] },
+      ]
+    }
+  });
+  let bytes = serde_json::to_vec_pretty(&doc).unwrap_or_default();
+  if std::fs::read(&file).ok().as_deref() == Some(bytes.as_slice()) {
+    return Ok(());
+  }
+  std::fs::write(&file, bytes)
+}
+
+/// The folders of this machine whose files the CLI's tools reach for and must find here: its config folder (plans,
+/// memory, artifacts, saved tool outputs) and Acpira's data root. Claude's temp folder (`/tmp/claude-<uid>`) is matched
+/// by name
+pub fn here_roots(dialect: Dialect, home: &Path, data_root: &Path) -> Vec<PathBuf> {
+  match dialect {
+    Dialect::Claude => {
+      let mut out = vec![home.join(".claude"), data_root.to_path_buf()];
+      if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        out.push(PathBuf::from(dir));
+      }
+      out
+    }
+    Dialect::Antigravity => vec![home.join(".gemini"), data_root.to_path_buf()],
+  }
 }
 
 fn claude_temp(p: &str) -> bool {
@@ -136,14 +263,71 @@ fn path_arg<'a>(name: &str, args: &'a Value) -> Option<&'a str> {
   }
 }
 
-/// Whether a call runs on this machine: a file tool whose path is one of Claude's own files here (`here_roots`, its
-/// temp folder). Commands always run on the host
-pub fn runs_here(name: &str, args: &Value, stand: &Stand, roots: &[PathBuf]) -> bool {
-  let Some(p) = path_arg(name, args).filter(|p| p.starts_with('/')) else { return false };
-  if stand.in_stand(p) {
+/// Whether a call runs on this machine: a file tool whose path is one of the CLI's own files here (`here_roots`, or
+/// Claude's temp folder). Anything under `<data_root>/remote` is stand-in space, never a local file; commands always
+/// run on the host
+pub fn runs_here(name: &str, args: &Value, stand: &Stand, data_root: &Path, roots: &[PathBuf]) -> bool {
+  let Some(p) = path_arg(name, args).filter(|p| p.starts_with('/') || Path::new(p).is_absolute()) else { return false };
+  if stand.in_stand(p) || Path::new(p).starts_with(data_root.join("remote")) {
     return false;
   }
-  claude_temp(p) || roots.iter().any(|r| Path::new(p).starts_with(r))
+  (stand.dialect == Dialect::Claude && claude_temp(p)) || roots.iter().any(|r| Path::new(p).starts_with(r))
+}
+
+/// Whether a local write (`runs_here`) targets the CLI's own plan / artifact folder, which its native tools write
+/// without showing a permission card
+pub fn is_agent_own_write(dialect: Dialect, path: &str, home: &Path, roots: &[PathBuf]) -> bool {
+  let p = Path::new(path);
+  match dialect {
+    // Claude's config folders are the roots except `data_root` at index 1 (`here_roots`)
+    Dialect::Claude => roots.iter().enumerate().filter(|(i, _)| *i != 1).any(|(_, r)| p.starts_with(r.join("plans"))),
+    Dialect::Antigravity => {
+      let gemini = home.join(".gemini");
+      p.starts_with(gemini.join("antigravity-cli").join("brain")) || p.starts_with(gemini.join("antigravity").join("brain"))
+    }
+  }
+}
+
+/// Defense in depth alongside `.agents/hooks.json`: if Antigravity sends `session/request_permission` for one of its
+/// built-in local workspace or shell tools outside `~/.gemini`, deny it even under synthesized yolo
+pub fn is_blocked_local_tool(stand: &Stand, tc: &Value, home: &Path, data_root: &Path) -> bool {
+  if stand.dialect != Dialect::Antigravity || remote_name(tc).is_some() {
+    return false;
+  }
+  let raw_name = tc
+    .get("name")
+    .and_then(Value::as_str)
+    .or_else(|| tc.get("title").and_then(Value::as_str))
+    .map(|s| s.strip_prefix("Run ").unwrap_or(s))
+    .unwrap_or("");
+  if raw_name.starts_with("mcp_") {
+    return false;
+  }
+  if AGY_SHELL_SEARCH_TOOLS.contains(&raw_name) {
+    return true;
+  }
+  if !AGY_FILE_TOOLS.contains(&raw_name) {
+    return false;
+  }
+  let input = tc.get("rawInput").or_else(|| tc.get("args"));
+  let path = ["Path", "TargetFile", "DirectoryPath", "SearchPath", "path", "file_path"]
+    .iter()
+    .find_map(|k| input.and_then(|v| v.get(*k)).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()));
+  let Some(p) = path else { return true };
+  if stand.in_stand(p) || Path::new(p).starts_with(data_root.join("remote")) {
+    return true;
+  }
+  !Path::new(p).starts_with(home.join(".gemini"))
+}
+
+/// Strips extra metadata fields (`toolSummary`) that `agy acp` injects into ACP `args` / `rawInput` before sending the
+/// tool's real arguments over MCP
+pub fn clean_input(input: &Value) -> Value {
+  let mut out = input.clone();
+  if let Some(o) = out.as_object_mut() {
+    o.remove("toolSummary");
+  }
+  out
 }
 
 /// The built-in agent's tool and arguments (`acpira_agent::tools`) for a call of a remote tool. `here`: the call runs on
@@ -320,25 +504,37 @@ pub fn tool_defs(alias: &str) -> Vec<Value> {
   ]
 }
 
-/// The session request of a Claude Code session in a folder on an SSH host: the stand-in as its cwd, the native tools
-/// switched off and aliased to the remote ones, and a system prompt section that says where the project is, with the
-/// host's instructions file (`instructions`: path and text) since the CLI cannot find it from here
+/// The session request of a Claude Code or Antigravity session in a folder on an SSH host: the stand-in as its cwd,
+/// Claude's native tools switched off and aliased to the remote ones, and a system prompt section that says where the
+/// project is, with the host's instructions file (`instructions`: path and text) since the CLI cannot find it from here
 pub fn with_stand(mut req: Value, stand: &Stand, places: Option<&Value>, instructions: &[(String, String)]) -> Value {
   req["cwd"] = json!(stand.local);
   if let Some(meta) = req.get_mut("_meta").and_then(Value::as_object_mut) {
     meta.remove(crate::acp::session::remote::META);
   }
-  let options = &mut req["_meta"]["claudeCode"]["options"];
-  let mut disallowed: Vec<Value> = options.get("disallowedTools").and_then(Value::as_array).cloned().unwrap_or_default();
-  disallowed.extend(DISALLOWED.iter().map(|t| json!(t)));
-  options["disallowedTools"] = json!(disallowed);
-  let aliases: Map<String, Value> = acpira_shared::host_tools::REMOTE.iter().map(|t| ((*t).to_owned(), json!(format!("{PREFIX}{t}")))).collect();
-  options["toolAliases"] = Value::Object(aliases);
-  let mut allowed: Vec<Value> = options.get("allowedTools").and_then(Value::as_array).cloned().unwrap_or_default();
-  allowed.extend(READ_ONLY.iter().map(|t| json!(format!("{PREFIX}{t}"))));
-  options["allowedTools"] = json!(allowed);
   let text = system_note(stand, places, instructions);
-  req["systemPrompt"] = json!({ "mode": "append", "content": [{ "type": "text", "text": text }] });
+  match stand.dialect {
+    Dialect::Claude => {
+      let options = &mut req["_meta"]["claudeCode"]["options"];
+      let mut disallowed: Vec<Value> = options.get("disallowedTools").and_then(Value::as_array).cloned().unwrap_or_default();
+      disallowed.extend(DISALLOWED.iter().map(|t| json!(t)));
+      options["disallowedTools"] = json!(disallowed);
+      let aliases: Map<String, Value> = acpira_shared::host_tools::REMOTE.iter().map(|t| ((*t).to_owned(), json!(format!("{PREFIX}{t}")))).collect();
+      options["toolAliases"] = Value::Object(aliases);
+      let mut allowed: Vec<Value> = options.get("allowedTools").and_then(Value::as_array).cloned().unwrap_or_default();
+      allowed.extend(READ_ONLY.iter().map(|t| json!(format!("{PREFIX}{t}"))));
+      options["allowedTools"] = json!(allowed);
+      req["systemPrompt"] = json!({ "mode": "append", "content": [{ "type": "text", "text": text }] });
+    }
+    Dialect::Antigravity => {
+      let sp = &mut req["_meta"]["antigravity"]["systemPrompt"];
+      let next = match sp.get("append").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        Some(prev) => format!("{prev}\n\n{text}"),
+        None => text,
+      };
+      sp["append"] = json!(next);
+    }
+  }
   req
 }
 
@@ -348,12 +544,23 @@ fn system_note(stand: &Stand, places: Option<&Value>, instructions: &[(String, S
     (Some(os), Some(arch), Some(shell)) => format!(" ({os} {arch}, shell {shell})"),
     _ => String::new(),
   };
+  let prefix = stand.dialect.prefix();
+  let own = match stand.dialect {
+    Dialect::Claude => {
+      "Your own files on this machine (plans, memory, saved outputs) stay here, and the same tools reach them."
+    }
+    Dialect::Antigravity => {
+      "Built-in local file, search and command tools (read_file, write_file, edit_file, grep_search, find_by_name, \
+       list_dir, run_command) target this machine and are blocked for project files; always call the mcp_acpira_* \
+       tools above instead. Your own artifacts, scratch files and skills under ~/.gemini stay on this machine."
+    }
+  };
   let mut out = format!(
     "# Remote project\n\nThis session's project is on the SSH host {alias}{platform}, in {host}. Your working directory {local} is an \
      empty stand-in on this machine for that folder: it holds none of the project's files, and it is not a git repository even when \
-     the project is one. The project tools {PREFIX}Read, Write, Edit, Bash, Grep and Glob run on {alias}: a relative path resolves \
-     against {host}, a path under the stand-in means the same file there, and commands (git, builds, tests) run there. Write \
-     paths as {host}/… Your own files on this machine (plans, memory, saved outputs) stay here, and the same tools reach them.",
+     the project is one. The project tools {prefix}Read, {prefix}Write, {prefix}Edit, {prefix}Bash, {prefix}Grep and {prefix}Glob run \
+     on {alias}: a relative path resolves against {host}, a path under the stand-in means the same file there, and commands (git, \
+     builds, tests) run there. Write paths as {host}/… {own}",
     alias = stand.alias,
     host = stand.host,
     local = stand.local.display(),
@@ -365,10 +572,12 @@ fn system_note(stand: &Stand, places: Option<&Value>, instructions: &[(String, S
 }
 
 /// The native name of a remote tool the update (or a permission request's toolCall) names: the adapter's
-/// `_meta.claudeCode.toolName`, its top-level `name`, else its title, which the generic reporter sets to the tool's name
+/// `_meta.claudeCode.toolName`, its top-level `name`, else its title (`mcp__acpira__<Tool>`, `mcp_acpira_<Tool>`, or
+/// Antigravity's `Run mcp_acpira_<Tool>`)
 pub fn remote_name(u: &Value) -> Option<&'static str> {
   let named = |s: Option<&str>| {
-    let n = s?.strip_prefix(PREFIX)?;
+    let s = s?.strip_prefix("Run ").unwrap_or(s?);
+    let n = s.strip_prefix(PREFIX).or_else(|| s.strip_prefix(ANTIGRAVITY_PREFIX))?;
     acpira_shared::host_tools::REMOTE.iter().find(|t| **t == n).copied()
   };
   ["/_meta/claudeCode/toolName", "/name", "/title"].iter().find_map(|at| named(u.pointer(at).and_then(Value::as_str)))
@@ -384,9 +593,9 @@ pub struct NativeView {
   pub input: Value,
 }
 
-pub fn view(name: &str, input: &Value, stand: &Stand, roots: &[PathBuf]) -> NativeView {
-  let here = runs_here(name, input, stand, roots);
-  let mut input = input.clone();
+pub fn view(name: &str, input: &Value, stand: &Stand, data_root: &Path, roots: &[PathBuf]) -> NativeView {
+  let mut input = clean_input(input);
+  let here = runs_here(name, &input, stand, data_root, roots);
   let path = path_arg(name, &input).map(|p| if here { p.to_owned() } else { stand.host_path(p) });
   if let (Some(p), Some(o)) = (&path, input.as_object_mut()) {
     let key = if o.contains_key("file_path") { "file_path" } else { "path" };
@@ -423,6 +632,10 @@ mod tests {
     Stand::new("gen1", "/home/u/proj/", Path::new("/Users/me/.acpira"))
   }
 
+  fn agy_stand() -> Stand {
+    Stand::for_dialect(Dialect::Antigravity, "gen1", "/home/u/proj/", Path::new("/Users/me/.acpira"))
+  }
+
   #[cfg(unix)]
   #[test]
   fn a_closed_folder_on_the_way_is_opened_for_the_stand_in() {
@@ -434,11 +647,25 @@ mod tests {
     let s = Stand::new("gen1", "/mnt/proj", root.path());
     s.make(root.path()).unwrap();
     assert!(s.local.is_dir());
+    assert!(!s.local.join(".agents").exists());
     assert_eq!(std::fs::metadata(&remote).unwrap().permissions().mode() & 0o777, 0o700);
   }
 
   #[test]
+  fn antigravity_stand_in_writes_pre_tool_use_hooks_keeping_claude_empty() {
+    let root = tempfile::tempdir().unwrap();
+    let s = Stand::for_dialect(Dialect::Antigravity, "gen1", "/mnt/proj", root.path());
+    s.make(root.path()).unwrap();
+    let hooks: Value = serde_json::from_slice(&std::fs::read(s.local.join(".agents/hooks.json")).unwrap()).unwrap();
+    let rules = hooks["hooks"]["PreToolUse"].as_array().unwrap();
+    assert_eq!(rules.len(), 2);
+    assert!(rules[0]["matcher"].as_str().unwrap().contains("run_command"));
+    assert!(rules[1]["matcher"].as_str().unwrap().contains("read_file"));
+  }
+
+  #[test]
   fn the_stand_in_maps_to_the_host_folder() {
+    let data = Path::new("/Users/me/.acpira");
     let s = stand();
     assert_eq!(s.local, PathBuf::from("/Users/me/.acpira/remote/hosts/gen1/home/u/proj"));
     assert_eq!(s.host_path("/Users/me/.acpira/remote/hosts/gen1/home/u/proj"), "/home/u/proj");
@@ -449,19 +676,31 @@ mod tests {
     assert_eq!(s.host_path("./a.rs"), "/home/u/proj/a.rs");
     assert_eq!(s.host_path("/etc/hosts"), "/etc/hosts");
     assert_eq!(Stand::new("h", "/", Path::new("/d")).host_path("/d/remote/hosts/h/x"), "/x");
+    assert_eq!(resolve_host_path("gen1", "/home/u/proj", data, "/Users/me/.acpira/remote/antigravity/gen1/home/u/proj/src/lib.rs"), "/home/u/proj/src/lib.rs");
   }
 
   #[test]
-  fn claudes_own_files_stay_here_and_the_rest_goes_to_the_host() {
+  fn clis_own_files_stay_here_and_the_rest_goes_to_the_host() {
+    let data = Path::new("/Users/me/.acpira");
+    let home = Path::new("/Users/me");
     let s = stand();
-    let roots = here_roots(Path::new("/Users/me"), Path::new("/Users/me/.acpira"));
-    let here = |name: &str, args: Value| runs_here(name, &args, &s, &roots);
+    let roots = here_roots(Dialect::Claude, home, data);
+    let here = |name: &str, args: Value| runs_here(name, &args, &s, data, &roots);
     assert!(here("Write", json!({ "file_path": "/Users/me/.claude/plans/p.md", "content": "x" })));
     assert!(here("Read", json!({ "file_path": "/private/tmp/claude-501/out.txt" })));
     assert!(!here("Read", json!({ "file_path": "/Users/me/.acpira/remote/hosts/gen1/home/u/proj/a.rs" })));
     assert!(!here("Read", json!({ "file_path": "src/a.rs" })));
     assert!(!here("Bash", json!({ "command": "cat /Users/me/.claude/x" })));
     assert!(!here("Grep", json!({ "pattern": "x" })));
+
+    let agy = agy_stand();
+    let agy_roots = here_roots(Dialect::Antigravity, home, data);
+    assert!(runs_here("Write", &json!({ "file_path": "/Users/me/.gemini/antigravity-cli/brain/id/plan.md", "content": "x" }), &agy, data, &agy_roots));
+    assert!(is_agent_own_write(Dialect::Antigravity, "/Users/me/.gemini/antigravity-cli/brain/id/plan.md", home, &agy_roots));
+    assert!(!runs_here("Read", &json!({ "file_path": "/Users/me/.acpira/remote/antigravity/gen1/home/u/proj/a.rs" }), &agy, data, &agy_roots));
+    assert!(is_blocked_local_tool(&agy, &json!({ "name": "run_command", "rawInput": { "CommandLine": "ls" } }), home, data));
+    assert!(is_blocked_local_tool(&agy, &json!({ "name": "read_file", "rawInput": { "Path": "/etc/hosts" } }), home, data));
+    assert!(!is_blocked_local_tool(&agy, &json!({ "name": "read_file", "rawInput": { "Path": "/Users/me/.gemini/skills/a/SKILL.md" } }), home, data));
   }
 
   #[test]
@@ -497,23 +736,37 @@ mod tests {
     assert_eq!(out["systemPrompt"]["mode"], "append");
     assert!(text.contains("SSH host gen1 (linux x86_64, shell /bin/bash), in /home/u/proj"));
     assert!(text.contains("Use pnpm."));
+
+    let agy = agy_stand();
+    let agy_req = json!({ "cwd": "/home/u/proj", "_meta": { "acpira/remote": { "alias": "gen1" } } });
+    let agy_out = with_stand(agy_req, &agy, Some(&places), &[("/home/u/proj/GEMINI.md".into(), "Use cargo.".into())]);
+    assert_eq!(agy_out["cwd"], json!(agy.local));
+    assert!(agy_out["_meta"].get("acpira/remote").is_none());
+    let agy_text = agy_out["_meta"]["antigravity"]["systemPrompt"]["append"].as_str().unwrap();
+    assert!(agy_text.contains("mcp_acpira_Read"));
+    assert!(agy_text.contains("Use cargo."));
   }
 
   #[test]
   fn rows_read_as_the_native_tools() {
+    let data = Path::new("/Users/me/.acpira");
     let s = stand();
     let u = json!({ "sessionUpdate": "tool_call", "title": "mcp__acpira__Edit", "_meta": { "claudeCode": { "toolName": "mcp__acpira__Edit" } } });
     assert_eq!(remote_name(&u), Some("Edit"));
+    assert_eq!(remote_name(&json!({ "name": "mcp_acpira_Read", "title": "Run mcp_acpira_Read" })), Some("Read"));
+    assert_eq!(remote_name(&json!({ "title": "Run mcp_acpira_Bash" })), Some("Bash"));
     assert_eq!(remote_name(&json!({ "title": "mcp__acpira__show_image" })), None);
+    assert_eq!(remote_name(&json!({ "name": "mcp_acpira_show_image", "title": "Run mcp_acpira_show_image" })), None);
     assert_eq!(remote_name(&json!({ "title": "Edit" })), None);
-    let v = view("Edit", &json!({ "file_path": "src/a.rs", "old_string": "a", "new_string": "b" }), &s, &[]);
+    let v = view("Edit", &json!({ "file_path": "src/a.rs", "old_string": "a", "new_string": "b", "toolSummary": "Edit a.rs" }), &s, data, &[]);
     assert_eq!((v.kind, v.title.as_str()), ("edit", "Edit src/a.rs"));
     assert_eq!(v.locations, vec![json!({ "path": "/home/u/proj/src/a.rs" })]);
     assert_eq!(v.diff.unwrap()["oldText"], "a");
     assert_eq!(v.input["file_path"], "/home/u/proj/src/a.rs");
-    let v = view("Bash", &json!({ "command": "cargo test" }), &s, &[]);
+    assert!(v.input.get("toolSummary").is_none());
+    let v = view("Bash", &json!({ "command": "cargo test" }), &s, data, &[]);
     assert_eq!((v.kind, v.title.as_str(), v.diff), ("execute", "cargo test", None));
-    let v = view("Read", &json!({ "file_path": "/Users/me/.acpira/remote/hosts/gen1/home/u/proj/README.md", "offset": 5 }), &s, &[]);
+    let v = view("Read", &json!({ "file_path": "/Users/me/.acpira/remote/hosts/gen1/home/u/proj/README.md", "offset": 5 }), &s, data, &[]);
     assert_eq!(v.locations, vec![json!({ "path": "/home/u/proj/README.md", "line": 5 })]);
   }
 }

@@ -866,6 +866,60 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });
       return { stopReason: 'end_turn' };
     }
+    // "agy-remote-call:<tool> <json>" → `agy acp` 1.5.9 calling a project tool of Acpira's MCP server on an SSH host
+    // (`Dialect::Antigravity` in vendors/claude_remote.rs): `Run mcp_acpira_<tool>`, injected `toolSummary` in rawInput/args,
+    // permission requested on every MCP tool (including Read/Grep/Glob), no `claudecode/toolUseId` in `_meta`, and no
+    // `content` echoed on `tool_call_update` completion.
+    if (text.startsWith('agy-remote-call:')) {
+      const [tool = '', ...rest] = text.split('\n')[0]!.slice('agy-remote-call:'.length).trim().split(' ');
+      const args = JSON.parse(rest.join(' ') || '{}') as Record<string, unknown>;
+      const argsWithSummary = { toolSummary: `Remote ${tool}`, ...args };
+      const server = mcpBySession.get(sid)?.find(m => m.name === 'acpira' && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
+      const toolCallId = `agy_${randomUUID().replace(/-/g, '')}`;
+      const title = `Run mcp_acpira_${tool}`;
+      const call = { toolCallId, title, kind: 'other', status: 'pending', rawInput: argsWithSummary, args: argsWithSummary } as unknown as acp.ToolCall;
+      await send({ sessionUpdate: 'tool_call', ...call });
+      const perm = await client.request(acp.methods.client.session.requestPermission, {
+        sessionId: sid,
+        toolCall: { toolCallId, title, kind: 'other', rawInput: argsWithSummary },
+        options: [
+          { optionId: 'proceed_once', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'proceed_always', name: 'Always Allow', kind: 'allow_always' },
+          { optionId: 'cancel', name: 'Deny', kind: 'reject_once' },
+        ],
+      } as acp.RequestPermissionRequest);
+      if (perm.outcome.outcome !== 'selected' || perm.outcome.optionId === 'cancel') {
+        await send({ sessionUpdate: 'tool_call_update', toolCallId, status: 'failed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify({ rejected: true }) } });
+        return { stopReason: 'end_turn' };
+      }
+      const reply = server ? await callMcp(server, tool, argsWithSummary).catch((e: unknown) => ({ error: String(e) })) : { error: 'no acpira MCP server' };
+      const result = (reply as { result?: { isError?: boolean } }).result;
+      await send({ sessionUpdate: 'tool_call_update', toolCallId, status: result?.isError ? 'failed' : 'completed' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });
+      return { stopReason: 'end_turn' };
+    }
+    // "agy-local-tool:<tool> <path>" → `agy acp` attempting one of its built-in local workspace tools (`read_file`, etc.)
+    // so tests can check `RemotePerm::BlockedLocalTool` vs `RemotePerm::AgentOwnFile` under `~/.gemini`.
+    if (text.startsWith('agy-local-tool:')) {
+      const [tool = '', ...rest] = text.split('\n')[0]!.slice('agy-local-tool:'.length).trim().split(' ');
+      const path = rest.join(' ').trim();
+      const toolCallId = `agyloc_${randomUUID().replace(/-/g, '')}`;
+      const rawInput = { Path: path };
+      await send({ sessionUpdate: 'tool_call', toolCallId, name: tool, title: `${tool} ${path}`, kind: 'read', status: 'pending', locations: [{ path }], rawInput } as unknown as acp.SessionUpdate);
+      const perm = await client.request(acp.methods.client.session.requestPermission, {
+        sessionId: sid,
+        toolCall: { toolCallId, name: tool, title: `${tool} ${path}`, kind: 'read', locations: [{ path }], rawInput } as unknown as acp.ToolCallUpdate,
+        options: [
+          { optionId: 'proceed_once', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'cancel', name: 'Deny', kind: 'reject_once' },
+        ],
+      } as acp.RequestPermissionRequest);
+      const rejected = perm.outcome.outcome !== 'selected' || perm.outcome.optionId === 'cancel';
+      await send({ sessionUpdate: 'tool_call_update', toolCallId, status: rejected ? 'failed' : 'completed' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify({ rejected }) } });
+      return { stopReason: 'end_turn' };
+    }
     // "say:<text>" → exactly that text as the reply ("||" splits it into chunks): antigravity-acp reports a failed turn this way
     if (text.startsWith('say:')) {
       for (const part of text.slice(4).split('||')) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: part } });

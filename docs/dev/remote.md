@@ -35,23 +35,24 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 
 ## Built-in agent
 
-Only the built-in agent and Claude Code can run here in an `ssh://` folder (`SSH_LOCAL_AGENTS`); others get `host.remoteBuiltinOnly`. Engine side `acp/session/remote.rs`, agent side `acpira_agent::remote`.
+Only the built-in agent, Claude Code and Antigravity can run here in an `ssh://` folder (`SSH_LOCAL_AGENTS`); others get `host.remoteBuiltinOnly`. Engine side `acp/session/remote.rs`, agent side `acpira_agent::remote`.
 
 - Session requests carry the host path as `cwd` and `_meta["acpira/remote"] = { alias, places }`; prompt files, commands and skills come only from `places`, never this disk.
 - File and command tools go to the host as `_acpira/remoteTool` and run in the helper with the same `acpira_agent::tools` code. Paths under the local data root (session outputs, plan, staged attachments) stay local.
 - Under full access no card shows, so the engine asks `beforeEdit` before every remote write (`remote_write_gate`); an unreachable host denies the edit. A call whose channel drops returns "outcome unknown"; nothing is replayed.
 
-## Claude Code
+## Claude Code and Antigravity
 
-Its file and shell tools live in its own process, so under local run it runs here with them swapped for Acpira's (`acp/vendors/claude_remote.rs`, `acp/session/remote_claude.rs`). Other CLIs offer no such seam.
+Their file and shell tools live in their own processes, so under local run they run here with those tools swapped for Acpira's (`acp/vendors/claude_remote.rs`, `acp/session/remote_claude.rs`, `Dialect::{Claude, Antigravity}`). Other CLIs offer no such seam.
 
-- The CLI (warm pool included) starts in an empty stand-in folder, `<data root>/remote/hosts/<alias>/<host path>`, never the `ssh://` folder; the host path and host CLAUDE.md / AGENTS.md go in `systemPrompt` append.
-- `_meta.claudeCode.options`: native tools touching this machine go in `disallowedTools`; `toolAliases` maps native names onto `mcp__acpira__<Name>`; read-only ones go in `allowedTools`, skipping `canUseTool`.
+- The CLI (warm pool included) starts in a stand-in folder (`<data root>/remote/hosts/<alias>/<host path>` for Claude Code, `<data root>/remote/antigravity/<alias>/<host path>` for Antigravity), never the `ssh://` folder; the host path and host instructions (`CLAUDE.md` / `AGENTS.md` or `GEMINI.md` / `AGENTS.md`) go in `systemPrompt` append.
+- Claude Code (`_meta.claudeCode.options`): native tools touching this machine go in `disallowedTools`; `toolAliases` maps native names onto `mcp__acpira__<Name>`; read-only ones go in `allowedTools`, skipping `canUseTool`.
+- Antigravity (`_meta.antigravity.systemPrompt.append`): `agy` has no ACP tool-disable list, so the stand-in carries a `.agents/hooks.json` `PreToolUse` guard (exit 2) for `agy`'s built-in workspace tools, backed by `RemotePerm::BlockedLocalTool` in `gates.rs` ahead of full access. `agy`'s injected `toolSummary` field is stripped from inputs and rows; un-ID'd `tools/call` requests match unclaimed pending rows by canonical input, and `RemotePerm::ReadOnly` auto-approves remote reads.
 - A cancelled MCP request closes the hub socket, which kills the host process group; a stop cancels every running call, since a host command outlived a stop on CLI 2.1.300.
-- Paths under Claude's own directories (`~/.claude`, `CLAUDE_CONFIG_DIR`, `/tmp/claude-*`) and the data root run here; a path inside the stand-in means the host folder.
+- Paths under the CLI's own directories (`~/.claude`, `CLAUDE_CONFIG_DIR`, `/tmp/claude-*`, `~/.gemini`) and the data root run here; a path inside the stand-in means the host folder.
 - Host writes pass the `beforeEdit` gate too (allow-once under acceptEdits).
 - Observed on claude-agent-acp 0.93.0 / Claude Code 2.1.300: the adapter spreads `_meta.claudeCode.options` into the SDK options and takes `systemPrompt: { mode: "append" }` on new / load / resume; a `tools/call` carries `_meta["claudecode/toolUseId"]`, tying it to its row. A row names the MCP call in a top-level `name` and an AIR permission request repeats it in `_meta.jetbrains.air.permission.title`; both are rewritten, or the row reads "Call Acpira".
-- Limits: a slash command's inline `!` shell finds no Bash (the turn ends silently); no background Bash, Monitor or worktrees; the host's `.claude/` is not read; a summoned Claude child is refused.
+- Limits: a slash command's inline `!` shell finds no Bash (the turn ends silently); no background Bash, Monitor or worktrees; the host's `.claude/` / `.gemini/` is not read; summoned Claude / Antigravity children are refused.
 
 ## Workspace seam
 
