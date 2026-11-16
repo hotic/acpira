@@ -45,6 +45,8 @@ data class ClientInfo(
   val sshConnection: String? = null,
   /** `peer`: another engine, never a window (docs/dev/remote.md). A plain wire leaves it unset */
   val role: String? = null,
+  /** A peer engine's machine id (docs/dev/remote.md); a phone never sets it */
+  val machine: String? = null,
 )
 
 /** The first envelope on a wire */

@@ -49,10 +49,14 @@ public struct ClientInfo: Codable, Hashable, Sendable {
   public var sshConnection: String?
   /// `peer`: another engine, never a window (docs/dev/remote.md). A plain wire leaves it unset
   public var role: String?
+  /// A peer engine's machine id (docs/dev/remote.md); a phone never sets it
+  public var machine: String?
 
-  public init(name: String, version: String, capabilities: [String] = [], sshConnection: String? = nil, role: String? = nil) {
+  public init(
+    name: String, version: String, capabilities: [String] = [], sshConnection: String? = nil, role: String? = nil, machine: String? = nil
+  ) {
     self.name = name; self.version = version; self.capabilities = capabilities
-    self.sshConnection = sshConnection; self.role = role
+    self.sshConnection = sshConnection; self.role = role; self.machine = machine
   }
 }
 
