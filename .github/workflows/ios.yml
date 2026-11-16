@@ -31,10 +31,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # The newest installed Xcode 27: the app builds against the iOS 27 SDK and the scripts' iPhone 18 Pro device
+      # The newest released Xcode 27: the app builds against the iOS 27 SDK and the scripts' iPhone 18 Pro device.
+      # Betas and release candidates are skipped: the image that added Xcode_27.3_beta failed WebKit and
+      # ImageRenderer tests that pass on 27.2 and locally
       - name: Select Xcode
         run: |
-          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
+          xcode="$(ls -d /Applications/Xcode_27*.app | grep -E '/Xcode_27(\.[0-9]+)*\.app$' | sort -V | tail -n 1)"
           test -n "$xcode"
           echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
       - name: check.sh
