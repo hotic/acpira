@@ -1,5 +1,6 @@
 pub mod account_manager;
 pub mod account_store;
+pub mod antigravity;
 pub mod claude;
 pub mod cli_home;
 pub mod codex;

@@ -16,6 +16,7 @@ use acpira_shared::sidecar::InitialView;
 
 use crate::accounts::account_manager::AccountManager;
 use crate::accounts::account_store::{AccountStore, FileVault};
+use crate::accounts::antigravity::AntigravityAccountProvider;
 use crate::accounts::claude::ClaudeAccountProvider;
 use crate::accounts::codex::CodexAccountProvider;
 use crate::accounts::devin::{BinaryFn, DevinAccountProvider};
@@ -133,9 +134,15 @@ impl HostRuntime {
       bridge_exe.as_deref().map(PathBuf::from),
       log.clone(),
     );
+    let mut account_providers: Vec<Arc<dyn crate::accounts::provider::AccountProvider>> = vec![Arc::new(devin), Arc::new(codex), Arc::new(claude)];
+    // Saved Antigravity accounts lean on how `agy` stores a login inside an SSH session, seen on macOS only: elsewhere
+    // the agent keeps its one CLI login
+    if cfg!(target_os = "macos") {
+      account_providers.push(Arc::new(AntigravityAccountProvider::new(root.join("accounts").join("antigravity"), binary_of("antigravity"))));
+    }
     let accounts = AccountManager::new(
       account_store,
-      vec![Arc::new(devin), Arc::new(codex), Arc::new(claude)],
+      account_providers,
       log.clone(),
       terminal.clone(),
       toast.clone(),
