@@ -275,6 +275,7 @@ impl AcpSession {
       c.model_facts = facts;
       c.ultracode.workflows = workflows;
     }
+    self.load_host_sidekick().await;
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
     let borrowed = match &self.deps.pool {

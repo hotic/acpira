@@ -33,6 +33,13 @@ Rounds, threads, duties and delivery: `transcript-pipeline.md` (Cross-harness su
   - Duty presets (`DUTY_BRIEFS`) are shared with TS via `test/fixtures/duty-presets.json`.
 - A consult round switches the child to its CLI's read-only mode, and Plan counts as one; but a plan ends in an approval, which would reach the user. So the built-in agent lists a Read-only mode to summoned sessions only (`acpira/summoned` in `_meta`), and a consult child's request to leave its mode (Claude Code's ExitPlanMode) is declined without a card (`gates.rs`). Claude Code's reaction to that decline is untested on a live CLI.
 - The sidekick is the root's other half, not a helper granted access: every round takes the root's access as it is (the call's `mode` is ignored) and copies its `approval` level, and a running round follows a root mode or approval change at once (`sync_sidekick_access`). The listing marks it as such, so the lead is not invited to pick a mode.
+- Host-owned sidekick (`acp/session/host_sidekick.rs`): a session whose CLI offers no `_sidekick` select gets the host's, made like Claude's Ultra level (put back after every agent answer, a pick never reaches the wire). Same categories as the built-in agent's, ids of its own (`host_sidekick`, `host_sidekick_effort`), so clients go by category and a CLI's own select always wins.
+  - A value is `<agent>/<model id>`: `sidekick_persona` runs it in that CLI. Candidates are read once per connection (probe, live session, newest records); models hidden in the settings are still listed.
+  - Offered only where `ask_agent` can be called: the CLI takes MCP servers and was handed Acpira's, in a local folder.
+  - The lead hears of a pick in a `<sidekick>` block ahead of the next user prompt (`host_sidekick_note`, the built-in agent's `sidekick/*` texts), not through `tools.listChanged`: most CLIs do not list again mid-session, and a changed tool table costs the lead its prompt cache.
+  - Access follows the root's mode only (`approval` and Fast exist on the built-in agent alone). A read-only root with a sidekick CLI that has no read-only mode gets the round refused (`sidekick_unbound`).
+  - A pick in another CLI starts a new thread, since a thread stays in the CLI it began in.
+  - Open: no real CLI pair has run a round yet; whether the saving the built-in pair measured (`evals.md`) holds with a vendor CLI as lead is unmeasured.
 - Group ids never collide with a persona's (`ask_agent`'s `agent` names either) or with `SIDEKICK_ID`.
 - Relay hub (`relay/hub.rs`): each session's `acpira` MCP entry carries its own grant (`ACPIRA_RELAY_TOKEN`) mapped to session, thread and depth, so a request cannot reach another session or reset its depth.
 - `ask_agent` (`host_mcp/tools.rs`, `host_mcp/relay_client.rs`):

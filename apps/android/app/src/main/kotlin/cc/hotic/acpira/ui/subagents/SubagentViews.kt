@@ -325,19 +325,20 @@ fun RowScope.SqueezedTitle(title: String) {
 /** The lead slot: the state mark at --subagent-mark, and a summoned child's CLI mark on its corner over a page tile */
 @Composable
 fun SubagentLead(node: SubagentSummary) {
-  val names = LocalAgentNames.current
   Box(Modifier.size(SubagentMetrics.mark)) {
     SubagentStateIcon(node, Modifier.align(Alignment.Center))
     node.harness?.agent?.takeIf { it.isNotEmpty() }?.let { agent ->
-      Box(
-        Modifier.align(Alignment.BottomEnd)
-          .offset(x = -SubagentMetrics.badgeInset, y = -SubagentMetrics.badgeInset)
-          .background(Palette.bg0, RoundedCornerShape(Metrics.rSm))
-          .padding(Metrics.hairline),
-      ) {
-        VendorMark(agent, names(agent), Palette.fg1, size = SubagentMetrics.badge - Metrics.hairline * 2)
-      }
+      HarnessBadge(agent, Modifier.align(Alignment.BottomEnd).offset(x = -SubagentMetrics.badgeInset, y = -SubagentMetrics.badgeInset))
     }
+  }
+}
+
+/** A CLI's mark as a corner badge, over a page tile (`.subagent-harness-mark`); the caller places it */
+@Composable
+fun HarnessBadge(agent: String, modifier: Modifier = Modifier) {
+  val names = LocalAgentNames.current
+  Box(modifier.background(Palette.bg0, RoundedCornerShape(Metrics.rSm)).padding(Metrics.hairline)) {
+    VendorMark(agent, names(agent), Palette.fg1, size = SubagentMetrics.badge - Metrics.hairline * 2)
   }
 }
 

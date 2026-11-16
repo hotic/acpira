@@ -12,7 +12,6 @@ import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
 import { Row } from '../ui/Row';
 import { AgentMark } from './AgentMark';
-import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { SIDEKICK_NAME } from '@acpira/shared/subagents';
 import { t, useLocale } from '../i18n';
 
@@ -164,13 +163,14 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
 // `wake_text`, one `## Persona (cli)` section each, `## Persona (cli) asks` for a question). The message is for the
 // agent; the reader gets each reporter's return in the sidekick relay's handback shape: its mark, its name, "handed
 // back" and the reply's first line. The sidekick's own return is already its relay's handback row, so a wake with only
-// the sidekick shows nothing and its reply joins the turn above
+// the sidekick shows nothing and its reply joins the turn above. It is known by its name alone, since it runs in
+// whichever CLI its pick names
 export function shownReports(text: string): { name: string; agent: string; asks: boolean; line?: string }[] {
   return [...text.matchAll(/^## (.+) \(([^()]*)\)( asks)?$/gm)].map((m, i, all) => {
     const body = text.slice(m.index! + m[0].length, all[i + 1]?.index ?? text.length);
     const line = body.split('\n').map(s => s.trim()).find(s => s.length > 0);
     return { name: m[1]!, agent: m[2]!, asks: !!m[3], line };
-  }).filter(r => !(r.agent === BUILTIN_AGENT_ID && r.name === SIDEKICK_NAME));
+  }).filter(r => r.name !== SIDEKICK_NAME);
 }
 
 function SubagentsReported({ text }: { text: string }) {

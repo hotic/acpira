@@ -118,15 +118,15 @@ private const val TREE_DEPTH_MAX = 8
  */
 fun receiptOnly(node: SubagentSummary): Boolean = node.visibility == SubagentVisibility.receipt && node.hasProcess != true
 
-/** The id the built-in agent's sidekick goes by (subagents.ts SIDEKICK_ID) */
+/** The persona id a sidekick's rounds go by, and the built-in agent's sidekick select (subagents.ts SIDEKICK_ID) */
 const val SIDEKICK_ID = "sidekick"
 
 /** The name the sidekick's rounds report under (subagents.ts SIDEKICK_NAME) */
 const val SIDEKICK_NAME = "Sidekick"
 
 /**
- * isSidekick (SidekickRelay.tsx): a round of the built-in agent's sidekick, the lead's own second hand rather than a
- * summoned helper. It draws as the relay and never counts among the session's subagents
+ * isSidekick (SidekickRelay.tsx): a round of the session's sidekick, the lead's own second hand rather than a summoned
+ * helper. It draws as the relay and never counts among the session's subagents
  */
 fun isSidekick(node: SubagentSummary): Boolean = node.harness?.persona == SIDEKICK_ID
 
@@ -147,9 +147,10 @@ private object SubagentPatterns {
 
 /**
  * shownReports: the wake message's `## Persona (cli)` / `## Persona (cli) asks` sections, the sidekick's left out (its
- * relay's handback row already shows its return)
+ * relay's handback row already shows its return). It is known by its name alone, since it runs in whichever CLI its
+ * pick names
  */
-fun shownReports(text: String, builtinAgent: String = "acpira"): List<SubagentReport> {
+fun shownReports(text: String): List<SubagentReport> {
   val out = ArrayList<SubagentReport>()
   for (line in text.split("\n")) {
     val m = SubagentPatterns.reportHead.matchEntire(line)
@@ -160,7 +161,7 @@ fun shownReports(text: String, builtinAgent: String = "acpira"): List<SubagentRe
       if (shown.isNotEmpty()) out[out.size - 1] = out.last().copy(line = shown)
     }
   }
-  return out.filter { !(it.agent == builtinAgent && it.name == SIDEKICK_NAME) }
+  return out.filter { it.name != SIDEKICK_NAME }
 }
 
 /** isWaiting: the child is blocked on a card of its own */

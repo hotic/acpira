@@ -253,7 +253,10 @@ object ModelCatalog {
 object ComposerControls {
   private val levels = listOf("None", "Minimal", "Low", "Medium", "High", "XHigh", "Max", "Ultra", "Thinking")
   const val permissionCategory = "_permission_mode"
-  /** The built-in agent's sidekick select (custom category), its level and its Fast, the model chip's last bean */
+  /**
+   * The sidekick select (custom category), its level and its Fast, the model chip's last bean: the built-in agent's own,
+   * or the host's for another CLI's session, under ids of its own (`host_sidekick`). Found by category, set by its id
+   */
   const val sidekickCategory = "_sidekick"
   const val sidekickEffortCategory = "_sidekick_effort"
   const val sidekickFastCategory = "_sidekick_fast"
@@ -383,7 +386,7 @@ class ModelChoices(
   val modes: List<SessionOption>
   val collaboration: ConfigControl?
   val access: ConfigControl?
-  /** The built-in agent's sidekick select, its level and its Fast (the last bean opens them as beans of their own) */
+  /** The sidekick select, its level and its Fast (the last bean opens them as beans of their own) */
   val sidekick: ConfigControl?
   val sidekickEffort: ConfigControl?
   val sidekickFast: Toggle?

@@ -8,6 +8,7 @@ import { ChipTag } from '../../ui/Button';
 import { EntranceScopeContext, QuietEntranceContext, Row, RowEntranceContext, RowLabel, RowTarget, pageHidden, useEntranceEnd } from '../../ui/Row';
 import { cn } from '../../ui/cn';
 import { cssTimeVar } from '../../ui/cssTime';
+import { AgentMark } from '../AgentMark';
 import { ModelMark } from '../ModelMark';
 import { commandDuration } from '../commandDuration';
 import { CommandOutcome } from '../CommandOutcome';
@@ -16,12 +17,14 @@ import { useToolSeconds } from '../useToolSeconds';
 import { isWaiting, resultText, stateLabel, subagentTitle } from './subagentState';
 import { useElapsed } from './useElapsed';
 
-// A round of the built-in agent's sidekick: the lead's own second hand, not a summoned helper
+// A round of the session's sidekick: the lead's own second hand, not a summoned helper
 export const isSidekick = (n: SubagentSummary) => n.harness?.persona === SIDEKICK_ID;
 
 // The lead model and the sidekick's display names, from the session's controls (chat/Shell.tsx). The relay's first mark is
-// the lead's, and a round carries only the sidekick select's value
-export interface SidekickModels { lead?: { name: string; brand?: string }; names: ReadonlyMap<string, string> }
+// the lead's, and a round carries only the sidekick's model id: the select's value for the built-in agent, the id inside
+// its CLI for the host's select, whose values are `<cli>/<model>`. `agent` is the session's CLI: a sidekick running in
+// another one carries that CLI's mark
+export interface SidekickModels { lead?: { name: string; brand?: string }; names: ReadonlyMap<string, string>; agent?: string }
 export const SidekickModelsContext = createContext<SidekickModels>({ names: new Map() });
 
 // Rows the window holds; the engine sends as many steps (`SIDEKICK_STEPS`)
@@ -53,12 +56,14 @@ const BACK_PARTS = ['sidekick-pop', 'sidekick-sheen', 'sidekick-slide', 'acp-fad
 // handback line taking the window's last slot. Nothing here changes height while the round runs or ends
 export function SidekickRelay({ node, onInspect }: { node: SubagentSummary; onInspect: (id: string) => void }) {
   useLocale();
-  const { lead, names } = useContext(SidekickModelsContext);
+  const { lead, names, agent } = useContext(SidekickModelsContext);
   const still = useStill();
   const { scope } = useContext(EntranceScopeContext);
   const key = `${scope}\u0000${node.id}`;
   const running = node.state === 'running';
-  const model = node.model ? names.get(node.model) ?? node.model : t('subagents.untitled');
+  const cli = node.harness?.agent;
+  const model = node.model ? names.get(node.model) ?? (cli && names.get(`${cli}/${node.model}`)) ?? node.model : t('subagents.untitled');
+  const away = cli && agent && cli !== agent ? cli : undefined;
   const brand = (node.model && modelBrand(node.model)) ?? modelBrand(model);
   const mark = <ModelMark family={model} brand={brand} colored />;
   const title = subagentTitle(node, t);
@@ -104,7 +109,8 @@ export function SidekickRelay({ node, onInspect }: { node: SubagentSummary; onIn
         title={node.task ?? title}
         aria-label={`${t('sidekick.relay', { model })} ${t('sidekick.takes')} ${title}${status ? ` ${status}` : ''} ${elapsed}`}
         onClick={() => onInspect(node.id)}
-        lead={<Flip from={lead && <ModelMark family={lead.name} brand={lead.brand} />} to={mark} />}
+        lead={<Flip from={lead && <ModelMark family={lead.name} brand={lead.brand} />}
+          to={away ? <>{mark}<AgentMark id={away} className="subagent-harness-mark sidekick-cli" /></> : mark} />}
         trailing={<>
           {node.harness?.effort && <span className="sidekick-level flex"><ChipTag small>{effortLabel({ id: node.harness.effort, name: node.harness.effort })}</ChipTag></span>}
           <span className="sidekick-clock whitespace-nowrap">
@@ -247,13 +253,13 @@ function Handback({ node, mark, steps, elapsed, enter, onEntered, onInspect }: {
 
 // The relay's model context for one session, kept by value: a push that changes neither the lead nor the sidekick list
 // hands the thread the same object, so no memoized turn re-renders for it
-export function useSidekickModels(options: ConfigControl[]): SidekickModels {
+export function useSidekickModels(options: ConfigControl[], agent?: string): SidekickModels {
   const { models, sidekick } = composerControls(options);
   const control = models[0];
   const picked = control?.options.find(o => o.id === control.value);
   const lead = picked ? { name: picked.name, brand: optionBrand(picked) } : undefined;
   const list = sidekick[0]?.options ?? [];
-  const key = [lead?.name, lead?.brand, ...list.flatMap(o => [o.id, o.name])].join('\u0000');
+  const key = [agent, lead?.name, lead?.brand, ...list.flatMap(o => [o.id, o.name])].join('\u0000');
   // `key` spells out everything the value reads
-  return useMemo(() => ({ lead, names: new Map(list.map(o => [o.id, o.name])) }), [key]);
+  return useMemo(() => ({ lead, names: new Map(list.map(o => [o.id, o.name])), agent }), [key]);
 }

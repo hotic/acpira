@@ -173,6 +173,14 @@
   .sidekick-flip-face { position: absolute; inset: 0; display: flex; backface-visibility: hidden; }
   .sidekick-flip-front { color: var(--fg-3); }
   .sidekick-flip-back { transform: rotateY(180deg); color: var(--sidekick); }
+  /* A sidekick running in another CLI: that CLI's logo on the corner of its mark, where a summoned child's row carries
+     it (.subagent-harness-mark, whose slot is --subagent-mark wide around the same --icon mark) */
+  .sidekick-flip .sidekick-cli {
+    right: calc(var(--subagent-badge-inset) - (var(--subagent-mark) - var(--icon)) / 2);
+    bottom: calc(var(--subagent-badge-inset) - (var(--subagent-mark) - var(--icon)) / 2);
+    width: var(--subagent-badge);
+    height: var(--subagent-badge);
+  }
 
   /* The light that crosses a relay row as it lands; invisible at rest */
   .sidekick-sheen { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }

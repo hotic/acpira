@@ -249,7 +249,7 @@ function ModelPanel(props: ModelPanelProps) {
   if (isLone(props) && !picked) return <LeadPanel {...props} />;
   const leadLevel = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard')).find(tag => !tag.fast)?.label;
   return <>
-    <PairViews role={role} lead={<LeadPanel {...props} />}
+    <PairViews role={role} lead={<LeadPanel {...props} />} rows={sidekick.options.length + new Set(sidekick.options.map(o => o.description).filter(Boolean)).size}
       sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} fast={sidekickFast} onSetConfig={(id, value) => onSetConfig?.(id, value)} />} />
     {/* Under the lists, next to the chip it spells out: the search line stays the panel's top edge on either side */}
     <PairSwitch role={role} onRole={setRole}

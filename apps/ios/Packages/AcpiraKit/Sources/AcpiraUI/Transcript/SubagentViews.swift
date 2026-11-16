@@ -253,21 +253,30 @@ struct SubagentReturns: View {
 /// The lead slot: the state mark at --subagent-mark, and a summoned child's CLI mark on its corner over a page tile
 struct SubagentLead: View {
   let node: SubagentSummary
-  @Environment(AppModel.self) private var model: AppModel?
 
   var body: some View {
     SubagentStateIcon(node: node)
       .frame(width: WebMetrics.subagentMark, height: WebMetrics.subagentMark)
       .overlay(alignment: .bottomTrailing) {
         if let agent = node.harness?.agent {
-          VendorMark(brand: agent, name: model?.agent(agent).name ?? agent,
-                     size: WebMetrics.subagentBadge - 2 * Metrics.hairline)
-            .padding(Metrics.hairline)
-            .background(RoundedRectangle(cornerRadius: Metrics.rSm).fill(Palette.bg0))
-            .foregroundStyle(Palette.fg1)
-            .offset(x: -WebMetrics.subagentBadgeInset, y: -WebMetrics.subagentBadgeInset)
+          HarnessBadge(agent: agent).offset(x: -WebMetrics.subagentBadgeInset, y: -WebMetrics.subagentBadgeInset)
         }
       }
+  }
+}
+
+/// A CLI's logo on a page-coloured tile (subagents.css `.subagent-harness-mark`): the corner badge of a summoned
+/// child's state mark, and of a sidekick's handoff mark when it runs in another CLI. The caller places it
+struct HarnessBadge: View {
+  let agent: AgentId
+  @Environment(AppModel.self) private var model: AppModel?
+
+  var body: some View {
+    VendorMark(brand: agent, name: model?.agent(agent).name ?? agent,
+               size: WebMetrics.subagentBadge - 2 * Metrics.hairline)
+      .padding(Metrics.hairline)
+      .background(RoundedRectangle(cornerRadius: Metrics.rSm).fill(Palette.bg0))
+      .foregroundStyle(Palette.fg1)
   }
 }
 

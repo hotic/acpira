@@ -184,6 +184,10 @@ impl AcpSession {
     let me = self.clone();
     Box::pin(async move {
       me.editing_guard()?;
+      // The host's own sidekick select (`host_sidekick.rs`) is not the agent's to set
+      if me.host_sidekick_pick(&config_id, &value) {
+        return Ok(());
+      }
       // A split agent's approval select is the host's: the CLI hears of it as a mode (`access.rs`)
       if me.access_pick(&config_id, &value).await? {
         let mut c = me.core.lock();
@@ -582,10 +586,12 @@ pub(crate) struct ControlPicks {
 }
 
 impl AcpSession {
-  /// Model sources and catalogue-narrowed efforts over whatever the agent last sent, plus Claude's Ultra level
+  /// Model sources and catalogue-narrowed efforts over whatever the agent last sent, plus Claude's Ultra level and the
+  /// host's sidekick select
   pub(crate) fn refine_controls(&self, c: &mut Core) {
     refine_controls(&self.agent, &mut c.state.controls.options, &c.model_facts);
     self.place_ultracode(c);
+    self.place_host_sidekick(c);
     self.place_access(c);
   }
 
@@ -673,6 +679,8 @@ pub(crate) fn picked_controls(c: &Core, shapes: Option<&ModelShapes>) -> Session
     if let Some(shape) = shape_for(shapes, model, value) {
       out.options.retain(is_model_control);
       out.options.extend(shape.iter().cloned());
+      // The host's sidekick selects are the session's, in no model's shape
+      out.options.extend(c.sidekick.controls.iter().cloned());
       out = controls_for_turn(&out, Some(&capture_turn_settings(&c.state.controls)));
     } else {
       // An unseen model's scale is not known yet. Do not advertise the previous model's effort or Fast meanwhile.

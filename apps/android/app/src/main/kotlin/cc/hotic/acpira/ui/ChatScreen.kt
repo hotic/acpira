@@ -198,7 +198,7 @@ fun ChatScreen(model: AppModel, id: String) {
   val allNodes = remember(held?.subagents) { held?.subagents.orEmpty().map { it.linkOnly } }
   val helpers = remember(view?.subagents) { view?.subagents.orEmpty().filter { !isSidekick(it) } }
   val context = androidx.compose.ui.platform.LocalContext.current
-  val sidekickModels = remember(held?.controls) { held?.controls?.let { SidekickModels.of(context, it) } ?: SidekickModels() }
+  val sidekickModels = remember(held?.controls, held?.agent) { held?.controls?.let { SidekickModels.of(context, it, held.agent) } ?: SidekickModels() }
   val inspect = remember(id, model) { { child: String -> model.push(Screen.Subagent(id, child)) } }
   // A diff whose view left its files out asks the engine for them (a demo has none to ask). Keyed on the model too: a
   // paired reconnect brings a new one for the same session, and the old one's client is closed
@@ -396,7 +396,7 @@ fun ChatScreen(model: AppModel, id: String) {
               )
               // The subagent returns that woke this reply, in the relay handback's shape (ThreadItems.swift)
               if (user.auto == true && user.autoReason == "subagents") {
-                val reports = remember(user.text) { shownReports(user.text, AppModel.BUILTIN_AGENT) }
+                val reports = remember(user.text) { shownReports(user.text) }
                 if (reports.isNotEmpty()) SubagentReturns(reports)
               }
             }

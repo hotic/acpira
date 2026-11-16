@@ -218,6 +218,8 @@ pub struct TestPolicy {
   pub compaction: Option<CompactionFn>,
   pub plan_auto_approve: bool,
   pub claim: Option<ClaimFn>,
+  /// The CLIs a host-owned sidekick can run in
+  pub sidekick: Vec<acpira_host::acp::session::host_sidekick::SidekickSource>,
 }
 
 pub type CompactionFn = Arc<dyn Fn() -> CompactionPolicy + Send + Sync>;
@@ -234,6 +236,11 @@ impl SessionPolicy for TestPolicy {
 
   fn claim(&self, session: &str) -> Option<Result<u64, String>> {
     self.claim.as_ref().map(|f| f(session))
+  }
+
+  fn sidekick_sources(&self) -> acpira_host::acp::transport::rpc::BoxFuture<Vec<acpira_host::acp::session::host_sidekick::SidekickSource>> {
+    let sources = self.sidekick.clone();
+    Box::pin(async move { sources })
   }
 }
 

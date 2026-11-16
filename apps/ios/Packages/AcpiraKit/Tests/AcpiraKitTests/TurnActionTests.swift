@@ -149,6 +149,12 @@ private func agentTurns(_ view: SessionView) -> [AgentTurn] {
     #expect(editTurnConfig(low, live: low, id: "sidekick", value: "a/terra", shapes: shapes).options[2].value == "low")
     #expect(editTurnConfig(low, live: low, id: "sidekick", value: "none", shapes: shapes).options.map(\.id) == ["model", "sidekick", "approval"])
     #expect(editTurnConfig(low, live: low, id: "sidekick", value: "a/sol", shapes: shapes).options.map(\.id) == ["model", "sidekick", "approval"])
+    // The host's select (an external CLI's session) goes by its own id, and so does the level select seated beside it
+    var host = controls
+    host.options[1].id = "host_sidekick"
+    let seated = editTurnConfig(host, live: host, id: "host_sidekick", value: "a/terra", shapes: shapes)
+    #expect(seated.options.map(\.id) == ["model", "host_sidekick", "host_sidekick_effort", "approval"])
+    #expect(captureTurnSettings(seated).config["host_sidekick"] == "a/terra")
   }
 
   @Test func anEditRequestCarriesTheTrimmedTextAndTheSnapshot() {
