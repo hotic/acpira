@@ -161,6 +161,12 @@ impl Vendor {
     self == Vendor::Antigravity
   }
 
+  /// A command sent to the background outlives its turn, and the reply that follows its exit is stored but never sent:
+  /// the session reads it back from a replay (`session/late_reply.rs`)
+  pub fn stores_late_replies(self) -> bool {
+    self == Vendor::Antigravity
+  }
+
   /// A failed turn arrives as the reply's last text with `end_turn` (`antigravity::reply_error`)
   pub fn reply_error(self, text: &str) -> Option<(usize, antigravity::ReplyError)> {
     if self == Vendor::Antigravity { antigravity::reply_error(text) } else { None }

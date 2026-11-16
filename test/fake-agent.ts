@@ -174,6 +174,23 @@ let airCaps: string[] = [];
 // Optional native store for account-switch tests: context belongs to the session,
 // survives process replacement, and is never reconstructed from the UI transcript.
 const sessionDir = process.env.FAKE_SESSION_DIR;
+// FAKE_LATE_REPLY=<ms> → agy acp 1.5.9's background command: a "late-command" prompt leaves its `run_command` row
+// in_progress and ends the turn. The command exits <ms> later and the model's reply to that is stored <ms> after it, with
+// nothing sent for either: session/list moves the session's updatedAt each time, and session/load on the live process
+// replays the conversation as it stands (the row closed with its receipt, then the reply)
+const lateMs = Number(process.env.FAKE_LATE_REPLY) || 0;
+// When each session's late-command turn ended
+const lateTurns = new Map<string, number>();
+// Where such a session stands: its command running (0), exited (1), exited and answered (2)
+const lateStage = (sid: string): number => {
+  const ms = Date.now() - (lateTurns.get(sid) ?? Date.now());
+  return ms >= lateMs * 2 ? 2 : ms >= lateMs ? 1 : 0;
+};
+const lateCommand = (done: boolean): acp.SessionUpdate => ({
+  sessionUpdate: 'tool_call', toolCallId: 'late-1', title: 'sleep 1; echo late-done', kind: 'execute', status: done ? 'completed' : 'in_progress',
+  rawInput: { CommandLine: 'sleep 1; echo late-done', WaitMsBeforeAsync: 500 },
+  ...(done ? { content: [{ type: 'content', content: { type: 'text', text: 'Command exited with code 0.\n\nCommand output:\nlate-done\r\n' } }] } : {}),
+});
 type SavedSession = { prompts: acp.ContentBlock[][]; mode: string; config: Record<string, string>; cwd?: string };
 function readSession(id: string): SavedSession | undefined {
   const file = sessionDir && join(sessionDir, `${id}.json`);
@@ -276,7 +293,7 @@ const app = acp.agent({ name: 'fake-agent' })
       agentInfo: { name: 'fake', version: process.env.FAKE_AGENT_VERSION ?? '0.0.0' },
       agentCapabilities: {
         loadSession: !process.env.FAKE_NO_RESTORE,
-        sessionCapabilities: process.env.FAKE_LOAD_ONLY || process.env.FAKE_NO_RESTORE ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}), ...(process.env.FAKE_EXTRA_DIRS ? { additionalDirectories: {} } : {}) },
+        sessionCapabilities: process.env.FAKE_LOAD_ONLY || process.env.FAKE_NO_RESTORE ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir || lateMs ? { list: {} } : {}), ...(process.env.FAKE_EXTRA_DIRS ? { additionalDirectories: {} } : {}) },
         promptCapabilities: process.env.FAKE_PROMPT_CAPS === 'strict' ? { embeddedContext: false, image: false } : { embeddedContext: true },
         // FAKE_MCP_TRACE: http but not sse, so a test sees the client filter client-provided servers by transport
         ...(process.env.FAKE_MCP_TRACE ? { mcpCapabilities: { http: true, sse: false } } : {}),
@@ -426,6 +443,10 @@ const app = acp.agent({ name: 'fake-agent' })
     return { modes: { currentModeId: 'plan', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } };
   })
   .onRequest(acp.methods.agent.session.list, ({ params }) => {
+    // FAKE_LATE_REPLY: the sessions with a background command, their time moving as it exits and is answered
+    if (lateMs && !sessionDir) {
+      return { sessions: [...lateTurns.keys()].map(id => ({ sessionId: id, cwd: params.cwd ?? '', title: 'Late', updatedAt: new Date(lateStage(id) * 1000).toISOString() })) };
+    }
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.list);
     const all = readdirSync(sessionDir).filter(f => f.endsWith('.json'))
       .map(f => ({ id: f.slice(0, -'.json'.length), mtime: statSync(join(sessionDir, f)).mtime, saved: readSession(f.slice(0, -'.json'.length)) }))
@@ -444,6 +465,19 @@ const app = acp.agent({ name: 'fake-agent' })
     logMcp('load', params.mcpServers);
     logMeta('load', params._meta, params.cwd, params.additionalDirectories);
     rejectMcp(params.mcpServers);
+    // FAKE_LATE_REPLY: the live session's conversation as it stands, whole messages where the turn sent chunks
+    if (lateMs && lateTurns.has(params.sessionId)) {
+      const stage = lateStage(params.sessionId);
+      const replay = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: params.sessionId, update });
+      await replay({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'late-command' } });
+      await replay(lateCommand(stage > 0));
+      await replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started it.' } });
+      if (stage > 1) {
+        await replay({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'The command exited.' } });
+        await replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Late reply: late-done' } });
+      }
+      return {};
+    }
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
     const restored = restoreSession(params.sessionId, params.cwd);
     // Native load replays content; an existing local transcript must not duplicate it.
@@ -1132,6 +1166,13 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
 
+    if (lateMs && text === 'late-command') {
+      await send(lateCommand(false));
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started ' } });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'it.' } });
+      lateTurns.set(sid, Date.now());
+      return { stopReason: 'end_turn' };
+    }
     if (text === 'async-shell') {
       // codex's backgrounded shell: the tool row is marked backgrounded, then the task announcement names it
       await send({ sessionUpdate: 'tool_call', toolCallId: 'bg-1', title: 'shell', kind: 'execute', status: 'in_progress', rawInput: { command: 'sleep 45 && echo done' } });

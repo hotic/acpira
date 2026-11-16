@@ -33,6 +33,7 @@ mod failures;
 mod shared_mcp;
 mod ultracode;
 mod autonomous;
+mod late_reply;
 mod hooks;
 pub mod plugin_runtime;
 
