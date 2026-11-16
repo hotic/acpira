@@ -130,7 +130,7 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
             {!listing && <Group><Note shimmer>{t('connections.reading')}</Note></Group>}
             {error && <Group><Note><span className="text-danger [overflow-wrap:anywhere]">{error}</span></Note></Group>}
             {listing && <Command.Empty>{t('connections.noHostMatch')}</Command.Empty>}
-            <Command.List searchable flush className={cn(blockList, 'min-h-0 max-h-none')}>
+            <Command.List searchable className={cn(blockList, 'min-h-0 max-h-none')}>
               {(h: HostPick) => {
                 const done = taken.includes(h.alias);
                 return <Command.Item key={h.typed ? `typed:${h.alias}` : h.alias} value={h} disabled={done} title={done ? t('connections.added') : undefined}

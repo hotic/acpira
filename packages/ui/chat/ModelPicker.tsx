@@ -112,9 +112,8 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
       {on.names ? chip.name : null}
     </Chip>;
   };
-  // The glyph sits in the rows' check column: the chip's own padding hangs past the line's inset, less the scrollbar
-  // gutter a searchable list keeps beside its rows
-  const add = onConfigure && <Chip caret={false} className={cn('shrink-0', modelSearch(families, true) ? '-mr-[calc(--spacing(1.5)-var(--scrollbar-thin))]' : '-mr-1.5')} icon={<Plus strokeWidth={1.75} />}
+  // The glyph sits in the rows' check column: the chip's own padding hangs past the line's inset
+  const add = onConfigure && <Chip caret={false} className="-mr-1.5 shrink-0" icon={<Plus strokeWidth={1.75} />}
     title={t('settings.providers.addModel')} aria-label={t('settings.providers.addModel')}
     onClick={() => { setOpen(false); onConfigure(); }}>{null}</Chip>;
   return (<>
@@ -238,8 +237,6 @@ function FastRow({ fast }: { fast: FastState }) {
     checked={fast.on} disabled={fast.disabled} onChange={fast.set} />;
 }
 const thinkingIcon = <Brain strokeWidth={1.75} aria-hidden />;
-// The room `scroll-stable` keeps for a thin scrollbar beside a searchable list
-const GUTTER = 'pr-(--scrollbar-thin)';
 
 function ModelPanel(props: ModelPanelProps) {
   const { cur, curVar, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, onSetConfig } = props;

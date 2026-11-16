@@ -37,9 +37,9 @@ function Input({ className, visible = true, box = false, action, ref, ...props }
   </label>;
 }
 // `fill`: the list takes the height its flex column leaves instead of capping at --pop rows (the model panel's sidekick side).
-// `flush`: a filled card list (settings' blockList) whose row highlight runs to the card's right edge, so no scrollbar
-// gutter is reserved; the thin bar takes its room only while the list overflows
-function List({ className, searchable = false, fill = false, flush = false, ref, ...props }: ComponentProps<typeof Base.List> & { searchable?: boolean; fill?: boolean; flush?: boolean }) {
+// No scrollbar and no gutter: a menu list scrolls by wheel and keys, so its rows keep the same inset on both sides
+// (a reserved gutter read as a lopsided right margin in the model panel)
+function List({ className, searchable = false, fill = false, ref, ...props }: ComponentProps<typeof Base.List> & { searchable?: boolean; fill?: boolean }) {
   const list = useRef<HTMLDivElement>(null);
   const listRef = useMergedRefs(list, ref);
   useLayoutEffect(() => {
@@ -77,7 +77,7 @@ function List({ className, searchable = false, fill = false, flush = false, ref,
     };
   }, [searchable]);
   return <Base.List ref={listRef} tabIndex={searchable ? -1 : 0} {...props}
-    className={cnState(cn('scroll-thin flex flex-col overflow-y-auto outline-none', fill ? 'min-h-0 flex-1' : 'max-h-pop', searchable && !flush && 'scroll-stable'), className)} />;
+    className={cnState(cn('scroll-none flex flex-col overflow-y-auto outline-none', fill ? 'min-h-0 flex-1' : 'max-h-pop'), className)} />;
 }
 function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
   return <Base.Item render={<button type="button" />} nativeButton {...props}
