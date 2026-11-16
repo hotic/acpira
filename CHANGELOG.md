@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.3] - 2026-11-16
+
+### Added
+
+- **Every CLI session gets a sidekick pick.** When a CLI offers no sidekick of its own and has Acpira's tools, the session offers one as `<agent>/<model>`: the sidekick runs in that CLI, and the lead hears of a new pick ahead of the next prompt. A read-only session whose sidekick CLI has no read-only mode refuses the round. Relay rows on the desktop and the phone apps carry the sidekick CLI's mark when it differs from the session's.
+- **Antigravity in SSH folders.** Antigravity runs locally with its own workspace tools blocked, and project tools, files and the host's instructions come from the SSH host through Acpira's tools.
+- Antigravity logins can be saved as separate accounts on macOS; conversations, settings and MCP configuration stay shared with the regular `~/.gemini`.
+- An Antigravity command left running in the background stays a background task, and the reply the model writes after it is read back into the transcript. Antigravity's MCP calls show as the tools they call.
+- Claude and Antigravity show their permission levels as an approval select beside the working modes; Plan returns to the level it left. Antigravity has no full-access mode over ACP, so full access runs in auto with Acpira approving what still asks.
+- On an SSH host, a session can install a missing CLI with progress and a failure log, and terminal sign-ins open a local terminal on the host. Sessions waiting for the CLI start once it is installed.
+- Each machine connected to an SSH host keeps its own built-in agent model sources and keys there; a built-in agent session uses the settings of whoever sent its last prompt.
+- A model the model panel has never seen offers the live reasoning levels, marked as a guess.
+- Pinned sessions offer Move to category; filing one unpins it.
+- The phone apps (iOS, Android and HarmonyOS) say why a session cannot open, with a retry, instead of an endless spinner.
+
+### Changed
+
+- Over remote access and SSH, controls and ordinary requests stay ahead of large uploads, and native session logs sync only what changed.
+- Menu lists no longer reserve a scrollbar gutter, so rows keep the same inset on both sides.
+- Blocks inside list items are spaced like the rest of a reply, and code blocks reserve their scrollbar height.
+- Fixed key hints use the platform's notation.
+
+### Fixed
+
+- A new session in an SSH folder starts with an agent the host can run, and the start page lists only those, instead of opening a missing-CLI error.
+- A prompt with a large dropped file, or a large paste into a terminal, on an SSH host no longer ends the connection.
+- An interrupted download of the SSH helper resumes instead of starting over, and Windows clients identify their machine to the host.
+- A new sign-in replaces a terminal sign-in still waiting, and sign-in and import stay available after the view reloads.
+- Rolling DeepSeek model ids resolve to their catalogue entries, and a model's confirmed reasoning levels replace estimated ones without losing the saved pick.
+- An agent configured with an absolute path to a built-in launcher keeps its built-in behaviour and update offer, and runs from that path.
+- A reopened session restores its folds and plan without animating them.
+- A reply screenshot keeps the card's full height.
+- On Windows, the compaction label no longer flashes coloured fringes.
+- A short selected tool panel tab keeps its natural width, desktop sheet titles line up with the window controls, and the docked subagent inspector's close sits at the trailing edge off macOS.
+- On iOS before 26, bar buttons and the back button get a glass base; a paired link that drops while the app is in front reconnects; selecting text no longer shows a blank link preview.
+
 ## [2.1.2] - 2026-11-15
 
 ### Added
