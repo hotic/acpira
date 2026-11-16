@@ -373,7 +373,6 @@ export const fr = {
   'composer.notReady': 'Session non prête',
   'composer.escAgainToStop': 'Appuyez à nouveau sur Échap pour arrêter',
   'composer.mode': 'Mode',
-  'composer.modeShort.default': 'Par défaut',
   'composer.modeShort.agent': 'Édition',
   'composer.modeShort.plan': 'Plan',
   'composer.modeShort.raw': 'Brut',

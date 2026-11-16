@@ -357,3 +357,78 @@ async fn a_pi_custom_model_offers_only_the_efforts_pi_and_the_catalogue_both_all
   s.select_config("model".into(), "asgard/unlisted-9".into()).await.unwrap();
   assert_eq!(option_ids(&view(&s), "effort"), ["low", "high", "off", "minimal", "medium"]);
 }
+
+fn mode_view(s: &AcpSession) -> (Vec<String>, Value, Value) {
+  let vw = view(s);
+  let modes = vw["controls"]["modes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap().to_owned()).collect();
+  (modes, vw["controls"]["modeId"].clone(), option_value(&vw, "approval"))
+}
+
+fn wire_modes(log: &std::path::Path) -> Vec<String> {
+  std::fs::read_to_string(log).unwrap_or_default().lines().map(str::to_owned).collect()
+}
+
+// Claude's one mode list shows as an approval select plus the resting and plan modes: a level goes out as its mode,
+// plan keeps the level for its return, the CLI's own switch moves the select, and full access answers bypass-immune asks
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_permission_levels_split_off_its_modes() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let log = dir.path().join("modes.log");
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_MIXED_MODES": "claude", "FAKE_MODE_LOG": log.to_string_lossy() } }));
+  let s = started(&h, "/tmp").await;
+  assert_eq!(mode_view(&s), (vec!["default".into(), "plan".into()], json!("default"), json!("ask")));
+
+  s.set_config("approval".into(), "full".into()).await.unwrap();
+  assert_eq!(wire_modes(&log), ["bypassPermissions"]);
+  assert_eq!(mode_view(&s).2, json!("full"));
+  prompt(&s, "perm-meta").await;
+  let blocks = agent_blocks(&view(&s));
+  assert!(!blocks.iter().any(|b| b["type"] == "permission"));
+  expect_match(blocks.last().unwrap(), json!({ "type": "text", "markdown": "picked yes-proceed" }));
+
+  // Plan runs as itself and keeps the level; picking another level there waits for the way back
+  s.set_mode("plan".into()).await.unwrap();
+  s.set_config("approval".into(), "auto-edit".into()).await.unwrap();
+  assert_eq!(wire_modes(&log), ["bypassPermissions", "plan"]);
+  assert_eq!(mode_view(&s), (vec!["default".into(), "plan".into()], json!("plan"), json!("auto-edit")));
+  s.set_mode("default".into()).await.unwrap();
+  assert_eq!(wire_modes(&log), ["bypassPermissions", "plan", "acceptEdits"]);
+  assert_eq!(mode_view(&s).1, json!("default"));
+
+  // The CLI switching itself (leaving plan through its own card) moves the select
+  prompt(&s, "mode:auto").await;
+  assert_eq!(mode_view(&s), (vec!["default".into(), "plan".into()], json!("default"), json!("auto")));
+  // A level remembered as its mode before the split still picks the level
+  s.set_mode("bypassPermissions".into()).await.unwrap();
+  assert_eq!(mode_view(&s).2, json!("full"));
+  assert_eq!(wire_modes(&log).last().map(String::as_str), Some("bypassPermissions"));
+}
+
+// Antigravity has no full-access mode over ACP: full access keeps the CLI in `auto` and the host approves the rest
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_full_access_is_host_approval_on_auto() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let log = dir.path().join("modes.log");
+  let h = Harness::for_agent(&fake, "antigravity", json!({ "env": { "FAKE_MIXED_MODES": "agy", "FAKE_MODE_LOG": log.to_string_lossy() } }));
+  let s = started(&h, "/tmp").await;
+  let (modes, _, level) = mode_view(&s);
+  assert_eq!((modes, level), (vec!["default".to_owned(), "plan".to_owned()], json!("ask")));
+  let p = spawn_prompt(&s, "use tool");
+  wait_block(&s, "permission").await;
+  s.set_config("approval".into(), "full".into()).await.unwrap();
+  p.await.unwrap();
+  assert_eq!(wire_modes(&log), ["auto"]);
+  assert!(!agent_blocks(&view(&s)).iter().any(|b| b["type"] == "permission"));
+  // The CLI echoing `auto` leaves full access in place; plan takes the host's approval away until the way back
+  prompt(&s, "mode:auto").await;
+  let (_, shown, level) = mode_view(&s);
+  assert_eq!((shown, level), (json!("default"), json!("full")));
+  s.set_mode("plan".into()).await.unwrap();
+  let p = spawn_prompt(&s, "use tool");
+  wait_block(&s, "permission").await;
+  s.set_mode("default".into()).await.unwrap();
+  p.await.unwrap();
+  assert_eq!(wire_modes(&log), ["auto", "plan", "auto"]);
+}

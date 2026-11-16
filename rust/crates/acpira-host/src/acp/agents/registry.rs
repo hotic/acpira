@@ -68,6 +68,8 @@ pub struct AgentDef {
   pub env: Option<StrMap>,
   /// Modes the protocol doesn't advertise but the CLI supports; descriptions may be i18n keys
   pub modes: Option<Vec<SessionOption>>,
+  /// Permission levels the CLI's modes mix with its working modes, shown as an approval select (`session/access.rs`)
+  pub access: Option<Vec<AccessLevel>>,
   pub images_regardless: bool,
   pub requires: Vec<String>,
   pub ignore_modes: bool,
@@ -78,6 +80,21 @@ pub struct AgentDef {
   /// Who makes the CLI and its mark (SVG path data, 24 x 24), for an agent the page knows neither of
   pub vendor: Option<String>,
   pub mark: Option<Vec<String>>,
+}
+
+/// One permission level of a CLI whose modes mix levels and working modes: the CLI mode it runs on, and whether the host
+/// approves every request there because the CLI has no mode of its own for it
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccessLevel {
+  pub id: String,
+  pub wire: String,
+  pub host: bool,
+}
+
+/// Levels in order, as (id, CLI mode, host-approved). Ids are the built-in agent's (`APPROVAL_LEVELS`) plus `auto`, the
+/// CLI's own judgement of what is safe
+fn access(levels: &[(&str, &str, bool)]) -> Option<Vec<AccessLevel>> {
+  Some(levels.iter().map(|(id, wire, host)| AccessLevel { id: s(id), wire: s(wire), host: *host }).collect())
 }
 
 /// Most paths and bytes per path a mark may carry
@@ -170,6 +187,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
         "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
         "https://github.com/agentclientprotocol/claude-agent-acp",
       ),
+      access: access(&[("ask", "default", false), ("auto-edit", "acceptEdits", false), ("auto", "auto", false), ("full", "bypassPermissions", false)]),
       adapter: Some(AdapterDef {
         package: s("@agentclientprotocol/claude-agent-acp"),
         engine: Some(AdapterEngine {
@@ -344,6 +362,9 @@ pub fn builtin_agents() -> Vec<AgentDef> {
 pub fn antigravity() -> AgentDef {
   AgentDef {
     login: login("agy", &["acp", "--login"]),
+    // agy 1.5.9 has no full-access mode over ACP (`--dangerously-skip-permissions` is a process flag): full access runs
+    // in `auto` with the host approving what still asks
+    access: access(&[("ask", "default", false), ("auto-edit", "accept-edits", false), ("auto", "auto", false), ("full", "auto", true)]),
     install: install(
       "curl -fsSL https://antigravity.google/cli/install.sh | bash",
       "irm https://antigravity.google/cli/install.ps1 | iex",
@@ -529,6 +550,8 @@ impl AgentRegistry {
         candidates: vec![],
         env: c.env,
         modes: c.modes,
+        // A custom entry under a built-in id runs that CLI: its mode split stays
+        access: defs.get(id).and_then(|b| b.access.clone()),
         images_regardless: c.prompt.and_then(|p| p.images_regardless).unwrap_or(false),
         requires: c.requires.unwrap_or_default(),
         subagents: c.subagents != Some(false),

@@ -7,6 +7,7 @@
 //! state and its construction; the lifecycle, the turn, the queue, the gates, the controls, history editing and the
 //! view / record projections are further `impl AcpSession` blocks in the child modules
 
+pub mod access;
 pub mod account_switch;
 pub mod attachments;
 pub mod compaction;
@@ -291,6 +292,8 @@ pub(crate) struct Core {
   pub relays: crate::acp::session::relay::Relays,
   /// Claude's host-made Ultra effort level (`ultracode.rs`)
   pub ultracode: crate::acp::session::ultracode::UltracodeState,
+  /// The permission level split off a CLI's modes and the mode the CLI is in (`access.rs`)
+  pub access: crate::acp::session::access::AccessState,
   /// Claude workflow agents' sidechain logs being read into their nodes (`workflow_logs.rs`)
   pub workflow_logs: crate::acp::session::workflow_logs::WorkflowLogs,
   /// The project's workspace hooks: the running turn's snapshot, rejected edits and the gate's rounds (`hooks.rs`)
@@ -489,6 +492,7 @@ impl AcpSession {
           relays: Default::default(),
           ultracode,
           workflow_logs: Default::default(),
+          access: Default::default(),
           hooks: Default::default(),
           plugin_events: Default::default(),
           plugin_state: plugin_hooks::PluginState { menus: record.plugin_menus, ..Default::default() },

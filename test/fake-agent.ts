@@ -362,6 +362,10 @@ const app = acp.agent({ name: 'fake-agent' })
       ...(lateBanner ? { _meta: { piAcp: { startupInfo: lateBanner } } } : {}),
       // when cwd contains no-modes, mimic Grok: omit modes, forcing the client to use the registry's synthesized modes
       ...(params.cwd.includes('no-modes') ? {} : { modes: process.env.FAKE_MIRROR_MODES ? mirrorModes()
+        // FAKE_MIXED_MODES=claude|agy → that CLI's one list of permission levels and plan
+        : process.env.FAKE_MIXED_MODES
+          ? { currentModeId: 'default', availableModes: (process.env.FAKE_MIXED_MODES === 'agy' ? ['default', 'accept-edits', 'auto', 'plan']
+            : ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']).map(id => ({ id, name: id })) }
         : process.env.FAKE_BYPASS_START
           ? { currentModeId: 'bypassPermissions', availableModes: [...(process.env.FAKE_BYPASS_START === 'only' ? [] : [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }]), { id: 'bypassPermissions', name: 'Bypass' }] }
           : { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } }),
@@ -529,6 +533,8 @@ const app = acp.agent({ name: 'fake-agent' })
   .onRequest(acp.methods.agent.session.setMode, async ({ params }) => {
     await configDelay();
     if (process.env.FAKE_BYPASS_START && params.modeId !== 'bypassPermissions') throw acp.RequestError.internalError(undefined, 'mode switch refused by fixture');
+    // FAKE_MODE_LOG: every mode the client set, so a test sees what reached the wire
+    if (process.env.FAKE_MODE_LOG) appendFileSync(process.env.FAKE_MODE_LOG, `${params.modeId}\n`);
     modes.set(params.sessionId, params.modeId); saveSession(params.sessionId); return {};
   })
   .onRequest(acp.methods.agent.session.setConfigOption, async ({ params, client }) => {

@@ -1,4 +1,4 @@
-import { Bug, CircleDashed, Code, Eye, FolderPen, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldCheck, ShieldEllipsis, ShieldOff, Sparkles, Unplug, Users, type LucideIcon } from 'lucide-react';
+import { Bug, CircleDashed, Code, Eye, FolderPen, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldCheck, ShieldEllipsis, ShieldHalf, ShieldOff, Sparkles, Unplug, Users, type LucideIcon } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { SessionOption } from '@acpira/shared/transcript';
 import { t } from '../i18n';
@@ -48,7 +48,8 @@ function byKeyword(mode: SessionOption): LucideIcon {
 // switch barely moves the toolbar and every agent reads alike; the agent's own name and description stay in the tooltip.
 // Anything unknown shows the agent's own name
 const SHORT: Record<string, MsgKey> = {
-  default: 'composer.modeShort.default',
+  // Every known agent's `default` asks before acting (Grok, Hermes); "Default" told nothing of that
+  default: 'composer.access.ask',
   // The built-in agent's own mode: named for what it does next to Team mode, apart from other agents' "default"
   agent: 'composer.modeShort.agent',
   build: 'composer.modeShort.build',
@@ -99,8 +100,9 @@ export function accessLabel(level: SessionOption): string {
   return Object.hasOwn(ACCESS, level.id) ? t(ACCESS[level.id]!) : modeLabel(level);
 }
 
-// The built-in agent's levels as one shield family, so the chip reads as a scale; other levels keep their mode glyph
-const ACCESS_ICON: Record<string, LucideIcon> = { ask: ShieldEllipsis, 'auto-edit': ShieldCheck, full: ShieldOff };
+// The approval levels (the built-in agent's, and `auto` from the engine's split of Claude / Antigravity modes) as one
+// shield family, so the chip reads as a scale; other levels keep their mode glyph
+const ACCESS_ICON: Record<string, LucideIcon> = { ask: ShieldEllipsis, 'auto-edit': ShieldCheck, auto: ShieldHalf, full: ShieldOff };
 
 export function accessIcon(level: SessionOption): LucideIcon {
   return Object.hasOwn(ACCESS_ICON, level.id) ? ACCESS_ICON[level.id]! : modeIcon(level);

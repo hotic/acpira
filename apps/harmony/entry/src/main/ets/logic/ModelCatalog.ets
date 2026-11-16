@@ -833,7 +833,7 @@ export function modeIcon(mode: SessionOption): string {
 }
 
 const MODE_SHORT: Map<string, string> = new Map<string, string>([
-  ['default', 'default'], ['agent', 'agent'], ['build', 'build'], ['plan', 'plan'], ['raw', 'raw'], ['team', 'team'],
+  ['agent', 'agent'], ['build', 'build'], ['plan', 'plan'], ['raw', 'raw'], ['team', 'team'],
   ['acceptEdits', 'autoEdit'], ['auto_edit', 'autoEdit'], ['auto', 'auto'], ['smart', 'smart'],
   ['bypassPermissions', 'full'], ['bypass', 'full'], ['yolo', 'full'], ['agent-full-access', 'full'],
   ['read-only', 'readOnly'], ['workspace-write', 'workspace'], ['ask', 'ask'], ['code', 'code'], ['accept-edits', 'code']
@@ -849,6 +849,10 @@ export function modeLabel(mode: SessionOption): string {
   }
   if (mode.kind === 'auto_review') {
     return t('composer.modeShort.auto');
+  }
+  // Every known agent's `default` asks before acting (modeIcons.ts)
+  if (mode.id === 'default') {
+    return t('composer.access.ask');
   }
   const short = MODE_SHORT.get(mode.id);
   return short !== undefined ? t(`composer.modeShort.${short}`) : mode.name;

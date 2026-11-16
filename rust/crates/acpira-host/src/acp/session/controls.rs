@@ -119,7 +119,12 @@ impl AcpSession {
         }
         (proc, c.acp_session_id.clone(), c.state.controls.mode_config_id.clone(), c.state.controls.mode_id.clone())
       };
-      if let Some(config_id) = mode_config {
+      let levels = me.access_levels().filter(|_| !me.core.lock().access.offered.is_empty());
+      if let Some(levels) = levels {
+        // A split agent: the resting mode runs at the picked level, a working mode as itself (`access.rs`)
+        let shown = crate::acp::session::access::shown_mode(&levels, &mut me.core.lock().access, &id);
+        me.apply_access(&levels, shown).await?;
+      } else if let Some(config_id) = mode_config {
         let r = proc.request("session/set_config_option", json!({ "sessionId": sid, "configId": config_id, "value": id })).await?;
         me.adopt_config_response(&r);
         me.sync_thought().await?;
@@ -136,7 +141,7 @@ impl AcpSession {
         me.core.lock().state.controls.mode_id = Some(id.clone());
       }
       let mut c = me.core.lock();
-      if c.perms.auto_approve || in_full_access(&c.state.controls) {
+      if c.perms.auto_approve || in_full_access(&c.state.controls) || Self::access_native_full(&c) {
         me.flush_permissions(&mut c);
       }
       me.touch(&mut c);
@@ -179,6 +184,15 @@ impl AcpSession {
     let me = self.clone();
     Box::pin(async move {
       me.editing_guard()?;
+      // A split agent's approval select is the host's: the CLI hears of it as a mode (`access.rs`)
+      if me.access_pick(&config_id, &value).await? {
+        let mut c = me.core.lock();
+        if c.perms.auto_approve || Self::access_native_full(&c) {
+          me.flush_permissions(&mut c);
+        }
+        me.touch(&mut c);
+        return Ok(());
+      }
       let (proc, sid, control, reasoning) = {
         let c = me.core.lock();
         let opts = &c.state.controls.options;
@@ -533,7 +547,9 @@ impl AcpSession {
     if let Some(mode) = settings.mode_id.clone().filter(|m| !m.is_empty() && !skip(MODE_PICK)) {
       let differs = {
         let c = self.core.lock();
-        c.state.controls.mode_id.as_ref() != Some(&mode) && c.state.controls.modes.iter().any(|m| m.id == mode)
+        // A split agent's level remembered as its mode before the split (`access.rs`) is a level pick
+        let level = !c.access.offered.is_empty() && self.access_levels().is_some_and(|l| crate::acp::session::access::is_level_mode(&l, &mode));
+        level || (c.state.controls.mode_id.as_ref() != Some(&mode) && c.state.controls.modes.iter().any(|m| m.id == mode))
       };
       if differs && let Err(e) = self.set_mode(mode.clone()).await {
         self.log(&format!("adopt mode {mode} refused: {e}"));
@@ -570,6 +586,7 @@ impl AcpSession {
   pub(crate) fn refine_controls(&self, c: &mut Core) {
     refine_controls(&self.agent, &mut c.state.controls.options, &c.model_facts);
     self.place_ultracode(c);
+    self.place_access(c);
   }
 
   pub(crate) fn synthetic_modes(&self) -> Option<Vec<SessionOption>> {
@@ -589,6 +606,13 @@ impl AcpSession {
     let wanted = c.state.controls.mode_id.clone();
     if self.protocol_controls(&mut c.state.controls, modes, config_options) {
       return;
+    }
+    {
+      let Core { access, state, .. } = c;
+      self.split_access(&mut state.controls, access);
+    }
+    if !c.access.offered.is_empty() {
+      c.perms.auto_approve = self.access_host_full(c);
     }
     let Some(syn) = self.synthetic_modes() else { return };
     if !c.state.controls.modes.is_empty() {

@@ -123,8 +123,8 @@ impl AcpSession {
     if kind == "current_mode_update" && (self.def().ignore_modes || c.state.controls.modes.is_empty()) {
       return;
     }
-    // yolo is host-side state: a mode pushed by the CLI must not drag the UI back
-    if c.perms.auto_approve && kind == "current_mode_update" {
+    // yolo is host-side state: a mode pushed by the CLI must not drag the UI back (split agents map it in access_mode_update)
+    if c.perms.auto_approve && kind == "current_mode_update" && c.access.offered.is_empty() {
       u["currentModeId"] = Value::from("yolo");
     }
     if c.replaying && RUNNING_KINDS.contains(&kind.as_str()) {
@@ -240,6 +240,10 @@ impl AcpSession {
     let title_before = (kind == "session_info_update").then(|| c.state.title.clone());
     if !apply_update(&mut c.state, &u) {
       return;
+    }
+    // A split agent's mode report: a level's mode becomes the approval level (`access.rs`)
+    if kind == "current_mode_update" {
+      self.access_mode_update(&mut c);
     }
     if !c.replaying {
       self.emit_update(&mut c, &kind, &u);

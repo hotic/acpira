@@ -378,7 +378,6 @@ export const ja = {
   'composer.notReady': 'セッションの準備ができていません',
   'composer.escAgainToStop': 'もう一度 Esc を押すと停止します',
   'composer.mode': 'モード',
-  'composer.modeShort.default': '標準',
   'composer.modeShort.agent': '編集',
   'composer.modeShort.plan': '計画',
   'composer.modeShort.raw': 'ダイレクト',

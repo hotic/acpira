@@ -370,7 +370,6 @@
   "composer.notReady": "Сессия не готова",
   "composer.escAgainToStop": "Нажмите Esc ещё раз, чтобы остановить",
   "composer.mode": "Режим",
-  "composer.modeShort.default": "Обычный",
   "composer.modeShort.agent": "Правка",
   "composer.modeShort.plan": "План",
   "composer.modeShort.raw": "Напрямую",
