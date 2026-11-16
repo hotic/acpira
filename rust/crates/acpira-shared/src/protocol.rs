@@ -282,6 +282,12 @@ pub enum HostMsg {
   /// The view shows no session: a project shell (`ShellEnv.projects`) with no project left, so the page shows its
   /// empty state instead of a session started in the home directory
   NoSession,
+  /// The session this viewer picked cannot be shown (its record is gone or unreadable): a page that waits for the
+  /// view, as a phone's chat screen does, shows `reason` instead of waiting forever
+  SessionUnavailable {
+    id: String,
+    reason: String,
+  },
   /// The session view, already serialized once for every viewer that shows it
   Session {
     session: RawJson,
@@ -596,6 +602,7 @@ impl HostMsg {
     match self {
       HostMsg::Subagent { session_id, subagent_id, .. } => format!("subagent:{session_id}:{subagent_id}"),
       HostMsg::DeleteSessionResult { request_id, .. } => format!("deleteSessionResult:{request_id}"),
+      HostMsg::SessionUnavailable { id, .. } => format!("sessionUnavailable:{id}"),
       other => other.type_name().to_owned(),
     }
   }
@@ -610,6 +617,7 @@ impl HostMsg {
       HostMsg::Sessions { .. } => "sessions",
       HostMsg::Categories { .. } => "categories",
       HostMsg::NoSession => "noSession",
+      HostMsg::SessionUnavailable { .. } => "sessionUnavailable",
       HostMsg::Session { .. } => "session",
       HostMsg::SessionPatch { .. } => "sessionPatch",
       HostMsg::SessionsPatch { .. } => "sessionsPatch",

@@ -1610,6 +1610,7 @@
   "mobile.changes.none": "Cette session n’a encore modifié aucun fichier",
   "mobile.engine.disconnected": "Déconnecté du moteur",
   "mobile.engine.dropped": "Un message du moteur n’a pas été compris. Mettez l’app à jour.",
+  "mobile.session.unavailable": "Impossible d’ouvrir cette session",
   "mobile.engine.updateComputer": "Acpira sur l’ordinateur est plus ancien que cette app. Mettez-le à jour.",
   "mobile.engine.updateApp": "Acpira sur l’ordinateur est plus récent que cette app. Mettez l’app à jour.",
   "mobile.settings.agents": "Agents",

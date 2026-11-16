@@ -47,6 +47,21 @@ struct EngineModelTests {
     #expect(wire.types.filter { $0 == "webviewMessage:resync" }.count == 1)
   }
 
+  /// The engine cannot show the picked session: the wait page gets its sentence, which stays while the engine moves the
+  /// view on to another session, and goes with a retry
+  @Test func anUnavailableSessionKeepsItsReasonUntilRetried() async throws {
+    let (model, wire) = try await connected()
+    model.open("gone")
+    push(wire, #"{"type":"sessionUnavailable","id":"gone","reason":"record unreadable"}"#)
+    push(wire, #"{"type":"session","session":{"id":"s2","agent":"fake","title":"New","cwd":"/w","rev":0,"turns":[]}}"#)
+    try await until { model.views["s2"] != nil }
+    #expect(model.unavailable["gone"] == "record unreadable")
+    model.open("gone")
+    #expect(model.unavailable["gone"] == nil)
+    try await until { wire.types.filter { $0 == "webviewMessage:selectSession" }.count == 2 }
+    #expect(wire.types.filter { $0 == "webviewMessage:selectSession" }.count == 2)
+  }
+
   @Test func appliesListPatchesAndAsksForTheWholeListWhenOneDoesNotFit() async throws {
     let (model, wire) = try await connected()
     #expect(wire.sent.contains { $0.contains(#""listPatches":true"#) })

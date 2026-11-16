@@ -125,6 +125,11 @@ class AppModel(
   var settings by mutableStateOf(SettingsView())
   /** The views the screens show, by session id */
   val views = mutableStateMapOf<String, SessionView>()
+  /**
+   * Why a session picked on this wire never showed, by session: the engine's sentence (`sessionUnavailable`), or the
+   * app's own when the view arrived but did not decode. The chat's wait page shows it; a retry or the view clears it
+   */
+  val unavailable = mutableStateMapOf<String, String>()
   /** Prompts sent while the engine has not shown their copy yet (logic/Outgoing.kt): drawn at once, gone once it has */
   val outgoing = mutableStateMapOf<String, List<Outgoing>>()
   /** Drafts, prompt edits and accounts (store/ChatState.kt) */
@@ -353,8 +358,13 @@ class AppModel(
   /** The auto-compact threshold the context ring marks (App.tsx compactAt); 0 follows the model's window, no mark */
   val compactAt: Int? get() = settings.compactAtTokens.takeIf { settings.autoCompact && it > 0 }
 
+  /** The wait page's retry: the session is picked again */
+  fun retryOpen(id: String) = select(id)
+
   private fun select(id: String) {
     if (!live) return
+    // A new pick is a new try
+    unavailable.remove(id)
     feed.select(id)?.let { views[id] = it }
     post(WebviewMsg.SelectSession(id))
   }
@@ -726,6 +736,8 @@ class AppModel(
       is EngineEvent.Dropped -> {
         Log.w(TAG, "dropped ${event.reason}")
         showToast(t("mobile.engine.dropped"))
+        // Most likely the view the chat on screen waits for: the toast goes, so its wait page keeps the sentence
+        onScreenChat()?.let { if (views[it] == null) unavailable[it] = t("mobile.engine.dropped") }
       }
       is EngineEvent.Incompatible -> showToast(t(if (event.engineVersion < SidecarProtocol.VERSION) "mobile.engine.updateComputer" else "mobile.engine.updateApp"))
       is EngineEvent.Closed -> {
@@ -795,6 +807,7 @@ class AppModel(
       }
       is HostMsg.Files -> fileSearch.receive(message.seq, message.files)
       is HostMsg.Session, is HostMsg.Patch, HostMsg.NoSession -> present(message)
+      is HostMsg.SessionUnavailable -> if (views[message.id] == null) unavailable[message.id] = message.reason
       is HostMsg.LocalDir -> folders.receive(message)
       is HostMsg.Providers -> sources.receive(message)
       is HostMsg.ProviderProbed -> sources.receive(message)
@@ -823,6 +836,7 @@ class AppModel(
         val keep = if (carried.isEmpty()) kept else kept + carried
         views.keys.filter { it !in keep }.forEach { views.remove(it) }
         views[view.id] = view
+        unavailable.remove(view.id)
         // The engine's view of the chat on screen, back in the foreground: the clock runs on the engine's times again
         if (clockHeld != null && !away && view.id == onScreenChat()) clockHeld = null
         // A prompt still on its way gives up its place once the session shows the engine's copy

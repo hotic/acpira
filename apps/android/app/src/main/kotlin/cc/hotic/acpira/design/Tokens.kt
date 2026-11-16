@@ -310,6 +310,8 @@ object Metrics {
   val gooBack = 26.dp
   /** A bean's panel: width, row, rows shown before it scrolls, corner, row inset, and the beans' spacing */
   val gooPanelW = 232.dp
+  /** The chat wait page's failure note: a short column, so the engine's sentence wraps well inside the screen */
+  val waitNoteW = 260.dp
   val gooRow = 40.dp
   const val gooPanelRows = 6.5f
   val rGooPanel = 22.dp

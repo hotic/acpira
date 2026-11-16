@@ -1662,6 +1662,7 @@ export const zhTW = {
   'mobile.changes.none': '這個工作階段還沒有改動檔案',
   'mobile.engine.disconnected': '已與引擎中斷連線',
   'mobile.engine.dropped': '看不懂引擎傳來的一則訊息，請更新 App。',
+  'mobile.session.unavailable': '無法開啟這個工作階段',
   'mobile.engine.updateComputer': '電腦上的 Acpira 比這個 App 舊，請先在電腦上更新。',
   'mobile.engine.updateApp': '電腦上的 Acpira 比這個 App 新，請更新 App。',
   'mobile.settings.agents': '智慧體',

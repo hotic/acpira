@@ -1627,6 +1627,7 @@ export const de = {
   'mobile.changes.none': 'Diese Sitzung hat noch keine Dateien geändert',
   'mobile.engine.disconnected': 'Verbindung zur Engine getrennt',
   'mobile.engine.dropped': 'Eine Nachricht der Engine wurde nicht verstanden. Aktualisiere die App.',
+  'mobile.session.unavailable': 'Diese Sitzung lässt sich nicht öffnen',
   'mobile.engine.updateComputer': 'Acpira auf dem Computer ist älter als diese App. Aktualisiere es dort.',
   'mobile.engine.updateApp': 'Acpira auf dem Computer ist neuer als diese App. Aktualisiere die App.',
   'mobile.settings.agents': 'Agents',

@@ -42,11 +42,25 @@ struct ChatScreen: View {
         screen(session)
       } else {
         // The list arrives before the transcript, which can take a while over a paired link. There is no byte
-        // progress on this wire, so keep an indeterminate indicator until the session itself arrives.
-        ProgressView {
-          Text(web: t("session.import.loading")).textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
+        // progress on this wire, so keep an indeterminate indicator until the session itself arrives, or the
+        // reason it will not (AppModel.unavailable) with a way to ask again
+        Group {
+          if let reason = model.unavailable[id] {
+            // A short headline carries the page; the engine's own sentence sits under it, small and in a narrow column
+            VStack(spacing: Metrics.s1) {
+              Text(web: t("mobile.session.unavailable")).textStyle(TypeScale.text1, weight: .medium).foregroundStyle(Palette.fg1)
+              Text(web: reason).textStyle(TypeScale.text3).foregroundStyle(Palette.fg3).multilineTextAlignment(.center)
+              Button(web: t("common.retry")) { model.open(id) }.modifier(CardButton(primary: false))
+                .padding(.top, Metrics.s3)
+            }
+            .frame(maxWidth: Metrics.waitNoteW)
+          } else {
+            ProgressView {
+              Text(web: t("session.import.loading")).textStyle(TypeScale.text2).foregroundStyle(Palette.fg3)
+            }
+            .tint(Palette.fg2)
+          }
         }
-        .tint(Palette.fg2)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.bg0.ignoresSafeArea())
         .navigationTitle("")

@@ -1631,6 +1631,7 @@ export const es = {
   'mobile.changes.none': 'Esta sesión aún no ha cambiado ningún archivo',
   'mobile.engine.disconnected': 'Desconectado del motor',
   'mobile.engine.dropped': 'No se entendió un mensaje del motor. Actualiza la app.',
+  'mobile.session.unavailable': 'No se puede abrir esta sesión',
   'mobile.engine.updateComputer': 'Acpira en el ordenador es más antiguo que esta app. Actualízalo allí.',
   'mobile.engine.updateApp': 'Acpira en el ordenador es más reciente que esta app. Actualiza la app.',
   'mobile.settings.agents': 'Agentes',

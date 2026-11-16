@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +41,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import cc.hotic.acpira.design.Haptic
@@ -341,10 +343,23 @@ fun ChatScreen(model: AppModel, id: String) {
   ) { padding ->
     if (view == null || held == null) {
       // The list arrives before the transcript, which can take a while over a paired link; there is no byte progress on
-      // the wire, so the spinner stays until the session itself arrives (ChatScreen.swift)
-      Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Metrics.s2, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
-        CircularProgressIndicator(color = Palette.fg2)
-        Text(t("session.import.loading"), color = Palette.fg3, fontSize = Type.text2, modifier = Modifier.testTag("chat.loading"))
+      // the wire, so the spinner stays until the session itself arrives, or the reason it will not
+      // (AppModel.unavailable) with a way to ask again (ChatScreen.swift)
+      val reason = model.unavailable[id]
+      Column(
+        Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(if (reason == null) Metrics.s2 else Metrics.s1, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        if (reason != null) {
+          // A short headline carries the page; the engine's own sentence sits under it, small and in a narrow column
+          Text(t("mobile.session.unavailable"), color = Palette.fg1, fontSize = Type.text1, fontWeight = FontWeight.Medium)
+          Text(reason, color = Palette.fg3, fontSize = Type.text3, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = Metrics.waitNoteW).testTag("chat.unavailable"))
+          CardButton(t("common.retry"), primary = false, modifier = Modifier.padding(top = Metrics.s3).testTag("chat.retry"), onClick = { model.retryOpen(id) })
+        } else {
+          CircularProgressIndicator(color = Palette.fg2)
+          Text(t("session.import.loading"), color = Palette.fg3, fontSize = Type.text2, modifier = Modifier.testTag("chat.loading"))
+        }
       }
       return@Scaffold
     }

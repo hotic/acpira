@@ -455,6 +455,8 @@ public enum Metrics {
   public static let gooBack: CGFloat = 26
   /// The list a bean opens: a rounded panel beside the bean column, rows of the composer's control height
   public static let gooPanelW: CGFloat = 232
+  /// The chat wait page's failure note: a short column, so the engine's sentence wraps well inside the screen
+  public static let waitNoteW: CGFloat = 260
   public static let gooRow: CGFloat = 40
   /// Rows shown before the panel scrolls; the half row shows there is more
   public static let gooPanelRows: CGFloat = 6.5

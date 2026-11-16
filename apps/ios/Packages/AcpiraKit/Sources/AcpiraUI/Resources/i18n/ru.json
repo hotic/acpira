@@ -1644,6 +1644,7 @@
   "mobile.changes.none": "В этом сеансе ещё не изменено ни одного файла",
   "mobile.engine.disconnected": "Соединение с движком разорвано",
   "mobile.engine.dropped": "Сообщение движка не распознано. Обновите приложение.",
+  "mobile.session.unavailable": "Не удалось открыть этот сеанс",
   "mobile.engine.updateComputer": "Acpira на компьютере старше этого приложения. Обновите его там.",
   "mobile.engine.updateApp": "Acpira на компьютере новее этого приложения. Обновите приложение.",
   "mobile.settings.agents": "Агенты",

@@ -298,6 +298,9 @@ export type HostMsg =
   | { type: 'categories'; categories: SessionCategories }
   // The view shows no session: a project shell (`ShellEnv.projects`) with no project left shows its empty state
   | { type: 'noSession' }
+  // The session this view picked cannot be shown (record gone or unreadable). The webview keeps what it showed and
+  // relies on the toast; a page that waits for the view (the phones' chat screen) shows `reason` instead
+  | { type: 'sessionUnavailable'; id: string; reason: string }
   | { type: 'session'; session: SessionView }
   // Only to pages that said `patches` in ready: the changes since the view sent last (sessionPatch.ts)
   | { type: 'sessionPatch'; patch: SessionPatch }

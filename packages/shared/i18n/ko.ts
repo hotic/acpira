@@ -1628,6 +1628,7 @@ export const ko = {
   'mobile.changes.none': '이 세션에서 아직 변경한 파일이 없습니다',
   'mobile.engine.disconnected': '엔진과 연결이 끊어졌습니다',
   'mobile.engine.dropped': '엔진에서 온 메시지를 해석하지 못했습니다. 앱을 업데이트하세요.',
+  'mobile.session.unavailable': '이 세션을 열 수 없습니다',
   'mobile.engine.updateComputer': '컴퓨터의 Acpira가 이 앱보다 오래되었습니다. 컴퓨터에서 업데이트하세요.',
   'mobile.engine.updateApp': '컴퓨터의 Acpira가 이 앱보다 최신입니다. 앱을 업데이트하세요.',
   'mobile.settings.agents': '에이전트',

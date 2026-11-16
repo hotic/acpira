@@ -53,6 +53,8 @@ export class AppModel implements ListHost {
   @Trace view: SessionView | undefined = undefined;
   /** The session the chat page shows; its view may still be on its way */
   @Trace openId: string | undefined = undefined;
+  /** Why the session the chat page waits for never showed (`sessionUnavailable`); a retry or its view clears it */
+  @Trace unavailable: string | undefined = undefined;
   /** What the chat's rows read from the view beyond their own turn; the chat page keeps it in step with `view` */
   readonly thread: ThreadContext = new ThreadContext();
   @Trace toast: string | undefined = undefined;
@@ -276,6 +278,8 @@ export class AppModel implements ListHost {
   /** The chat page opens on session `id` */
   open(id: string): void {
     this.openId = id;
+    // A new pick is a new try
+    this.unavailable = undefined;
     if (this.live) {
       this.view = undefined;
       // A paired wire not synced yet selects it with its init
@@ -449,9 +453,15 @@ export class AppModel implements ListHost {
         }
         if (view.id === this.openId) {
           this.view = view;
+          this.unavailable = undefined;
         }
         break;
       }
+      case 'sessionUnavailable':
+        if (message.id === this.openId && this.view === undefined) {
+          this.unavailable = message.reason ?? '';
+        }
+        break;
       case 'sessionPatch': {
         const patch = (message as Object as SessionPatchMsg).patch;
         if (patch.id !== this.openId) {
