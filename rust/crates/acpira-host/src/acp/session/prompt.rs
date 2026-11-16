@@ -769,6 +769,7 @@ impl AcpSession {
   /// (quota exhausted), hand a finished turn to the workspace gate, or compact / flush as usual. A turn that does not
   /// reach the gate leaves its span to the next one that does (`hooks.rs`)
   fn finish_turn(self: &Arc<Self>, turn: &OpenTurn, auto: bool, compacting: bool, settled: Settled) {
+    self.watch_late_replies();
     let context_error = {
       let mut c = self.core.lock();
       if auto || compacting {
@@ -829,6 +830,10 @@ impl AcpSession {
     let failed = error.is_some();
     let ended = !failed && stop == TurnStop::EndTurn;
     self.emit_turn_ended(c, stop, error.as_ref());
+    // A command Antigravity sent to the background keeps its row past the turn (`late_reply.rs`)
+    if ended {
+      self.park_background_commands(c);
+    }
     match error {
       Some(e) => fail_turn(&mut c.state, e),
       None => end_turn(&mut c.state, stop),

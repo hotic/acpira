@@ -24,6 +24,7 @@ pub mod goal;
 pub mod handlers;
 pub mod hooks;
 pub mod images;
+pub mod late_reply;
 pub mod lifecycle;
 pub mod plan_build;
 pub mod plugin_card;
@@ -241,6 +242,8 @@ pub(crate) struct Core {
   pub task_peer: HashMap<String, String>,
   /// Claude's pending `ScheduleWakeup` (`vendors::claude_wakeup`): the session reads as background work until it fires
   pub wake: crate::acp::vendors::claude_wakeup::Wake,
+  /// Antigravity's replies after a background command, read back from a replay (`late_reply.rs`)
+  pub late: late_reply::LateReply,
   pub state: NormalizeState,
   pub tree: SubagentTree,
   pub status: SessionStatus,
@@ -448,6 +451,7 @@ impl AcpSession {
           elsewhere: false,
           task_peer: HashMap::new(),
           wake: Default::default(),
+          late: Default::default(),
           state,
           tree,
           status: SessionStatus::Starting,

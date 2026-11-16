@@ -27,6 +27,15 @@ impl AcpSession {
     // Claude Code's project tools on an SSH host read as its native tools
     self.nativize_remote(&kind, &mut u);
     let mut c = self.core.lock();
+    // A replay read for what a background command left behind (`late_reply.rs`): none of it is a live update
+    if c.acp_session_id.as_deref() == Some(session_id.as_str())
+      && let Some(replay) = c.late.capture.as_mut()
+    {
+      if RUNNING_KINDS.contains(&kind.as_str()) {
+        replay.push(u);
+      }
+      return;
+    }
     if c.phase.editing {
       if matches!(kind.as_str(), "available_commands_update" | "usage_update") {
         c.phase.edit_notifications.push(n);
@@ -336,7 +345,7 @@ impl AcpSession {
   }
 
   /// An AIR async task lands on the transcript of the session whose stream carried it
-  fn async_task_update(&self, c: &mut Core, peer: &str, e: &crate::acp::transport::wire::AsyncTaskEvent) {
+  pub(crate) fn async_task_update(&self, c: &mut Core, peer: &str, e: &crate::acp::transport::wire::AsyncTaskEvent) {
     if c.replaying {
       return;
     }

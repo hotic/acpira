@@ -5,6 +5,10 @@
 //! `agy acp`: a failed MCP server load, an exhausted quota, a browser-tool start failure, a lost harness connection, or
 //! any other SDK error as `Agent execution error: <e>`. `reply_error` finds that tail so the session can show it as the
 //! turn's error instead of a reply
+//!
+//! A `run_command` sent to the background outlives its turn, and the reply the CLI has the model write when it exits is
+//! stored but never sent. `session/load` on the live process replays the conversation with it: the `replay_*` helpers
+//! tell what such a replay holds that the transcript does not (`session/late_reply.rs`)
 
 use std::sync::LazyLock;
 
@@ -72,6 +76,48 @@ fn command_output(text: &str) -> Option<String> {
     _ if out.is_empty() => format!("exit code {code}"),
     _ => format!("{out}\nexit code {code}"),
   })
+}
+
+/// The task a background command's row carries, before the call's id
+pub const COMMAND_TASK: &str = "agy-command:";
+
+/// The updates a replay may add to the transcript: the agent's own, never the prompts
+const REPLAY_AGENT_KINDS: [&str; 5] = ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"];
+
+fn kind_of(u: &Value) -> &str {
+  u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("")
+}
+
+fn squash(text: &str) -> String {
+  text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// How much of a replay the transcript already holds: up to the reply its last turn ended on or the last call that
+/// turn made, whichever comes later. A replay read as the turn ends may already hold what follows a command that
+/// exited at once, so its length alone is the answer only when neither is found. A replay gives each message whole
+/// where the wire sent chunks, hence the whitespace-blind comparison
+pub fn replay_known(replay: &[Value], last_reply: Option<&str>, has_call: impl Fn(&str) -> bool) -> usize {
+  let reply = last_reply.map(squash).filter(|r| !r.is_empty());
+  let held = |u: &Value| match kind_of(u) {
+    "agent_message_chunk" => reply.as_deref().is_some_and(|r| u.pointer("/content/text").and_then(Value::as_str).is_some_and(|t| squash(t) == r)),
+    "tool_call" | "tool_call_update" => u.get("toolCallId").and_then(Value::as_str).is_some_and(&has_call),
+    _ => false,
+  };
+  replay.iter().rposition(held).map_or(replay.len(), |at| at + 1)
+}
+
+/// The row of this call in a replay once its command is over, with the receipt the wire never carried
+pub fn replay_closed<'a>(replay: &'a [Value], id: &str) -> Option<&'a Value> {
+  replay.iter().rev().find(|u| {
+    matches!(kind_of(u), "tool_call" | "tool_call_update")
+      && u.get("toolCallId").and_then(Value::as_str) == Some(id)
+      && matches!(u.get("status").and_then(Value::as_str), Some("completed" | "failed" | "cancelled"))
+  })
+}
+
+/// What the agent produced past the known part of a replay
+pub fn replay_tail(replay: &[Value], known: usize) -> Vec<Value> {
+  replay.iter().skip(known).filter(|u| REPLAY_AGENT_KINDS.contains(&kind_of(u))).cloned().collect()
 }
 
 static RECEIPT: LazyLock<Regex> = LazyLock::new(|| {
@@ -145,6 +191,32 @@ mod tests {
     let mut read = serde_json::json!({ "kind": "read", "content": [{ "type": "content", "content": { "type": "text", "text": receipt } }] });
     tidy_command(&mut read);
     assert_eq!(read["content"][0]["content"]["text"], receipt);
+  }
+
+  #[test]
+  fn a_replay_is_split_at_what_the_transcript_holds() {
+    use serde_json::json;
+    let text = |kind: &str, t: &str| json!({ "sessionUpdate": kind, "content": { "type": "text", "text": t } });
+    let call = |status: &str| json!({ "sessionUpdate": "tool_call", "toolCallId": "c1", "kind": "execute", "status": status });
+    let started = "Started it; I will\nreport back.";
+    // As the turn ends: the prompt, a thought, the command still running, the reply
+    let mut replay = vec![text("user_message_chunk", "run it"), text("agent_thought_chunk", "hm"), call("in_progress"), text("agent_message_chunk", started)];
+    let ours = |id: &str| id == "c1";
+    assert_eq!(replay_known(&replay, Some("Started it; I will report back."), ours), 4);
+    assert!(replay_closed(&replay, "c1").is_none());
+    assert!(replay_tail(&replay, 4).is_empty());
+    // The command exited and the model wrote on
+    replay[2] = call("completed");
+    replay.extend([text("agent_thought_chunk", "done"), text("user_message_chunk", "typed elsewhere"), text("agent_message_chunk", "Output: ok")]);
+    assert_eq!(replay_closed(&replay, "c1").unwrap()["status"], "completed");
+    assert!(replay_closed(&replay, "c2").is_none());
+    let tail = replay_tail(&replay, 4);
+    assert_eq!(tail.iter().map(|u| u["sessionUpdate"].as_str().unwrap()).collect::<Vec<_>>(), ["agent_thought_chunk", "agent_message_chunk"]);
+    // A first read that already holds the late reply still ends at the turn's own reply
+    assert_eq!(replay_known(&replay, Some(started), ours), 4);
+    // A turn that ended on its call, with no reply to find, ends at the call
+    assert_eq!(replay_known(&replay[..3], None, ours), 3);
+    assert_eq!(replay_known(&replay, Some("something else"), |_| false), replay.len());
   }
 
   #[test]
