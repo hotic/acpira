@@ -105,8 +105,8 @@ struct PairSettingsHooks: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .navigationDestination(for: PairedComputer.self) { PairComputerDetail(computer: $0, pairing: pairing) }
-      .navigationDestination(item: $shown) { PairComputerDetail(computer: $0, pairing: pairing) }
+      .navigationDestination(for: PairedComputer.self) { PairComputerDetail(computer: $0, pairing: pairing).backWithoutMenu() }
+      .navigationDestination(item: $shown) { PairComputerDetail(computer: $0, pairing: pairing).backWithoutMenu() }
       .sheet(isPresented: Bindable(pairing).addOpen) { PairSheet() }
       .task {
         while !pairing.loaded { try? await Task.sleep(for: .milliseconds(50)) }

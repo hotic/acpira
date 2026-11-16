@@ -155,6 +155,8 @@ struct Lightbox: View {
               ShareLink(item: image, preview: SharePreview(Text(web: name ?? t("common.image")), image: image)) {
                 Label { Text(web: t("mobile.share")) } icon: { Image(systemName: "square.and.arrow.up") }
               }
+              .labelStyle(.iconOnly)
+              .barButtonBase()
             }
           }
         }

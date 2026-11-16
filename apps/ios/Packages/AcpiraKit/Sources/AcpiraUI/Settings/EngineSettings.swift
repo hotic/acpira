@@ -273,6 +273,7 @@ struct ModelsSettingsPage: View {
       // The desktop's refresh: the engine asks the agent again (a fresh probe), as the empty state says
       ToolbarItem(placement: .primaryAction) {
         Button { model.loadControls(id, fresh: true) } label: { Image(systemName: "arrow.clockwise") }
+          .barButtonBase()
           .accessibilityLabel(Text(web: t("common.refresh")))
       }
     }

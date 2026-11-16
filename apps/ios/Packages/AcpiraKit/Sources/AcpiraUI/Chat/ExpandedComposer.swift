@@ -49,6 +49,7 @@ struct ExpandedComposer: View {
           Button(action: onCollapse) {
             Icon(.minimize2, size: Metrics.iconCtl)
           }
+          .barButtonBase()
           .accessibilityLabel(Text(web: t("mobile.composer.collapse")))
         }
       }

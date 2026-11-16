@@ -131,6 +131,9 @@ public struct RootView: View {
     // `-locale` pins a screenshot's language; otherwise the stored choice, then the device's
     L10n.setLocale(options.locale ?? Prefs.resolve(UserDefaults.standard.string(forKey: Prefs.locale) ?? "auto"))
     InterFont.register()
+    #if os(iOS)
+    LegacyBackIndicator.install()
+    #endif
     let pairing = PairingModel.launch() ?? (options.engine == nil ? pairingService.map { PairingModel(service: $0) } : nil)
     // A paired build launched bare shows no fixtures: the list stands empty under the connect page until a computer's
     // wire brings its own model
@@ -283,7 +286,7 @@ public struct RootView: View {
           // Nothing picked yet: a new session, as the desktop opens on its composer
           destination(model.path.first ?? .new(agent: nil, cwd: nil))
             .id(model.path.first)
-            .navigationDestination(for: Route.self) { route in destination(route) }
+            .navigationDestination(for: Route.self) { route in destination(route).backWithoutMenu() }
         }
       }
       .modifier(SplitStyle(roomy: roomy))
@@ -301,7 +304,7 @@ public struct RootView: View {
     } else {
       NavigationStack(path: Bindable(model).path) {
         SessionListScreen()
-          .navigationDestination(for: Route.self) { route in destination(route) }
+          .navigationDestination(for: Route.self) { route in destination(route).backWithoutMenu() }
       }
     }
   }

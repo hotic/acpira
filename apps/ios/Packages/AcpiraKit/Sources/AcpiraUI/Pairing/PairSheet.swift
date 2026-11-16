@@ -71,8 +71,9 @@ struct PairSheet: View {
       .navigationTitle(phase == .choose ? t(inline == nil ? "mobile.pair.add" : "mobile.pair.connectTitle") : "")
       // Large only over a phone's page: beside a centred column it stood off at the window's edge
       .modifier(PairTitleMode(large: inline != nil && widthClass == .compact))
+      .backWithoutMenu()
       .navigationDestination(for: NearbyComputer.self) { computer in
-        PairCodePage(computer: computer, finish: finish, closes: inline == nil)
+        PairCodePage(computer: computer, finish: finish, closes: inline == nil).backWithoutMenu()
       }
       .toolbar {
         if let inline {
@@ -80,6 +81,7 @@ struct PairSheet: View {
           if phase == .choose || failed {
             ToolbarItem(placement: .navigation) {
               Button(action: failed ? rescan : inline.onBack) { Image(systemName: "chevron.backward") }
+                .barButtonBase()
                 .accessibilityLabel(Text(web: t("welcome.back")))
             }
           }

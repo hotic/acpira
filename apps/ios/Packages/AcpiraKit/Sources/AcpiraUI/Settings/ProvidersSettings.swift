@@ -63,8 +63,8 @@ struct ProvidersPage: View {
     .formPage()
     .navigationTitle(t("settings.providers"))
     .navigationBarTitleDisplayModeInline()
-    .navigationDestination(item: $opened) { id in SourcePage(id: id, onGone: { opened = nil }) }
-    .navigationDestination(item: $form) { _ in SourceFormPage(provider: nil, onDone: { form = nil }) }
+    .navigationDestination(item: $opened) { id in SourcePage(id: id, onGone: { opened = nil }).backWithoutMenu() }
+    .navigationDestination(item: $form) { _ in SourceFormPage(provider: nil, onDone: { form = nil }).backWithoutMenu() }
     .onAppear { model.loadProviders() }
     .task {
       // Ollama / LM Studio answering on the computer: offered once, as the desktop page does
@@ -148,9 +148,9 @@ struct SourcePage: View {
       .formPage()
       .navigationTitle(p.name.isEmpty ? p.id : p.name)
       .navigationBarTitleDisplayModeInline()
-      .navigationDestination(item: $adding) { listed in AddModelPage(id: id, listed: listed, onDone: { adding = nil }) }
+      .navigationDestination(item: $adding) { listed in AddModelPage(id: id, listed: listed, onDone: { adding = nil }).backWithoutMenu() }
       .navigationDestination(item: $form) { f in
-        SourceFormPage(provider: p, error: f.error, onDone: { form = nil }, onRemoved: onGone)
+        SourceFormPage(provider: p, error: f.error, onDone: { form = nil }, onRemoved: onGone).backWithoutMenu()
       }
     } else {
       // Removed meanwhile (here or on the computer)
@@ -227,7 +227,7 @@ struct AddModelPage: View {
     .navigationBarTitleDisplayModeInline()
     .navigationBarBackButtonHidden()
     .toolbar {
-      ToolbarItem(placement: .confirmationAction) { Button(t("settings.providers.addModel.done"), action: onDone) }
+      ToolbarItem(placement: .confirmationAction) { Button(t("settings.providers.addModel.done"), action: onDone).barButtonBase(text: true) }
     }
   }
 
@@ -349,7 +349,7 @@ struct SourceFormPage: View {
         if busy {
           ProgressView()
         } else {
-          Button(t("settings.providers.save")) { save(fullUrl: fullUrl) }.disabled(!valid)
+          Button(t("settings.providers.save")) { save(fullUrl: fullUrl) }.barButtonBase(text: true).disabled(!valid)
         }
       }
     }
@@ -357,7 +357,7 @@ struct SourceFormPage: View {
       Button(t("common.remove"), role: .destructive) { remove() }
       Button(t("mobile.cancel"), role: .cancel) {}
     }
-    .navigationDestination(item: $added) { a in AddModelPage(id: a.id, listed: a.listed, onDone: onDone) }
+    .navigationDestination(item: $added) { a in AddModelPage(id: a.id, listed: a.listed, onDone: onDone).backWithoutMenu() }
     // A field changed: the last failure no longer applies
     .onChange(of: [name, format, baseUrl, key]) { _, _ in failure = nil }
   }

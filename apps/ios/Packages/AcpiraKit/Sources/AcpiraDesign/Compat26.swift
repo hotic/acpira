@@ -109,6 +109,18 @@ public extension View {
     }
   }
 
+  /// A bar button's ground before iOS 26, where the bar draws none under its items: the legacy glass circle (a capsule
+  /// for a text label), so every control on a bar stands on a base as the glass gives it on 26. For a `Button` or a
+  /// `Menu` inside a toolbar item
+  @ViewBuilder
+  func barButtonBase(text: Bool = false) -> some View {
+    if #available(iOS 26, macOS 26, *) {
+      self
+    } else {
+      menuStyle(.button).buttonStyle(LegacyGlassButtonStyle(prominent: false, circle: !text))
+    }
+  }
+
   /// `navigationSubtitle(_:)` came to iOS with 26; before it the title stands alone
   @ViewBuilder
   func navigationSubtitleIfAvailable(_ subtitle: String) -> some View {

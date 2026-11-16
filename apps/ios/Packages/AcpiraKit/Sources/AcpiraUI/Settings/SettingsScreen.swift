@@ -115,12 +115,16 @@ struct SettingsScreen: View {
     .formPage()
     .pairSettingsHooks(pairing)
     .navigationDestination(for: SettingsRoute.self) { route in
-      switch route {
-      case .agent(let id): AgentSettingsPage(id: id)
-      case .models(let id): ModelsSettingsPage(id: id)
-      case .providers: ProvidersPage()
-      case .developer: DeveloperSettingsPage()
+      // Every pushed page hands on the same untitled back item as the root (`backWithoutMenu`)
+      Group {
+        switch route {
+        case .agent(let id): AgentSettingsPage(id: id)
+        case .models(let id): ModelsSettingsPage(id: id)
+        case .providers: ProvidersPage()
+        case .developer: DeveloperSettingsPage()
+        }
       }
+      .backWithoutMenu()
     }
     .navigationTitle(t("session.settings"))
     .navigationBarTitleDisplayModeInline()

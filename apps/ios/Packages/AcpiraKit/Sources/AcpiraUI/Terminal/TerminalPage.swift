@@ -37,6 +37,7 @@ struct TerminalPage: View {
           } label: {
             Image(systemName: "ellipsis")
           }
+          .barButtonBase()
           .accessibilityLabel(Text(web: t("session.more")))
         }
       }

@@ -524,6 +524,7 @@ struct ListViewMenu: View {
     } label: {
       Image(systemName: "line.3.horizontal.decrease")
     }
+    .barButtonBase()
     .accessibilityLabel(Text(web: t("session.view.group")))
     .accessibilityValue(Text(web: name(view)))
   }
@@ -776,6 +777,7 @@ struct ListTopBar: ViewModifier {
         if !inSidebar {
           ToolbarItem(placement: .topBarTrailing) {
             Button(action: onSettings) { Image(systemName: "gearshape") }
+              .barButtonBase()
               .accessibilityLabel(Text(web: t("session.settings")))
           }
         }
