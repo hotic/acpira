@@ -227,6 +227,9 @@ pub(super) fn show_image_args(raw: Option<&Map<String, Value>>) -> Option<&Map<S
 /// claude-agent-acp's `mcp__<server>__<tool>` and codex-acp's `mcp.<server>.<tool>`
 static CLAUDE_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp__([A-Za-z0-9-][A-Za-z0-9_-]*?)__(.+)$"));
 static CODEX_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp\.([^.\s]+)\.(\S+)$"));
+/// `agy acp`'s `mcp_<server>_<tool>` (agy 1.5.9, in `name`, with the title `Run <name>`). The server ends at the first
+/// underscore, so a server whose own name holds one is cut short
+static AGY_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp_([^_\s]+)_(\S+)$"));
 
 /// An MCP tool call: the server's name as configured, the tool's own name, and its title when the agent knows it
 pub(super) struct McpCall {
@@ -238,13 +241,16 @@ pub(super) struct McpCall {
 /// Who an MCP call went to, from whichever naming the adapter used: the built-in agent says so in
 /// `_meta["acpira/mcp"] { server, tool, title }`; claude-agent-acp names the call `mcp__<server>__<tool>` (title or
 /// `name`); codex-acp titles it `mcp.<server>.<tool>` with rawInput `{ server, tool, arguments }`. OpenCode's
-/// `<server>_<tool>` cannot be told from an ordinary tool name and is left alone. The engine's own `ask_agent` keeps its
+/// `<server>_<tool>` cannot be told from an ordinary tool name and is left alone; `agy acp` names the call
+/// `mcp_<server>_<tool>` and titles it `Run <name>`, and only that pair counts. The engine's own `ask_agent` keeps its
 /// row as it is: the summoned agent's node stands for it
 pub(super) fn mcp_identity(u: &Value, meta: Option<&Map<String, Value>>, title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<McpCall> {
   let s = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
   let call = if let Some(m) = meta.and_then(|m| m.get("acpira/mcp")) {
     McpCall { server: s(m.get("server"))?, tool: s(m.get("tool"))?, title: s(m.get("title")) }
   } else if let Some(c) = [title, str_of(u, "name")].into_iter().flatten().find_map(|x| CLAUDE_MCP.captures(x.trim())) {
+    McpCall { server: c[1].to_owned(), tool: c[2].to_owned(), title: None }
+  } else if let Some(c) = str_of(u, "name").filter(|n| title.is_some_and(|t| t.trim().strip_prefix("Run ") == Some(*n))).and_then(|n| AGY_MCP.captures(n)) {
     McpCall { server: c[1].to_owned(), tool: c[2].to_owned(), title: None }
   } else {
     let c = title.and_then(|x| CODEX_MCP.captures(x.trim()))?;
