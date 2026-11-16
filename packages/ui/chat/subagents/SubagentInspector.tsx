@@ -15,7 +15,7 @@ import { TurnActionsContext } from '../TurnActions';
 import { FollowContext, useBottomFollow } from '../useBottomFollow';
 import { CommandStopContext, DiffSourceContext } from '../fileLinks';
 import { receiptOnly, resumedAgent, subagentTitle } from './subagentState';
-import { useDesktop } from '../../desktop';
+import { macOS, useDesktop } from '../../desktop';
 
 interface InspectorProps {
   node: SubagentSummary;
@@ -57,6 +57,14 @@ export function SubagentInspector(p: InspectorProps) {
   const title = subagentTitle(node, t);
   const cancelable = node.state === 'running' && node.controls.cancel && p.onCancel !== undefined;
   const cancelLabel = t(node.cancelRequested ? 'subagents.cancelling' : 'subagents.cancel');
+  // The overlay's back arrow always leads; the docked pane's close follows the platform like the tool panel's tabs
+  // (ToolPanel TabButton): leading on macOS, trailing elsewhere
+  const closeAtEnd = mode === 'docked' && !macOS;
+  const close = (
+    <IconButton className={closeAtEnd ? '-mr-1.5' : '-ml-1.5'} onClick={p.onClose} aria-label={t('subagents.back')} title={t('subagents.back')}>
+      {mode === 'overlay' ? <ArrowLeft strokeWidth={1.5} /> : <X strokeWidth={1.5} />}
+    </IconButton>
+  );
   return (
     <div
       ref={root}
@@ -66,7 +74,8 @@ export function SubagentInspector(p: InspectorProps) {
         if (e.key === 'Escape' && !e.defaultPrevented) { e.stopPropagation(); p.onClose(); }
       }}
     >
-      {/* Same shape as the main Header, which the overlay covers: back / close, the child's title, cancel on the right.
+      {/* Same shape as the main Header, which the overlay covers: back / close, the child's title, cancel on the right
+          (the docked close trails after cancel off macOS).
           Ancestry and the graph live behind the composer's subagent entry. The icon bites into the page margin like the
           Header's trailing icons, so the arrow sits on the column edge */}
       {/* Desktop: the window's header line, without its rule, dragging the window like the sheet's header. The overlay is
@@ -76,9 +85,7 @@ export function SubagentInspector(p: InspectorProps) {
         className={cn('flex h-hdr shrink-0 items-center gap-gap',
           !desktop ? 'px-page shadow-[inset_0_-1px_0_0_var(--line)]'
             : mode === 'overlay' ? 'pr-(--sheet-trail) pl-(--sheet-lead)' : 'pr-(--pane-trail) pl-(--pane-lead)')}>
-        <IconButton className="-ml-1.5" onClick={p.onClose} aria-label={t('subagents.back')} title={t('subagents.back')}>
-          {mode === 'overlay' ? <ArrowLeft strokeWidth={1.5} /> : <X strokeWidth={1.5} />}
-        </IconButton>
+        {!closeAtEnd && close}
         <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-strong" title={title}>{title}</span>
         {cancelable && (
           <IconButton onClick={p.onCancel} disabled={node.cancelRequested} aria-label={cancelLabel} title={cancelLabel}
@@ -86,6 +93,7 @@ export function SubagentInspector(p: InspectorProps) {
             <Square strokeWidth={1.5} />
           </IconButton>
         )}
+        {closeAtEnd && close}
       </div>
       <DiffSourceContext.Provider value={p.diffSource}>
         <CommandStopContext.Provider value={p.stopCommand}>
