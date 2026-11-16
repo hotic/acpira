@@ -690,12 +690,21 @@ async fn host_account_metadata_and_actions_never_use_the_local_account_store() {
   }).await;
   wait(&m, "the host's terminal auth method", 15_000, || m.active().is_some_and(|v| v["status"] == "auth_required")).await;
   m.handle(json!({ "type": "login", "sessionId": id, "methodId": "term-login" })).await;
-  // A peer cannot yet display the host's terminal. The fallback names the host and never starts a local login.
-  wait(&m, "the host terminal fallback", 15_000, || {
-    m.toasts.lock().unwrap().iter().any(|t| t.starts_with("gen1:") && t.contains("FAKE_LOGIN=1") && t.contains("--login"))
+  // Terminal auth on an SSH peer opens an interactive `ssh -t` session targeting the remote host rather than running the
+  // CLI locally or calling ACP `authenticate`.
+  wait(&m, "the host interactive ssh terminal", 15_000, || !m.terminals.lock().unwrap().is_empty()).await;
+  {
+    let terminals = m.terminals.lock().unwrap();
+    let (cmd, args, env) = &terminals[0];
+    assert!(cmd.ends_with("fake-ssh"), "terminal must invoke ssh: {cmd}");
+    assert_eq!(&args[..3], ["-t", "--", "gen1"], "{args:?}");
+    assert!(args.iter().any(|a| a.contains("export FAKE_LOGIN=1") && a.contains("--login")), "{args:?}");
+    assert!(env.is_none(), "remote env rides inside the ssh command: {env:?}");
+  }
+  wait(&m, "the host login retry hint", 15_000, || {
+    m.toasts.lock().unwrap().iter().any(|t| t.starts_with("gen1:") && !t.contains("FAKE_LOGIN=1"))
   })
   .await;
-  assert!(m.terminals.lock().unwrap().is_empty(), "a host login must not run in a local terminal");
   assert!(!auth_log.exists(), "terminal auth must not call ACP authenticate");
 
   // Fake has no account provider: the host's error still returns through remoteAuth, not the local progress list.
@@ -842,6 +851,92 @@ async fn source_reconciliation_reselects_the_host_peer_without_tombstoning_its_s
   assert!(host_store.load("reconciled-peer").await.is_some());
   assert!(m.m.live_session("reconciled-peer").is_none());
   mirror.stop();
+  m.dispose().await;
+  connections.dispose();
+}
+
+/// Installing a missing CLI from a remote session's error card runs the installer on the SSH host, keeps local install
+/// state untouched, updates `remoteAuth.install` / `remoteAuth.agent.available`, and auto-starts the waiting session.
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_missing_cli_installs_on_the_host_and_starts_the_waiting_session() {
+  use acpira_host::acp::agents::registry::AgentRegistry;
+
+  let fake = crate::fake_or_skip!();
+  let node = AgentRegistry::new(&fake.setting(json!({}))).resolve_binary("fake").await.expect("node binary");
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let host_home = lab.host_home().join(".acpira");
+  let host_bin = lab.path().join("host-bin");
+  let work = lab.path().join("hostfs/work");
+  std::fs::create_dir_all(&host_home).unwrap();
+  std::fs::create_dir_all(&host_bin).unwrap();
+  std::fs::create_dir_all(&work).unwrap();
+  let bin = host_bin.join("made-cli");
+  let install_cmd = format!(
+    "echo installing-on-host; printf '#!/bin/sh\\nexec \"{node}\" \"$@\"\\n' > '{0}'; chmod +x '{0}'",
+    bin.display(),
+  );
+  let host_agents = json!({
+    "made": {
+      "name": "Made",
+      "command": bin,
+      "args": fake.args(),
+      "install": { "command": install_cmd },
+    },
+  });
+  std::fs::write(host_home.join("agents.json"), serde_json::to_vec(&host_agents).unwrap()).unwrap();
+
+  let dir = tempfile::tempdir().unwrap();
+  let local_agents = json!({
+    "made": {
+      "name": "Made",
+      "command": "/nonexistent/local-made-cli",
+      "install": { "command": "echo should-not-run-locally; exit 1" },
+    },
+  });
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let mut opts = crate::session_manager::Opts::with_agents(local_agents, "made").projects();
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(&dir.path().join("sessions"), opts);
+  m.init().await;
+
+  m.handle(json!({ "type": "newSession", "agent": "made", "cwd": format!("ssh://gen1{}", work.display()) })).await;
+  wait(&m, "missing CLI error on SSH host", 30_000, || {
+    m.active().is_some_and(|v| v["status"] == "error" && v["remoteAuth"]["agent"]["available"] == false)
+  })
+  .await;
+  let id = m.active_id().unwrap();
+
+  // Terminal install on the remote session opens an interactive `ssh -t` terminal targeting `gen1`.
+  m.handle(json!({ "type": "installInTerminal", "sessionId": id, "agent": "made" })).await;
+  wait(&m, "remote installInTerminal over ssh -t", 15_000, || !m.terminals.lock().unwrap().is_empty()).await;
+  {
+    let terminals = m.terminals.lock().unwrap();
+    let (cmd, args, _) = &terminals[0];
+    assert!(cmd.ends_with("fake-ssh"), "{cmd}");
+    assert_eq!(&args[..3], ["-t", "--", "gen1"], "{args:?}");
+    assert!(args.iter().any(|a| a.contains("installing-on-host")), "{args:?}");
+  }
+
+  // In-app install runs on the SSH host engine, reports progress via `remoteAuth.install`, and starts the session.
+  m.handle(json!({ "type": "installAgent", "sessionId": id, "agent": "made" })).await;
+  wait(&m, "host install success and session ready", 30_000, || {
+    m.active().is_some_and(|v| {
+      v["status"] == "ready"
+        && v["remoteAuth"]["agent"]["available"] == true
+        && v["remoteAuth"]["install"]["status"] == "success"
+    })
+  })
+  .await;
+  let view = m.active().unwrap();
+  assert!(
+    view["remoteAuth"]["install"]["log"].as_array().unwrap().iter().any(|l| l == "installing-on-host"),
+    "{view}",
+  );
+  assert!(m.m.agent_installs().is_empty(), "remote install must not run or record on the local engine");
+  assert_eq!(m.m.agents().iter().find(|a| a.id == "made").unwrap().available, Some(false));
+
   m.dispose().await;
   connections.dispose();
 }

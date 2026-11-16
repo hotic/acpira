@@ -239,6 +239,14 @@ impl SessionManager {
         }
         let found = m.registry().resolve_binary(&id).await.is_some();
         m.emit_agents();
+        if ok && found {
+          // Sessions of this agent that failed before the CLI existed can start now without a manual retry click.
+          for s in m.live_sessions().into_iter().filter(|s| s.agent == id && s.status() == SessionStatus::Error) {
+            tokio::spawn(async move {
+              s.start().await;
+            });
+          }
+        }
         let key = match (ok, found) {
           (true, true) => Some(("info", "host.installDone")),
           (true, false) => Some(("info", "host.installDoneNotFound")),

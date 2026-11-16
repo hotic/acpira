@@ -39,8 +39,9 @@ const LIST_VIEW: &str = "list";
 /// How long a new session in a host folder waits for the host's engine to be reached
 const NEW_WAIT: Duration = Duration::from_secs(60);
 /// What this engine serves for the host's engine (the requests its views cause come back here).
-/// A local terminal cannot run host logins, and a fresh SSH login cannot unlock the engine's macOS keychain session.
-const PEER_CAPS: &[&str] = &["toast"];
+/// Terminal commands run on the host through `ssh -t`; a fresh SSH login still has its own security session and
+/// cannot unlock a background engine's macOS keychain.
+const PEER_CAPS: &[&str] = &["toast", "runInTerminal"];
 /// Blob fetches from one host at a time: a session full of pictures must not queue the view stream behind them all
 const BLOB_FETCHES: usize = 3;
 /// The largest blob fetched without being asked for; a larger one stays on the host and its view shows it as missing
@@ -952,10 +953,25 @@ impl SessionManager {
       }
       Some("platformRequest") => {
         let request = env.get("request").cloned().unwrap_or(Value::Null);
-        if let Some("toast") = request.get("method").and_then(Value::as_str) {
-          let text = request.get("text").and_then(Value::as_str).unwrap_or("");
-          let level = request.get("level").and_then(Value::as_str).unwrap_or("info");
-          (self.deps.toast)(level, &format!("{}: {text}", run.alias));
+        match request.get("method").and_then(Value::as_str) {
+          Some("toast") => {
+            let text = request.get("text").and_then(Value::as_str).unwrap_or("");
+            let level = request.get("level").and_then(Value::as_str).unwrap_or("info");
+            (self.deps.toast)(level, &format!("{}: {text}", run.alias));
+          }
+          Some("runInTerminal") => {
+            if let (Some(remote), Some(command)) = (&self.deps.remote, request.get("command").and_then(Value::as_str)) {
+              let title = request.get("title").and_then(Value::as_str).unwrap_or(command);
+              let args: Vec<String> = request
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                .unwrap_or_default();
+              let (prog, ssh_args) = remote.terminal_command(&run.alias, command, &args, request.get("env").and_then(Value::as_object));
+              (self.deps.run_in_terminal)(format!("{title} ({})", run.alias), prog, ssh_args, None);
+            }
+          }
+          _ => {}
         }
         if let Some(id) = env.get("requestId").and_then(Value::as_str) {
           run.send(json!({ "type": "platformResponse", "requestId": id, "error": "not available to a peer" }));
@@ -974,7 +990,12 @@ impl SessionManager {
       match msg.get("type").and_then(Value::as_str) {
         Some("init") => {
           if let Some(state) = msg.get("state") {
-            for (key, source) in [("agents", "agents"), ("accounts", "accounts"), ("actions", "accountActions")] {
+            for (key, source) in [
+              ("agents", "agents"),
+              ("accounts", "accounts"),
+              ("actions", "accountActions"),
+              ("installs", "agentInstalls"),
+            ] {
               if let Some(v) = state.get(source) {
                 auth[key] = v.clone();
               }
@@ -984,6 +1005,7 @@ impl SessionManager {
         Some("agents") => auth["agents"] = msg.get("agents").cloned().unwrap_or_else(|| json!([])),
         Some("accounts") => auth["accounts"] = msg.get("accounts").cloned().unwrap_or_else(|| json!([])),
         Some("accountActions") => auth["actions"] = msg.get("actions").cloned().unwrap_or_else(|| json!([])),
+        Some("agentInstalls") => auth["installs"] = msg.get("installs").cloned().unwrap_or_else(|| json!([])),
         _ => return,
       }
       *auth != before
@@ -1233,6 +1255,8 @@ fn remote_auth(auth: &Value, agent: &str) -> Value {
     .filter(|a| a.get("agent").and_then(Value::as_str) == Some(agent)).cloned().collect();
   let action = auth.get("actions").and_then(Value::as_array).into_iter().flatten()
     .find(|a| a.get("agent").and_then(Value::as_str) == Some(agent));
+  let install = auth.get("installs").and_then(Value::as_array).into_iter().flatten()
+    .find(|a| a.get("agent").and_then(Value::as_str) == Some(agent));
   let mut out = json!({ "agent": info, "accounts": accounts });
   // The start picker needs this host's CLI availability, not the viewing machine's installation state.
   if let Some(agents) = auth.get("agents").filter(|a| a.is_array()) {
@@ -1240,6 +1264,9 @@ fn remote_auth(auth: &Value, agent: &str) -> Value {
   }
   if let Some(action) = action {
     out["action"] = action.clone();
+  }
+  if let Some(install) = install {
+    out["install"] = install.clone();
   }
   out
 }

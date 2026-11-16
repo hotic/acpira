@@ -1734,6 +1734,8 @@ pub struct RemoteAuth {
   pub accounts: Vec<AccountInfo>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub action: Option<crate::protocol::AccountAction>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub install: Option<crate::protocol::AgentInstallProgress>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

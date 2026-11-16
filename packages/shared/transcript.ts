@@ -3,7 +3,7 @@
 import type { MsgKey } from './i18n/keys';
 import type { SubagentSummary } from './subagents';
 import type { ModelMemory, ModelShapes } from './modelShapes';
-import type { AccountAction } from './protocol';
+import type { AccountAction, AgentInstallProgress } from './protocol';
 
 // Built-in devin / grok; custom ids can be added in acpira.agents
 export type AgentId = string;
@@ -805,6 +805,7 @@ export interface RemoteAuth {
   agents?: AgentInfo[];
   accounts: AccountInfo[];
   action?: AccountAction;
+  install?: AgentInstallProgress;
 }
 
 // Everything a session looks like to the webview: the host pushes the whole thing on every change (the transcript is small, not worth diffing)

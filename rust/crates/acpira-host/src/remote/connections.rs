@@ -451,6 +451,33 @@ impl Connections {
     Ok(())
   }
 
+  /// The local `(program, args)` that runs an interactive terminal command on `alias` over `ssh -t`
+  pub fn terminal_command(
+    &self,
+    alias: &str,
+    command: &str,
+    args: &[String],
+    env: Option<&serde_json::Map<String, Value>>,
+  ) -> (String, Vec<String>) {
+    let host = Host::new(self.opts.ssh.clone(), alias);
+    let prog = self.opts.ssh.to_string_lossy().into_owned();
+    if self.client(alias).is_some_and(|c| c.hello().os == "windows") {
+      // A Windows host engine has already encoded `command` + `args` via `windows_launch`.
+      return (prog, host.interactive_args(std::iter::once(command.to_owned()).chain(args.iter().cloned())));
+    }
+    let mut script = String::new();
+    for (k, v) in env.into_iter().flatten().filter(|(k, _)| is_env_name(k)) {
+      if v.is_null() {
+        script.push_str(&format!("unset {k}; "));
+      } else if let Some(s) = v.as_str() {
+        script.push_str(&format!("export {k}={}; ", super::ssh::sh_quote(s)));
+      }
+    }
+    let words: Vec<String> = std::iter::once(command).chain(args.iter().map(String::as_str)).map(super::ssh::sh_quote).collect();
+    script.push_str(&format!("exec {}", words.join(" ")));
+    (prog, host.interactive_args([super::ssh::remote_command(&script)]))
+  }
+
   /// End every channel and driver. The runtime calls it on its way out: a running driver holds the manager, so the
   /// last handle going away does not end it
   pub fn dispose(&self) {
@@ -805,4 +832,9 @@ fn read_file(file: &Path) -> Result<FileShape> {
 fn progress_text(sent: u64, total: u64) -> String {
   let mb = |n: u64| n as f64 / 1_000_000.0;
   format!("{:.1} / {:.1} MB", mb(sent), mb(total))
+}
+
+fn is_env_name(name: &str) -> bool {
+  !name.is_empty()
+    && name.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && b.is_ascii_digit()))
 }

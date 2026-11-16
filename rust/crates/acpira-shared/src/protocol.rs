@@ -1063,14 +1063,20 @@ pub enum WebviewMsg {
     method_id: Option<String>,
   },
   InstallAgent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
     agent: AgentId,
   },
   /// Stop the agent's in-app install (its whole process tree)
   CancelInstall {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
     agent: AgentId,
   },
   /// The same install line in an IDE terminal: the fallback when an installer needs a person at the keyboard
   InstallInTerminal {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
     agent: AgentId,
   },
   Retry {
