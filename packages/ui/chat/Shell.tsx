@@ -52,7 +52,7 @@ import { compactingNow } from './usageBreakdown';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { imageMimeOf, stagedFileBlob } from '@acpira/shared/attachments';
 import { mediaKind } from '../panel/files';
-import { agentsForFolder, launchable } from '@acpira/shared/agentOrder';
+import { agentsForFolder, launchable, pickFolderAgent } from '@acpira/shared/agentOrder';
 import { parseRemoteFolder, SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ProjectDialog } from './ProjectDialog';
@@ -685,6 +685,9 @@ export function Shell(p: ShellProps) {
   const startPage = desktop && !p.noProject && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
   const startAgents = useMemo(() => agentsForFolder(p.agents, p.cwd, p.hostAgents, p.sshLocalAgents), [p.agents, p.cwd, p.hostAgents, p.sshLocalAgents]);
   const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
+  const folderAgent = useCallback((dir?: string): AgentId | undefined => (
+    pickFolderAgent(p.agents, p.agent.id, dir ?? p.cwd, p.cwd, p.hostAgents, p.sshLocalAgents)
+  ), [p.agents, p.agent.id, p.cwd, p.hostAgents, p.sshLocalAgents]);
   // A session in a folder on an SSH host, of an agent that runs in the host's engine but could run here (the host lacks
   // its CLI or its login, or cannot reach the vendor): its notice offers to run it on this machine instead
   const runHere = on.runHere && p.cwd && parseRemoteFolder(p.cwd) && SSH_LOCAL_AGENTS.includes(p.agent.id) && !p.sshLocalAgents?.includes(p.agent.id)
@@ -703,10 +706,10 @@ export function Shell(p: ShellProps) {
   const openProject = useCallback((cwd: string) => {
     on.categoryOp?.({ op: 'addProject', cwd });
     unfold(cwd);
-    on.newSession(currentAgent, undefined, cwd);
+    on.newSession(folderAgent(cwd), undefined, cwd);
     setFresh(cwd);
     closeDrawer();
-  }, [on.categoryOp, on.newSession, unfold, currentAgent, closeDrawer]);
+  }, [on.categoryOp, on.newSession, unfold, folderAgent, closeDrawer]);
   const addProject = useCallback(() => { void on.pickFolder?.().then(dir => { if (dir) openProject(dir); }); }, [on.pickFolder, openProject]);
   // The column's "remote folder" entries: a folder on that host through the remote folder picker, or a new host on the
   // settings page
@@ -739,20 +742,20 @@ export function Shell(p: ShellProps) {
     // Already on that project's start page: the composer takes the focus instead
     if (startPage && dir === p.cwd) { root.current?.querySelector<HTMLTextAreaElement>('[data-start-dock] textarea')?.focus(); return; }
     unfold(dir);
-    on.newSession(currentAgent, undefined, dir);
-  }, [p.cwd, p.chats, chatHere, newChat, closeDrawer, addProject, startPage, unfold, on.newSession, currentAgent]);
+    on.newSession(folderAgent(dir), undefined, dir);
+  }, [p.cwd, p.chats, chatHere, newChat, closeDrawer, addProject, startPage, unfold, on.newSession, folderAgent]);
   const newHere = useCallback(() => newIn(), [newIn]);
   // The start page starts its empty session over with another agent or in another project (the engine drops the empty one
   // it leaves); what was typed there moves to the new one before its composer mounts
   const carry = useRef<string | undefined>(undefined);
-  const startOver = (agent: AgentId, cwd = p.cwd) => {
+  const startOver = (agent?: AgentId, cwd = p.cwd) => {
     carry.current = p.activeSessionId;
     // A chat starts over as a new chat: the engine takes the empty one's folder away with it
     if (chatHere && cwd === p.cwd) { on.newSession(agent, undefined, undefined, true); return; }
     if (cwd) unfold(cwd);
     on.newSession(agent, undefined, cwd);
   };
-  const startChat = () => { carry.current = p.activeSessionId; on.newSession(p.agent.id, undefined, undefined, true); };
+  const startChat = () => { carry.current = p.activeSessionId; on.newSession(currentAgent, undefined, undefined, true); };
   if (carry.current && p.activeSessionId && carry.current !== p.activeSessionId) {
     if (!p.turns.length) {
       moveDraft(carry.current, p.activeSessionId);
@@ -768,7 +771,7 @@ export function Shell(p: ShellProps) {
   }, [p.categories, p.cwd, chatHere]);
   const copyPath = useCallback((path: string) => copied(navigator.clipboard.writeText(path), t('session.project.copied')), [copied]);
   const newFromPanel = useCallback((agent?: AgentId) => { on.newSession(agent); closeDrawer(); }, [on.newSession, closeDrawer]);
-  const newInCat = useCallback((category: string) => { on.newSession(p.agent.id, category); closeDrawer(); }, [on.newSession, p.agent.id, closeDrawer]);
+  const newInCat = useCallback((category: string) => { on.newSession(folderAgent(p.cwd), category); closeDrawer(); }, [on.newSession, folderAgent, p.cwd, closeDrawer]);
   const toggleDrawer = useCallback(() => (drawerOpenNow.current ? closeDrawer() : openDrawer()), [closeDrawer, openDrawer]);
   const trail = useSessionHistory(desktop ? p.activeSessionId : undefined, id => p.sessions.some(s => s.id === id), id => on.selectSession(id));
   const focusSearch = () => {
@@ -1448,13 +1451,13 @@ export function Shell(p: ShellProps) {
             <Header
               title={desktop && p.noProject ? '' : p.title}
               // Desktop start page: the project after the title is a dropdown that starts the empty session over there
-              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(p.agent.id, cwd)} onOpenOther={on.pickFolder ? addProject : undefined}
+              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(folderAgent(cwd), cwd)} onOpenOther={on.pickFolder ? addProject : undefined}
                 chat={chatHere} chats={p.chats} onChat={p.chats && !chatHere ? startChat : undefined} /> : undefined}
               placeName={chatHere ? t('session.group.chats') : undefined}
               sessions={p.sessions}
               categories={p.categories}
               agent={p.agent}
-              agents={p.agents}
+              agents={startAgents}
               accounts={p.accounts}
               accountId={p.accountId}
               activeSessionId={p.activeSessionId}
@@ -1549,14 +1552,14 @@ export function Shell(p: ShellProps) {
                       onCompact={p.commands?.some(c => c.name === 'compact') ? on.compact : undefined}
                       onContinue={() => on.send(t('alert.continueText'), [])}
                       onDismiss={() => setDismissedAlert(alertKey)}
-                      onNewSession={() => on.newSession(p.agent.id)}
+                      onNewSession={() => on.newSession(folderAgent(p.cwd))}
                     />
                   )}
                   <Notice
                     status={p.status} error={p.error} agent={p.agent} authMethods={p.authMethods}
                     accounts={p.accounts?.filter(x => x.agent === p.agent.id)} accountId={p.accountId}
                     accountAction={p.accountAction} remoteAuth={p.remoteAuth} install={p.agentInstall}
-                    onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(p.agent.id)}
+                    onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(folderAgent(p.cwd))}
                     onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
                     onUnlock={canUnlock && on.unlockCredentials ? () => on.unlockCredentials?.(p.agent.id) : undefined}
                     onTakeOver={p.canTakeOver ? on.takeOver : undefined}
