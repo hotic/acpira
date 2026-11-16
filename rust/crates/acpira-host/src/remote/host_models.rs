@@ -1,10 +1,13 @@
-//! Model sources follow the user to their hosts (docs/dev/remote.md): a session an SSH host runs reads the host's own
-//! `providers.json`, which no settings page on this machine edits. So this engine's sources and their keys go to every
-//! connected host, when it connects and whenever they change here; the host's built-in agent picks the file up by itself.
+//! Model sources follow the user to their hosts (docs/dev/remote.md). A host whose engine reads a client's settings
+//! (`SET_FEATURE`) keeps this engine's whole built-in agent settings apart, per machine (`put_set`), and the sessions
+//! this machine drives there read them instead of the host's own files. An older host engine reads only its own
+//! `providers.json`, so there this engine's sources and their keys are merged in instead (`merge`). Either way they go
+//! to every connected host when it connects and whenever they change here; the host's built-in agent picks the files up
+//! by itself.
 //!
-//! `merge` is the helper's side. A source it writes names the machine that brought it (`SYNCED_FROM_FIELD`), and only
-//! that machine's entries are replaced or taken away again. The host's own source under the same id wins: a host is
-//! often a machine the user also sits at, and its settings page edits that file. `ModelMirror` is this engine's side
+//! `merge` is the helper's older side. A source it writes names the machine that brought it (`SYNCED_FROM_FIELD`), and
+//! only that machine's entries are replaced or taken away again. The host's own source under the same id wins: a host
+//! is often a machine the user also sits at, and its settings page edits that file. `ModelMirror` is this engine's side
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -16,19 +19,28 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use acpira_shared::providers::{PROVIDERS_FILE, PROVIDERS_VERSION, Provider, ProvidersFile, SYNCED_FROM_FIELD, provider_secret_key};
+use acpira_shared::providers::{
+  PROVIDER_SECRET_PREFIX, PROVIDERS_FILE, PROVIDERS_VERSION, Provider, ProvidersFile, SYNCED_FROM_FIELD, WEB_SECRET_PREFIX, client_settings_dir, provider_secret_key,
+};
+use acpira_agent::config::SECRETS_FILE;
 use acpira_shared::remote::{ConnectionState, ConnectionView};
 
 use super::connections::Connections;
-use super::host_store::{body, call_with_body, this_machine};
+use super::host_store::{body, send_body, this_machine};
 use super::wire::WireError;
 use crate::accounts::account_store::FileVault;
 use crate::providers::ProviderStore;
 use crate::store::file_lock::{with_file_lock, write_atomic};
 use crate::store::transcript_store::LogFn;
 
-/// The helper operation that takes a machine's sources
+/// The helper operation that merges a machine's sources into the host's own (an older host engine)
 pub const PUT_OP: &str = "modelsPut";
+
+/// The helper operation that keeps a machine's built-in agent settings apart for the sessions it drives on the host
+pub const SET_OP: &str = "clientSettingsPut";
+
+/// What a host engine that reads a client's settings says in `helloOk.features`
+pub const SET_FEATURE: &str = "clientSettings";
 
 /// A save writes the entry, then its key: both go in one push
 const SETTLE: Duration = Duration::from_millis(300);
@@ -38,6 +50,16 @@ const SETTLE: Duration = Duration::from_millis(300);
 pub struct Carried {
   #[serde(default)]
   pub providers: Vec<Provider>,
+  #[serde(default)]
+  pub keys: BTreeMap<String, String>,
+}
+
+/// What one machine keeps on a host for the sessions it drives there (`SET_OP`): its settings file with only the sources
+/// that travel, and the keys those sources and its search backends use, by vault key
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClientSet {
+  #[serde(default)]
+  pub file: ProvidersFile,
   #[serde(default)]
   pub keys: BTreeMap<String, String>,
 }
@@ -149,35 +171,133 @@ pub async fn merge(root: &Path, machine: &str, name: &str, carried: Carried) -> 
   .await
 }
 
-/// The helper's `modelsPut`: a machine's `Carried` as the body
-pub(crate) async fn serve(a: &Value, stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result<Value, WireError> {
+/// Keep `set` as what `machine` brings for the host's sessions it drives, or drop it (None: the host's setting is off on
+/// that machine). Whatever the machine merged into the host's own file before goes first, so the two never stand side
+/// by side. True when anything changed
+pub async fn put_set(root: &Path, machine: &str, name: &str, set: Option<ClientSet>) -> Result<bool> {
+  let took_back = merge(root, machine, name, Carried::default()).await?;
+  let wrote = match set {
+    Some(set) => write_set(root, machine, set).await?,
+    None => drop_set(root, machine).await?,
+  };
+  Ok(took_back || wrote)
+}
+
+/// A machine's settings folder, its parent made: the folder's own path is what it is locked under, so the lock file
+/// sits beside the folder, which a drop removes whole
+async fn set_dir(root: &Path, machine: &str) -> Result<std::path::PathBuf> {
+  let dir = client_settings_dir(root, machine).ok_or_else(|| anyhow!("not a usable machine id: {machine}"))?;
+  if let Some(parent) = dir.parent() {
+    tokio::fs::create_dir_all(parent).await?;
+  }
+  Ok(dir)
+}
+
+async fn write_set(root: &Path, machine: &str, mut set: ClientSet) -> Result<bool> {
+  let dir = set_dir(root, machine).await?;
+  // Only the keys the agent reads: a machine's other secrets never land here
+  set.keys.retain(|k, v| (k.starts_with(PROVIDER_SECRET_PREFIX) || k.starts_with(WEB_SECRET_PREFIX)) && !v.is_empty());
+  set.file.version = set.file.version.max(PROVIDERS_VERSION);
+  let (keys, file) = (serde_json::to_vec_pretty(&set.keys)?, serde_json::to_vec_pretty(&set.file)?);
+  with_file_lock(&dir.clone(), || async move {
+    tokio::fs::create_dir_all(&dir).await?;
+    // The keys first: a turn that already sees a source finds its key with it
+    let keys_changed = write_changed(&dir.join(SECRETS_FILE), &keys, Some(0o600)).await?;
+    let file_changed = write_changed(&dir.join(PROVIDERS_FILE), &file, None).await?;
+    Ok(keys_changed || file_changed)
+  })
+  .await
+}
+
+/// Remove what `machine` keeps here for its sessions. True when there was something
+pub async fn drop_set(root: &Path, machine: &str) -> Result<bool> {
+  let dir = set_dir(root, machine).await?;
+  with_file_lock(&dir.clone(), || async move {
+    match tokio::fs::remove_dir_all(&dir).await {
+      Ok(()) => Ok(true),
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+      Err(e) => Err(e.into()),
+    }
+  })
+  .await
+}
+
+/// A file left alone when it already holds these bytes: the agent re-reads on every change of its modification time
+async fn write_changed(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<bool> {
+  if tokio::fs::read(path).await.is_ok_and(|now| now == bytes) {
+    return Ok(false);
+  }
+  write_atomic(path, bytes, mode).await?;
+  Ok(true)
+}
+
+/// The request's data root, and the machine it names with that machine's name
+fn target(a: &Value) -> Result<(std::path::PathBuf, String, String), WireError> {
   let root = a.get("home").and_then(Value::as_str).map(std::path::PathBuf::from).unwrap_or_else(crate::store::data_dir::acpira_home);
   let machine = a.get("machine").and_then(Value::as_str).filter(|m| !m.is_empty()).ok_or_else(|| WireError::new("invalid", "no machine"))?;
-  let name = a.get("name").and_then(Value::as_str).unwrap_or(machine);
+  let name = a.get("name").and_then(Value::as_str).unwrap_or(machine).to_owned();
+  Ok((root, machine.to_owned(), name))
+}
+
+fn unusable(providers: &[Provider]) -> bool {
+  providers.iter().any(|p| p.id.is_empty() || p.id.contains('/'))
+}
+
+/// The helper's `modelsPut`: a machine's `Carried` as the body. A machine that sends it merges again (an older build,
+/// or a host engine that reads only its own file), so what it kept here apart goes
+pub(crate) async fn serve(a: &Value, stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result<Value, WireError> {
+  let (root, machine, name) = target(a)?;
   let carried: Carried = serde_json::from_slice(&body(stdin).await?).map_err(|e| WireError::new("invalid", format!("not model sources: {e}")))?;
-  if carried.providers.iter().any(|p| p.id.is_empty() || p.id.contains('/')) {
+  if unusable(&carried.providers) {
     return Err(WireError::new("invalid", "a source without a usable id"));
   }
-  let changed = merge(&root, machine, name, carried).await.map_err(|e| WireError::new("io", format!("{e:#}")))?;
+  let io = |e: anyhow::Error| WireError::new("io", format!("{e:#}"));
+  let mut changed = merge(&root, &machine, &name, carried).await.map_err(io)?;
+  if client_settings_dir(&root, &machine).is_some() {
+    changed |= drop_set(&root, &machine).await.map_err(io)?;
+  }
   Ok(json!({ "changed": changed }))
+}
+
+/// The helper's `clientSettingsPut`: a machine's `ClientSet` as the body, or `null` to drop it
+pub(crate) async fn serve_set(a: &Value, stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result<Value, WireError> {
+  let (root, machine, name) = target(a)?;
+  if client_settings_dir(&root, &machine).is_none() {
+    return Err(WireError::new("invalid", "not a usable machine id"));
+  }
+  let set: Option<ClientSet> = serde_json::from_slice(&body(stdin).await?).map_err(|e| WireError::new("invalid", format!("not agent settings: {e}")))?;
+  if set.as_ref().is_some_and(|s| unusable(&s.file.providers)) {
+    return Err(WireError::new("invalid", "a source without a usable id"));
+  }
+  let changed = put_set(&root, &machine, &name, set).await.map_err(|e| WireError::new("io", format!("{e:#}")))?;
+  Ok(json!({ "changed": changed }))
+}
+
+/// How a connected host was last sent this machine's settings
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Sent {
+  /// Its setting was on: settings went (off: none, which takes back what an earlier push brought)
+  on: bool,
+  /// Its engine reads a client's settings (`SET_FEATURE`): they went apart, else merged into its own file
+  apart: bool,
 }
 
 #[derive(Default)]
 struct State {
-  /// Connected hosts, and whether each was last sent sources (false: sent none, its setting being off)
-  up: HashMap<String, bool>,
+  /// Connected hosts whose engine has answered, and what each was last sent
+  up: HashMap<String, Sent>,
   /// A change here is waiting to go
   settling: bool,
   sub: Option<u64>,
 }
 
-/// This engine's sources kept on every connected host
+/// This engine's settings kept on every connected host
 pub struct ModelMirror {
   connections: Arc<Connections>,
   providers: Arc<ProviderStore>,
   log: LogFn,
   state: parking_lot::Mutex<State>,
-  /// One push at a time: a later read of the sources never reaches a host before an earlier one
+  /// One push at a time: a later read of the settings never reaches a host before an earlier one
   sending: tokio::sync::Mutex<()>,
   me: Weak<ModelMirror>,
 }
@@ -187,10 +307,10 @@ impl ModelMirror {
     Arc::new_cyclic(|me| ModelMirror { connections, providers, log, state: Default::default(), sending: Default::default(), me: me.clone() })
   }
 
-  /// Follow the sources' changes and the hosts' connections
+  /// Follow the settings' changes and the hosts' connections
   pub fn start(self: &Arc<Self>) {
     let weak = self.me.clone();
-    self.providers.set_change_hook(Arc::new(move || {
+    self.providers.on_change(Arc::new(move || {
       if let Some(m) = weak.upgrade() {
         m.changed();
       }
@@ -223,57 +343,97 @@ impl ModelMirror {
     tokio::spawn(async move {
       tokio::time::sleep(SETTLE).await;
       let Some(m) = weak.upgrade() else { return };
-      let hosts: Vec<(String, bool)> = {
+      let hosts: Vec<String> = {
         let mut st = m.state.lock();
         st.settling = false;
-        st.up.iter().filter(|(_, on)| **on).map(|(a, on)| (a.clone(), *on)).collect()
+        st.up.iter().filter(|(_, s)| s.on).map(|(a, _)| a.clone()).collect()
       };
-      for (alias, on) in hosts {
-        m.push(&alias, on).await;
+      for alias in hosts {
+        m.push(&alias).await;
       }
     });
   }
 
-  /// A host that came up, or whose setting changed, is sent the sources (none with the setting off, which takes back
-  /// what an earlier push brought)
+  /// A host that came up, whose setting changed, or whose engine answered differently is sent the settings. One whose
+  /// engine has not answered yet waits for it, so a connection never merges first only to take it back a moment later;
+  /// with no engine there, no session of the host could use them anyway
   fn on_connections(&self, views: &[ConnectionView]) {
-    let todo: Vec<(String, bool)> = {
+    let todo: Vec<String> = {
       let mut st = self.state.lock();
-      let connected: HashMap<&str, bool> = views.iter().filter(|v| v.state == ConnectionState::Connected).map(|v| (v.alias.as_str(), !v.models_off)).collect();
-      st.up.retain(|a, _| connected.contains_key(a.as_str()));
-      let todo: Vec<(String, bool)> = connected.iter().filter(|(a, on)| st.up.get(**a) != Some(*on)).map(|(a, on)| ((*a).to_owned(), *on)).collect();
+      let connected: HashMap<&str, Option<Sent>> = views
+        .iter()
+        .filter(|v| v.state == ConnectionState::Connected)
+        .map(|v| (v.alias.as_str(), self.connections.engine_offers(&v.alias, SET_FEATURE).map(|apart| Sent { on: !v.models_off, apart })))
+        .collect();
+      st.up.retain(|a, _| connected.get(a.as_str()).is_some_and(Option::is_some));
+      let todo: Vec<(String, Sent)> =
+        connected.iter().filter_map(|(a, s)| Some(((*a).to_owned(), (*s)?))).filter(|(a, s)| st.up.get(a) != Some(s)).collect();
       st.up.extend(todo.iter().cloned());
-      todo
+      todo.into_iter().map(|(a, _)| a).collect()
     };
-    for (alias, on) in todo {
+    for alias in todo {
       let weak = self.me.clone();
       tokio::spawn(async move {
         if let Some(m) = weak.upgrade() {
-          m.push(&alias, on).await;
+          m.push(&alias).await;
         }
       });
     }
   }
 
-  async fn push(&self, alias: &str, on: bool) {
+  async fn push(&self, alias: &str) {
     let _one = self.sending.lock().await;
-    let Some(client) = self.connections.client(alias) else { return };
-    let carried = if on {
+    // What the host is now, not what it was when this push was queued: another may have waited ahead of it
+    let Some(sent) = self.state.lock().up.get(alias).copied() else { return };
+    // The channel and the way its own engine takes the settings, together: a helper replaced since has an engine yet
+    // to answer, and its hello queues the next push
+    let Some((client, apart)) = self.connections.engine_client(alias, SET_FEATURE) else { return };
+    let sent = Sent { apart, ..sent };
+    let (machine, name) = this_machine();
+    let a = json!({ "machine": machine, "name": name });
+    if sent.apart {
+      let set = if sent.on {
+        match self.providers.client_set().await {
+          Ok(s) => Some(s),
+          // A file that cannot be read says nothing about what the host should hold
+          Err(e) => return (self.log)(&format!("host models: {alias}: not sent: {e}")),
+        }
+      } else {
+        None
+      };
+      match send_body(&client, SET_OP, a.clone(), &serde_json::to_vec(&set).unwrap_or_default()).await {
+        Ok(reply) => {
+          self.connections.set_settings_apart(alias, true);
+          if reply.get("changed").and_then(Value::as_bool) == Some(true) {
+            let count = set.as_ref().map_or(0, |s| s.file.providers.len());
+            (self.log)(&format!("host models: {alias}: {count} source(s) kept on the host for this machine's sessions"));
+          }
+          return;
+        }
+        // A helper older than the engine there (a local build deploys the release it was built on): merged instead
+        Err(e) if e.code() == "unknownOp" => {}
+        Err(e) => return (self.log)(&format!("host models: {alias}: not sent: {e}")),
+      }
+    }
+    let carried = if sent.on {
       match self.providers.carried().await {
         Ok(c) => c,
-        // A file that cannot be read says nothing about what the host should hold
         Err(e) => return (self.log)(&format!("host models: {alias}: not sent: {e}")),
       }
     } else {
       Carried::default()
     };
-    let (machine, name) = this_machine();
-    let sent = async { call_with_body(&client, PUT_OP, json!({ "machine": machine, "name": name }), &serde_json::to_vec(&carried)?).await };
-    match sent.await {
-      Ok(reply) if reply.get("changed").and_then(Value::as_bool) == Some(true) => (self.log)(&format!("host models: {alias}: {} source(s) on the host", carried.providers.len())),
+    let merged = send_body(&client, PUT_OP, a, &serde_json::to_vec(&carried).unwrap_or_default()).await;
+    if merged.is_ok() {
+      self.connections.set_settings_apart(alias, false);
+    }
+    match merged {
+      Ok(reply) if reply.get("changed").and_then(Value::as_bool) == Some(true) => {
+        (self.log)(&format!("host models: {alias}: {} source(s) on the host", carried.providers.len()))
+      }
       Ok(_) => {}
       // A helper from before this existed answers `unknownOp`: its host keeps its own sources
-      Err(e) => (self.log)(&format!("host models: {alias}: not sent: {e:#}")),
+      Err(e) => (self.log)(&format!("host models: {alias}: not sent: {e}")),
     }
   }
 }
@@ -391,5 +551,73 @@ mod tests {
     assert!(merge(dir.path(), "mac", "Mac", carried(&[(source("gw", "https://gw.test/v1", &[]), Some("k"))])).await.is_err());
     assert_eq!(std::fs::read_to_string(dir.path().join(PROVIDERS_FILE)).unwrap(), "{ not json");
     assert!(!dir.path().join("secrets.json").exists());
+  }
+
+  /// A machine's settings kept apart: what it merged before goes back first, the host's own source under the same id
+  /// and its key stay as they are, only the keys the agent reads land, and the same again changes nothing
+  #[tokio::test]
+  async fn a_machines_settings_stay_apart_from_the_hosts_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join(PROVIDERS_FILE), json!({ "approval": "full", "providers": [
+      { "id": "gw", "format": "openai-chat", "baseUrl": "https://gw.test/v1", "models": [{ "id": "host" }] },
+    ] }).to_string()).unwrap();
+    std::fs::write(root.join("secrets.json"), json!({ "acpira.provider.gw": "host-key" }).to_string()).unwrap();
+    // An earlier push merged `extra` into the host's own file
+    let extra = source("extra", "https://extra.test/v1", &["x"]);
+    assert!(merge(root, "mac", "Mac", carried(&[(extra.clone(), Some("extra-key"))])).await.unwrap());
+
+    let mut file: ProvidersFile = serde_json::from_value(json!({ "approval": "ask", "fastModel": "gw/mine" })).unwrap();
+    file.providers = vec![source("gw", "https://gw.test/v1", &["mine"]), extra];
+    let keys = [("acpira.provider.gw", "mac-key"), ("acpira.web.jina", "j"), ("acpira.account.x", "not this")];
+    let set = ClientSet { file, keys: keys.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect() };
+    assert!(put_set(root, "mac", "Mac", Some(set.clone())).await.unwrap());
+    let host = read(root, PROVIDERS_FILE);
+    let ids: Vec<&str> = host["providers"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["gw"], "what the machine merged before went back");
+    assert_eq!((host["providers"][0]["models"][0]["id"].as_str(), host["approval"].as_str()), (Some("host"), Some("full")));
+    assert_eq!(read(root, "secrets.json"), json!({ "acpira.provider.gw": "host-key" }));
+
+    let kept = client_settings_dir(root, "mac").unwrap();
+    let file = read(&kept, PROVIDERS_FILE);
+    let ids: Vec<&str> = file["providers"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["gw", "extra"]);
+    assert_eq!((file["approval"].as_str(), file["fastModel"].as_str()), (Some("ask"), Some("gw/mine")));
+    assert_eq!(read(&kept, "secrets.json"), json!({ "acpira.provider.gw": "mac-key", "acpira.web.jina": "j" }));
+    assert!(!put_set(root, "mac", "Mac", Some(set)).await.unwrap(), "the same again changes nothing");
+
+    // The host's setting off on that machine: the folder goes, the host's own file stays as it is
+    assert!(put_set(root, "mac", "Mac", None).await.unwrap());
+    assert!(!kept.exists());
+    assert_eq!(read(root, PROVIDERS_FILE)["providers"].as_array().unwrap().len(), 1);
+    assert!(!put_set(root, "mac", "Mac", None).await.unwrap());
+  }
+
+  fn body_of(bytes: Vec<u8>) -> Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    tx.send(Some(bytes)).unwrap();
+    tx.send(None).unwrap();
+    Some(rx)
+  }
+
+  /// A machine back to merging (an older build of it) leaves nothing apart behind, and a machine id that is not a plain
+  /// name never becomes a folder
+  #[tokio::test]
+  async fn merging_again_drops_what_was_kept_apart() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let a = json!({ "home": root, "machine": "mac", "name": "Mac" });
+    let set = serde_json::to_vec(&Some(ClientSet::default())).unwrap();
+    assert_eq!(serve_set(&a, body_of(set.clone())).await.unwrap()["changed"], true);
+    let kept = client_settings_dir(root, "mac").unwrap();
+    assert!(kept.join(PROVIDERS_FILE).exists());
+
+    let merged = serde_json::to_vec(&carried(&[(source("gw", "https://gw.test/v1", &["m"]), None)])).unwrap();
+    assert_eq!(serve(&a, body_of(merged)).await.unwrap()["changed"], true);
+    assert!(!kept.exists());
+    assert_eq!(read(root, PROVIDERS_FILE)["providers"][0]["syncedFrom"]["machine"], "mac");
+
+    let odd = json!({ "home": root, "machine": "../mac" });
+    assert_eq!(serve_set(&odd, body_of(set)).await.unwrap_err().code, "invalid");
   }
 }

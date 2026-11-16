@@ -257,8 +257,10 @@ impl AcpSession {
   /// the built-in agent reads to compact inside the turn at that threshold (every other agent ignores it)
   fn prompt_params(&self, acp_id: Option<&str>, blocks: Vec<Value>) -> Value {
     let mut params = json!({ "sessionId": acp_id, "prompt": blocks });
+    // Every turn names whose settings it reads: the session's sender may have changed since the last one
+    self.with_client_settings(&mut params, &self.agent);
     if let Some(policy) = self.deps.policy.compaction() {
-      params["_meta"] = json!({ "acpira/compaction": { "auto": policy.auto, "atTokens": policy.at_tokens } });
+      params["_meta"]["acpira/compaction"] = json!({ "auto": policy.auto, "atTokens": policy.at_tokens });
     }
     params
   }
@@ -331,6 +333,12 @@ impl AcpSession {
       }
       // Mid-turn /compact cannot be injected: the next user-facing request is the earliest slot, compact that first
       let compact_first = !auto && !is_compact_command(text) && self.should_auto_compact(&c);
+      // A turn the user asked for reads the settings of whoever sent last, fixed until it ends: a send meanwhile waits
+      // for the next one. Turns Acpira starts on its own (a /compact ahead of an accepted prompt, a goal's next turn,
+      // owed results, the gate's follow-up) go on with what the session reads and leave a pending sender pending
+      if matches!(origin, Origin::User | Origin::Retry | Origin::Goal) {
+        self.adopt_sender();
+      }
       c.phase.running = true;
       c.compaction.auto_eligible = false;
       c.phase.staging = true;

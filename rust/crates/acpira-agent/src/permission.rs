@@ -219,7 +219,14 @@ impl Guard {
       acpira_shared::providers::plugin_providers_path(home),
     ];
     // Prompt overrides change what every later session is told: Acpira's own and the project's (`prompt::library`)
-    let mut dirs = vec![home.join("agent").join("config"), home.join("prompts"), crate::prompt::project_prompts(cwd), home.join("plugins").join(".versions")];
+    // The settings other machines keep here for the sessions they drive (`ConfigCache::of_client`), like providers.json
+    let mut dirs = vec![
+      home.join("agent").join("config"),
+      home.join("prompts"),
+      crate::prompt::project_prompts(cwd),
+      home.join("plugins").join(".versions"),
+      home.join("remote").join("clients"),
+    ];
     // The project's own files when the session folder is below its root (`prompt::project_root`)
     if let Some(root) = crate::prompt::project_root(cwd, user_home).filter(|r| r != cwd) {
       dirs.push(crate::prompt::project_prompts(&root));
@@ -372,6 +379,7 @@ mod tests {
     assert!(g.protects(Path::new("/w/sub/../.agents/hooks.json")));
     assert!(g.protects(Path::new("/w/.acpira/prompts/system.md")));
     assert!(g.protects(Path::new("/h/.acpira/prompts/mode/plan.md")));
+    assert!(g.protects(Path::new("/h/.acpira/remote/clients/mac/secrets.json")));
     // The project's scratch folders beside them stay the agent's to write
     assert!(!g.protects(Path::new("/w/.acpira/tmp/0123abcd/out.txt")));
     assert!(!g.protects(Path::new("/w/.agents/skills/x/SKILL.md")));

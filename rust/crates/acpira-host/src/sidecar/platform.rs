@@ -73,6 +73,8 @@ struct WireFacts {
   /// A peer's capabilities serve the requests its views cause; its environment and settings are its own machine's and
   /// count for nothing here
   peer: bool,
+  /// A peer's machine id, as its hello named it
+  machine: Option<String>,
   facts: ShellFacts,
 }
 
@@ -234,13 +236,18 @@ impl SidecarPlatform {
 
   /// A peer wire joined: its capabilities serve the requests its views cause, and nothing else changes
   pub fn add_peer(&self, wire: u64, hello: &Hello) {
-    self.shells.write().wires.insert(wire, WireFacts { peer: true, facts: ShellFacts::of(hello) });
+    self.shells.write().wires.insert(wire, WireFacts { peer: true, machine: hello.client.machine.clone().filter(|m| !m.is_empty()), facts: ShellFacts::of(hello) });
+  }
+
+  /// The machine a peer wire comes from; None for a window, or a peer that did not say
+  pub fn peer_machine(&self, wire: u64) -> Option<String> {
+    self.shells.read().wires.get(&wire).filter(|w| w.peer).and_then(|w| w.machine.clone())
   }
 
   /// A window wire joined: its facts are kept apart from every other window's, and serve engine-global reads once the
   /// server makes it active (`set_active`)
   pub fn add_window(&self, wire: u64, hello: &Hello) {
-    self.shells.write().wires.insert(wire, WireFacts { peer: false, facts: ShellFacts::of(hello) });
+    self.shells.write().wires.insert(wire, WireFacts { peer: false, machine: None, facts: ShellFacts::of(hello) });
     // The engine started for a peer: the first window's snapshot is the one to create the shared file from
     if !self.window_seen.swap(true, std::sync::atomic::Ordering::AcqRel)
       && let Some(store) = self.shared.read().clone()

@@ -13,10 +13,15 @@ use acpira_shared::transcript::*;
 
 use super::dispatch::list_edit_target;
 use super::{PUSH_QUANTUM, SessionManager, Viewer, ViewerShell, ViewerState, is_forwarded, session_id_of};
-use crate::acp::session::AcpSession;
 use crate::acp::session::errors::error_text;
+use crate::acp::session::{AcpSession, SentFrom};
 use crate::i18n::t;
 use crate::store::transcript_store::sort_index;
+
+/// The machine whose page took a forwarded action (`SentFrom`), carried inside the action: a bus router of an older
+/// engine re-reads frames into its own shape and drops fields it does not know, but passes the action through whole,
+/// and an older owner reading the action ignores it
+const FORWARDED_FROM: &str = "acpiraSentFrom";
 
 impl Viewer {
   /// Peer views never relay sessions imported from another SSH host.
@@ -191,6 +196,7 @@ impl SessionManager {
       state: parking_lot::Mutex::new(ViewerState { active_id: id, session_list, empty, ..Default::default() }),
       sink: Default::default(),
       shell,
+      sent_from: Default::default(),
     });
     st.viewers.push(v.clone());
     let unseeded = st.categories.projects.is_none();
@@ -342,21 +348,27 @@ impl SessionManager {
     self.sync_node_subs();
   }
 
-  /// A page's action on a session another engine owns and pushes: run there
-  pub(super) async fn forward(&self, id: &str, m: &WebviewMsg) -> Result<()> {
-    let msg = serde_json::to_value(m)?;
+  /// A page's action on a session another engine owns and pushes: run there, with the machine the page belongs to
+  /// inside the action (`FORWARDED_FROM`)
+  pub(super) async fn forward(&self, id: &str, m: &WebviewMsg, from: &SentFrom) -> Result<()> {
+    let mut msg = serde_json::to_value(m)?;
+    if *from != SentFrom::Unknown {
+      msg[FORWARDED_FROM] = serde_json::to_value(from)?;
+    }
     self.bus.act(id, msg).await.map_err(|e| anyhow!(e))
   }
 
   /// Run an action a page of another engine took on a session this one owns, as if from a page showing it here
-  pub(super) async fn run_forwarded(self: Arc<Self>, session: String, msg: Value) -> Result<(), String> {
+  pub(super) async fn run_forwarded(self: Arc<Self>, session: String, mut msg: Value) -> Result<(), String> {
+    // Absent or unreadable (an older engine): not known, so the session keeps whose settings it reads
+    let from: SentFrom = msg.as_object_mut().and_then(|o| o.remove(FORWARDED_FROM)).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
     let m: WebviewMsg = serde_json::from_value(msg).map_err(|e| e.to_string())?;
     // An edit answers its page with a result instead of going through `dispatch`: run it here and hand the error back
     if let WebviewMsg::EditTurn { edit, .. } = m {
       if edit.session_id != session {
         return Err(format!("not an action on {session}"));
       }
-      return self.edit_turn(edit).await.map_err(|e| error_text(&e));
+      return self.edit_turn_from(edit, &from).await.map_err(|e| error_text(&e));
     }
     let target = session_id_of(&m).or_else(|| list_edit_target(&m).map(str::to_owned));
     if !(is_forwarded(&m) || list_edit_target(&m).is_some()) || target.is_some_and(|id| id != session) {
@@ -371,6 +383,7 @@ impl SessionManager {
       state: parking_lot::Mutex::new(ViewerState { active_id: Some(session), ..Default::default() }),
       sink: Default::default(),
       shell: None,
+      sent_from: parking_lot::Mutex::new(from),
     });
     self.dispatch(&v, m).await.map_err(|e| error_text(&e))
   }
@@ -440,6 +453,21 @@ impl SessionManager {
     // A fresh entry or an idle edge wakes the flusher at once
     if prev.is_none() || !running {
       self.wake.notify_one();
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// An owner from before the sender rode along reads the action as it always did
+  #[test]
+  fn an_older_owner_reads_a_forwarded_action_past_its_sender() {
+    for m in [serde_json::json!({ "type": "stop", "sessionId": "s" }), serde_json::json!({ "type": "ready" })] {
+      let mut v = m.clone();
+      v[FORWARDED_FROM] = serde_json::to_value(SentFrom::Machine("mac".into())).unwrap();
+      assert_eq!(serde_json::from_value::<WebviewMsg>(v).unwrap(), serde_json::from_value::<WebviewMsg>(m).unwrap());
     }
   }
 }

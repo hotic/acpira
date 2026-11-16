@@ -711,6 +711,13 @@ impl SessionManager {
     if (self.deps.ssh_local_agents)().iter().any(|a| a == agent) {
       return None;
     }
+    // The built-in agent on a host that keeps this machine's settings (as the last push found, not merely offered): a
+    // session this machine starts there reads them, so this machine answers
+    if agent == crate::acp::agents::registry::SELF_AGENT_ID
+      && self.deps.remote.as_ref().is_some_and(|c| c.models_on(&folder.alias) && c.settings_apart(&folder.alias) == Some(true))
+    {
+      return None;
+    }
     let run = self.hosts.runs.lock().get(&folder.alias).cloned()?;
     let reply = if *run.up.borrow() {
       // Keyed by agent: a second ask for the same agent replaces the first, which falls back to the last answer
@@ -1360,9 +1367,13 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
     let Some(m) = weak.upgrade() else { return };
     let Some(connections) = m.deps.remote.clone() else { return };
     drop(m);
-    let attempt: Result<PeerLink> = async {
+    let attempt: Result<(PeerLink, crate::remote::client::RemoteClient)> = async {
+      // What an earlier link heard may be another engine's by now (an update; a run cancelled mid-link never got to
+      // forget it): unknown until this link's hello
+      connections.forget_engine_features(&run.alias);
       let client = connections.follow(&run.alias, CONNECT_WAIT).await?;
-      PeerLink::connect(&client, None, PeerHello { version: acpira_shared::version::VERSION, capabilities: PEER_CAPS, host_language: "en" }).await
+      let link = PeerLink::connect(&client, None, PeerHello { version: acpira_shared::version::VERSION, capabilities: PEER_CAPS, host_language: "en" }).await?;
+      Ok((link, client))
     }
     .await;
     match attempt {
@@ -1371,9 +1382,13 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
           m.log(&format!("remote run: {}'s engine: {e:#}", run.alias));
         }
       }
-      Ok(mut link) => {
+      Ok((mut link, client)) => {
         retry = RETRY_FIRST;
         *run.pid.lock() = link.hello_ok.pointer("/sidecar/pid").and_then(Value::as_u64).map(|p| p as u32);
+        // What the host's engine takes decides how this machine's settings go there (`remote/host_models.rs`)
+        let features = link.hello_ok.get("features").and_then(Value::as_array).map(|f| f.iter().filter_map(Value::as_str).map(str::to_owned).collect());
+        connections.set_engine_features(&run.alias, &client, features.unwrap_or_default());
+        drop(client);
         let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
         *run.out.lock() = Some(tx);
         {
@@ -1410,6 +1425,7 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
         *run.out.lock() = None;
         run.requests.lock().clear();
         *run.pid.lock() = None;
+        connections.forget_engine_features(&run.alias);
         if let Some(m) = weak.upgrade() {
           m.log(&format!("remote run: lost {}'s engine", run.alias));
           let error = crate::i18n::tp("host.remoteUnreachable", &[("host", &run.alias)]);

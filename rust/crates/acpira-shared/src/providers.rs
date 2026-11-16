@@ -34,6 +34,17 @@ pub fn plugin_providers_path(home: &std::path::Path) -> std::path::PathBuf {
   home.join("plugins").join(PROVIDERS_FILE)
 }
 
+/// Where an SSH host keeps the built-in agent settings a client machine brought (`remote/host_models.rs`), shaped like a
+/// data root (`providers.json` and `secrets.json`): the host's sessions that machine drives read them instead of the
+/// host's own (`acpira_agent::config::ConfigCache`). None for a machine id that is not a plain file name
+pub fn client_settings_dir(home: &std::path::Path, machine: &str) -> Option<std::path::PathBuf> {
+  let plain = !machine.is_empty()
+    && machine.len() <= 128
+    && !machine.starts_with('.')
+    && machine.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+  plain.then(|| home.join("remote").join("clients").join(machine))
+}
+
 /// A source's field naming the machine that brought it to this one over SSH (`{ machine, name, kept? }`, `kept` being
 /// this machine's own source under the same id): the engine's `remote/host_models.rs` writes it, and only that machine
 /// replaces or removes the entry

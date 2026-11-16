@@ -132,6 +132,8 @@ pub struct Session {
   pub permissions_changed: tokio::sync::Notify,
   /// Where its commands keep temp files (`scratch.rs`)
   pub scratch: crate::scratch::Scratch,
+  /// The settings it reads: the data root's own, or those of the machine that sent its last turn (`CLIENT_SETTINGS_META`)
+  pub settings: parking_lot::Mutex<Arc<ConfigCache>>,
 }
 
 /// The plugins' folders a session reads besides the user's and the project's
@@ -152,6 +154,19 @@ pub const SKILLS_META: &str = "acpira/skillLayers";
 /// `_meta` of `session/new` / `load` / `resume`: the engine opens this session for a summoned agent, so its mode list
 /// carries Read-only (`modes::READ_ONLY`), the mode the engine picks for a consult
 pub const SUMMONED_META: &str = "acpira/summoned";
+/// `_meta` of `session/new` / `load` / `resume` and every `session/prompt`: the id of the machine that drives the
+/// session over SSH, whose built-in agent settings it reads (`ConfigCache::of_client`); absent, the data root's own.
+/// Taken when a turn starts, so a running turn never switches (`Server::follow_settings`)
+pub const CLIENT_SETTINGS_META: &str = "acpira/clientSettings";
+
+/// Notification from the engine: the settings were saved, so open sessions get their changed controls now rather than
+/// at the next once-a-second look (`Server::watch_controls`), which stays for edits the engine does not make
+pub const SETTINGS_CHANGED: &str = "_acpira/settingsChanged";
+
+/// The machine a request names (`CLIENT_SETTINGS_META`)
+fn client_of(params: &Value) -> Option<&str> {
+  params.pointer("/_meta/acpira~1clientSettings").and_then(Value::as_str).filter(|m| !m.is_empty())
+}
 
 /// The request's ACP `additionalDirectories`: absolute paths only
 fn extra_of(params: &Value) -> Vec<PathBuf> {
@@ -174,6 +189,11 @@ fn layers_of(params: &Value) -> Layers {
 }
 
 impl Session {
+  /// The settings as the session reads them now
+  pub fn config(&self) -> Arc<Config> {
+    self.settings.lock().get()
+  }
+
   /// A tool call id unique in this session
   pub fn next_tool_id(&self) -> String {
     format!("call-{}", self.tool_seq.fetch_add(1, Ordering::Relaxed) + 1)
@@ -203,7 +223,10 @@ impl Session {
 }
 
 pub struct Server {
-  pub config: ConfigCache,
+  /// The data root's own settings; a session reads its own (`Session::config`)
+  pub config: Arc<ConfigCache>,
+  /// The settings other machines brought for the sessions they drive here, one reader per machine (`settings_for`)
+  clients: parking_lot::Mutex<HashMap<String, Arc<ConfigCache>>>,
   /// A plugin's specialised agent: every session takes its prompt, tools, modes and model (`profile.rs`)
   pub profile: Option<Arc<crate::profile::Profile>>,
   pub catalog: crate::catalog::CatalogCache,
@@ -229,7 +252,8 @@ impl Server {
     Arc::new(Server {
       profile: profile.map(Arc::new),
       catalog: crate::catalog::CatalogCache::new(&home),
-      config: ConfigCache::new(home),
+      config: Arc::new(ConfigCache::new(home)),
+      clients: Default::default(),
       version: version.into(),
       http: crate::llm::default_http(),
       booleans: AtomicBool::new(false),
@@ -238,6 +262,34 @@ impl Server {
       conn: OnceLock::new(),
       sessions: Default::default(),
     })
+  }
+
+  /// The settings a session reads: those `client` brought for the sessions it drives here, else the data root's own
+  pub fn settings_for(&self, client: Option<&str>) -> Arc<ConfigCache> {
+    let Some(machine) = client else { return self.config.clone() };
+    let mut clients = self.clients.lock();
+    if let Some(c) = clients.get(machine) {
+      return c.clone();
+    }
+    match ConfigCache::of_client(self.config.home().to_path_buf(), machine) {
+      Some(c) => clients.entry(machine.to_owned()).or_insert(Arc::new(c)).clone(),
+      None => self.config.clone(),
+    }
+  }
+
+  /// A turn's start is where a session takes the settings of the machine that sent it: from then on its pickers and
+  /// its turns read those (a model they lack gives way to their default, `reconcile`), and a running turn keeps the
+  /// settings it started with
+  pub fn follow_settings(&self, session: &Arc<Session>, params: &Value) {
+    let next = self.settings_for(client_of(params));
+    {
+      let mut now = session.settings.lock();
+      if Arc::ptr_eq(&now, &next) {
+        return;
+      }
+      *now = next;
+    }
+    self.push_controls_of(session);
   }
 
   /// The session's own directory under the data root (spilled tool outputs, the plan)
@@ -407,7 +459,7 @@ impl Server {
     // acpira's tool table the way a pick before the first message does (`set_config_option`), not into a note
     if !st.items.iter().any(|i| matches!(i, Item::User(_))) {
       st.titled = false;
-      st.sidekick_told = sidekick_of(&self.config.get(), &st);
+      st.sidekick_told = sidekick_of(&session.config(), &st);
       session.mcp.relist(ACPIRA_SERVER);
     }
     // The goal goes back with the history (`goal::rewound`); the client takes the result from the answer, since it
@@ -451,7 +503,8 @@ impl Server {
 
   fn new_session(&self, params: &Value) -> Result<Value, RpcError> {
     let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).ok_or_else(|| RpcError::new(-32602, "cwd is required"))?;
-    let config = self.config.get();
+    let settings = self.settings_for(client_of(params));
+    let config = settings.get();
     let catalog = self.catalog.get();
     let id = uuid::Uuid::new_v4().to_string();
     let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), summoned: summoned_of(params), ..Default::default() };
@@ -475,8 +528,21 @@ impl Server {
     store.prelude(json!({ "type": "prompt", "variant": state.prompt.variant, "version": state.prompt.version, "digest": state.prompt.digest,
       "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking, "overrides": state.prompt.overrides }));
     let mcp = crate::mcp::Hub::start(params.get("mcpServers").unwrap_or(&Value::Null), &self.process_dir(std::path::Path::new(cwd), remote.is_some()));
-    let session =
-      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote, layers, prompts, permissions_changed: Default::default(), scratch };
+    let session = Session {
+      id: id.clone(),
+      cwd: PathBuf::from(cwd),
+      state: parking_lot::Mutex::new(state),
+      store,
+      tool_seq: AtomicU64::new(0),
+      jobs: Default::default(),
+      mcp,
+      remote,
+      layers,
+      prompts,
+      permissions_changed: Default::default(),
+      scratch,
+      settings: parking_lot::Mutex::new(settings),
+    };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
     let (remote, layers) = (session.remote.clone(), session.layers.clone());
@@ -515,9 +581,14 @@ impl Server {
         other => other,
       }
     };
+    let settings = self.settings_for(client_of(params));
     let (session, updates) = match open {
       Some(s) => {
         s.store.flush();
+        // Reopened as it runs, it keeps the settings its turn started with
+        if s.state.lock().turn.is_none() {
+          *s.settings.lock() = settings;
+        }
         let updates = if replay { store::load(&path, false).map(|l| l.updates).unwrap_or_default() } else { vec![] };
         (s, updates)
       }
@@ -527,7 +598,7 @@ impl Server {
           return Err(gone());
         }
         let cwd = want_cwd.unwrap_or_else(|| loaded.cwd.clone());
-        let mut revived = self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null), crate::remote::Remote::of(params));
+        let mut revived = self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null), crate::remote::Remote::of(params), settings);
         // A session reopened in the same folder keeps its recorded prompt; moving it to another folder drops it so the next turn recomposes it
         revived.layers = layers_of(params);
         revived.prompts = Arc::new(crate::prompt::Library::load(&self.places_of(&revived.cwd, revived.remote.as_deref(), revived.layers.clone())));
@@ -548,7 +619,7 @@ impl Server {
     if let Some(g) = crate::goal::published(goal.as_ref()) {
       crate::goal::publish(self, id, Some(g));
     }
-    let config = self.config.get();
+    let config = session.config();
     let catalog = self.catalog.get();
     let mut st = session.state.lock();
     st.summoned |= summoned_of(params);
@@ -559,8 +630,18 @@ impl Server {
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
-  fn revive(&self, id: &str, cwd: PathBuf, loaded: &store::Loaded, path: PathBuf, mcp_servers: &Value, remote: Option<Arc<crate::remote::Remote>>) -> Session {
-    let config = self.config.get();
+  #[expect(clippy::too_many_arguments, reason = "one reopening's parts, each taken once")]
+  fn revive(
+    &self,
+    id: &str,
+    cwd: PathBuf,
+    loaded: &store::Loaded,
+    path: PathBuf,
+    mcp_servers: &Value,
+    remote: Option<Arc<crate::remote::Remote>>,
+    settings: Arc<ConfigCache>,
+  ) -> Session {
+    let config = settings.get();
     let catalog = self.catalog.get();
     let s = |k: &str| loaded.state.get(k).and_then(Value::as_str).map(str::to_owned);
     let mut st = SessionState {
@@ -629,7 +710,21 @@ impl Server {
     let mcp = crate::mcp::Hub::start(mcp_servers, &self.process_dir(&cwd, remote.is_some()));
     // Reopened in another folder (`moveSession`), both commands and the next turn's recomposed prompt use the new folder
     let scratch = self.scratch_of(&cwd, id, remote.is_some(), &config);
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default(), prompts: Default::default(), permissions_changed: Default::default(), scratch }
+    Session {
+      id: id.to_owned(),
+      cwd,
+      state: parking_lot::Mutex::new(st),
+      store,
+      tool_seq: AtomicU64::new(seq),
+      jobs: Default::default(),
+      mcp,
+      remote,
+      layers: Layers::default(),
+      prompts: Default::default(),
+      permissions_changed: Default::default(),
+      scratch,
+      settings: parking_lot::Mutex::new(settings),
+    }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given
@@ -686,7 +781,7 @@ impl Server {
     if config_id != FAST && config_id != SIDEKICK_FAST && !raw.is_string() {
       return Err(RpcError::new(-32602, "value must be a string"));
     }
-    let config = self.config.get();
+    let config = session.config();
     let catalog = self.catalog.get();
     let mut st = session.state.lock();
     // The effort check below must see the model the picker shows
@@ -772,53 +867,58 @@ impl Server {
   /// Push changed modes and config options to open sessions: settings edits update the composer's own pickers,
   /// not just the settings page's probe
   pub fn push_controls(&self) {
-    let config = self.config.get();
-    let catalog = self.catalog.get();
     let sessions: Vec<Arc<Session>> = self.sessions.lock().values().cloned().collect();
     for s in sessions {
-      let (options, modes, usage) = {
-        let mut st = s.state.lock();
-        if reconcile(&config, &catalog, &mut st) {
-          s.save_state(&st);
-        }
-        let options = config_options(&config, &catalog, &st, self.offers());
-        let options = if st.sent_options.as_ref().is_none_or(|sent| *sent == options) {
-          None
-        } else {
-          st.sent_options = Some(options.clone());
-          Some(options)
-        };
-        let modes = self.mode_options(&config, &st);
-        let modes = if st.sent_modes == modes {
-          None
-        } else {
-          st.sent_modes = modes.clone();
-          Some((st.mode.clone(), modes))
-        };
-        // The window of the session's model as configured now (edited in the settings, or another model picked)
-        let window = st.model.as_deref().and_then(|p| crate::turn::limits(&config, &catalog, p)).map(|m| m.context.unwrap_or(crate::turn::DEFAULT_CONTEXT));
-        let usage = match (st.reported, window) {
-          (Some((used, size)), Some(w)) if w != size => {
-            st.reported = Some((used, w));
-            Some((used, w))
-          }
-          _ => None,
-        };
-        (options, modes, usage)
+      self.push_controls_of(&s);
+    }
+  }
+
+  /// `push_controls` for one session, against the settings it reads
+  fn push_controls_of(&self, s: &Arc<Session>) {
+    let config = s.config();
+    let catalog = self.catalog.get();
+    let (options, modes, usage) = {
+      let mut st = s.state.lock();
+      if reconcile(&config, &catalog, &mut st) {
+        s.save_state(&st);
+      }
+      let options = config_options(&config, &catalog, &st, self.offers());
+      let options = if st.sent_options.as_ref().is_none_or(|sent| *sent == options) {
+        None
+      } else {
+        st.sent_options = Some(options.clone());
+        Some(options)
       };
-      if let Some(options) = options {
-        self.conn().notify("session/update", json!({ "sessionId": s.id, "update": { "sessionUpdate": "config_option_update", "configOptions": options } }));
-      }
-      if let Some((mode, modes)) = modes {
-        // ACP has no mode-list update; the standard current-mode notification carries our additive extension
-        self.conn().notify("session/update", json!({ "sessionId": s.id, "update": {
-          "sessionUpdate": "current_mode_update", "currentModeId": mode, "_meta": { "acpira/availableModes": modes }
-        } }));
-      }
-      if let Some((used, size)) = usage {
-        // Recorded like the turn's own, so a replay ends on the current window
-        self.update(&s.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": size }));
-      }
+      let modes = self.mode_options(&config, &st);
+      let modes = if st.sent_modes == modes {
+        None
+      } else {
+        st.sent_modes = modes.clone();
+        Some((st.mode.clone(), modes))
+      };
+      // The window of the session's model as configured now (edited in the settings, or another model picked)
+      let window = st.model.as_deref().and_then(|p| crate::turn::limits(&config, &catalog, p)).map(|m| m.context.unwrap_or(crate::turn::DEFAULT_CONTEXT));
+      let usage = match (st.reported, window) {
+        (Some((used, size)), Some(w)) if w != size => {
+          st.reported = Some((used, w));
+          Some((used, w))
+        }
+        _ => None,
+      };
+      (options, modes, usage)
+    };
+    if let Some(options) = options {
+      self.conn().notify("session/update", json!({ "sessionId": s.id, "update": { "sessionUpdate": "config_option_update", "configOptions": options } }));
+    }
+    if let Some((mode, modes)) = modes {
+      // ACP has no mode-list update; the standard current-mode notification carries our additive extension
+      self.conn().notify("session/update", json!({ "sessionId": s.id, "update": {
+        "sessionUpdate": "current_mode_update", "currentModeId": mode, "_meta": { "acpira/availableModes": modes }
+      } }));
+    }
+    if let Some((used, size)) = usage {
+      // Recorded like the turn's own, so a replay ends on the current window
+      self.update(&s.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": size }));
     }
   }
 
@@ -1087,6 +1187,8 @@ impl Inbound for Handler {
   fn notification(&self, method: &str, params: Value) {
     if method == "session/cancel" {
       self.0.cancel(&params);
+    } else if method == SETTINGS_CHANGED {
+      self.0.push_controls();
     } else if method == crate::remote::PROGRESS {
       let session = params.get("sessionId").and_then(Value::as_str).and_then(|id| self.0.sessions.lock().get(id).cloned());
       if let Some(remote) = session.and_then(|s| s.remote.clone()) {

@@ -190,6 +190,7 @@ impl SessionManager {
       client_ids: Vec::new(),
       // The fork keeps the plugin menus as they were picked
       plugin_menus: source.plugin_menus.clone(),
+      settings_from: source.settings_from.clone(),
     };
     // Every blob the copied turns point at (prompt / steer attachments and the images the agent produced, subagent
     // transcripts included) is re-saved under the fork's own blob dir; content-hash names keep the same file name

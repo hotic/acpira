@@ -330,6 +330,24 @@ pub struct AcpSession {
   client_ids: parking_lot::Mutex<std::collections::VecDeque<String>>,
   /// The plugin host each card offered by `plugin_activate` came through, by card id (`plugin_card.rs`)
   pub(crate) plugin_offers: parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::plugins::host::PluginHost>>>,
+  /// The machine whose built-in agent settings the session reads (`adopt_sender`); saved with the record
+  settings_from: parking_lot::Mutex<Option<String>>,
+  /// Who sent last since the running turn started: the next turn reads their settings (`sent_by`)
+  next_from: parking_lot::Mutex<SentFrom>,
+}
+
+/// Where a turn came from, for the built-in agent settings the session reads from then on (`AcpSession::sent_by`).
+/// Travels with an action forwarded over the push bus (`bus::Bus::act`)
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SentFrom {
+  /// Not known (an action an older engine forwarded, a page no shell connects): the session keeps what it reads
+  #[default]
+  Unknown,
+  /// A window of this machine: its own settings
+  Here,
+  /// A machine driving this one over SSH, by its id (`ClientInfo::machine`): the settings it brought
+  Machine(String),
 }
 
 /// How many `clientId`s a session remembers: a device resends what it wrote in the last seconds before losing its link,
@@ -485,6 +503,8 @@ impl AcpSession {
         remote_calls: Default::default(),
         client_ids: parking_lot::Mutex::new(record.client_ids.iter().cloned().collect()),
         plugin_offers: Default::default(),
+        settings_from: parking_lot::Mutex::new(record.settings_from),
+        next_from: Default::default(),
       }
     })
   }
@@ -504,6 +524,43 @@ impl AcpSession {
     }
     ids.push_back(id.to_owned());
     true
+  }
+
+  /// The machine whose built-in agent settings this session reads, None for this machine's own: the one that sent its
+  /// last turn over SSH (`sent_by`)
+  pub fn settings_from(&self) -> Option<String> {
+    self.settings_from.lock().clone()
+  }
+
+  /// "Whoever sends decides": a message sent from another machine makes the next turn read that machine's built-in agent
+  /// settings, one sent from a window here this machine's own. Noted only: the turn that starts next takes it
+  /// (`adopt_sender`), so a send that queues or steers never changes the running turn, its staging or its children
+  pub fn sent_by(&self, from: &SentFrom) {
+    if self.agent != crate::acp::agents::registry::SELF_AGENT_ID || *from == SentFrom::Unknown {
+      return;
+    }
+    *self.next_from.lock() = from.clone();
+  }
+
+  /// A turn starting (`claim`), or a session opened for a page before its `session/new`: whoever sent last since
+  /// becomes the machine whose settings it reads
+  pub fn adopt_sender(&self) {
+    let from = std::mem::take(&mut *self.next_from.lock());
+    match from {
+      SentFrom::Unknown => {}
+      SentFrom::Here => *self.settings_from.lock() = None,
+      SentFrom::Machine(m) => *self.settings_from.lock() = Some(m),
+    }
+  }
+
+  /// A built-in agent request names the machine whose settings the session reads (`CLIENT_SETTINGS_META`); a child of
+  /// this session reads the same
+  pub(crate) fn with_client_settings(&self, req: &mut serde_json::Value, agent: &str) {
+    if agent == crate::acp::agents::registry::SELF_AGENT_ID
+      && let Some(m) = self.settings_from()
+    {
+      req["_meta"][acpira_agent::acp::CLIENT_SETTINGS_META] = serde_json::Value::String(m);
+    }
   }
 
   pub fn fresh(agent: &str, cwd: &str, deps: SessionDeps, account_id: Option<String>) -> Arc<AcpSession> {
@@ -536,6 +593,7 @@ impl AcpSession {
         copy_of: None,
         client_ids: Vec::new(),
         plugin_menus: Default::default(),
+        settings_from: None,
       },
       deps,
     )

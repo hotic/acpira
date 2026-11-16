@@ -119,6 +119,16 @@ struct Inner {
   child: Mutex<Option<Child>>,
 }
 
+/// One helper channel, remembered without holding it (`RemoteClient::token`)
+#[derive(Clone)]
+pub struct ClientToken(std::sync::Weak<Inner>);
+
+impl ClientToken {
+  pub fn is(&self, client: &RemoteClient) -> bool {
+    std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&client.inner))
+  }
+}
+
 /// Held by every clone of a client (and every call in flight): when the last one goes, the channel closes the way
 /// `close` does. The I/O tasks hold `Inner` themselves, so its own lifetime cannot tell
 struct Owner(Arc<Inner>);
@@ -346,6 +356,11 @@ impl RemoteClient {
 
   pub fn hello(&self) -> &Hello {
     &self.inner.hello
+  }
+
+  /// Names this channel without keeping it open: a fact learned through it can tell when the channel was replaced
+  pub fn token(&self) -> ClientToken {
+    ClientToken(Arc::downgrade(&self.inner))
   }
 
   /// The last measured round trip, 0 before the first pong

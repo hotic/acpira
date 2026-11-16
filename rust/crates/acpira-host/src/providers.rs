@@ -26,7 +26,8 @@ pub type ProvidersChanged = Arc<dyn Fn() + Send + Sync>;
 pub struct ProviderStore {
   file: PathBuf,
   vault: Arc<FileVault>,
-  on_change: parking_lot::RwLock<Option<ProvidersChanged>>,
+  /// Everyone told of an edit: the hosts' copies (`remote/host_models.rs`), the built-in agent processes
+  on_change: parking_lot::RwLock<Vec<ProvidersChanged>>,
 }
 
 impl ProviderStore {
@@ -34,8 +35,8 @@ impl ProviderStore {
     ProviderStore { file: root.join(PROVIDERS_FILE), vault, on_change: Default::default() }
   }
 
-  pub fn set_change_hook(&self, hook: ProvidersChanged) {
-    *self.on_change.write() = Some(hook);
+  pub fn on_change(&self, hook: ProvidersChanged) {
+    self.on_change.write().push(hook);
   }
 
   /// The sources that go to this machine's SSH hosts, with their keys (`remote/host_models.rs`)
@@ -48,6 +49,22 @@ impl ProviderStore {
       }
     }
     Ok(crate::remote::host_models::Carried { providers, keys })
+  }
+
+  /// This machine's whole built-in agent settings for the sessions it drives on an SSH host whose engine keeps them apart
+  /// (`remote/host_models.rs`): the file with only the sources that travel, and the keys those sources and the search
+  /// backends use. A setting naming a source that stays here falls back on the host as it does here when one goes
+  pub async fn client_set(&self) -> Result<crate::remote::host_models::ClientSet, String> {
+    let mut file = self.read().await?;
+    file.providers.retain(crate::remote::host_models::travels);
+    let wanted: Vec<String> = file.providers.iter().map(|p| provider_secret_key(&p.id)).chain(WEB_SEARCH_BACKENDS.into_iter().skip(1).map(web_secret_key)).collect();
+    let mut keys = std::collections::BTreeMap::new();
+    for key in wanted {
+      if let Some(k) = self.vault.get(&key).await.ok().flatten().filter(|k| !k.is_empty()) {
+        keys.insert(key, k);
+      }
+    }
+    Ok(crate::remote::host_models::ClientSet { file, keys })
   }
 
   /// An absent file reads as no sources; Err carries why an existing one cannot be used
@@ -150,8 +167,8 @@ impl ProviderStore {
   pub async fn apply(&self, action: ProviderAction) -> Result<()> {
     let done = self.apply_action(action).await;
     // Told even after a failure: a save may have written the entry before its key was refused
-    let hook = self.on_change.read().clone();
-    if let Some(f) = hook {
+    let hooks = self.on_change.read().clone();
+    for f in hooks {
       f();
     }
     done

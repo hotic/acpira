@@ -1,6 +1,7 @@
-//! Model sources follow the user to a host (`remote/host_models.rs`), through the real helper: the sources another
-//! machine can reach land in the host's providers.json with their keys when it connects, an edit here follows, and
-//! turning the host's setting off takes them away again
+//! Model sources follow the user to a host (`remote/host_models.rs`), through the real helper. A host whose engine keeps
+//! a client's settings apart gets this machine's whole settings in their own folder; an older one gets the sources
+//! another machine can reach merged into its providers.json with their keys. Either way they go when it connects, an
+//! edit here follows, and turning the host's setting off takes them away again
 
 #![cfg(unix)]
 
@@ -10,7 +11,9 @@ use std::time::Duration;
 
 use acpira_host::accounts::account_store::FileVault;
 use acpira_host::providers::ProviderStore;
-use acpira_host::remote::host_models::ModelMirror;
+use acpira_host::remote::host_models::{ModelMirror, SET_FEATURE};
+use acpira_host::remote::host_store::this_machine;
+use acpira_shared::providers::client_settings_dir;
 use acpira_shared::providers::{Provider, ProviderAction};
 use acpira_shared::remote::ConnectionOp;
 use serde_json::{Value, json};
@@ -50,6 +53,11 @@ async fn this_machines_sources_reach_the_host_and_follow_its_edits() {
   let mirror = ModelMirror::new(connections.clone(), providers.clone(), Arc::new(|_: &str| {}));
   mirror.start();
   connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  // Nothing goes before the host's engine has answered; this one is older and keeps no client's settings
+  tokio::time::sleep(Duration::from_millis(600)).await;
+  assert!(host_models(&lab, "gw").is_none());
+  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.set_engine_features("gen1", &client, vec![]);
 
   until("the source on the host", || host_models(&lab, "gw").is_some()).await;
   assert_eq!(host_models(&lab, "gw").unwrap(), ["one"]);
@@ -71,6 +79,59 @@ async fn this_machines_sources_reach_the_host_and_follow_its_edits() {
   assert!(host_models(&lab, "gw").is_none(), "nothing goes while the setting is off");
   connections.op(ConnectionOp::SetModels { alias: "gen1".into(), on: true }).await.unwrap();
   until("the source back", || host_models(&lab, "gw").is_some_and(|m| m == ["one"])).await;
+
+  mirror.stop();
+  connections.dispose();
+}
+
+/// A host whose engine keeps a client's settings apart: this machine's whole settings land in their own folder there
+/// with the keys they use, the host's own file and its source under the same id stay as they are, what an earlier merge
+/// brought goes back, an edit here follows, and the host's setting off takes the folder away
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_that_keeps_them_apart_gets_this_machines_whole_settings() {
+  let lab = Lab::new();
+  let connections = lab.engine("engine");
+  let root = lab.path().join("engine");
+  std::fs::write(root.join("providers.json"), json!({ "approval": "full", "providers": [
+    { "id": "gw", "baseUrl": "https://gw.test/v1", "models": [{ "id": "one" }] },
+    { "id": "extra", "baseUrl": "https://extra.test/v1", "models": [{ "id": "x" }] },
+  ] }).to_string()).unwrap();
+  std::fs::write(root.join("secrets.json"), json!({ "acpira.provider.gw": "sk-gw", "acpira.web.jina": "j-1" }).to_string()).unwrap();
+  let host_root = lab.host_home().join(".acpira");
+  std::fs::create_dir_all(&host_root).unwrap();
+  std::fs::write(host_root.join("providers.json"), json!({ "providers": [{ "id": "gw", "baseUrl": "https://host.test/v1", "models": [{ "id": "host" }] }] }).to_string()).unwrap();
+  let providers = Arc::new(ProviderStore::new(&root, Arc::new(FileVault::new(root.join("secrets.json"), Arc::new(|_: &str| {})))));
+  let mirror = ModelMirror::new(connections.clone(), providers.clone(), Arc::new(|_: &str| {}));
+  mirror.start();
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+
+  // First an older engine there: `extra` is merged into the host's own file
+  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.set_engine_features("gen1", &client, vec![]);
+  until("the merged source", || host_models(&lab, "extra").is_some()).await;
+
+  // The engine updated: the settings go apart and the merged source comes back out
+  connections.set_engine_features("gen1", &client, vec![SET_FEATURE.into()]);
+  let kept = client_settings_dir(&host_root, &this_machine().0).unwrap();
+  until("the settings kept apart", || read(&kept.join("providers.json")).is_some()).await;
+  until("the host found keeping them apart", || connections.settings_apart("gen1") == Some(true)).await;
+  until("the merged source taken back", || host_models(&lab, "extra").is_none()).await;
+  let file = read(&kept.join("providers.json")).unwrap();
+  let ids: Vec<&str> = file["providers"].as_array().unwrap().iter().filter_map(|p| p["id"].as_str()).collect();
+  assert_eq!(ids, ["gw", "extra"]);
+  assert_eq!(file["approval"], "full", "the behaviour settings travel too");
+  assert_eq!(read(&kept.join("secrets.json")).unwrap(), json!({ "acpira.provider.gw": "sk-gw", "acpira.web.jina": "j-1" }));
+  assert_eq!(host_models(&lab, "gw").unwrap(), ["host"], "the host's own source stays its own");
+
+  // A model added here follows
+  let gw: Provider = serde_json::from_value(json!({ "id": "gw", "baseUrl": "https://gw.test/v1", "models": [{ "id": "one" }, { "id": "two" }] })).unwrap();
+  providers.apply(ProviderAction::Save { provider: gw, key: None }).await.unwrap();
+  until("the new model kept apart", || read(&kept.join("providers.json")).is_some_and(|f| f["providers"][0]["models"].as_array().is_some_and(|m| m.len() == 2))).await;
+
+  // The host's setting off: the folder goes, the host's own file is untouched
+  connections.op(ConnectionOp::SetModels { alias: "gen1".into(), on: false }).await.unwrap();
+  until("the settings taken away", || !kept.exists()).await;
+  assert_eq!(host_models(&lab, "gw").unwrap(), ["host"]);
 
   mirror.stop();
   connections.dispose();

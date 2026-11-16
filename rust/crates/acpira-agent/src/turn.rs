@@ -119,6 +119,8 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     }
     !st.titled && !st.items.iter().any(|i| matches!(i, Item::User(_)))
   };
+  // The turn reads the settings of the machine that sent it, its controls updated first
+  server.follow_settings(&session, &params);
   let (answer, kind) = match command.clone().map(|c| goal::begin(&server, &session, c)) {
     Some(goal::Begin::Answer(a)) => (Some(a), None),
     Some(goal::Begin::Turn(k)) => (None, Some(k)),
@@ -232,7 +234,7 @@ const PRUNE_AT_TENTHS: u64 = 7;
 /// themselves) and the last call at `PRUNE_AT_TENTHS` of the threshold or more, where the prune puts a compaction off
 fn prune_due(server: &Server, session: &Session, params: &Value, pick: Option<&str>) -> bool {
   let policy = Policy::from_prompt(params);
-  let config = server.config.get();
+  let config = session.config();
   if !policy.auto || config.chunked() || session.state.lock().mode == modes::RAW {
     return false;
   }
@@ -289,10 +291,10 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
   let mut offer = session.mcp.offer(&tools::names::ALL).await;
   // A sidekick picked where acpira offered no ask_agent at all (no persona when its tools were listed) has no tool a
   // note could name: acpira lists its tools once more, and the table grows by ask_agent with the sidekick first
-  if sidekick_unlisted(server, session, &offer) {
+  if sidekick_unlisted(session, &offer) {
     session.mcp.relist(crate::acp::ACPIRA_SERVER);
     offer = session.mcp.offer(&tools::names::ALL).await;
-    let config = server.config.get();
+    let config = session.config();
     let mut st = session.state.lock();
     st.sidekick_told = crate::acp::sidekick_of(&config, &st);
   }
@@ -362,9 +364,9 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     }
     // A sidekick picked, changed or dropped since the model learned of it is told the same way while ask_agent is
     // offered: the tool table stays as it was listed, so the prompt cache holds
-    let sidekick = crate::acp::sidekick_of(&server.config.get(), &st);
+    let sidekick = crate::acp::sidekick_of(&session.config(), &st);
     if !s.raw && sidekick != st.sidekick_told && offers_ask(&offer) {
-      let note = sidekick_note(&server.config.get(), &session.prompts, &st.prompt.variant, st.sidekick_told.is_some(), sidekick.as_deref());
+      let note = sidekick_note(&session.config(), &session.prompts, &st.prompt.variant, st.sidekick_told.is_some(), sidekick.as_deref());
       st.sidekick_told = sidekick;
       match parts.first_mut() {
         Some(Part::Text(t)) => *t = format!("<sidekick>\n{note}\n</sidekick>\n\n{t}"),
@@ -414,7 +416,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       st.pick = Some(s.pick.clone());
       st.prompt = Some(s.prompt.clone());
     }
-    refresh_limits(server, &mut s);
+    refresh_limits(server, session, &mut s);
     let mut request = Request {
       model: s.model.id.clone(),
       system: s.system.clone(),
@@ -559,7 +561,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       tokio::time::sleep(wait).await;
     };
     // A window edited while the call ran decides this step's compaction already
-    refresh_limits(server, &mut s);
+    refresh_limits(server, session, &mut s);
     let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
     // A call always has input, so a reported 0 is a provider gap (a gateway's streamed usage): estimate it instead
     let estimated = usage.is_some_and(|u| u.input == 0);

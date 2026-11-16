@@ -452,6 +452,8 @@ struct RecordRef<'a> {
   client_ids: Vec<String>,
   #[serde(skip_serializing_if = "crate::store::record::PluginMenus::is_empty")]
   plugin_menus: &'a crate::store::record::PluginMenus,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  settings_from: Option<String>,
 }
 
 impl AcpSession {
@@ -483,6 +485,7 @@ impl AcpSession {
       goal: c.state.goal.as_ref(),
       client_ids: self.client_ids.lock().iter().cloned().collect(),
       plugin_menus: &c.plugin_state.menus,
+      settings_from: self.settings_from(),
     }
   }
 }

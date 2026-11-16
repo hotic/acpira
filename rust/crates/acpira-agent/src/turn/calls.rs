@@ -476,7 +476,7 @@ pub(super) fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -
     outputs: server.session_dir(&session.id).join("outputs"),
     call_id: acp.to_owned(),
     jobs: session.jobs.clone(),
-    search: server.config.get().web_search(),
+    search: session.config().web_search(),
     mcp: session.mcp.clone(),
     history: server.session_file(&session.id),
     scratch: None,

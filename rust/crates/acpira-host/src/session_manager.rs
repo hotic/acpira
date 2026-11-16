@@ -202,9 +202,19 @@ pub struct Viewer {
   state: parking_lot::Mutex<ViewerState>,
   sink: parking_lot::Mutex<Option<Sink>>,
   shell: Option<ViewerShell>,
+  /// The machine the page belongs to: a turn it sends reads that machine's built-in agent settings (`AcpSession::sent_by`)
+  sent_from: parking_lot::Mutex<crate::acp::session::SentFrom>,
 }
 
 impl Viewer {
+  pub fn sent_from(&self) -> crate::acp::session::SentFrom {
+    self.sent_from.lock().clone()
+  }
+
+  pub fn set_sent_from(&self, from: crate::acp::session::SentFrom) {
+    *self.sent_from.lock() = from;
+  }
+
   pub fn active_id(&self) -> Option<String> {
     self.state.lock().active_id.clone()
   }

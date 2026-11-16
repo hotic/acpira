@@ -85,7 +85,7 @@ impl Setup {
 }
 
 pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::Tool]) -> Result<Setup, String> {
-  let config = server.config.get();
+  let config = session.config();
   if let Some(e) = &config.error {
     return Err(e.clone());
   }
@@ -189,7 +189,7 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
 /// fails
 pub(super) fn summary_call<'a>(server: &Server, session: &Session, s: &'a Setup) -> compact::Call<'a> {
   let mut writers = Vec::with_capacity(2);
-  let config = server.config.get();
+  let config = session.config();
   let catalog = server.catalog.get();
   if let Some((provider, model)) = config.fast_model(&catalog)
     && model_pick(&provider.id, &model.id) != s.pick
@@ -222,7 +222,7 @@ pub(super) fn summary_call<'a>(server: &Server, session: &Session, s: &'a Setup)
 /// do) or could not read the log. Ok(Some(chunked)) when the history changed
 pub(super) async fn compact_history(server: &Server, session: &Session, s: &Setup, reason: Reason, measured: Option<crate::chunk::Measured>) -> Result<Option<bool>, String> {
   // Chunks point the model at history tools Raw mode does not offer, so a /compact there always summarizes
-  if server.config.get().chunked() && !s.raw {
+  if session.config().chunked() && !s.raw {
     let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
     let usable = compact::usable(context, s.model.output);
     let limits = crate::chunk::Limits {
@@ -301,8 +301,8 @@ pub fn limits(config: &crate::config::Config, catalog: &acpira_shared::model_cat
 /// Take the model's window and output limit as configured now. The rest of the setup stays frozen for the turn (the
 /// prompt cache keys on it), but a limit edited in the settings mid-turn applies from the next model call, where
 /// before it waited for the next turn and a window corrected from a 128k guess still compacted at the old threshold
-pub(super) fn refresh_limits(server: &Server, s: &mut Setup) {
-  if let Some(m) = limits(&server.config.get(), &server.catalog.get(), &s.pick) {
+pub(super) fn refresh_limits(server: &Server, session: &Session, s: &mut Setup) {
+  if let Some(m) = limits(&session.config(), &server.catalog.get(), &s.pick) {
     s.model.context = m.context;
     s.model.output = m.output;
     s.model.estimated = m.estimated;
@@ -315,11 +315,11 @@ pub(super) fn offers_ask(offer: &crate::mcp::Offer) -> bool {
 }
 
 /// A sidekick the model has not learned of, with no ask_agent to summon it through (Raw mode offers no MCP tools at all)
-pub(super) fn sidekick_unlisted(server: &Server, session: &Session, offer: &crate::mcp::Offer) -> bool {
+pub(super) fn sidekick_unlisted(session: &Session, offer: &crate::mcp::Offer) -> bool {
   if offers_ask(offer) {
     return false;
   }
-  let config = server.config.get();
+  let config = session.config();
   let st = session.state.lock();
   let now = crate::acp::sidekick_of(&config, &st);
   st.mode != modes::RAW && now.is_some() && now != st.sidekick_told

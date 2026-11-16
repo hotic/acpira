@@ -287,6 +287,8 @@ async fn a_peer_reaches_the_hosts_engine_which_outlives_the_connection() {
 
   let mut link = PeerLink::connect(&client, None, ME).await.expect("connected to the host's engine");
   let pid = link.hello_ok["sidecar"]["pid"].as_u64().expect("the engine's pid") as i32;
+  // It keeps a client's built-in agent settings for the sessions that client drives (`remote/host_models.rs`)
+  assert!(link.hello_ok["features"].as_array().unwrap().iter().any(|f| f == acpira_host::remote::host_models::SET_FEATURE));
   assert_ne!(pid as u32, std::process::id());
   link.send(&json!({ "type": "attachView", "viewId": "P", "host": "sidebar", "initial": { "mostRecent": true } }));
   link.send(&json!({ "type": "webviewMessage", "viewId": "P", "message": { "type": "ready" } }));
@@ -500,6 +502,10 @@ async fn a_new_session_page_in_a_host_folder_gets_the_hosts_models() {
   assert_eq!(value(&answer.controls).as_deref(), Some("host-model"));
   assert!(m.m.host_controls("fake", "/work", false).await.is_none(), "a local folder is answered here");
   assert!(m.m.known_controls("fake").await.is_empty(), "the host's models never join this machine's");
+  // The built-in agent there reads this machine's settings once a push found them kept apart (`settings_apart`): answered here
+  assert_eq!(connections.engine_offers("gen1", acpira_host::remote::host_models::SET_FEATURE), Some(true));
+  connections.set_settings_apart("gen1", true);
+  assert!(m.m.host_controls("acpira", folder, false).await.is_none());
 
   // The host's engine goes away: the last answer stands in
   for (_, pid) in m.m.host_engines() {

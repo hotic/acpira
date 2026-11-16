@@ -183,6 +183,10 @@ pub struct ClientInfo {
   /// its own views cause go back to it alone (`sidecar/server.rs`)
   #[serde(default)]
   pub role: Option<String>,
+  /// A peer's machine id (`remote::helper::machine_id`): the sessions it drives here read the built-in agent settings
+  /// it brought (`remote/host_models.rs`). Older peers send none
+  #[serde(default)]
+  pub machine: Option<String>,
 }
 
 impl ClientInfo {

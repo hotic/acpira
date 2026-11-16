@@ -42,7 +42,7 @@ pub fn source_of(prompt: &Value) -> Option<String> {
 /// Start naming the session in the background when a fast model is set and the prompt has text; false when nothing
 /// was started (the caller may try again on a later first prompt)
 pub fn spawn(server: &Arc<Server>, session: &Arc<Session>, prompt: &Value) -> bool {
-  let config = server.config.get();
+  let config = session.config();
   let catalog = server.catalog.get();
   let Some((provider, model)) = config.fast_model(&catalog) else { return false };
   let Some(source) = source_of(prompt) else { return false };

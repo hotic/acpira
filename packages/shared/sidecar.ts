@@ -65,7 +65,8 @@ export type ShellMsg =
     // session the window runs in; a persistent engine started under another login retires when its keychain is locked
     // role 'peer': another engine rather than a window (docs/dev/remote.md); it never rebinds the platform or serves the
     // windows' IDE actions, and the platform requests its own views cause go back to it alone
-    client: { name: string; version: string; capabilities: PlatformMethod[]; sshConnection?: string; role?: 'peer' };
+    // `machine`: a peer engine's machine id; the built-in agent sessions it drives read the settings it keeps there
+    client: { name: string; version: string; capabilities: PlatformMethod[]; sshConnection?: string; role?: 'peer'; machine?: string };
     env: ShellEnv;
     // Flat acpira.* keys (`defaultAgent`, `appearance.motion`, …): the shell owns the settings store, the sidecar reads this snapshot
     settings: Record<string, unknown>;

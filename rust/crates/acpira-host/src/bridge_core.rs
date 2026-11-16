@@ -184,6 +184,11 @@ impl BridgeCore {
     remote_access: Arc<crate::devices::RemoteAccess>,
   ) -> Arc<BridgeCore> {
     let viewer = manager.attach_in(initial, shell);
+    // A peer's page is that machine's, any other this machine's: the settings the turns it sends read
+    viewer.set_sent_from(match wire.and_then(|w| platform.peer_machine(w)) {
+      Some(m) => crate::acp::session::SentFrom::Machine(m),
+      None => crate::acp::session::SentFrom::Here,
+    });
     // The page loads its bundle between attach and `ready`: a stored session it opens on is read and brought live meanwhile,
     // so `ready` finds its view instead of starting a long record's read only then. A page opening on a new session
     // still starts it at `ready`
@@ -803,7 +808,7 @@ impl BridgeCore {
         }
       }
       W::EditTurn { request_id, edit } => {
-        let error = manager.edit_turn(edit).await.err().map(|e| e.to_string());
+        let error = manager.edit_turn_from(edit, &self.viewer.sent_from()).await.err().map(|e| e.to_string());
         self.post_now(HostMsg::EditTurnResult { request_id, error });
       }
       W::SetSetting { key, value } => {
