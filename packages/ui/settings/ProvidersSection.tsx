@@ -301,7 +301,7 @@ function AddModelDialog({ provider: p, listed, busy, onAdd, onRemove, onClose }:
               showed a filled slab under one row */}
           <div className="flex h-pop min-h-0 flex-col gap-gap">
           <Command.Empty>{t('settings.providers.addModel.typeId')}</Command.Empty>
-          <Command.List searchable flush className={cn(blockList, 'min-h-0 max-h-none')}>
+          <Command.List searchable className={cn(blockList, 'min-h-0 max-h-none')}>
             {(m: Pick) => <Command.Item key={m.typed ? `typed:${m.id}` : m.id} value={m} disabled={busy} className={blockItem}
               onClick={() => {
                 if (taken(m)) { onRemove(m.id); return; }
