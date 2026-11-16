@@ -1676,6 +1676,7 @@ export const en = {
   'mobile.changes.none': 'This session has not changed any files',
   'mobile.engine.disconnected': 'Disconnected from the engine',
   'mobile.engine.dropped': 'A message from the engine was not understood. Update the app.',
+  'mobile.session.unavailable': "This session can't be opened",
   'mobile.engine.updateComputer': 'Acpira on the computer is older than this app. Update it there.',
   'mobile.engine.updateApp': 'Acpira on the computer is newer than this app. Update the app.',
   'mobile.settings.agents': 'Agents',

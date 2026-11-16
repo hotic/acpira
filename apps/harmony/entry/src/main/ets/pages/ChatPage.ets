@@ -12,6 +12,7 @@ import { AlertCard, EditingBar, PlanDock, QuestionCard, QueueBubble } from '../c
 import { attachBeans, Bean, modelBeans } from '../components/composer/Beans';
 import { GooLayer } from '../components/composer/GooLayer';
 import { ChatBar, ChatBarActions } from '../components/ChatBar';
+import { CardButton } from '../components/Cards';
 import { topFade } from '../components/Chrome';
 import { turnKey } from '../store/Thread';
 
@@ -136,7 +137,34 @@ export struct ChatPage {
       ChatBar({ model: this.model, actions: this.actions })
         .blur(this.receded() ? Cmp.gooBlur : 0)
 
-      if (this.model.view === undefined) {
+      if (this.model.view === undefined && this.model.unavailable !== undefined) {
+        // The engine said why the session will not come: its sentence and a way to ask again (ChatScreen.swift)
+        // A short headline carries the page; the engine's own sentence sits under it, small and in a narrow column
+        Column({ space: Metrics.s1 }) {
+          Text(t('mobile.session.unavailable'))
+            .fontSize(Type.text1)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.fg1'))
+          Text(this.model.unavailable)
+            .fontSize(Type.text3)
+            .fontColor($r('app.color.fg3'))
+            .textAlign(TextAlign.Center)
+            .constraintSize({ maxWidth: Cmp.waitNoteW })
+            .margin({ bottom: Metrics.s3 })
+          CardButton({
+            label: t('common.retry'),
+            onTap: () => {
+              const id = this.model.openId;
+              if (id !== undefined) {
+                this.model.open(id);
+              }
+            }
+          })
+        }
+        .justifyContent(FlexAlign.Center)
+        .width('100%')
+        .layoutWeight(1)
+      } else if (this.model.view === undefined) {
         LoadingProgress()
           .color($r('app.color.fg3'))
           .width(Metrics.barCtl)

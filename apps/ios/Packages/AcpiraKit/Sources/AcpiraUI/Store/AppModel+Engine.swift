@@ -57,6 +57,9 @@ extension AppModel {
     case .dropped(let reason):
       EngineLink.log.error("dropped \(reason, privacy: .public)")
       show(t("mobile.engine.dropped"), icon: .triangleAlert)
+      // Most likely the view the chat on screen waits for: the toast goes, so its wait page keeps the sentence. A view
+      // that does arrive takes the page over anyway
+      if let id = watching, views[id] == nil { unavailable[id] = t("mobile.engine.dropped") }
     case .incompatible(let engine):
       // The older side is the one to update
       incompatible = true
@@ -146,6 +149,8 @@ extension AppModel {
       probing.removeValue(forKey: id)?.resume(returning: outcome)
     case .session, .sessionPatch, .noSession:
       present(message)
+    case let .sessionUnavailable(id, reason):
+      if views[id] == nil { unavailable[id] = reason }
     case .terminalOutput, .terminalState:
       terminals.receive(message)
     case .imageBlob(let seq, let blob):
@@ -204,6 +209,7 @@ extension AppModel {
         Haptics.play(haptic)
       }
       views[view.id] = view
+      if unavailable[view.id] != nil { unavailable[view.id] = nil }
       // The engine's view of the chat on screen, back in the foreground: the counters run on the engine's times again
       if clockHeld != nil, !away, view.id == watching { clockHeld = nil }
       // A prompt still on its way gives up its place once the session shows the engine's copy; the ones sent after it
@@ -345,6 +351,8 @@ extension AppModel {
       EntranceLedger.seed(current)
     }
     guard let link else { return }
+    // A new pick is a new try
+    if unavailable[id] != nil { unavailable[id] = nil }
     if let kept = link.feed.select(id) {
       liveSessions.remove(id)
       EntranceLedger.seed(kept)

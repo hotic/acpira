@@ -90,6 +90,9 @@ final class AppModel {
   /// They stay beside the feed's own until the cache bound needs their room, so a chat opened after a reconnect shows
   /// its last copy at once (syncing) instead of a spinner until the whole transcript arrives again
   @ObservationIgnored var carried: [String] = []
+  /// Why a session picked on this wire never showed, by session: the engine's sentence (`sessionUnavailable`), or the
+  /// app's own when the view arrived but did not decode. The chat's wait page shows it; a retry or the view clears it
+  var unavailable: [String: String] = [:]
   /// Prompts sent to the engine that their session does not show yet, by session (Outgoing.swift)
   var outgoing: [String: [Outgoing]] = [:]
   var path: [Route] = []

@@ -701,5 +701,6 @@ enum ContractSamples {
     #"{"type":"localDir","seq":31,"path":"/Users/me/code","parent":"/Users/me","entries":[{"name":"acpira","dir":true,"git":true}],"error":"slow"}"#,
     #"{"type":"providers","view":{"providers":[{"id":"gw","name":"Gateway","preset":"custom","format":"openai-chat","baseUrl":"https://gw.example/v1","fullUrl":false,"enabled":true,"hasKey":true,"models":[],"headers":{"X-Team":"a"}}],"families":["generic"]},"error":"locked"}"#,
     #"{"type":"providerProbed","id":"p1","outcome":{"kind":"failed","error":"401"}}"#,
+    #"{"type":"sessionUnavailable","id":"s1","reason":"record unreadable"}"#,
   ]
 }

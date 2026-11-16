@@ -101,6 +101,9 @@ async fn a_corrupt_record_stays_listed_and_reports_a_diagnostic_error() {
   second.m.select_session_for(&second.v, &id).await;
   assert!(second.session_ids().contains(&id));
   assert!(second.toasts().iter().any(|text| text.contains("SESSION_RECORD_CORRUPT")), "{:?}", second.toasts());
+  // The viewer that picked it is told too: a page waiting for the view shows the reason instead of waiting on
+  let told = second.events.lock().unwrap().iter().any(|e| e["type"] == "sessionUnavailable" && e["id"] == id.as_str() && e["reason"].as_str().is_some_and(|r| r.contains("SESSION_RECORD_CORRUPT")));
+  assert!(told, "{:?}", second.events.lock().unwrap());
   second.dispose().await;
 }
 

@@ -1141,6 +1141,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case categories(categories: SessionCategories)
   /// The view shows no session (a project shell with no project left)
   case noSession
+  /// The session this view picked cannot be shown (record gone or unreadable); `reason` is the engine's sentence
+  case sessionUnavailable(id: String, reason: String)
   /// The whole session view: the first push of a session, a session switch, or the answer to `resync`
   case session(session: SessionView)
   /// The changes since the view sent last; only to pages that said `patches` in ready
@@ -1206,7 +1208,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "sessionsPatch", "accounts", "accountActions",
     "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "stagedFile", "sessionMarkdown",
     "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
-    "deleteSessionResult", "appearance", "connections", "localDir", "providers", "providerProbed",
+    "deleteSessionResult", "appearance", "connections", "localDir", "providers", "providerProbed", "sessionUnavailable",
   ]
 
   /// The wire `type`
@@ -1217,6 +1219,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .sessions: "sessions"
     case .categories: "categories"
     case .noSession: "noSession"
+    case .sessionUnavailable: "sessionUnavailable"
     case .session: "session"
     case .sessionPatch: "sessionPatch"
     case .sessionsPatch: "sessionsPatch"
@@ -1254,6 +1257,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case controls, shapes, commands, cwd, seq, hits
     case sessionId, subagentId, rev, running, turns, files, source, blob, size, markdown, error, entries, root, marks, text
     case hunks, id, data, title, cols, rows, replay, exit, requestId, undo, appearance, connections, path, parent, view, outcome
+    case reason
   }
 
   public init(from decoder: Decoder) throws {
@@ -1267,6 +1271,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case "sessions": self = .sessions(sessions: try c.decode([SessionSummary].self, forKey: .sessions))
     case "categories": self = .categories(categories: try c.decode(SessionCategories.self, forKey: .categories))
     case "noSession": self = .noSession
+    case "sessionUnavailable": self = .sessionUnavailable(id: try str(.id), reason: try str(.reason))
     case "session": self = .session(session: try c.decode(SessionView.self, forKey: .session))
     case "sessionPatch": self = .sessionPatch(patch: try c.decode(SessionPatch.self, forKey: .patch))
     case "sessionsPatch": self = .sessionsPatch(patch: try c.decode(SessionsPatch.self, forKey: .patch))
@@ -1417,6 +1422,9 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case let .providerProbed(id, outcome):
       try c.encode(id, forKey: .id)
       try c.encode(outcome, forKey: .outcome)
+    case let .sessionUnavailable(id, reason):
+      try c.encode(id, forKey: .id)
+      try c.encode(reason, forKey: .reason)
     case .noSession, .unknown:
       break
     }

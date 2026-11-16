@@ -139,6 +139,9 @@ export interface HostMsg {
   agents?: AgentInfo[];
   session?: SessionView;
   text?: string;
+  /** `sessionUnavailable`: the session picked and the engine's sentence for why it cannot be shown */
+  id?: string;
+  reason?: string;
 }
 
 export interface SessionPatchMsg {

@@ -1633,6 +1633,7 @@ export const ja = {
   'mobile.changes.none': 'このセッションではまだファイルを変更していません',
   'mobile.engine.disconnected': 'エンジンとの接続が切れました',
   'mobile.engine.dropped': 'エンジンからのメッセージを解釈できませんでした。アプリを更新してください。',
+  'mobile.session.unavailable': 'このセッションを開けません',
   'mobile.engine.updateComputer': 'コンピュータの Acpira がこのアプリより古いバージョンです。コンピュータ側を更新してください。',
   'mobile.engine.updateApp': 'コンピュータの Acpira がこのアプリより新しいバージョンです。アプリを更新してください。',
   'mobile.settings.agents': 'エージェント',

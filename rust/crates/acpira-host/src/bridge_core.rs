@@ -123,6 +123,8 @@ pub struct BridgeCore {
   ready: std::sync::atomic::AtomicBool,
   /// A session view was pushed before the page was ready: the session it opens has a view to put into init
   view_shown: tokio::sync::Notify,
+  /// Answers to a pick made before the page was ready that init cannot carry (`sessionUnavailable`): sent after init
+  refused: parking_lot::Mutex<Vec<HostMsg>>,
   /// The page applies `sessionPatch` messages (it said so in `ready`)
   patches: std::sync::atomic::AtomicBool,
   /// The session views this page holds as far as patches go: the one on screen and the last one sent of each recent
@@ -208,6 +210,7 @@ impl BridgeCore {
       wire,
       ready: Default::default(),
       view_shown: Default::default(),
+      refused: Default::default(),
       patches: Default::default(),
       list_patches: Default::default(),
       listed: Default::default(),
@@ -340,6 +343,8 @@ impl BridgeCore {
         *self.listed.lock() = list_patches.then(|| (0, state.sessions.clone()));
         self.emit(HostMsg::Init { state: Box::new(state) });
         drop(sent);
+        let refused = std::mem::take(&mut *self.refused.lock());
+        refused.into_iter().for_each(|m| self.queue(m));
         // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
         // unchanged list: the batch gets the current one, ordered against every other list push
         manager.sessions_in_order(&self.viewer);
@@ -1037,6 +1042,10 @@ impl BridgeCore {
       // (`notify_one` keeps the wake-up when the ready handler is not waiting yet)
       if matches!(m, HostMsg::Session { .. }) {
         self.view_shown.notify_one();
+      }
+      // Not state: init says nothing of a session that could not be opened, and the page waiting for it would wait on
+      if matches!(m, HostMsg::SessionUnavailable { .. }) {
+        self.refused.lock().push(m);
       }
       return;
     }

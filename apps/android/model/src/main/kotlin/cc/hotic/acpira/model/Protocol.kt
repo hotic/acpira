@@ -424,6 +424,8 @@ sealed interface HostMsg {
   data class Sessions(val sessions: List<SessionSummary>) : HostMsg
   data class Categories(val categories: SessionCategories) : HostMsg
   data object NoSession : HostMsg
+  /** The session this view picked cannot be shown (record gone or unreadable); [reason] is the engine's sentence */
+  data class SessionUnavailable(val id: String, val reason: String) : HostMsg
   data class Session(val session: SessionView) : HostMsg
   data class Patch(val patch: SessionPatch) : HostMsg
   /** sessionsPatch: the session list as runs over the list sent last; only to pages that said `listPatches` in ready */
@@ -503,7 +505,7 @@ sealed interface HostMsg {
       "accountActions", "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob",
       "stagedFile", "sessionMarkdown", "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput",
       "terminalState", "editTurnResult", "deleteSessionResult", "appearance", "connections", "localDir", "providers",
-      "providerProbed",
+      "providerProbed", "sessionUnavailable",
     )
 
     /**
@@ -525,6 +527,7 @@ sealed interface HostMsg {
         "sessions" -> Sessions(field("sessions", ListSerializer(SessionSummary.serializer())))
         "categories" -> Categories(field("categories", SessionCategories.serializer()))
         "noSession" -> NoSession
+        "sessionUnavailable" -> SessionUnavailable(obj.string("id") ?: "", obj.string("reason") ?: "")
         "session" -> Session(field("session", SessionView.serializer()))
         "sessionPatch" -> Patch(field("patch", SessionPatch.serializer()))
         "sessionsPatch" -> ListPatch(field("patch", SessionsPatch.serializer()))

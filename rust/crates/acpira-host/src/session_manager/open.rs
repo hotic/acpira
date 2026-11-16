@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 
+use acpira_shared::protocol::HostMsg;
 use acpira_shared::transcript::*;
 use acpira_shared::turn_settings::capture_turn_settings;
 
@@ -14,7 +15,7 @@ use crate::acp::session::AcpSession;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::{t, tp};
 use crate::store::session_lease::Claim;
-use crate::store::transcript_store::is_session_id;
+use crate::store::transcript_store::{RecordLoadError, is_session_id};
 
 fn keep_empty(cur: &AcpSession, agent: &str, account: Option<&str>, cwd: &str) -> bool {
   if cur.agent != agent || cur.account_id().as_deref() != account || cur.cwd != cwd {
@@ -207,6 +208,7 @@ impl SessionManager {
         return;
       }
       if me.state.lock().trash.contains_key(&id) {
+        v.emit(HostMsg::SessionUnavailable { id: id.clone(), reason: me.record_load_message(&id, &RecordLoadError::Missing) });
         me.set_active(&v, previous.filter(|old| old != &id));
         return;
       }
@@ -340,6 +342,7 @@ impl SessionManager {
         if missing && !listed {
           self.log(&format!("session {id}: not stored here"));
           (self.deps.toast)("error", &t("sessionLink.notHere"));
+          v.emit(HostMsg::SessionUnavailable { id: id.to_owned(), reason: t("sessionLink.notHere") });
           match previous.filter(|old| old != id) {
             Some(old) if v.active_id().as_deref() == Some(id) => self.set_active(v, Some(old)),
             _ => self.rehome(id).await,
@@ -347,6 +350,8 @@ impl SessionManager {
           return;
         }
         self.notify_record_load_failure(id, &error);
+        // Before the viewer is moved on: the page still waiting for this session learns why it never comes
+        v.emit(HostMsg::SessionUnavailable { id: id.to_owned(), reason: self.record_load_message(id, &error) });
         if missing {
           self.state.lock().index.retain(|s| s.id != id);
           self.emit_sessions();

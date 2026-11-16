@@ -225,6 +225,8 @@ export class Cmp {
   static readonly sidekickNotch: number = 2;
   /** The context ring's card and the quotes' card */
   static readonly usageCardW: number = 260;
+  /** The chat wait page's failure note: a short column, so the engine's sentence wraps well inside the screen */
+  static readonly waitNoteW: number = 260;
   static readonly popLg: number = 300;
   /** How faint a queued prompt's bubble stands until it goes, and the lines it shows */
   static readonly queuedBubble: number = 0.55;
