@@ -202,7 +202,10 @@ impl AgentProcess {
     init_timeout: Option<Duration>,
   ) -> Result<Arc<AgentProcess>> {
     let box_: HandlerBox = Arc::new(parking_lot::RwLock::new(h));
-    let mut cmd = launch::command(binary, &def.args);
+    // A saved Antigravity account names its store in the account env; `agy` takes it only as a flag
+    let mut args = def.args.clone();
+    args.extend(crate::accounts::antigravity::spawn_args(&def.id, extra_env));
+    let mut cmd = launch::command(binary, &args);
     cmd.current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(false);
     // Claude Code keeps dynamic workflows off for SDK hosts by default (no Workflow tool, ultracode ignored); the terminal
     // CLI has them on. The variable only moves that default, the user's own settings still decide (`claude_workflow`)

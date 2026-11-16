@@ -161,6 +161,17 @@ impl SessionManager {
         env.insert(k, Some(v));
       }
       let mut args = def.args.clone();
+      // A saved Antigravity account signs in on its own store: without the flag and its environment the terminal
+      // would replace the CLI's own login instead
+      let account_env = match (s.account_id(), &self.deps.accounts) {
+        (Some(a), Some(m)) => m.spawn_env_for(&s.agent, &a).await,
+        _ => None,
+      };
+      let store_args = crate::accounts::antigravity::spawn_args(&def.id, account_env.as_ref());
+      if !store_args.is_empty() {
+        env.extend(account_env.into_iter().flatten().map(|(k, v)| (k, Some(v))));
+        args.extend(store_args);
+      }
       args.extend(term.args);
       (self.deps.run_in_terminal)(title, bin.unwrap_or_else(|| def.command.clone()), args, (!env.is_empty()).then_some(env));
       (self.deps.toast)("info", &tp("host.loginThenRetry", &[("agent", &def.name)]));
