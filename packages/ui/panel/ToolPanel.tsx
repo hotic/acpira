@@ -264,7 +264,19 @@ export function PanelTabList({ children }: { children: ReactNode }) {
       label.style.opacity = label.clientWidth < 2 * parseFloat(getComputedStyle(label).fontSize) ? '0' : '';
     }
     const active = list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-    if (active) revealInline(list, active);
+    if (!active) return;
+    // The selected tab's floor (--panel-tab-on-min) never exceeds its own natural width: a short title ("Files") was
+    // padded out with blank room after its close button whenever it was selected. Natural width = where its last part
+    // ends, plus the title's truncated overflow and the trailing padding
+    const label = active.querySelector<HTMLElement>('[data-tab-label]');
+    const last = active.lastElementChild;
+    if (label && last) {
+      const style = getComputedStyle(active);
+      const end = last.getBoundingClientRect().right + parseFloat(getComputedStyle(last).marginRight) + parseFloat(style.paddingRight);
+      const fit = Math.ceil(end - active.getBoundingClientRect().left + label.scrollWidth - label.clientWidth);
+      active.style.setProperty('--tab-fit', `${fit}px`);
+    }
+    revealInline(list, active);
   }, [ref]);
   useLayoutEffect(reveal);
   useLayoutEffect(() => {
@@ -323,7 +335,7 @@ export function TabButton({ label, title, icon, on, closable, guard, closeAt = m
     <button type="button" role="tab" data-part="tab" title={title ?? label} aria-selected={on} onClick={onSelect}
       onAuxClick={e => { if (closable && e.button === 1) onClose(); }}
       onPointerLeave={guard?.leave} onPointerMove={guard?.move}
-      className={cn(TAB, on ? 'min-w-[min(var(--panel-tab-on-min),100%)] bg-active text-fg-1' : 'min-w-[min(var(--panel-tab-min),100%)] text-fg-2 hover:bg-hover hover:text-fg-1')}>
+      className={cn(TAB, on ? 'min-w-[min(var(--panel-tab-on-min),var(--tab-fit,var(--panel-tab-on-min)),100%)] bg-active text-fg-1' : 'min-w-[min(var(--panel-tab-min),100%)] text-fg-2 hover:bg-hover hover:text-fg-1')}>
       <span className="relative flex size-icon shrink-0 items-center justify-center">
         {icon(cn('size-icon transition-opacity', atStart && !guard && 'group-hover/tab:opacity-0'))}
         {atStart && close('group-hover/tab:opacity-100')}
