@@ -45,6 +45,28 @@ export function pickDefaultAgent(agents: AgentInfo[], preferred: AgentId): Agent
   return (installed ?? (own.disabled ? open[0] : undefined))?.id ?? preferred;
 }
 
+// Carry `preferred` into `targetCwd` only when the engine that will run it has its CLI: local folders and `localOnSsh`
+// agents check this machine's list; an SSH folder on the currently connected host checks `host`; an unprobed SSH host
+// returns undefined so that host's own engine picks an installed default instead of opening a missing-CLI error card.
+export function pickFolderAgent(
+  agents: AgentInfo[],
+  preferred: AgentId,
+  targetCwd: string | undefined,
+  activeCwd: string | undefined,
+  host: AgentInfo[] | undefined,
+  localOnSsh: readonly AgentId[] = [],
+): AgentId | undefined {
+  const remote = targetCwd ? parseRemoteFolder(targetCwd) : undefined;
+  if (!remote || localOnSsh.includes(preferred)) {
+    return launchable(agents).some(a => a.id === preferred && a.available !== false) ? preferred : undefined;
+  }
+  const activeRemote = activeCwd ? parseRemoteFolder(activeCwd) : undefined;
+  if (activeRemote?.alias === remote.alias && host) {
+    return pickDefaultAgent(agentsForFolder(agents, targetCwd, host, localOnSsh), preferred);
+  }
+  return undefined;
+}
+
 // Move one id to another position of the full visible list; the result is what agentOrder stores
 export function moveAgent(ids: AgentId[], id: AgentId, to: number): AgentId[] {
   const from = ids.indexOf(id);
