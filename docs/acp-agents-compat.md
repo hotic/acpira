@@ -186,12 +186,16 @@ The Antigravity CLI's ACP mode, the server antigravity.google documents for ACP 
 | install | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` (`~/.local/bin/agy`), Windows `irm https://antigravity.google/cli/install.ps1 \| iex` (`%LOCALAPPDATA%\agy\bin`); Homebrew also ships `agy` | docs; Windows unverified |
 | `initialize` | `agentInfo { name: Antigravity ACP Server, version: 1.5.9 }`; `loadSession`, `promptCapabilities { image, embeddedContext }`, `sessionCapabilities { resume, close, load, list, additionalDirectories }`, `auth.logout`, `_meta.antigravity { tier, systemPrompt.append }` | verified |
 | `authMethods` | `oauth-personal`, `oauth-business`, `gemini-api-key`, `agent-platform`, `terminal-login` (`type: terminal`, args `--login`) | verified |
-| login store | macOS keychain `gemini` / `antigravity`, shared with the interactive CLI; `--gemini-dir` moves config and conversations but not the login | verified |
+| login store | macOS keychain `gemini` / `antigravity`, shared with the interactive CLI; `--gemini-dir` moves config and conversations but not the login. With `SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` set the keychain is left alone and the login is `<gemini dir>/antigravity-cli/antigravity-oauth-token` (`{ token, auth_method, id_token_email }`); `--login` then prints the link and takes the pasted authorization code. `ANTIGRAVITY_GEMINI_DIR` does not move the store | verified |
 | controls | `configOptions` `model` (families: Gemini 4 Carbon / Argon / Hydrogen, Gemini 3.8 Flash, Claude Opus 5.5, Claude Sonnet 5.5, gpt-oss-120b, orchestrators), `thought_level` (low / medium / high), `mode` (default / accept-edits / auto / plan); the legacy `models` list keeps one id per family and level | verified |
 | prompt | the prompt is echoed as `user_message_chunk`; Claude's result carries `usage`; a trivial Claude turn reported ~17.4k input tokens | verified |
 | failed turn | `end_turn` with `\n⚠ <text>\n` as the last chunk (quota exhausted on the Gemini bucket) | verified |
 | restore | `session/resume` keeps the session without replay; `session/load` replays; an unknown id fails resume with `-32603 Failed to read session …` while load "succeeds" empty; `session/list` lists sessions with title and `updatedAt` | verified |
 | skills / commands | `available_commands_update` lists built-ins (`/goal /compact /schedule /browser /plan …`) plus skills from `~/.gemini/config/skills` and the project's `.agents/skills` | verified |
+| client MCP servers | launches a stdio server from `session/new` (`initialize`, `tools/list`, `tools/call`); a call is a `tool_call` with `name` `mcp_<server>_<tool>`, title `Run <name>`, kind `other` and `rawInput` = the arguments plus the model's `toolSummary`; the `completed` update carries no result | verified |
+| permission options | `allow` (allow_once "Allow") / `deny` (reject_once "Deny"), for an MCP call and for `run_command` | verified |
+| background command | `run_command` (`rawInput` `CommandLine`, `WaitMsBeforeAsync`) stays `in_progress` and the prompt answers `end_turn`. When the command exits the CLI wakes the model and stores its reply, but sends nothing over ACP. `session/list` `updatedAt` moves at the exit and again at the reply; `session/load`, on the live process too, replays the row as `completed` with its receipt (`rawOutput`, `content`) and then the reply, and keeps the picked model and mode. The engine reads that back (`late_reply.rs`), checked through the sidecar | verified, agy bug |
+| usage | `usage_update { used, size: 1048576 }` during the turn | verified |
 
 ## Factory Droid and Hermes Agent (droid 1.6.0, hermes-agent 0.22.5)
 
@@ -230,7 +234,7 @@ Open:
 
 ## Open items (not yet verified)
 
-- Antigravity (`agy acp`): a permission card, an `ask_question` card, `terminal-login` through the Notice, `session/list` import, client MCP servers, and Linux / Windows.
+- Antigravity (`agy acp`): a permission card, an `ask_question` card, `terminal-login` through the Notice, `session/list` import, and Linux / Windows.
 - Whether OpenCode deduplicates a skill seen both through `.agents/skills` and a `.claude/skills` link by real path (`OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` would switch the Claude folders off); only Claude gets skill links today, so this matters only for project `.claude/skills` links.
 - An agent actually calling a tool of a shared MCP server in a turn (needs a model call); only the launch and `tools/list` are verified.
 - Shared-config links on Windows (junction / hard-link fallbacks).

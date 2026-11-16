@@ -70,12 +70,15 @@ How each external agent CLI behaves on the ACP wire, with the version observed. 
 
 ## Antigravity
 
-- The entry runs `agy acp` (Antigravity CLI 1.5.9), the server the Antigravity docs give ACP clients. The separate `agy_acp_server` package (ACP Registry `antigravity-acp`, 1.3.0 – 1.5.0) offers Claude / GPT only to an allowlist of `clientInfo.name` (JetBrains, Zed, Xcode, T3 Code, Android Studio); `agy acp` offers them to any client.
-- Login: the `terminal-login` method (`type: terminal`, args `--login`). The token lives in the macOS keychain item `gemini` / `antigravity` whatever `--gemini-dir` says, so there is no per-account home to switch between.
-- Controls: `configOptions` `model` (one entry per family), `thought_level`, `mode` (`default` / `accept-edits` / `auto` / `plan`). `session/new` `_meta.antigravity.tier` names the plan; `initialize` advertises `_meta.antigravity.systemPrompt.append`. A prompt comes back as `user_message_chunk` before the reply.
-- Failed turns are `end_turn` with the failure as its own chunk, one line `\n⚠ <text>\n` (an exhausted quota: `⚠ Individual quota reached. … Resets in 46m9s.`); `vendors/antigravity.rs` cuts it into the turn error. Gemini models share one quota bucket, Claude has its own. The module's other patterns are `agy_acp_server`'s, unverified on `agy acp`.
-- Restore: `session/resume` does not replay. An id it never stored answers `-32603 Failed to read session <id>; retry, or load it with session/load`, and that `session/load` then succeeds with an empty history, so the message counts as gone (`errors.rs`). `agy_acp_server` sessions are such ids: the next prompt hands their transcript over.
-- Unverified on `agy acp`: the `ask_question` and permission option shapes (`protocol-gotchas.md` keys on `agy_acp_server`'s `interaction_*` calls), MCP failures, the Windows install directory.
+- Runs `agy acp` (agy 1.5.9); wire table in `docs/acp-agents-compat.md`. The older `agy_acp_server` package (Registry `antigravity-acp`) offers Claude / GPT only to allowlisted `clientInfo.name`s.
+- Login: keychain item `gemini` / `antigravity`, or a file in the gemini dir under SSH; saved accounts: `accounts/antigravity.rs`.
+- A prompt comes back as `user_message_chunk` before the reply.
+- Failed turns are `end_turn` with the failure as its own chunk, `\n⚠ <text>\n`; `vendors/antigravity.rs` cuts it into the turn error. Its other patterns are `agy_acp_server`'s, unverified here. Gemini models share one quota bucket, Claude has its own.
+- Restore: `session/resume` does not replay. An unknown id answers `-32603 Failed to read session <id>; …` while `session/load` succeeds empty, so that message counts as gone (`errors.rs`); `agy_acp_server` sessions are such ids.
+- MCP calls: `name` `mcp_<server>_<tool>`, title `Run <name>`, kind `other`; the server ends at the first `_` (`tool_kind.rs`). `agy` injects `toolSummary` into every MCP tool schema, asks `request_permission` on every MCP call (read-only included), omits `toolUseId` in `tools/call` `_meta`, and omits result `content` on `tool_call_update`.
+- Session instructions and hooks (1.5.9): `session/new`, `load` and `resume` accept `_meta.antigravity.systemPrompt` (`{ append }` or replacement string). `_meta.agy.disabledTools` does not disable built-in tools, whereas `<cwd>/.agents/hooks.json` `PreToolUse` exit 2 blocks them cleanly.
+- Background commands: a `run_command` still `in_progress` at `end_turn` runs on. When it exits the CLI wakes the model, and neither the exit nor that reply reaches ACP: only `session/list` `updatedAt` moves (once for each), and `session/load` on the live process replays both, keeping the picked model and mode. `session/late_reply.rs` keeps the row as a background task and reads the replay back; nothing watches after a restore.
+- Unverified: `ask_question` (`protocol-gotchas.md` keys on `agy_acp_server`'s `interaction_*`), MCP load failures, a prompt sent while a late reply is being written, the Windows install directory.
 
 ## Pi (pi-acp)
 
