@@ -42,7 +42,7 @@ export interface SessionMenuItemsProps {
   onCopy?: (what: SessionCopyKind) => void;
   onDelete: () => void;
   // "Move to category": the categories of the session's own project, the pick (null = take it out) and "new category…".
-  // Offered only with onFile, and never for a pinned session (pinned ones are locked to the top)
+  // Offered only with onFile. A pinned session gets it too: filing unpins in the engine, so one pick does both
   categories?: SessionCategory[];
   onFile?: (category: string | null) => void;
   onNewCategory?: () => void;
@@ -99,8 +99,9 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onUnread, 
     const unread = isUnread(session);
     top.push(<DropdownMenu.Item key="unread" onClick={() => onUnread(!unread)}><OptionContent icon={unread ? <MailCheck strokeWidth={1.5} /> : <Mail strokeWidth={1.5} />}>{t(unread ? 'session.markRead' : 'session.markUnread')}</OptionContent></DropdownMenu.Item>);
   }
-  if (onFile && !session.pinned) {
-    const filed = categories.some(c => c.id === session.category);
+  if (onFile) {
+    // A pinned session sits in no category, whatever id its record still carries
+    const filed = !session.pinned && categories.some(c => c.id === session.category);
     top.push(<Submenu key="file" side={subSide} icon={<Inbox strokeWidth={1.5} />} label={t('session.category.moveTo')}>{[
       ...categories.map(c => (
         <DropdownMenu.Item key={c.id} onClick={() => onFile(c.id)}>
