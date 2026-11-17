@@ -69,8 +69,9 @@
 - Emulator: it reaches the computer only as 10.0.2.2 (its loopback), not its LAN addresses or Bonjour, so iroh's first dial spends its deadline on the LAN addresses. Behind a proxy TUN the gateway binds IPv4 on the physical address only (`tun::detect`), out of the emulator's reach: the test `gateway.sh` sets `ACPIRA_NET_BYPASS=0` for the wildcard socket. Debug builds take `nearby=ID@10.0.2.2:PORT` to list the gateway in the sheet; a code pairing stores the address it reached first.
 - First run (`ui/Welcome.kt`, the iOS flow's rules: a bare launch with no computer paired, until it finishes once): its pairing step is the add sheet's own `PairFlow` in place, so `PairingModel.onboarding` keeps the sheet down meanwhile. Its notification step asks once (the `notify` prefs' `asked`), so a wire asks only on installs that never saw it. A fresh install opens on it, so scripts that pair go through `welcome.start`.
 - Compose's `PathParser` misreads arc flags run together with the next number (`0 01-4.45`, as the minified lobehub marks write them); `IconStore.mark` spells them out first.
-- The pairing hero redraws the scanned code's own modules (`ui/PairScanner.kt` `QrReader`): ZXing's `Detector` grid, cloned before `Decoder.decode` (it unmasks the matrix in place) and transposed when the result says mirrored. An opened link has no grid, so `logic/PairCode.kt` encodes one from the link.
-- Open: the camera scan, NSD on a real network, background grace under Doze.
+- The scan (`ui/PairScanner.kt` `QrReader`): zxing-cpp reads the text, since a camera sees a dark-theme card's lit dots swollen and joined, where ZXing finds no code. Hence also the asked frame size (CameraX defaults to 640x480), the exposure held down and the second, tone-curved reading. ZXing still samples the grid when it can (cloned before `Decoder.decode`, which unmasks in place; transposed when mirrored) so the hero redraws the card's own modules; otherwise, and for an opened link, `logic/PairCode.kt` encodes one.
+- A read leaves the camera page at once, before any network: a scan that does nothing is the reader, not the link.
+- Open: the camera scan on a real phone, NSD on a real network, background grace under Doze.
 
 ## Notifications
 

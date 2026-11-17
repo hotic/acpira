@@ -3,14 +3,19 @@ package cc.hotic.acpira.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.Settings
+import android.util.Size as FrameSize
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
@@ -65,10 +70,14 @@ import com.google.zxing.qrcode.detector.Detector
 import cc.hotic.acpira.logic.PairCodeRows
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
+import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import zxingcpp.BarcodeReader
 
-// The camera card that leads the add-computer sheet (apps/ios Pairing/PairScanner.swift): CameraX frames read by ZXing
-// for QR codes only, under a viewfinder. Where the phone has no camera the card is a quiet stand-in; where access was
+// The camera card that leads the add-computer sheet (apps/ios Pairing/PairScanner.swift): CameraX frames read by
+// zxing-cpp for QR codes only, under a viewfinder. Where the phone has no camera the card is a quiet stand-in; where access was
 // refused it says so and opens the app's settings. Any QR code that is not an `acpira://pair/…` link is ignored.
 
 private enum class CameraSource { Live, Unavailable, Denied }
@@ -137,7 +146,13 @@ private fun CameraFeed(onLink: (String, List<String>?) -> Unit) {
       val p = future.get()
       provider = p
       val shown = Preview.Builder().build().also { it.surfaceProvider = preview.surfaceProvider }
-      val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+      // CameraX hands an analyzer 640x480 unless asked: the card's code (57 modules and up, dots that do not touch) then
+      // lands near 3 pixels a module at arm's length, under what ZXing reads off a monitor
+      val sharp = ResolutionSelector.Builder()
+        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+        .setResolutionStrategy(ResolutionStrategy(SCAN_FRAME, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+        .build()
+      val analysis = ImageAnalysis.Builder().setResolutionSelector(sharp).setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
       val reader = QrReader()
       analysis.setAnalyzer(executor) { image ->
         val read = reader.read(image)
@@ -149,7 +164,15 @@ private fun CameraFeed(onLink: (String, List<String>?) -> Unit) {
       }
       runCatching {
         p.unbindAll()
-        p.bindToLifecycle(lifecycle, CameraSelector.DEFAULT_BACK_CAMERA, shown, analysis)
+        val camera = p.bindToLifecycle(lifecycle, CameraSelector.DEFAULT_BACK_CAMERA, shown, analysis)
+        // A dark-theme card is a few lit dots on a dark monitor: metered as a scene it is overexposed until the dots
+        // bleed into each other, so the picture is held down
+        val exposure = camera.cameraInfo.exposureState
+        if (exposure.isExposureCompensationSupported) {
+          val range = exposure.exposureCompensationRange
+          val index = (SCAN_EXPOSURE / exposure.exposureCompensationStep.toFloat()).roundToInt().coerceIn(range.lower, range.upper)
+          camera.cameraControl.setExposureCompensationIndex(index)
+        }
       }
     }, ContextCompat.getMainExecutor(context))
     onDispose {
@@ -161,25 +184,64 @@ private fun CameraFeed(onLink: (String, List<String>?) -> Unit) {
 }
 
 /**
- * ZXing on a frame's luminance plane: QR only, light-on-dark too (a dark-theme pairing card). Detected and decoded in
- * two steps rather than through a reader, so the sampled module grid comes along with the text: the sheet draws the
- * card's very modules (logic/PairCode.kt)
+ * A frame's luminance plane read for a QR code, light-on-dark too (a dark-theme pairing card). zxing-cpp reads the text:
+ * a camera's picture of the card has its dots swollen and joined, where ZXing no longer finds the code at any size.
+ * ZXing then samples the same frame for the module grid when it can, so the sheet draws the card's very modules
+ * (logic/PairCode.kt); without one the sheet makes a code from the link
  */
 private class QrReader {
+  private val reader = BarcodeReader(BarcodeReader.Options(
+    formats = setOf(BarcodeReader.Format.QR_CODE), tryHarder = true, tryRotate = true, tryInvert = true, tryDownscale = true,
+  ))
   private val hints = mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE))
   private val decoder = Decoder()
+  // Kept between frames: the plane's bytes, and the same picture under [CURVE]
+  private var plane = ByteArray(0)
+  private var curved = ByteArray(0)
+  private var bitmap: Bitmap? = null
 
   /** The text and the code's rows, or null when no code is read in the frame */
-  fun read(image: ImageProxy): Pair<String, List<String>?>? {
-    val plane = image.planes.firstOrNull() ?: return null
-    val buffer = plane.buffer
-    val stride = plane.rowStride
-    val data = ByteArray(buffer.remaining()).also { buffer.get(it) }
-    val source = PlanarYUVLuminanceSource(data, stride, image.height, 0, 0, image.width, image.height, false)
-    return read(source) ?: read(source.invert())
+  fun read(image: ImageProxy): Pair<String, List<String>?>? = try {
+    val text = reader.read(image).firstOrNull()?.text ?: copy(image)?.let { reader.read(curve(image, it)).firstOrNull()?.text }
+    text?.let { it to grid(image, it) }
+  } catch (_: Exception) {
+    null
   }
 
-  private fun read(source: LuminanceSource): Pair<String, List<String>?>? = try {
+  /** The luminance plane's bytes, rows [ImageProxy.PlaneProxy.getRowStride] apart */
+  private fun copy(image: ImageProxy): ByteArray? {
+    val buffer = image.planes.firstOrNull()?.buffer ?: return null
+    buffer.rewind()
+    if (plane.size != buffer.remaining()) plane = ByteArray(buffer.remaining())
+    buffer.get(plane)
+    return plane
+  }
+
+  /** The frame with its mid-tones pulled down: the glow round each lit dot goes back to dark and the dots part again */
+  private fun curve(image: ImageProxy, data: ByteArray): Bitmap {
+    val w = image.width
+    val h = image.height
+    val stride = image.planes[0].rowStride
+    if (curved.size != w * h) curved = ByteArray(w * h)
+    for (y in 0 until h) {
+      val row = y * stride
+      val out = y * w
+      for (x in 0 until w) curved[out + x] = CURVE[data[row + x].toInt() and 0xFF]
+    }
+    // An alpha-only bitmap is a luminance picture to the reader
+    val target = bitmap?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8).also { bitmap = it }
+    target.copyPixelsFromBuffer(ByteBuffer.wrap(curved))
+    return target
+  }
+
+  /** The symbol's modules as ZXing samples them, when it reads the same text in the frame */
+  private fun grid(image: ImageProxy, text: String): List<String>? {
+    val data = copy(image) ?: return null
+    val source = PlanarYUVLuminanceSource(data, image.planes[0].rowStride, image.height, 0, 0, image.width, image.height, false)
+    return (sample(source) ?: sample(source.invert()))?.takeIf { it.first == text }?.second
+  }
+
+  private fun sample(source: LuminanceSource): Pair<String, List<String>?>? = try {
     val found = Detector(BinaryBitmap(HybridBinarizer(source)).blackMatrix).detect(hints)
     // Decoding unmasks the grid in place: the rows are taken from a copy first
     val grid = found.bits.clone()
@@ -226,6 +288,15 @@ private fun Finder(ink: Color, dim: Boolean) {
 }
 
 private data class Quad(val x: Float, val y: Float, val sx: Float, val sy: Float)
+
+/** The frame the reader asks for, the preview's 4:3 (ImageAnalysis takes nothing over 1080p's pixel count) */
+private val SCAN_FRAME = FrameSize(1600, 1200)
+
+/** How far the camera's exposure is held down while it scans, in EV */
+private const val SCAN_EXPOSURE = -2f
+
+/** The second reading's tone curve (a power of three): only a dot's lit core stays light */
+private val CURVE = ByteArray(256) { (255 * (it / 255.0).pow(3.0)).roundToInt().toByte() }
 
 /** The camera dimmed outside the viewfinder */
 private const val FINDER_DIM = 0.22f

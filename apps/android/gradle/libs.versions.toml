@@ -8,8 +8,9 @@ serialization = "1.12.0"
 okhttp = "5.5.1"
 junit = "4.13.2"
 jna = "5.17.0"
-camerax = "1.5.1"
+camerax = "1.5.2"
 zxing = "3.5.3"
+zxingcpp = "3.1.1"
 javascriptengine = "1.1.1"
 termlib = "0.3.14"
 
@@ -29,11 +30,13 @@ okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 junit = { module = "junit:junit", version.ref = "junit" }
 # UniFFI's Kotlin bindings call acpira-mobile through JNA; the aar carries its Android native part
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
-# The pairing sheet's camera card: CameraX frames, ZXing's QR reader (no Play services, so it scans on phones without them)
+# The pairing sheet's camera card: CameraX frames read by zxing-cpp (no Play services, so it scans on phones without
+# them); ZXing samples the module grid and encodes a link's code
 camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
 camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
 camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+zxing-cpp = { module = "io.github.zxing-cpp:android", version.ref = "zxingcpp" }
 # Code colours: shiki in AndroidX's JavaScript sandbox (V8 from the WebView provider, no view), the counterpart of the
 # JavaScriptCore context the iOS app runs it in
 javascriptengine = { module = "androidx.javascriptengine:javascriptengine", version.ref = "javascriptengine" }
