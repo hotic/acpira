@@ -310,6 +310,8 @@ fun ChatScreen(model: AppModel, id: String) {
   val scope = rememberCoroutineScope()
   // A reply block or prompt handed to range selection drops it on a tap elsewhere in the thread
   val threadTaps = remember(id) { ThreadTaps() }
+  // The older reply whose action row a tap has opened: one per chat
+  val turnReveal = remember(id) { TurnReveal() }
   // The floating to-do card's height: the thread's end clears it
   var planDockH by remember { mutableIntStateOf(0) }
 
@@ -457,6 +459,7 @@ fun ChatScreen(model: AppModel, id: String) {
       LocalDiffSource provides diffSource,
       LocalPromptMarks provides marks,
       LocalThreadTaps provides threadTaps,
+      LocalTurnReveal provides turnReveal,
     ) {
     // Messages leave under the bar through a fade, once the thread has moved off its top
     val scrolled by remember(thread) { derivedStateOf { thread.canScrollBackward } }

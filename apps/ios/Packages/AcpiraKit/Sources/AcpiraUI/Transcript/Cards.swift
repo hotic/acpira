@@ -473,7 +473,8 @@ struct PermissionCard: View {
 /// Retry · copy the reply · its screenshot · fork from this turn · response statistics; hugs the reply (-mt-gap) at
 /// --ctl-sm. Retry shows only on the newest reply when it failed in a way Retry answers (`retryableTurn`, the alert
 /// card's rule), so it stays at hand after the card is dismissed. A reply with nothing in it offers no copy, screenshot
-/// or statistics
+/// or statistics. Only the newest reply shows the row at rest; an older one shows it while a tap has it open
+/// (`TurnReveal`). The row keeps its height either way, so showing it moves nothing, as the desktop's hover does
 struct TurnActions: View {
   let turn: AgentTurn
   var index = 0
@@ -490,13 +491,19 @@ struct TurnActions: View {
   @Environment(\.agentAccent) private var accent
   @Environment(\.displayScale) private var displayScale
   @Environment(AppModel.self) private var model: AppModel?
+  @Environment(\.turnReveal) private var reveal
+  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
   @State private var copied = false
   @State private var stats = false
   /// A screenshot is being drawn: a second tap waits for it
   @State private var sharing = false
 
+  /// A tap to open the row is no gesture VoiceOver offers: with it on, every reply keeps its row
+  private var shown: Bool { last || voiceOver || reveal?.index == index }
+
   var body: some View {
     let content = hasTurnContent(turn)
+    let shown = shown
     HStack(spacing: Metrics.s0_5) {
       if retry {
         IconButton(.rotateCcw, size: .web, label: t("common.retry")) { sessionActions.retry() }
@@ -526,6 +533,10 @@ struct TurnActions: View {
     }
     .frame(maxWidth: .infinity, minHeight: WebMetrics.ctlSm, maxHeight: WebMetrics.ctlSm, alignment: .trailing)
     .padding(.top, -Metrics.gap)
+    .opacity(shown ? 1 : 0)
+    .allowsHitTesting(shown)
+    .accessibilityHidden(!shown)
+    .animation(.easeOut(duration: Motion.dur), value: shown)
     .task(id: copied) {
       // The check stands for a moment, then the copy glyph returns
       guard copied else { return }
@@ -572,6 +583,28 @@ struct TurnActions: View {
     }
     #endif
   }
+}
+
+/// The one older reply in a thread whose action row a tap has opened; another tap closes it, a tap on another reply
+/// moves it there. Nil outside a thread (renders), where only the newest reply shows its row
+@Observable final class TurnReveal {
+  var index: Int?
+  func toggle(_ turn: Int) { index = index == turn ? nil : turn }
+}
+
+/// A tap on a settled older reply, handed down to its text's selection surface (which takes the taps on the text
+/// itself). Equal while it names the same turn of the same thread, so a redraw of the turn does not count as a change
+/// for every paragraph under it
+struct ReplyTap: Equatable {
+  let index: Int
+  let reveal: TurnReveal
+  func callAsFunction() { reveal.toggle(index) }
+  static func == (a: Self, b: Self) -> Bool { a.index == b.index && a.reveal === b.reveal }
+}
+
+extension EnvironmentValues {
+  @Entry var turnReveal: TurnReveal?
+  @Entry var replyTap: ReplyTap?
 }
 
 /// The reply text a copy takes: the turn's final prose, else (a tail the split finds nothing in) its plain text blocks

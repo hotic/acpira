@@ -2,6 +2,8 @@ package cc.hotic.acpira.ui
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -303,14 +305,24 @@ fun AgentMessage(
   val placed = remember(shown, subagents) { cc.hotic.acpira.logic.delegatedIds(shown.blocks, subagents) }
   val placement = remember(subagents, placed) { cc.hotic.acpira.logic.placeNodes(subagents, placed) }
   val readOnly = cc.hotic.acpira.ui.subagents.LocalSubagentTranscript.current
+  // An older settled reply opens and closes its action row on a tap (the newest one always shows it). Rows, links and
+  // buttons inside keep their own taps; the prose blocks hand theirs on through [LocalReplyTap] (BlockSelection)
+  val reveal = LocalTurnReveal.current
+  val revealable = reveal != null && !last && !readOnly && showsTurnActions(turn, running)
+  val tap: (() -> Unit)? = remember(reveal, index, revealable) { if (revealable) ({ reveal?.toggle(index) }) else null }
   CompositionLocalProvider(
+    LocalReplyTap provides tap,
     LocalRowHeight provides WebMetrics.chatRow,
     LocalEntranceScope provides EntranceScope(live = running, scope = key),
     LocalClock provides now,
     cc.hotic.acpira.ui.subagents.LocalDelegations provides placement.byId,
     LocalNoticeScope provides NoticeScope(showActions = last && !running && !readOnly, suppressId = turn.error?.failureId, absorbed = absorbed),
   ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = Metrics.pad + Metrics.threadInset), verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
+    Column(
+      Modifier.fillMaxWidth().padding(horizontal = Metrics.pad + Metrics.threadInset)
+        .then(if (tap != null) Modifier.pointerInput(tap) { detectTapGestures(onTap = { tap() }) } else Modifier),
+      verticalArrangement = Arrangement.spacedBy(Metrics.gap),
+    ) {
       // A saved plan cuts the turn: its card stands between the stretch before it and the continuation after it
       // (AgentMessage.swift, planSections.ts)
       val sections = remember(shown, placed) { splitPlanSections(shown.blocks, placed) }
@@ -343,7 +355,7 @@ fun AgentMessage(
       }
       // A child's transcript offers no action row: fork there would act on the parent session
       if (showsTurnActions(turn, running) && !readOnly) {
-        TurnActions(turn, index, retry, settings, controls, actions)
+        TurnActions(turn, index, retry, settings, controls, actions, last)
       }
     }
   }
@@ -425,6 +437,31 @@ private fun seedEntrances(turn: AgentTurn, process: List<AgentBlock>, scope: Str
   }
 }
 
+/** The one older reply in a thread whose action row a tap has opened (Cards.swift `TurnReveal`); null outside a chat */
+class TurnReveal {
+  var index by mutableStateOf<Int?>(null)
+  fun toggle(turn: Int) { index = if (index == turn) null else turn }
+}
+
+val LocalTurnReveal = androidx.compose.runtime.staticCompositionLocalOf<TurnReveal?> { null }
+
+/** A tap on a settled older reply, for its prose blocks, whose long-press detector takes their taps (BlockSelection) */
+val LocalReplyTap = androidx.compose.runtime.compositionLocalOf<(() -> Unit)?> { null }
+
+/** TalkBack's touch exploration is on: a tap to open a row is no gesture it offers, so every reply keeps its row */
+@Composable
+private fun touchExploration(): Boolean {
+  val context = LocalContext.current
+  val manager = remember(context) { context.getSystemService(android.view.accessibility.AccessibilityManager::class.java) }
+  var on by remember(manager) { mutableStateOf(manager?.isTouchExplorationEnabled == true) }
+  androidx.compose.runtime.DisposableEffect(manager) {
+    val listener = android.view.accessibility.AccessibilityManager.TouchExplorationStateChangeListener { on = it }
+    manager?.addTouchExplorationStateChangeListener(listener)
+    onDispose { manager?.removeTouchExplorationStateChangeListener(listener) }
+  }
+  return on
+}
+
 /** What a settled turn's actions do (apps/ios `sessionActions`); the chat wires them to its session */
 class TurnHandlers(val retry: () -> Unit, val fork: (turnIndex: Int) -> Unit, val toast: (String) -> Unit)
 
@@ -432,7 +469,8 @@ class TurnHandlers(val retry: () -> Unit, val fork: (turnIndex: Int) -> Unit, va
  * The reply's actions under it (Cards.swift TurnActions), hugging the reply: retry, copy, its screenshot, fork from
  * this turn, the statistics. Retry shows only on the newest reply when it failed in a way Retry answers; a reply with
  * nothing in it offers no copy, screenshot or statistics. Android 13+ confirms a copy itself, so the glyph only turns
- * into a tick for a moment
+ * into a tick for a moment. Only the newest reply ([last]) shows the row at rest; an older one shows it while a tap has
+ * it open ([TurnReveal]). The row keeps its height either way, so showing it moves nothing
  */
 @Composable
 private fun TurnActions(
@@ -442,6 +480,7 @@ private fun TurnActions(
   settings: TurnSettings?,
   controls: SessionControls,
   actions: TurnHandlers?,
+  last: Boolean,
 ) {
   val reply = remember(turn) { replyMarkdown(turn) }
   val content = remember(turn) { hasTurnContent(turn) }
@@ -459,18 +498,25 @@ private fun TurnActions(
   // The screenshot being drawn: its watermark and the card's desktop reading width
   var sharing by remember { mutableStateOf<Pair<ShareMeta, Int>?>(null) }
   val cardWidth = with(LocalDensity.current) { Metrics.contentW.roundToPx() }
+  val shown = last || touchExploration() || LocalTurnReveal.current?.index == index
+  val alpha by androidx.compose.animation.core.animateFloatAsState(
+    if (shown) 1f else 0f, androidx.compose.animation.core.tween(Motion.fade), label = "turnActions",
+  )
   // Hugs the reply (-mt-gap): the row gives a gap of its height back to the column's spacing
   Row(
     Modifier.fillMaxWidth().layout { measurable, constraints ->
       val row = measurable.measure(constraints)
       val pull = Metrics.gap.roundToPx()
       layout(row.width, maxOf(row.height - pull, 0)) { row.place(0, -pull) }
-    },
+    }
+      // Hidden, the row takes no taps (they fall through to the turn, which opens it) and reads as nothing
+      .graphicsLayer { this.alpha = alpha }
+      .then(if (shown) Modifier else Modifier.clearAndSetSemantics {}),
     horizontalArrangement = Arrangement.spacedBy(Metrics.s0_5, Alignment.End),
   ) {
-    if (retry && actions != null) ActionButton("rotateCcw", t("common.retry"), "turn.retry", hint = t("alert.retryHint")) { actions.retry() }
+    if (retry && actions != null) ActionButton("rotateCcw", t("common.retry"), "turn.retry", hint = t("alert.retryHint"), enabled = shown) { actions.retry() }
     if (reply.isNotEmpty()) {
-      ActionButton(if (copied) "check" else "copy", t(if (copied) "code.copied" else "turn.copy"), "turn.copy") {
+      ActionButton(if (copied) "check" else "copy", t(if (copied) "code.copied" else "turn.copy"), "turn.copy", enabled = shown) {
         if (copyText(context, reply)) actions?.toast?.invoke(t("code.copied"))
         haptics.play(Haptic.Copy)
         copied = true
@@ -480,7 +526,7 @@ private fun TurnActions(
     val lightbox = media.lightbox
     if (lightbox != null && !shareable.isEmpty) {
       Box {
-        ActionButton("image", t("turn.share"), "turn.share") {
+        ActionButton("image", t("turn.share"), "turn.share", enabled = shown) {
           if (sharing != null) return@ActionButton
           haptics.play(Haptic.Copy)
           val view = media.session?.let { media.model?.views?.get(it) }
@@ -500,10 +546,10 @@ private fun TurnActions(
         }
       }
     }
-    if (actions != null) ActionButton("gitBranch", t("turn.fork"), "turn.fork") { actions.fork(index) }
+    if (actions != null) ActionButton("gitBranch", t("turn.fork"), "turn.fork", enabled = shown) { actions.fork(index) }
     if (content) {
       Box {
-        ActionButton("chartNoAxesColumn", t("turn.stats"), "turn.stats", open = stats) { stats = !stats }
+        ActionButton("chartNoAxesColumn", t("turn.stats"), "turn.stats", open = stats, enabled = shown) { stats = !stats }
         if (stats) StatsPopup(turn, remember(turn.usage, settings, controls) { modelLabel(turn.usage, settings, controls) }) { stats = false }
       }
     }
@@ -515,10 +561,12 @@ private fun TurnActions(
  * label (TalkBack reads it as the action, as VoiceOver reads iOS's `accessibilityHint`)
  */
 @Composable
-private fun ActionButton(icon: String, label: String, tag: String, open: Boolean = false, hint: String? = null, onClick: () -> Unit) {
+private fun ActionButton(
+  icon: String, label: String, tag: String, open: Boolean = false, hint: String? = null, enabled: Boolean = true, onClick: () -> Unit,
+) {
   Box(
     Modifier.size(Metrics.ctlSm).clip(CircleShape).background(if (open) Palette.active else Color.Transparent)
-      .clickable(onClickLabel = hint, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).testTag(tag),
+      .clickable(enabled = enabled, onClickLabel = hint, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).testTag(tag),
     contentAlignment = Alignment.Center,
   ) {
     Lucide(icon, if (open) Palette.fg1 else Palette.fg2, size = Metrics.chevron, contentDescription = label)

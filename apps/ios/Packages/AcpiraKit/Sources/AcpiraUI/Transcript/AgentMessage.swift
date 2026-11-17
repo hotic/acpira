@@ -26,8 +26,12 @@ struct AgentMessage: View {
   @Environment(\.sessionActions) private var sessionActions
   @Environment(\.subagentTranscript) private var readOnly
   @Environment(\.quietEntrance) private var quiet
+  @Environment(\.turnReveal) private var reveal
 
   var body: some View {
+    // An older settled reply opens and closes its action row on a tap (the newest one always shows it). Rows,
+    // links and buttons inside keep their own taps; the text's own taps reach it through its selection surface
+    let tap = !last && !readOnly && showsTurnActions(turn, running: running) ? reveal.map { ReplyTap(index: index, reveal: $0) } : nil
     let absorbed = absorbedNotices(turn)
     let shown = displayTurn(turn, absorbed: absorbed)
     // Subagent rows sit where they were delegated: a placed delegation row stays in the turn's process, and its node
@@ -63,7 +67,10 @@ struct AgentMessage: View {
       }
     }
     .environment(\.delegations, placement.byId)
+    .environment(\.replyTap, tap)
     .padding(.horizontal, Metrics.pad)
+    .contentShape(Rectangle())
+    .onTapGesture { tap?() }
     .environment(\.rowHeight, WebMetrics.chatRow)
     // Entrance effects belong to the live turn only; restored history stays still
     .environment(\.rowEnter, running && !quiet)

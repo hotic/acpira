@@ -1,6 +1,7 @@
 import { earlierTurns, SessionView, SlashCommand, Turn } from '../wire/Wire';
 import { asView, SubagentSummary } from '../wire/Blocks';
 import { isContextLengthError, shortStop } from '../logic/Composing';
+import { accessibility } from '@kit.AccessibilityKit';
 
 // What the chat's rows read from the view beyond their own turn (apps/ios Chat/ThreadItems.swift passes it per item).
 // A turn row keeps its ForEach key while its turn object stays the same, and a kept child keeps the params it was built
@@ -47,13 +48,30 @@ export class ThreadContext {
   @Trace live: number = -1;
   /** The failed turn Retry answers (TurnEdit.swift retryableTurn), -1 for none */
   @Trace retry: number = -1;
+  /** The newest turn, counted like `live`: its reply keeps the action row at rest, older ones open theirs on a tap */
+  @Trace newest: number = -1;
+  /** The older reply whose action row a tap has opened (Cards.swift TurnReveal), -1 for none; another session closes it */
+  @Trace revealed: number = -1;
+  /** The screen reader's touch guide is on: a tap to open a row is no gesture it offers, so every reply keeps its row */
+  @Trace touchGuide: boolean = false;
+  private viewId: string = '';
   // Every patch parses its own copy of the view's fields: a field is written only when its content changed, so rows
   // that read it render again only then
   private subagentsSig: string = '';
   private controlsSig: string = '';
   private commandsSig: string = '';
 
+  /** A tap on an older reply: opens its action row, closes it again, or moves it there from another reply */
+  toggleReveal(turn: number): void {
+    this.revealed = this.revealed === turn ? -1 : turn;
+  }
+
   follow(view: SessionView | undefined): void {
+    const viewId = view?.id ?? '';
+    if (viewId !== this.viewId) {
+      this.viewId = viewId;
+      this.revealed = -1;
+    }
     const subagents = view === undefined ? NO_SUBAGENTS : (asView(view).subagents ?? NO_SUBAGENTS);
     const subagentsSig = JSON.stringify(subagents);
     if (subagentsSig !== this.subagentsSig) {
@@ -77,6 +95,20 @@ export class ThreadContext {
     const last = view !== undefined ? earlierTurns(view) + view.turns.length - 1 : -1;
     this.live = view !== undefined && view.running ? last : -1;
     this.retry = view !== undefined && retryable(view) ? last : -1;
+    this.newest = last;
+    const guide = touchGuideOn();
+    if (guide !== this.touchGuide) {
+      this.touchGuide = guide;
+    }
+  }
+}
+
+/** Whether the screen reader's touch guide is on; false where the module is missing (the Previewer) */
+function touchGuideOn(): boolean {
+  try {
+    return accessibility.isOpenTouchGuideSync();
+  } catch (e) {
+    return false;
   }
 }
 
