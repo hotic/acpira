@@ -54,7 +54,7 @@ pub(crate) enum RemotePerm {
   None,
   /// A read-only remote tool (`Read`, `Grep`, `Glob`): `agy acp` has no `allowedTools` list and asks on every MCP tool
   ReadOnly,
-  /// A write on the SSH host (`Write` / `Edit`): auto-approved in accept-edits mode, card in default mode
+  /// A write on the SSH host (`Write` / `Edit` / `MultiEdit`): auto-approved in accept-edits mode, card in default mode
   HostEdit,
   /// The CLI's own local plan or artifact file here (`~/.claude/plans`, `~/.gemini/.../brain`)
   AgentOwnFile,
@@ -199,7 +199,10 @@ impl AcpSession {
       }
     }
     let call = bound_id.clone().unwrap_or_else(crate::util::random_uuid);
-    let out = if here { self.run_here(tool, call_args, &call).await } else { self.run_on_host(tool, call_args, &call, stop).await };
+    let mut out = if here { self.run_here(tool, call_args, &call).await } else { self.run_on_host(tool, call_args, &call, stop).await };
+    if name == "Bash" {
+      claude_remote::name_job_tools(&mut out, stand.dialect);
+    }
     if let Some(id) = &bound_id
       && let Some(c) = self.remote_calls.lock().get_mut(id)
     {
@@ -364,8 +367,8 @@ impl AcpSession {
             }
           }
           None => {
-            if let Some(d) = view.diff {
-              u["content"] = json!([d]);
+            if !view.diffs.is_empty() {
+              u["content"] = json!(view.diffs);
             }
           }
         }
@@ -374,8 +377,8 @@ impl AcpSession {
         calls.remove(&id);
       }
       _ => {
-        if let Some(d) = view.diff.filter(|_| first || u.get("rawInput").is_some() || u.get("args").is_some()) {
-          u["content"] = json!([d]);
+        if !view.diffs.is_empty() && (first || u.get("rawInput").is_some() || u.get("args").is_some()) {
+          u["content"] = json!(view.diffs);
         }
       }
     }
@@ -426,7 +429,7 @@ impl AcpSession {
     if claude_remote::READ_ONLY.contains(&c.name) {
       return RemotePerm::ReadOnly;
     }
-    if !matches!(c.name, "Write" | "Edit") {
+    if !matches!(c.name, "Write" | "Edit" | "MultiEdit") {
       return RemotePerm::None;
     }
     let roots = claude_remote::here_roots(stand.dialect, &home, &data_root);

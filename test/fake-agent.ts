@@ -887,7 +887,8 @@ const app = acp.agent({ name: 'fake-agent' })
       const name = `mcp__acpira__${tool}`;
       const call = { toolCallId, name, title: name, kind: 'other', status: 'pending', rawInput: args, _meta: { claudeCode: { toolName: name }, is_mcp_tool_call: true } } as acp.ToolCall;
       await send({ sessionUpdate: 'tool_call', ...call });
-      if (!['Read', 'Grep', 'Glob'].includes(tool)) {
+      // The session request's `allowedTools` (claude_remote.rs READ_ONLY) skip the request
+      if (!['Read', 'Grep', 'Glob', 'LS', 'BashOutput', 'KillShell'].includes(tool)) {
         const perm = await client.request(acp.methods.client.session.requestPermission, {
           sessionId: sid,
           toolCall: { toolCallId, title: name, kind: 'other', rawInput: args, _meta: { claudeCode: { toolName: name } } },
