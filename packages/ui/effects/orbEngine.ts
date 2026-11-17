@@ -265,15 +265,23 @@ function draw(i: Inst, now: number) {
 
 const running = (i: Inst) => i.visible && !i.paused && !reduced;
 
-function tick() {
+// A draw is some 360 canvas calls replayed in WebKit's GPU process, so a fast display paid for every frame it has: the
+// orb redraws about sixty times a second instead (every frame at 60-72 Hz, every second one at 120 Hz). Measured on the
+// frame's own timestamp, which steps by whole frame intervals; motion reads the clock, so its speed is unchanged
+const FRAME_MS = 13;
+let drawnAt = -Infinity;
+
+function tick(frame: number) {
   raf = 0;
+  const due = frame - drawnAt >= FRAME_MS;
   const now = performance.now();
   let any = false;
   for (const i of insts) {
     if (!running(i)) continue;
-    draw(i, now);
+    if (due) draw(i, now);
     any = true;
   }
+  if (due) drawnAt = frame;
   if (any) raf = requestAnimationFrame(tick);
 }
 

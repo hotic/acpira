@@ -95,6 +95,9 @@ const SVG_STYLE: Record<MetalTheme, CSSProperties> = {
   // Light mode multiplies a darkened, saturated copy and overscans by 1 px
   light: { inset: -1, width: 'calc(100% + 2px)', height: 'calc(100% + 2px)', opacity: 0.2746, mixBlendMode: 'multiply', filter: 'saturate(5.355) brightness(0.78)' },
 };
+const ALPHA_MASK: CSSProperties = { maskType: 'alpha' };
+// What #808080 and #404040 let through as luminance
+const GREY_80 = 128 / 255, GREY_40 = 64 / 255;
 const MOVE: CSSProperties = { transformOrigin: '0 0', willChange: 'transform', transition: 'transform 100ms linear' };
 // The glow relocates every few seconds, so one of its fades is running most of the time, and each frame of a fade
 // repaints the svg with its masks and blurs. Sixty steps a second read as continuous for a change of brightness; a
@@ -133,18 +136,21 @@ function GlowSvg({ id, geo, scale, theme, nodes }: { id: string; geo: RingGeomet
       <defs>
         {HALO.map((v, i) => filter(`h${i}`, haloHalf, v))}
         {CATCH.map((v, i) => filter(`c${i}`, streakHalf, v))}
+        {/* Both masks are alpha masks: WebKit turns a luminance mask (the default) into one pixel by pixel on the CPU,
+            each time the glow under it changes. The levels are the grey values the luminance masks held (metal-fx's) */}
         <radialGradient id={`${id}fg`} cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0" stopColor="white" /><stop offset="0.3" stopColor="white" /><stop offset="0.65" stopColor="#404040" /><stop offset="1" stopColor="black" />
+          <stop offset="0" stopColor="white" /><stop offset="0.3" stopColor="white" /><stop offset="0.65" stopColor="white" stopOpacity={GREY_40} /><stop offset="1" stopColor="white" stopOpacity="0" />
         </radialGradient>
-        <mask id={`${id}fm`} maskUnits="userSpaceOnUse" {...box}>
-          <rect {...box} fill="black" />
+        <mask id={`${id}fm`} maskUnits="userSpaceOnUse" {...box} style={ALPHA_MASK}>
           <circle ref={el => { nodes.fade = el; }} cx="0" cy="0" r={FADE_R * scale} fill={`url(#${id}fg)`} style={{ willChange: 'transform' }} />
         </mask>
-        {/* Full on the 1 px ring, half outside, none inside */}
-        <mask id={`${id}rm`} maskUnits="userSpaceOnUse" {...box}>
-          <rect {...box} fill="#808080" />
-          <rect x="0" y="0" width={w} height={h} rx={r} ry={r} fill="white" />
-          <rect x="1" y="1" width={w - 2} height={h - 2} rx={Math.max(0, r - 1)} ry={Math.max(0, r - 1)} fill="black" />
+        {/* Full on the 1 px ring, half outside, none inside. An alpha mask cannot paint the inside out, so the half
+            level stops under the ring (halfway across it) and the ring is one shape with its hole: every antialiased
+            edge then lies on one shape over a solid one or over nothing. Two shapes sharing an edge add their partial
+            coverages up, which shows as a brighter line along the inner corners */}
+        <mask id={`${id}rm`} maskUnits="userSpaceOnUse" {...box} style={ALPHA_MASK}>
+          <path fillRule="evenodd" fill="white" fillOpacity={GREY_80} d={`M ${box.x} ${box.y} h ${box.width} v ${box.height} h ${-box.width} Z ${roundRect(0.5, 0.5, w - 1, h - 1, Math.max(0, r - 0.5))}`} />
+          <path fillRule="evenodd" fill="white" d={`${roundRect(0, 0, w, h, r)} ${roundRect(1, 1, w - 2, h - 2, Math.max(0, r - 1))}`} />
         </mask>
       </defs>
       {/* The unfilled rects stretch each group's box to the mask region (Safari clips a mask to the element's box) */}
@@ -160,6 +166,14 @@ function GlowSvg({ id, geo, scale, theme, nodes }: { id: string; geo: RingGeomet
       </g>
     </svg>
   );
+}
+
+// A rounded rectangle as path data, clockwise from the top edge's left end
+function roundRect(x: number, y: number, w: number, h: number, r: number) {
+  const c = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  if (!c) return `M ${x} ${y} h ${w} v ${h} h ${-w} Z`;
+  const arc = (dx: number, dy: number) => `a ${c} ${c} 0 0 1 ${dx} ${dy}`;
+  return `M ${x + c} ${y} h ${w - 2 * c} ${arc(c, c)} v ${h - 2 * c} ${arc(-c, c)} h ${2 * c - w} ${arc(-c, -c)} v ${2 * c - h} ${arc(c, -c)} Z`;
 }
 
 function perimeter(w: number, h: number, r: number) {
