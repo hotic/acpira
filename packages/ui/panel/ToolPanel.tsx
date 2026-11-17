@@ -222,7 +222,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
         )}
       </aside>
       {p.cwd && p.sessionId && (
-        <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[var(--title-top)] pr-[calc(var(--sheet-inset)+var(--start-x)+var(--caps-w,0px))]">
+        <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[var(--title-top)] pr-[calc(var(--sheet-inset)+var(--line-end)+var(--caps-w,0px))]">
           <IconButton ref={toggle} className="pointer-events-auto" title={`${label} ${TOGGLE_KEY}`} aria-label={t('panel.label')} aria-pressed={shown} onClick={() => panel.toggle()}>
             <PanelRight strokeWidth={1.5} />
           </IconButton>
@@ -248,7 +248,10 @@ export function tabLabel(tab: PanelTab): string {
 // A tab's tooltip: a terminal's folder, a plugin piece's plugin, else its label
 export const tabTitle = (tab: PanelTab) => (tab.kind === 'terminal' ? `${tabLabel(tab)} — ${tab.cwd}` : tab.kind === 'plugin' ? `${tabLabel(tab)} — ${tab.plugin}` : undefined);
 
-const TAB = 'group/tab inline-flex h-ctl max-w-[min(var(--panel-tab-max),100%)] shrink items-center gap-1.5 rounded-md px-2 text-2 transition-colors';
+// As tall as the hover fill of the icon buttons on its line (the new-tab plus, the chat header's actions), with its corner
+// An end that holds a glyph (the icon, the close button) is padded so the glyph sits in a square cap (pl-tab-cap): the
+// close button's hover box is then as far from the tab's side as from its top and bottom
+const TAB = 'group/tab inline-flex h-ctl-fill max-w-[min(var(--panel-tab-max),100%)] shrink items-center gap-1.5 rounded-ctl-fill pl-tab-cap text-2 transition-colors';
 
 // Both desktop layouts shrink tab titles before scrolling. Keep the selected tab whole when
 // its container resizes, without scrollIntoView moving any of the shell's ancestor scrollports.
@@ -335,13 +338,13 @@ export function TabButton({ label, title, icon, on, closable, guard, closeAt = m
     <button type="button" role="tab" data-part="tab" title={title ?? label} aria-selected={on} onClick={onSelect}
       onAuxClick={e => { if (closable && e.button === 1) onClose(); }}
       onPointerLeave={guard?.leave} onPointerMove={guard?.move}
-      className={cn(TAB, on ? 'min-w-[min(var(--panel-tab-on-min),var(--tab-fit,var(--panel-tab-on-min)),100%)] bg-active text-fg-1' : 'min-w-[min(var(--panel-tab-min),100%)] text-fg-2 hover:bg-hover hover:text-fg-1')}>
+      className={cn(TAB, atEnd ? 'pr-tab-cap' : 'pr-2', on ? 'min-w-[min(var(--panel-tab-on-min),var(--tab-fit,var(--panel-tab-on-min)),100%)] bg-active text-fg-1' : 'min-w-[min(var(--panel-tab-min),100%)] text-fg-2 hover:bg-hover hover:text-fg-1')}>
       <span className="relative flex size-icon shrink-0 items-center justify-center">
         {icon(cn('size-icon transition-opacity', atStart && !guard && 'group-hover/tab:opacity-0'))}
         {atStart && close('group-hover/tab:opacity-100')}
       </span>
       <span data-tab-label className="min-w-0 truncate">{label}</span>
-      {atEnd && <span className="relative -mr-1 flex size-icon shrink-0">{close(on ? 'opacity-100' : 'group-hover/tab:opacity-100')}</span>}
+      {atEnd && <span className="relative flex size-icon shrink-0">{close(on ? 'opacity-100' : 'group-hover/tab:opacity-100')}</span>}
     </button>
   );
 }

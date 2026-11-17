@@ -732,9 +732,10 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
               if (part.type === 'subagents') return (
                 <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)"><DelegatedSubagents ids={part.ids} /></div>
               );
-              // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
+              // The padding folds with its part: the prose gap after a card, the tail on the last. The first part gets none, so
+              // the head and the first row stand one row pitch apart like the rows below them
               const body = (
-                <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
+                <div className={cn(!retired && i > 0 && 'pt-(--process-prose-gap)', !retired && i === parts.length - 1 && 'pb-1.5')}>
                   <ProcessHistory>
                     <ProcessChunks items={part.items} open={open} tail={running || bornOpen}>{rows => <ProcessBlocks blocks={blocks} items={rows} continuing={continuing} />}</ProcessChunks>
                   </ProcessHistory>

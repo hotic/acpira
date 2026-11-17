@@ -85,9 +85,19 @@ export function cloneSelectionContent(range: Range): HTMLElement {
     anc = anc.parentElement
   ) {
     const tag = anc.tagName.toLowerCase();
-    // Single-line text selected inside one `<li>` reads cleaner as a paragraph than an orphaned bullet
-    if ((tag === 'li' || tag === 'ul' || tag === 'ol') && !hasListItems) continue;
-    if ((tag === 'td' || tag === 'th' || tag === 'tr' || tag === 'tbody' || tag === 'thead' || tag === 'table') && !hasTableParts) continue;
+    // Text selected inside one `<li>` / cell reads cleaner as a paragraph than an orphaned bullet or a lone cell. The
+    // paragraph is required, not cosmetic: bare inline runs (bold, text, inline code) would otherwise become items of
+    // the flex-column `.acp-prose` and stack one per line
+    if ((tag === 'li' && !hasListItems) || ((tag === 'td' || tag === 'th') && !hasTableParts)) {
+      if (!(current instanceof Element && /^(p|h[1-6]|blockquote|pre|ul|ol|table)$/i.test(current.tagName))) {
+        const para = document.createElement('p');
+        para.appendChild(current);
+        current = para;
+      }
+      continue;
+    }
+    if ((tag === 'ul' || tag === 'ol') && !hasListItems) continue;
+    if ((tag === 'tr' || tag === 'tbody' || tag === 'thead' || tag === 'table') && !hasTableParts) continue;
     if (
       tag === 'p' || tag === 'blockquote' || tag === 'ul' || tag === 'ol' || tag === 'li'
       || tag === 'table' || tag === 'thead' || tag === 'tbody' || tag === 'tr'

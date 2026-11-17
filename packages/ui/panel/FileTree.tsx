@@ -467,10 +467,10 @@ export function FileTree(p: FileTreeProps) {
     <ContextMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
     <ContextMenu.Trigger render={<div className="flex min-h-0 flex-1 flex-col" data-tree onContextMenuCapture={target} />}>
       {/* The side insets are the tool panel's when the tree sits in it (panel.css --tree-lead / --tree-trail): the filter, the
-          sections and the rows share its edge lines. The filter is as tall as the panel's tabs, so the two read as one block; no rule under it, a stuck folder
+          sections and the rows share its edge lines, and the filter starts at the tab's top there (--tree-top). No rule under it, a stuck folder
           draws its own edge once the tree scrolls */}
       {/* The filter keeps the system's menu, and the session's changes have none: only the project's own rows are entries */}
-      <div onContextMenu={e => e.stopPropagation()} className="flex h-[calc(var(--ctl)+var(--spacing-gap))] shrink-0 items-center pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
+      <div onContextMenu={e => e.stopPropagation()} className="flex shrink-0 items-center pt-[var(--tree-top,var(--spacing-gap-half))] pb-gap-half pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
         <label className="flex h-ctl min-w-0 flex-1 items-center gap-1.5 rounded-md border border-line bg-chip px-2 text-2 focus-within:border-line-strong">
           <Search strokeWidth={1.5} className="size-3.5 shrink-0 text-fg-3" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('panel.filter')} spellCheck={false}

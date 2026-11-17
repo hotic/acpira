@@ -60,7 +60,7 @@ export function QuickOpen({
             className="popup-surface flex w-(--dialog-w) max-w-full flex-col overflow-hidden rounded-lg border p-1 shadow-pop"
           >
             <Dialog.Title className="sr-only">{t('panel.searchFiles')}</Dialog.Title>
-            <label className="mb-1 flex h-ctl shrink-0 items-center gap-2 border-b border-line px-2 text-fg-3">
+            <label className="-mt-1 mb-1 flex h-search-line shrink-0 items-center gap-2 border-b border-line px-2 text-fg-3">
               <Search className="size-icon shrink-0" strokeWidth={1.5} aria-hidden />
               <input
                 ref={input}

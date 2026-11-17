@@ -59,9 +59,10 @@
 @layer components {
   [data-thread-body] {
     --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--msg-gap));
-    /* The action row's own room: its height after a row gap, less the message gap the exchange gives back (Shell.tsx) */
+    /* The action row's own room: its height after a row gap, less the message gap the exchange gives back, which is all
+       of it but --spacing-turn-actions-below (Shell.tsx) */
     &:has(> section:last-child > :last-child > [data-turn-actions]:last-child) {
-      --thread-tail-room: calc(var(--row) + var(--gap) / 2 - var(--ctl-sm));
+      --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--ctl-sm) - var(--spacing-turn-actions-below));
     }
   }
 }
@@ -176,6 +177,10 @@
      layout and paint out of sight and keeps that size, so the thread's height does not move when it comes back */
   [data-exchange] { contain-intrinsic-block-size: auto var(--row); }
   [data-exchange][data-seen] { content-visibility: auto; }
+  /* A stuck prompt card (HistoryMessage) is rounded, so the rows scrolling under it showed through its top corners: its
+     frame paints the page's colour behind the card. Keyed on `sticky`, which a share capture strips from its clone; not
+     over a skin's backdrop, where a square of opaque page colour would show on the translucent sheet */
+  .acp-shell:not([data-backdrop]) [data-sticky-prompt].sticky { background: var(--bg-0); }
   /* Keep WebKit's row contents in the paint tree: skipped descendants can stay blank while the row's own hover fill
      still paints. This WebKit-only property leaves Chromium's off-screen optimization intact. */
   @supports (-webkit-nbsp-mode: space) {
@@ -442,6 +447,10 @@
     background: var(--share-sheet);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 20px rgba(0, 0, 0, 0.07);
   }
+  /* The framed sheet makes a ragged right edge read as a lopsided margin (a Latin word or inline code that does not fit
+     drops whole and leaves up to its width blank). Justify keeps the same line breaks and closes the edge; the last
+     line stays start-aligned. The live transcript stays ragged: a streaming line would respace when it wraps */
+  .acp-share-body .acp-prose :is(p, li) { text-align: justify; }
 
   /* Frameless screenshot presentation (`Lightbox` family): gentle 220ms settle-in; resting state is clean when motion is disabled */
   .acp-share-stage { animation: share-stage-in var(--dur-open) cubic-bezier(0.2, 0.9, 0.3, 1) backwards; }

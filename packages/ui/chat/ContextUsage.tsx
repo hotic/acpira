@@ -8,7 +8,7 @@ import { CATEGORY_BG, categoryLabel } from '../context/categories';
 import { desktopShell } from '../desktop';
 import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
-import { Chip } from '../ui/Button';
+import { Chip, CORNER_CHIP } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { compactingNow, liveUsage, overCompactBudget, usageFill } from './usageBreakdown';
 
@@ -140,15 +140,15 @@ function UsagePanel({ usage, split, pct, fill, compactAt, canCompact, overAt, pe
     <div className="flex flex-col gap-1 p-1 tabular-nums">
       {/* The model menu's head (ModelPicker): a quiet label, then icon chips named by their tooltips, Compact before the
           report. Compact stays put whenever the agent supports /compact and is only disabled mid-turn */}
-      <div className="flex min-h-ctl-sm items-center justify-between px-2">
+      <div className="flex items-center justify-between px-2 pt-0.5">
         <span className="text-3 text-fg-3">{t('usage.title')}</span>
         <span className="-mr-1.5 flex items-center gap-0.5">
           {canCompact && (
             <Chip caret={false} icon={<Shrink strokeWidth={1.75} />} title={t('usage.compact')} aria-label={t('usage.compact')}
-              disabled={compactDisabled} onClick={onCompact} className={CHIP_DISABLED}>{null}</Chip>
+              disabled={compactDisabled} onClick={onCompact} className={cn(CORNER_CHIP, CHIP_DISABLED)}>{null}</Chip>
           )}
           {onReport && (
-            <Chip caret={false} icon={<ChartBarStacked strokeWidth={1.75} />} title={t('usage.report')} aria-label={t('usage.report')} onClick={onReport}>{null}</Chip>
+            <Chip caret={false} icon={<ChartBarStacked strokeWidth={1.75} />} title={t('usage.report')} aria-label={t('usage.report')} onClick={onReport} className={CORNER_CHIP}>{null}</Chip>
           )}
         </span>
       </div>

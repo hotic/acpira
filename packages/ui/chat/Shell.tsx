@@ -1915,8 +1915,10 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
             // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
             // transcript render budget); the clip it brings is pushed out by --hit on the left and bottom, where row hit areas and
             // card shadows reach past the column, and on the right only as far as the thread's right padding (--hit-end), and the top edge stays put for the sentinel. An exchange ending in a reply's action
-            // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
-            <section ref={exchangeRef} data-exchange data-exchange-start={slot.key} className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
+            // row pulls the next one up until the icons stand as far from the next prompt as from the reply text (TurnActions,
+            // --spacing-turn-actions-below). It reads --msg-gap itself: the --spacing-* aliases resolve where the theme declares
+            // them, above the element that carries the density, so they keep the default density's value.
+            <section ref={exchangeRef} data-exchange data-exchange-start={slot.key} className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--msg-gap)-var(--spacing-turn-actions-below))]">
               {messages}
             </section>
           }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>;

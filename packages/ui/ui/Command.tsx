@@ -27,7 +27,7 @@ function Input({ className, visible = true, box = false, action, ref, ...props }
   if (!visible) return null;
   return <label className={box
     ? 'flex h-ctl shrink-0 items-center gap-gap rounded-md border border-line bg-chip px-3 text-fg-3 focus-within:border-line-strong'
-    : 'mb-1 flex h-ctl shrink-0 items-center gap-2 border-b border-line px-2 text-fg-3'}>
+    : '-mt-1 mb-1 flex h-search-line shrink-0 items-center gap-2 border-b border-line px-2 text-fg-3'}>
     {box
       ? <span className="flex w-lead shrink-0 items-center justify-center"><Search className="size-icon" strokeWidth={1.75} /></span>
       : <Search className="size-icon shrink-0" strokeWidth={1.5} />}
