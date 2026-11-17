@@ -1,7 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { ImageIcon, MessageSquarePlus } from 'lucide-react';
 import type { Draft } from '@acpira/shared/transcript';
 import { t } from '../i18n';
+import { usePluginPieces } from '../pluginSlots';
+import { runPluginAction } from '../plugins/MessageActions';
 import { cn } from '../ui/cn';
 import { Popover, ShellLayerContext } from '../ui/Popover';
 import { useMorph } from '../ui/useMorph';
@@ -25,6 +27,18 @@ function paint(range?: Range) {
   if (range) registry.set(HIGHLIGHT, new Highlight(range)); else registry.delete(HIGHLIGHT);
 }
 
+// The selection bar's buttons, Acpira's own and the plugins' (selection.actions) alike
+const BAR_BUTTON = 'inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3';
+const BAR_RULE = 'my-gap-half w-px self-stretch bg-line';
+
+// The transcript index of the message a selection starts in (data-turn on the user / agent message), if any
+function turnOf(range: Range): number | undefined {
+  const start = range.startContainer;
+  const at = (start instanceof Element ? start : start.parentElement)?.closest<HTMLElement>('[data-turn]')?.dataset.turn;
+  const n = at ? Number(at) : NaN;
+  return Number.isInteger(n) ? n : undefined;
+}
+
 // Text selected inside the transcript
 function pickIn(root: HTMLElement | null): Picked | undefined {
   const sel = document.getSelection();
@@ -37,12 +51,18 @@ function pickIn(root: HTMLElement | null): Picked | undefined {
 
 // Selecting text in the transcript raises a small toolbar over it (Codex's "Add to chat"): the quote goes into the main composer
 // as an annotation at once, and the toolbar turns into an optional comment field for it. Enter keeps the comment, Escape / clicking
-// away leaves the quote without one. `root` is the transcript content; selections elsewhere (composer, cards) are ignored
-export function QuoteToolbar({ root, onShare }: { root: RefObject<HTMLElement | null>; onShare?: (range: Range) => void }) {
+// away leaves the quote without one. `root` is the transcript content; selections elsewhere (composer, cards) are ignored.
+// Plugins add their own buttons after Acpira's (selection.actions, docs/dev/plugins.md Interface): a frame never sees the
+// page's selection, so the bar hands the selected text to the plugin's runtime method
+export function QuoteToolbar({ root, session, onShare }: { root: RefObject<HTMLElement | null>; session?: string; onShare?: (range: Range) => void }) {
   const [picked, setPicked] = useState<Picked>();
+  const pickedRef = useRef(picked);
+  pickedRef.current = picked;
   const [added, setAdded] = useState<QuoteDraft>();
   const addedRef = useRef(added);
   addedRef.current = added;
+  const actions = usePluginPieces('selection.actions');
+  const [busy, setBusy] = useState<string>();
   // The "Add to chat" button grows into the comment field
   const morph = useMorph<HTMLDivElement>(!!added);
 
@@ -175,6 +195,20 @@ export function QuoteToolbar({ root, onShare }: { root: RefObject<HTMLElement | 
     close();
     onShare(selectedRange);
   };
+  // The bar stays up, the button pulsing, until the plugin answers; then it goes with the selection, unless another
+  // selection has taken the bar meanwhile
+  const act = async (key: string, piece: (typeof actions)[number]) => {
+    const at = picked;
+    if (!at || !session || busy) return;
+    setBusy(key);
+    const turn = turnOf(at.range);
+    await runPluginAction(piece, { session, ...(turn !== undefined ? { turn } : {}), text: at.text });
+    setBusy(undefined);
+    if (pickedRef.current === at && !addedRef.current) {
+      document.getSelection()?.removeAllRanges();
+      close();
+    }
+  };
   // Pasted screenshots join the prompt as ordinary image attachments, right after the quote they were pasted on
   const comment = (value: string, images: Draft[]) => {
     const quote = added;
@@ -204,23 +238,41 @@ export function QuoteToolbar({ root, onShare }: { root: RefObject<HTMLElement | 
                         // Pressing the button must not collapse the selection it acts on
                         onMouseDown={e => e.preventDefault()}
                         onClick={add}
-                        className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3">
+                        className={BAR_BUTTON}>
                         <MessageSquarePlus strokeWidth={1.5} />
                         {t('quote.add')}
                       </button>
                       {onShare && (
                         <>
-                          <span className="my-gap-half w-px self-stretch bg-line" aria-hidden />
+                          <span className={BAR_RULE} aria-hidden />
                           <button type="button"
                             data-part="quote-share"
                             onMouseDown={e => e.preventDefault()}
                             onClick={share}
-                            className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3">
+                            className={BAR_BUTTON}>
                             <ImageIcon strokeWidth={1.5} />
                             {t('turn.share')}
                           </button>
                         </>
                       )}
+                      {session && actions.map(p => {
+                        const key = `${p.plugin}/${p.id}`;
+                        return (
+                          <Fragment key={key}>
+                            <span className={BAR_RULE} aria-hidden />
+                            <button type="button"
+                              data-plugin-action={key}
+                              title={p.title}
+                              aria-busy={busy === key || undefined}
+                              disabled={busy === key}
+                              onMouseDown={e => e.preventDefault()}
+                              onClick={() => void act(key, p)}
+                              className={cn(BAR_BUTTON, 'max-w-pop-sm', busy === key && 'animate-pulse')}>
+                              <span className="truncate">{p.title}</span>
+                            </button>
+                          </Fragment>
+                        );
+                      })}
                     </div>}
               </Popover.Popup>
             </Popover.Positioner>

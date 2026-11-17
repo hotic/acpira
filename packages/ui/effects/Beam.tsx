@@ -26,6 +26,8 @@ export interface BeamProps {
   // 0-1, scales the beam layers only
   strength?: number;
   className?: string;
+  // A plugin style hook for the beam's root
+  'data-part'?: string;
 }
 
 // Per size and theme: layer opacities, inner shadow, filter brightness / saturation
@@ -309,7 +311,7 @@ function layersFor(size: BeamSize, color: BeamColor, theme: BeamTheme): Layers {
 // animation and animationend never fires
 const FADE_OUT_FALLBACK_MS = 650;
 
-export function Beam({ children, size = 'md', colorVariant = 'colorful', staticColors = false, theme = 'dark', borderRadius = 16, active = true, strength = 1, className }: BeamProps) {
+export function Beam({ children, size = 'md', colorVariant = 'colorful', staticColors = false, theme = 'dark', borderRadius = 16, active = true, strength = 1, className, 'data-part': part }: BeamProps) {
   // Same state machine as the library: a fade-out always completes before the next fade-in
   const [shown, setShown] = useState(active);
   const [fading, setFading] = useState(false);
@@ -350,7 +352,7 @@ export function Beam({ children, size = 'md', colorVariant = 'colorful', staticC
     </>
   );
   return (
-    <div className={className ? `bb ${className}` : 'bb'} data-bb={size} data-bb-still={still ? '' : undefined} data-bb-mono={mono ? '' : undefined} style={rootStyle}>
+    <div className={className ? `bb ${className}` : 'bb'} data-part={part} data-bb={size} data-bb-still={still ? '' : undefined} data-bb-mono={mono ? '' : undefined} style={rootStyle}>
       {children}
       {shown && (
         <div className="bb-fx" data-state={fading ? 'off' : 'on'} onAnimationEnd={onEnd}>

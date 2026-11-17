@@ -105,11 +105,11 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
       pressIn(button, 0.06);
       if (thumb.current && card.kind !== 'skin') returning.current = { at: performance.now(), returns: captureReturns(card, thumb.current) };
     }
-    // Any card with pieces, one that also runs a program (exec) included. A reply action is a native button, which
-    // the mark flies to instead (landings.ts)
+    // Any card with pieces, one that also runs a program (exec) included. A reply or selection action is a native
+    // button, which the mark flies to instead (landings.ts)
     if (!undo && card.slots?.length) {
       for (const el of thumb.current?.querySelectorAll<HTMLElement>('[data-piece]') ?? []) {
-        if (el.dataset.piece !== 'message.actions') expectArrival(card.plugin, el.dataset.piece!, el.getBoundingClientRect(), sessionId);
+        if (el.dataset.piece !== 'message.actions' && el.dataset.piece !== 'prompt.actions' && el.dataset.piece !== 'selection.actions') expectArrival(card.plugin, el.dataset.piece!, el.getBoundingClientRect(), sessionId);
       }
     }
     if (!sessionId) return;
@@ -200,6 +200,8 @@ const BLOCKS: Record<string, { in: 'column' | 'sheet' | 'composer'; style: CSSPr
   statusbar: { in: 'sheet', style: { left: '34%', right: '9%', bottom: '2%', height: '4%' } },
   start: { in: 'sheet', style: { left: '40%', right: '20%', top: '30%', height: '24%' } },
   'message.actions': { in: 'sheet', style: { left: '34%', top: '50%', width: '14%', height: '6%' } },
+  'prompt.actions': { in: 'sheet', style: { left: '70%', top: '34%', width: '14%', height: '6%' } },
+  'selection.actions': { in: 'sheet', style: { left: '44%', top: '20%', width: '18%', height: '6%' } },
   page: { in: 'sheet', style: { left: '30%', right: '6%', top: '20%', bottom: '34%' } },
 };
 const lit: CSSProperties = { position: 'absolute', borderRadius: 'var(--r-xs, 2px)', background: 'color-mix(in srgb, var(--land-ink) 30%, transparent)', boxShadow: '0 0 0 1px var(--land-ink), 0 0 8px -1px var(--land-ink)' };

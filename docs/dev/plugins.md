@@ -107,12 +107,12 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Interface
 
-- Pieces go to `UI_SLOTS` (`acpira-shared/src/plugins.rs`); an empty push and safe mode remove them. Desktop only, where the frame document is served.
+- Pieces go to `UI_SLOTS` (`acpira-shared`); an empty push and safe mode remove them. Desktop only, where the frame document is served.
 - A piece runs in `<iframe sandbox="allow-scripts">` without `allow-same-origin`, loading `/plugin-frame.html`, not `srcdoc`: a srcdoc frame inherits the page's nonce-only script policy, so inline code never runs. `document.open` keeps the no-network policy and the `acpira` object in WKWebView (desktop smoke checks it).
 - The host-message handler (`App.tsx`) ignores child frames, so a piece cannot forge `pluginUi` and borrow another plugin's methods. The bridge accepts only registered frames whose origin reads `null`; a frame calls only its own plugin's methods. The outline sent to frames carries counts, never text, paths or commands.
 - Page-held documents (backdrop, thumbnails) may be unconfirmed versions, so they neither call methods nor hear `ui/post`. Thumbnails run 2D: a page has few WebGL contexts.
 - The sandbox keeps page state and sessions out of a piece's reach, not the plugin out of anything.
-- `composer.above` takes no clicks, never covering a control, and its height joins the dock's clearance so the last reply's actions stay clear of it. `message.actions` is a native button: a frame per reply costs too much.
+- `composer.above` takes no clicks, never covering a control; its height joins the dock's clearance so reply actions stay clear. `BUTTON_SLOTS` are native buttons: a frame per message costs too much, and no frame sees the selection. `prompt.actions` is the only thing under a sent prompt: the page puts nothing of its own there, so the strip exists only while a plugin fills it.
 - Theme `css` and `style` reach the page only through `STYLE_HOOKS`; `test/pluginStyleHooks.test.ts` fails when the page drops one. Renaming a hook or a `data-state` value breaks plugins.
 
 ## Parity with OpenCode

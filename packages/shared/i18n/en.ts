@@ -131,8 +131,6 @@ export const en = {
   'goal.pause': 'Pause goal',
   'goal.resume': 'Resume goal',
   'goal.clear': 'Clear goal',
-  'goal.setFromPrompt': 'Set as goal',
-  'goal.setFromPromptHint': 'Keep working on this message until it is done',
   'goal.rounds': 'Round {n}',
   'goal.tokens': '{used} tokens',
   'goal.tokensOf': '{used} / {budget} tokens',

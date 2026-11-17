@@ -132,8 +132,6 @@ export const ru = {
   'goal.pause': 'Приостановить цель',
   'goal.resume': 'Возобновить цель',
   'goal.clear': 'Снять цель',
-  'goal.setFromPrompt': 'Сделать целью',
-  'goal.setFromPromptHint': 'Работать над этим сообщением до завершения',
   'goal.rounds': 'Раунд {n}',
   'goal.tokens': '{used} токенов',
   'goal.tokensOf': '{used} / {budget} токенов',

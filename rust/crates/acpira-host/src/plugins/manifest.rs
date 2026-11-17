@@ -159,7 +159,7 @@ impl ScheduleDef {
 }
 
 /// `contributes.ui[]`: `html` is a file of the plugin, at most `UI_HTML_MAX_BYTES`, for the slot `slot`
-/// (`acpira_shared::plugins::UI_SLOTS`); a `message.actions` piece is a native button calling `method` instead
+/// (`acpira_shared::plugins::UI_SLOTS`); a piece of a `BUTTON_SLOTS` slot is a native button calling `method` instead
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiDef {
@@ -178,7 +178,7 @@ pub struct UiDef {
   pub width: Option<u32>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub height: Option<u32>,
-  /// `message.actions`: the runtime method a click calls with `{ session, turn, text }`
+  /// A button slot (`message.actions`, `prompt.actions`, `selection.actions`): the runtime method a click calls with `{ session, turn, text }`
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub method: Option<String>,
 }
@@ -832,17 +832,19 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     if !acpira_shared::plugins::UI_SLOTS.contains(&u.slot.as_str()) {
       err(findings, format!("{at}: slot `{}` is not one of {}", u.slot, acpira_shared::plugins::UI_SLOTS.join(", ")));
     }
-    if u.slot == "message.actions" {
-      // A button under each reply: one frame per message would cost a document per turn
+    if acpira_shared::plugins::BUTTON_SLOTS.contains(&u.slot.as_str()) {
+      // A button under each reply or prompt, or over a text selection: one frame per message would cost a document per turn, and a
+      // frame cannot read the page's selection
+      let slot = &u.slot;
       match u.method.as_deref() {
-        None => err(findings, format!("{at}: a `message.actions` piece names the runtime `method` its button calls, instead of `html`")),
+        None => err(findings, format!("{at}: a `{slot}` piece names the runtime `method` its button calls, instead of `html`")),
         Some(method) if !m.contributes.runtime.as_ref().is_some_and(|r| r.methods.iter().any(|x| x == method)) => {
           err(findings, format!("{at}: method `{method}` is not one of the runtime's `methods`"))
         }
         Some(_) => {}
       }
       if !u.html.is_empty() || u.entry.is_some() {
-        err(findings, format!("{at}: a `message.actions` piece is a button, not a document; drop `html` and `entry`"));
+        err(findings, format!("{at}: a `{slot}` piece is a button, not a document; drop `html` and `entry`"));
       }
       if u.title.trim().is_empty() {
         err(findings, format!("{at}: the button needs a `title`"));
@@ -850,7 +852,7 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
       continue;
     }
     if u.method.is_some() {
-      err(findings, format!("{at}: only a `message.actions` piece calls a `method`"));
+      err(findings, format!("{at}: only a `message.actions`, `prompt.actions` or `selection.actions` piece calls a `method`"));
     }
     match (u.html.is_empty(), u.entry.as_deref()) {
       (false, Some(_)) => err(findings, format!("{at}: `html` and `entry` exclude each other")),
@@ -1343,6 +1345,8 @@ mod tests {
       piece("session.panel", json!({ "width": 40 })), piece("sidebar", json!({ "height": 120 })), piece("start", json!({ "height": 90 })),
       piece("panel.tab", json!({})), piece("page", json!({})),
       { "id": "sum", "slot": "message.actions", "title": "Summarize", "method": "summarize" },
+      { "id": "explain", "slot": "selection.actions", "title": "Explain", "method": "summarize" },
+      { "id": "stamp", "slot": "prompt.actions", "title": "Stamp", "method": "summarize" },
     ]);
     let (m, mut f) = manifest(ui(sized));
     check(&m, "kit", dir.path(), &|p| p == "node", &mut f);
@@ -1351,6 +1355,7 @@ mod tests {
       piece("statusbar", json!({ "width": 60 })), piece("session.panel", json!({})), piece("sidebar", json!({})),
       { "id": "a", "slot": "message.actions", "title": "A", "method": "nope" },
       { "id": "b", "slot": "message.actions", "title": "", "html": "p.html" },
+      { "id": "c", "slot": "selection.actions", "title": "C", "entry": "p.tsx" },
       piece("start", json!({ "height": 90, "method": "summarize" })),
     ]);
     let (m, mut f) = manifest(ui(bare));
@@ -1358,7 +1363,8 @@ mod tests {
     let text = f.text();
     for needle in [
       "`statusbar` needs `height`", "`session.panel` needs `width`", "`sidebar` needs `height`", "method `nope` is not one of",
-      "names the runtime `method`", "not a document", "needs a `title`", "only a `message.actions` piece calls",
+      "names the runtime `method`", "not a document", "needs a `title`", "only a `message.actions`, `prompt.actions` or `selection.actions` piece calls",
+      "a `selection.actions` piece names the runtime `method`", "ui `c`: a `selection.actions` piece is a button",
     ] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }

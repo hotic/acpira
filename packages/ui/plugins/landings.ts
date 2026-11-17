@@ -14,7 +14,9 @@ import { playWhoosh } from '../effects/whoosh';
 // - agents: a new agent is picked from the new-session entry
 // - models: a model source shows in the model chip
 // - actions: a reply action is a native button, not a framed piece, so it lands here too
-export type Landing = 'composer' | 'settings' | 'agents' | 'models' | 'actions';
+// - selection: a selection action shows only over selected text, so it lands on a paragraph of a reply, where selecting
+//   brings it up
+export type Landing = 'composer' | 'settings' | 'agents' | 'models' | 'actions' | 'selection';
 
 const BY_ADD: Record<string, Landing> = {
   tools: 'composer', mcp: 'composer', prompts: 'composer', skills: 'composer', commands: 'composer',
@@ -23,7 +25,7 @@ const BY_ADD: Record<string, Landing> = {
 };
 // A landing whose control is absent here (a narrow header folds the gear into its menu, a session without a model
 // chip) falls back along this chain; the composer is always there under a card
-const FALLBACK: Record<Landing, Landing | undefined> = { settings: 'composer', agents: 'models', models: 'composer', composer: undefined, actions: undefined };
+const FALLBACK: Record<Landing, Landing | undefined> = { settings: 'composer', agents: 'models', models: 'composer', composer: undefined, actions: undefined, selection: 'composer' };
 // Between the flights of one card: each frame is seen leaving on its own, still one gesture
 const STAGGER_MS = 320;
 // A frame rises off the card for this long before it flies, then takes this long to land: slower than a piece, since
@@ -48,6 +50,7 @@ export function landingsFor(card: Pick<PluginCard, 'kind' | 'adds' | 'slots' | '
   }
   if (card.schedules?.length) to.add('settings');
   if (slots.includes('message.actions')) to.add('actions');
+  if (slots.includes('selection.actions')) to.add('selection');
   // A style sheet whose parts are not on screen goes behind the gear, where the looks are chosen; with anything else it
   // rides along. Never a flash over the whole window: that read as the window being wiped
   if (adds.includes('style') && !adds.includes('theme') && !restyled && !to.size && !slots.length) to.add('settings');
@@ -203,6 +206,11 @@ function target(at: Landing, plugin: string, near: DOMRect): Target | undefined 
     }
     case 'actions':
       return actionsTarget(plugin);
+    case 'selection': {
+      const para = nearest('[data-part="agent-message"] p', near);
+      if (!para) return undefined;
+      return { rect: () => para.getBoundingClientRect(), outline: () => para, land: () => pressIn(para, PRESS_ROW) };
+    }
   }
 }
 
@@ -279,7 +287,7 @@ export function captureReturns(card: PluginCard, thumb: HTMLElement): Return[] {
     const r = t?.rect();
     if (!land || !r || seen.has(land)) continue;
     seen.add(land);
-    out.push({ from: r, slot: land === 'actions' ? 'message.actions' : undefined });
+    out.push({ from: r, slot: land === 'actions' ? 'message.actions' : land === 'selection' ? 'selection.actions' : undefined });
   }
   const id = CSS.escape(card.plugin);
   for (const el of document.querySelectorAll<HTMLElement>(`[data-plugin-piece^="${id}/"]`)) {

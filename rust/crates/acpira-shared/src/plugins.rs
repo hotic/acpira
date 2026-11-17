@@ -185,8 +185,13 @@ pub enum PluginAction {
 
 /// The places of the page a plugin's interface may take (`contributes.ui`, docs/dev/plugins.md, Interface): above
 /// the composer, in its toolbar, the session's side panel, the session list's side, the status bar, the start page,
-/// the actions of a message, a tool panel tab and a page of its own
-pub const UI_SLOTS: &[&str] = &["composer.above", "composer.toolbar", "session.panel", "sidebar", "statusbar", "start", "message.actions", "panel.tab", "page"];
+/// the actions of a reply, the actions of a sent prompt, the actions of a text selection in the transcript, a tool panel tab and a page of its own
+pub const UI_SLOTS: &[&str] =
+  &["composer.above", "composer.toolbar", "session.panel", "sidebar", "statusbar", "start", "message.actions", "prompt.actions", "selection.actions", "panel.tab", "page"];
+
+/// The slots drawn as native buttons calling a runtime `method` instead of a framed document: one frame per message
+/// would cost a document per turn, and a frame cannot read the page's text selection
+pub const BUTTON_SLOTS: &[&str] = &["message.actions", "prompt.actions", "selection.actions"];
 
 /// The selectors a theme's `css` may style the page through, kept stable across releases (the guide lists them; a
 /// contract test in `test/` checks the page still carries each). Anything else in the page's markup may change.
@@ -210,6 +215,8 @@ pub const STYLE_HOOKS: &[&str] = &[
   "[data-part=\"composer-mode\"]",
   "[data-part=\"composer-model\"]",
   "[data-part=\"composer-send\"]",
+  "[data-part=\"composer-beam\"]",
+  "[data-part=\"orb\"]",
   "[data-part=\"header-new\"]",
   "[data-part=\"header-history\"]",
   "[data-part=\"header-account\"]",
@@ -244,7 +251,8 @@ pub struct PluginSlot {
   pub width: Option<u32>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub height: Option<u32>,
-  /// `message.actions`: a native button calling this runtime method with `{ session, turn, text }`; `html` is empty
+  /// `BUTTON_SLOTS`: a native button calling this runtime method with `{ session, turn, text }` (the reply's Markdown,
+  /// the prompt's text, or the selected text); `html` is empty
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub method: Option<String>,
 }

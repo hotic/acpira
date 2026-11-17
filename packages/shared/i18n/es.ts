@@ -131,8 +131,6 @@ export const es = {
   'goal.pause': 'Pausar objetivo',
   'goal.resume': 'Reanudar objetivo',
   'goal.clear': 'Eliminar objetivo',
-  'goal.setFromPrompt': 'Fijar como objetivo',
-  'goal.setFromPromptHint': 'Seguir trabajando en este mensaje hasta terminarlo',
   'goal.rounds': 'Ronda {n}',
   'goal.elapsed.hm': '{h} h {m} min',
   'session.noneAgent': '{name} aún no tiene sesiones',
