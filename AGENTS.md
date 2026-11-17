@@ -66,7 +66,7 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 | Plugins: manifest, runtime, hooks, activation, safe mode | `docs/dev/plugins.md` |
 | SSH remote workspaces: helper, deploy, connections, remote run | `docs/dev/remote.md` |
 | Eval benches | `docs/dev/evals.md` |
-| Anything specific to one agent CLI | `docs/dev/agent-quirks.md` (Claude: `agent-quirks-claude.md`, Codex: `agent-quirks-codex.md`), then `docs/acp-agents-compat.md` (the compatibility matrix) |
+| Anything specific to one agent CLI | `docs/dev/agent-quirks.md` (Claude: `agent-quirks-claude.md`, Codex: `agent-quirks-codex.md`, Devin: `agent-quirks-devin.md`), then `docs/acp-agents-compat.md` (the compatibility matrix) |
 | `apps/intellij/` | `docs/dev/intellij.md` |
 | `apps/desktop/` | `docs/dev/desktop.md` |
 | `apps/ios/` | `docs/dev/ios.md`; SwiftUI traps and webview parity: `docs/dev/ios-ui.md` |

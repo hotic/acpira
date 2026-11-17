@@ -728,6 +728,17 @@ mod tests {
   }
 
   #[test]
+  fn a_sidekick_changes_the_listing_only_when_it_is_the_whole_roster() {
+    use super::relay_client::roster_fingerprint;
+    let persona = |id: &str| serde_json::from_value::<acpira_shared::subagents::SubagentPersona>(json!({ "id": id, "name": id, "agent": "codex" })).unwrap();
+    let sidekick = persona(acpira_shared::subagents::SIDEKICK_ID);
+    // Nobody else to summon: the pick is what puts `ask_agent` on the list, so the client has to list again
+    assert_ne!(roster_fingerprint(&[], &[]), roster_fingerprint(std::slice::from_ref(&sidekick), &[]));
+    // With a persona listed the tool is there already and the pick goes as a note
+    assert_eq!(roster_fingerprint(&[persona("a")], &[]), roster_fingerprint(&[sidekick, persona("a")], &[]));
+  }
+
+  #[test]
   fn the_host_entry_is_found_and_removed_by_name_and_subcommand() {
     let req = json!({ "cwd": "/w", "mcpServers": [{ "name": "user", "command": "x", "args": [], "env": [] }, server_entry("/bin/acpira")] });
     assert!(has_server(&req));

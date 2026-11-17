@@ -832,6 +832,9 @@ export interface SessionView {
   controls: SessionControls;
   // The agent's remembered per-model parameters (shared/modelShapes.ts), for the history editor's local model switch
   modelShapes?: ModelShapes;
+  // What each option of the sidekick select runs with once picked, keyed by option id: its effort select and Fast switch
+  // as they would read, so a sidekick row offers its parameters before it is picked
+  sidekickShapes?: ModelShapes;
   // What the user last ran each of this agent's models with (engine prefs): `recent` holds model option ids, newest
   // first; `picks` the values of the model's own parameters (reasoning level, model_config) per model option id
   modelMemory?: ModelMemory;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyModelSources } from '../modelSources';
 import type { SessionOption } from '../transcript';
-import { familyHidden, findFusionVariant, findVariant, fusionLabel, groupModels, modelBrand, optionBrand, parseFusionName, parseModelName, setFamilyVisible, variantLabel, visibleOptions } from '../models';
+import { agentBrand, familyHidden, findFusionVariant, findVariant, fusionLabel, groupModels, modelBrand, optionBrand, parseFusionName, parseModelName, setFamilyVisible, variantLabel, visibleOptions } from '../models';
 
 // Real name samples issued by Devin (measured via pnpm probe devin), covering all suffix combinations
 const DEVIN = [
@@ -305,6 +305,16 @@ describe('modelBrand', () => {
   it('matches on word boundaries only', () => {
     expect(modelBrand('Glmer 1')).toBeUndefined();
     expect(modelBrand('Adaptation X')).toBeUndefined();
+  });
+});
+
+describe('agentBrand', () => {
+  it('names the vendor of a CLI whose model labels carry none', () => {
+    // Codex labels its models "6 Luna": neither the label nor a round's reported name says OpenAI
+    expect(modelBrand('6 Luna')).toBeUndefined();
+    expect(agentBrand('codex')).toBe('openai');
+    // An agent that routes to many vendors has no brand of its own
+    expect(agentBrand('acpira')).toBeUndefined();
   });
 });
 

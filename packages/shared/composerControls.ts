@@ -133,8 +133,11 @@ function levelTag(label: string): ChipTagItem {
 export function chipTags(cur: ModelFamily | undefined, curVar: ModelVariant | undefined, reasoning: ConfigControl[], modelConfig: ConfigControl[], standard: string): ChipTagItem[] {
   const tags: ChipTagItem[] = [];
   const fast: ChipTagItem = { label: 'Fast', short: '', fast: true };
+  // Devin 3000.12 bakes one lead level into each Fusion id ("Claude Fable 5.2 Medium + …") next to its own thought_level
+  // select: the select is the effort that runs, so the baked level stays in the pair's tooltip, not on the chip
+  const nativeLevel = reasoning.some(control => !!reasoningChip(control));
   if (cur && curVar && (curVar.lead || cur.efforts.length > 1 || curVar.effort || curVar.fast || curVar.long)) {
-    if (curVar.effort) tags.push(levelTag(curVar.effort));
+    if (curVar.effort && !(curVar.lead && nativeLevel)) tags.push(levelTag(curVar.effort));
     // The localized Standard shortens to its first character (S, 标)
     else if (!curVar.lead && cur.efforts.length > 1) tags.push({ label: standard, short: Array.from(standard)[0] ?? '' });
     if (curVar.fast) tags.push(fast);

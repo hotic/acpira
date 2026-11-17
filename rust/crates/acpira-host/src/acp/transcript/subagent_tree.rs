@@ -27,9 +27,12 @@ use crate::store::record::{SubagentPart, turn_parts};
 use crate::util::{ms_of_iso, now_iso, now_ms, random_uuid};
 
 mod child_stream;
+mod fusion;
 mod root_stream;
 mod summoned;
 mod workflow;
+
+pub use fusion::native_sidekick_call;
 
 const ORPHAN_MAX_IDS: usize = 8;
 const ORPHAN_MAX_UPDATES: usize = 64;
@@ -112,6 +115,8 @@ enum Dialect {
   Devin,
   /// An agent of a Claude dynamic workflow (`claude_workflow.rs`)
   Workflow,
+  /// A round of Devin Fusion's sidekick (`fusion.rs`)
+  Fusion,
 }
 
 struct PendingDelegation {
@@ -244,6 +249,8 @@ pub struct SubagentTree {
   resumed_logs: bool,
   /// Root `SendMessage` calls not yet tied to the run they resume
   send_calls: Vec<SendCall>,
+  /// The model and reasoning effort of the agent's own sidekick (`fusion.rs`), as the session's model pair names them
+  native_sidekick: (Option<String>, Option<String>),
 }
 
 #[derive(serde::Serialize)]
@@ -301,6 +308,7 @@ impl SubagentTree {
       terminal_events: vec![],
       resumed_logs,
       send_calls: vec![],
+      native_sidekick: (None, None),
     };
     for r in records.unwrap_or_default() {
       let mut c = r.core;
@@ -527,11 +535,20 @@ impl SubagentTree {
       if n.status != SubagentState::Running {
         continue;
       }
+      // The agent's own sidekick works inside the prompt: its round is handed back when the prompt returns
+      if prompt_returned && Self::native_round(n) {
+        n.status = SubagentState::Completed;
+        n.state_source = StateSource::Local;
+        seal_node(n, SubagentState::Completed);
+        self.terminal_events.push(n.id.clone());
+        n.rev += 1;
+        continue;
+      }
       // A workflow runs in the background past the prompt that launched it; its agents end with the run (`workflow_ended`).
       // A summoned child is Acpira's own process: it keeps working after a tool call that returned early, and the
       // session ends it explicitly (`relay.rs`)
       // A resumed run nothing on the wire speaks for ends with its log (`log_run_ended`), whenever the prompt returns
-      if prompt_returned && (n.dialect == Some(Dialect::Workflow) || n.harness.is_some() || n.log_ends) {
+      if prompt_returned && (n.dialect == Some(Dialect::Workflow) || Self::summoned(n).is_some() || n.log_ends) {
         continue;
       }
       // Sealing it here would drop the rest of its stream and leave a late terminal word on a cut transcript

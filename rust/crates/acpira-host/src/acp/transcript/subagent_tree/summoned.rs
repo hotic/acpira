@@ -15,7 +15,8 @@ use crate::util::now_ms;
 const SIDEKICK_STEPS: usize = 4;
 
 impl SubagentTree {
-  /// A round of the built-in agent's sidekick (`relay/hub.rs`), which the root transcript draws as a relay, not a row
+  /// A round of a sidekick, which the root transcript draws as a relay, not a row: one Acpira runs (`relay/hub.rs`), or
+  /// the agent's own (`fusion.rs`)
   pub(super) fn is_sidekick(n: &Node) -> bool {
     n.harness.as_ref().is_some_and(|h| h.persona.as_deref() == Some(SIDEKICK_ID))
   }
@@ -151,7 +152,7 @@ impl SubagentTree {
 
   /// The latest round of a thread
   pub fn relay_latest(&self, thread: &str) -> Option<RelayRound> {
-    let n = self.nodes.iter().rev().find(|n| n.harness.as_ref().is_some_and(|h| h.thread == thread || n.id == thread))?;
+    let n = self.nodes.iter().rev().find(|n| Self::summoned(n).is_some_and(|h| h.thread == thread || n.id == thread))?;
     let harness = n.harness.clone()?;
     let native = harness.session_id.clone();
     Some(RelayRound { node: n.id.clone(), harness, persona: n.role.clone(), native, state: n.status })
@@ -159,22 +160,22 @@ impl SubagentTree {
 
   /// A summoned node's harness and persona name
   pub fn relay_harness(&self, id: &str) -> Option<(SubagentHarness, Option<String>)> {
-    self.nodes.iter().find(|n| n.id == id).and_then(|n| Some((n.harness.clone()?, n.role.clone())))
+    self.nodes.iter().find(|n| n.id == id).and_then(|n| Some((Self::summoned(n)?.clone(), n.role.clone())))
   }
 
   /// Whether a summoned node runs without approvals (its round's mode is bypass)
   pub fn relay_bypass(&self, id: &str) -> bool {
-    self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).is_some_and(|h| h.mode == acpira_shared::subagents::RelayMode::Bypass)
+    self.nodes.iter().find(|n| n.id == id).and_then(Self::summoned).is_some_and(|h| h.mode == acpira_shared::subagents::RelayMode::Bypass)
   }
 
   /// Whether a summoned node runs a consult round
   pub fn relay_consult(&self, id: &str) -> bool {
-    self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).is_some_and(|h| h.mode == acpira_shared::subagents::RelayMode::Consult)
+    self.nodes.iter().find(|n| n.id == id).and_then(Self::summoned).is_some_and(|h| h.mode == acpira_shared::subagents::RelayMode::Consult)
   }
 
   /// The thread a node belongs to, when it is a summoned one
   pub fn relay_thread_of(&self, id: &str) -> Option<String> {
-    self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).map(|h| h.thread.clone())
+    self.nodes.iter().find(|n| n.id == id).and_then(Self::summoned).map(|h| h.thread.clone())
   }
 
   /// The oldest summoned node of `turn_index` not yet tied to the root call that summoned it, with the call's task and
@@ -188,7 +189,7 @@ impl SubagentTree {
       .find(|n| {
         n.turn_index == turn_index as u64
           && n.peer.tool_call_id.is_none()
-          && n.harness.as_ref().is_some_and(|h| fits(h, n.role.as_deref()))
+          && Self::summoned(n).is_some_and(|h| fits(h, n.role.as_deref()))
           && n.task.as_deref().map(norm).as_deref() == Some(want.as_str())
       })
       .map(|n| n.id.clone())
@@ -253,7 +254,7 @@ impl SubagentTree {
   pub fn relay_cancel(&mut self, id: &str) -> bool {
     let Some(i) = self.idx(id) else { return false };
     let n = &mut self.nodes[i];
-    if n.harness.is_none() || n.status != SubagentState::Running {
+    if Self::summoned(n).is_none() || n.status != SubagentState::Running {
       return false;
     }
     n.cancel_requested = true;
@@ -275,12 +276,12 @@ impl SubagentTree {
 
   /// A summoned node's own transcript: the turns of its round
   pub fn relay_turns(&self, id: &str) -> Option<&[Turn]> {
-    self.nodes.iter().find(|n| n.id == id && n.harness.is_some()).map(|n| n.state.turns.as_slice())
+    self.nodes.iter().find(|n| n.id == id && Self::summoned(n).is_some()).map(|n| n.state.turns.as_slice())
   }
 
   /// Every round of a thread so far, oldest first: the turns of each
   pub fn relay_thread_turns(&self, thread: &str) -> Vec<&[Turn]> {
-    self.nodes.iter().filter(|n| n.harness.as_ref().is_some_and(|h| h.thread == thread)).map(|n| n.state.turns.as_slice()).collect()
+    self.nodes.iter().filter(|n| Self::summoned(n).is_some_and(|h| h.thread == thread)).map(|n| n.state.turns.as_slice()).collect()
   }
 
   /// The last text the child wrote in its current round
@@ -295,7 +296,7 @@ impl SubagentTree {
 
   /// Running summoned nodes (the session ends their processes when it settles or closes)
   pub fn relay_running(&self) -> Vec<String> {
-    self.nodes.iter().filter(|n| n.harness.is_some() && n.status == SubagentState::Running).map(|n| n.id.clone()).collect()
+    self.nodes.iter().filter(|n| Self::summoned(n).is_some() && n.status == SubagentState::Running).map(|n| n.id.clone()).collect()
   }
 
   /// Running summoned nodes announced at or after turn_index: the ones an edit's `truncate` would take away
@@ -303,7 +304,7 @@ impl SubagentTree {
     self
       .nodes
       .iter()
-      .filter(|n| n.harness.is_some() && n.status == SubagentState::Running && n.turn_index >= turn_index as u64)
+      .filter(|n| Self::summoned(n).is_some() && n.status == SubagentState::Running && n.turn_index >= turn_index as u64)
       .map(|n| n.id.clone())
       .collect()
   }

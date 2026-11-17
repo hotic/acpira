@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 
 use crate::acp::session::controls::picked_controls;
+use crate::acp::session::host_sidekick::{native_option_shapes, ours};
 use crate::acp::session::queue::queue_snapshot;
 use crate::util::now_ms;
 use crate::acp::transcript::normalize::has_live_async_task;
@@ -193,6 +194,11 @@ impl AcpSession {
       Some(list)
     };
     let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c, shapes.as_ref()));
+    // What each sidekick option runs with once picked, so its row offers its level and Fast before it is picked: the
+    // host's select keeps them beside it, the built-in agent's are read from its models' shapes
+    let controls = picked.as_ref().unwrap_or(&c.state.controls);
+    let native_sidekick = if controls.options.iter().any(ours) { None } else { native_option_shapes(&controls.options, shapes.as_ref()) };
+    let sidekick_shapes = if controls.options.iter().any(ours) { Some(&c.sidekick.shapes) } else { native_sidekick.as_ref() };
     let queued = queue_snapshot(&c);
     // The plugins' slash commands join the agent's own in the menu
     let merged = self.plugin_commands(&c.state.commands, &c.plugin_state.menus);
@@ -209,8 +215,9 @@ impl AcpSession {
       turns: &[],
       running: c.phase.running,
       rev: c.rev,
-      controls: picked.as_ref().unwrap_or(&c.state.controls),
+      controls,
       model_shapes: shapes.as_ref(),
+      sidekick_shapes: sidekick_shapes.filter(|s| !s.is_empty()),
       model_memory: memory.as_ref(),
       usage: c.state.usage.as_ref(),
       commands: merged.as_deref().unwrap_or(&c.state.commands),
@@ -385,6 +392,8 @@ struct ViewRef<'a> {
   controls: &'a SessionControls,
   #[serde(skip_serializing_if = "Option::is_none")]
   model_shapes: Option<&'a ModelShapes>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  sidekick_shapes: Option<&'a ModelShapes>,
   #[serde(skip_serializing_if = "Option::is_none")]
   model_memory: Option<&'a ModelMemory>,
   #[serde(skip_serializing_if = "Option::is_none")]

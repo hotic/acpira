@@ -5,13 +5,14 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use acpira_shared::models::fusion_sidekick;
 use acpira_shared::transcript::*;
 
 use crate::acp::session::failure::failure_of;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_task, apply_goal, apply_update, find_tool, mark_responded};
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
-use crate::acp::transcript::subagent_tree::{Route, RouteCtx};
+use crate::acp::transcript::subagent_tree::{Route, RouteCtx, native_sidekick_call};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
 use crate::acp::vendors::{antigravity, claude_autonomous, claude_wakeup, claude_window, goal, hermes, steering};
 use crate::util::now_ms;
@@ -234,6 +235,15 @@ impl AcpSession {
       apply_goal(&mut c.state, next, mark);
     }
     let turn_index = current_turn_index(&c);
+    // The agent's own sidekick (Devin Fusion) never names its model: the picked pair's name does
+    if native_sidekick_call(&u) {
+      let pair = c.state.controls.options.iter().find(|o| o.category.as_deref() == Some("model")).and_then(|m| {
+        let picked = m.options.iter().find(|o| Some(&o.id) == m.value.as_ref())?;
+        fusion_sidekick(&picked.name)
+      });
+      let (model, effort) = pair.unzip();
+      c.tree.set_native_sidekick(model, effort.filter(|e| !e.is_empty()));
+    }
     let routed = {
       let Core { tree, state, .. } = &mut *c;
       tree.route_root(&u, &mut RouteCtx { turn_index, root_turns: &mut state.turns })

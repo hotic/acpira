@@ -1766,6 +1766,10 @@ pub struct SessionView {
   pub controls: SessionControls,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub model_shapes: Option<ModelShapes>,
+  /// What each option of the sidekick select runs with once picked, keyed by option id: its effort select and Fast
+  /// switch as they would read (`host_sidekick.rs`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub sidekick_shapes: Option<ModelShapes>,
   /// What the user last ran each of this agent's models with (engine prefs)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub model_memory: Option<ModelMemory>,

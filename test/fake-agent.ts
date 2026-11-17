@@ -36,7 +36,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 //   (=claude-async never reports a terminal state); =claude-resume runs k1, then a root SendMessage to it whose resumed run
 //   `k1:generation:2` streams nothing for 1.5 s (claude-agent-acp 0.83.0 drops it; =claude-resume-wire sends one chunk
 //   on it, as an adapter that delivers the run would; =claude-resume-air / -unannounced: see the scenario); =devin replays the Devin nested shape (run_subagent / subagent_started /
-//   subagent_context / read_subagent / subagent_completed, child usage_update); =receipt is Kimi's Agent tool.
+//   subagent_context / read_subagent / subagent_completed, child usage_update); =fusion is Devin Fusion's sidekick (`sk::` calls among the lead's own); =receipt is Kimi's Agent tool.
 //   Extension kinds leave this process verbatim — the agent side does not validate outgoing params; the host's ndjson
 //   rewrite (subagents/wire.ts) is what parks them in session_info_update
 // "failure-*" → AIR sessionFailure payloads (only to clients advertising the capability): =retry sends a warning rev
@@ -1667,6 +1667,20 @@ const app = acp.agent({ name: 'fake-agent' })
           _meta: { 'cognition.ai/subagent_completed': { agentId: 'd1', success: true, summary: '2 files in src/shared', depth: 1 } } });
         await sendTo(sid, { sessionUpdate: 'usage_update', used: 5000, size: 100_000 });
         await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'src/shared has 2 files' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      // Devin Fusion: of the sidekick only its tool calls arrive, on the root stream under `sk::` ids, while the lead
+      // thinks, speaks and calls its own tools in between
+      if (text === 'subagents-fusion') {
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'toolu_lead_1', title: 'Read PLAN.md', kind: 'read', status: 'completed' });
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'sk::exec:0', title: 'ls src', kind: 'execute', status: 'in_progress' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Working alongside. ' } });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'sk::exec:0', status: 'completed' });
+        await send({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'It lists the files.' } });
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'sk::read:1', title: 'Read a.ts', kind: 'read', status: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Reviewed the first pass.' } });
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'sk::exec:2', title: 'pnpm test', kind: 'execute', status: 'completed' });
         return { stopReason: 'end_turn' };
       }
 

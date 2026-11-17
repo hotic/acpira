@@ -6,14 +6,22 @@ use serde_json::{Map, Value};
 use acpira_shared::subagents::{SubagentPeer, SubagentState, SubagentVisibility};
 
 use super::{
-  Dialect, PendingDelegation, PendingLaunch, Route, RouteCtx, SEND_CALLS_MAX, SendCall, SubagentTree, rec, result_text, run_of, s,
-  seal_launch_receipt, terminal,
+  Dialect, PendingDelegation, PendingLaunch, Route, RouteCtx, SEND_CALLS_MAX, SendCall, SubagentTree, native_sidekick_call, rec, result_text,
+  run_of, s, seal_launch_receipt, terminal,
 };
 use crate::i18n::t;
 
 impl SubagentTree {
   /// Root-stream routing: the nested / receipt dialects
   pub fn route_root(&mut self, u: &Value, ctx: &mut RouteCtx) -> Route {
+    let route = self.route_dialects(u, ctx);
+    if matches!(route, Route::Root) {
+      self.native_handback(u);
+    }
+    route
+  }
+
+  fn route_dialects(&mut self, u: &Value, ctx: &mut RouteCtx) -> Route {
     let meta = rec(u.get("_meta"));
     if let Some(started) = meta.and_then(|m| rec(m.get("cognition.ai/subagent_started"))) {
       let started = started.clone();
@@ -26,14 +34,24 @@ impl SubagentTree {
       return Route::Consumed;
     }
     let parent_agent = s(meta.and_then(|m| m.get("cognition.ai/subagent_context")).and_then(|c| c.get("parentAgentId")));
+    // Devin's Fusion sidekick is never announced: a parent its call names only counts when a subagent holds that id
+    let sidekick = native_sidekick_call(u);
     if let Some(pa) = parent_agent.filter(|p| p != "root") {
       match self.by(&self.by_agent, &pa) {
-        None => self.buffer_orphan(&format!("agent:{pa}"), u.clone()),
+        None if sidekick => {}
+        None => {
+          self.buffer_orphan(&format!("agent:{pa}"), u.clone());
+          return Route::Consumed;
+        }
         Some(i) => {
           let id = self.nodes[i].id.clone();
           self.apply_child(&id, u, ctx);
+          return Route::Consumed;
         }
       }
+    }
+    if sidekick {
+      self.route_native_sidekick(u, ctx);
       return Route::Consumed;
     }
     let kind = u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("");

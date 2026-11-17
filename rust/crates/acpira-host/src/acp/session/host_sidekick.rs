@@ -6,11 +6,15 @@
 
 use acpira_shared::composer_controls::is_reasoning_control;
 use acpira_shared::model_shapes::{ModelShapes, is_model_control, shape_for};
+use acpira_shared::models::parse_fusion_name;
 use acpira_shared::subagents::SIDEKICK_ID;
-use acpira_shared::transcript::{ConfigControl, SessionOption};
+use acpira_shared::transcript::{ConfigControl, ControlType, SessionOption};
 
 use crate::acp::agents::registry::SELF_AGENT_ID;
-use crate::acp::session::relay::personas::{NO_SIDEKICK, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY};
+use crate::acp::session::relay::personas::{
+  NO_SIDEKICK, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_EFFORT_CONFIG as NATIVE_EFFORT_CONFIG, SIDEKICK_FAST_CATEGORY,
+  SIDEKICK_FAST_CONFIG as NATIVE_FAST_CONFIG,
+};
 use crate::acp::session::{AcpSession, Core};
 
 /// The host's selects: the built-in agent's categories, which every client draws the sidekick from, under ids of their
@@ -38,6 +42,8 @@ pub(crate) struct HostSidekick {
   pub sources: Vec<SidekickSource>,
   /// The selects as last built; empty until a connection read the sources
   pub controls: Vec<ConfigControl>,
+  /// What each option of the select runs with once picked (`option_shapes`), built with `controls`
+  pub shapes: ModelShapes,
   /// The pick the lead was last told of in a note (`sidekick_note`); `told_any`: it was told once
   pub told: Option<String>,
   pub told_any: bool,
@@ -50,6 +56,19 @@ pub(crate) fn ours(o: &ConfigControl) -> bool {
 /// The CLI's own sidekick select (the built-in agent's): the host adds none beside it
 fn native(options: &[ConfigControl]) -> bool {
   options.iter().any(|o| o.category.as_deref() == Some(SIDEKICK_CATEGORY) && !ours(o))
+}
+
+/// The model in use (`held`: a pick in flight) is a Devin Fusion pair, a lead and a sidekick of the CLI's own: the host
+/// offers no second sidekick beside it, and keeps its pick for when the session leaves the pair
+fn fusion_pair(options: &[ConfigControl], held: impl Fn(&str) -> Option<String>) -> bool {
+  let Some(model) = options.iter().find(|o| is_model_control(o)) else { return false };
+  let Some(value) = held(&model.id).or_else(|| model.value.clone()) else { return false };
+  model.options.iter().find(|o| o.id == value).is_some_and(|o| parse_fusion_name(&o.name).is_some())
+}
+
+/// A model a sidekick can run on: not a Devin Fusion pair, which is a lead and a sidekick of its own
+fn candidate(o: &SessionOption) -> bool {
+  parse_fusion_name(&o.name).is_none()
 }
 
 /// The CLI and the model id of a pick
@@ -71,7 +90,7 @@ pub(crate) fn build(own: &str, sources: &[SidekickSource], pick: Option<&str>, e
   let mut options = vec![SessionOption { id: NO_SIDEKICK.into(), name: "None".into(), ..Default::default() }];
   let ordered = sources.iter().filter(|s| s.agent == own).chain(sources.iter().filter(|s| s.agent != own));
   for s in ordered {
-    options.extend(s.model.options.iter().map(|o| SessionOption {
+    options.extend(s.model.options.iter().filter(|o| candidate(o)).map(|o| SessionOption {
       id: format!("{}/{}", s.agent, o.id),
       name: o.name.clone(),
       description: Some(s.name.clone()),
@@ -93,18 +112,85 @@ pub(crate) fn build(own: &str, sources: &[SidekickSource], pick: Option<&str>, e
     value: Some(value.to_owned()),
   }];
   if let Some(levels) = pick.and_then(|p| effort_of(sources, p)) {
-    let offered = |v: &&str| levels.options.iter().any(|o| o.id == *v);
-    let value = effort.filter(offered).or(levels.value.as_deref().filter(offered)).unwrap_or(&levels.options[0].id);
-    out.push(ConfigControl {
-      id: SIDEKICK_EFFORT_CONFIG.into(),
-      name: "Sidekick effort".into(),
-      category: Some(SIDEKICK_EFFORT_CATEGORY.into()),
-      kind: None,
-      options: levels.options.clone(),
-      value: Some(value.to_owned()),
-    });
+    out.push(effort_select(SIDEKICK_EFFORT_CONFIG, levels, effort));
   }
   out
+}
+
+/// The sidekick's effort select over a model's levels: the level picked while the model offers it, else the one shown
+/// last, else the first
+fn effort_select(id: &str, levels: &ConfigControl, effort: Option<&str>) -> ConfigControl {
+  let offered = |v: &&str| levels.options.iter().any(|o| o.id == *v);
+  let value = effort.filter(offered).or(levels.value.as_deref().filter(offered)).unwrap_or(&levels.options[0].id);
+  ConfigControl {
+    id: id.into(),
+    name: "Sidekick effort".into(),
+    category: Some(SIDEKICK_EFFORT_CATEGORY.into()),
+    kind: None,
+    options: levels.options.clone(),
+    value: Some(value.to_owned()),
+  }
+}
+
+/// A model's levels as its CLI last showed them
+fn levels_in(shape: &[ConfigControl]) -> Option<&ConfigControl> {
+  shape.iter().find(|c| is_reasoning_control(c) && !c.options.is_empty())
+}
+
+/// What each option of the host's select runs with once picked, keyed by option id (the view's `sidekickShapes`): the
+/// effort select `build` would show for it. A model whose levels no session showed yet is left out
+pub(crate) fn option_shapes(sources: &[SidekickSource], effort: Option<&str>) -> ModelShapes {
+  let mut out = ModelShapes::new();
+  for s in sources {
+    for o in s.model.options.iter().filter(|o| candidate(o)) {
+      if let Some(levels) = shape_for(s.shapes.as_ref(), &s.model, &o.id).and_then(|shape| levels_in(shape)) {
+        out.insert(format!("{}/{}", s.agent, o.id), vec![effort_select(SIDEKICK_EFFORT_CONFIG, levels, effort)]);
+      }
+    }
+  }
+  out
+}
+
+/// A Fast switch: a boolean, or the Standard / Fast select (`isFastControl` in packages/shared/composerControls.ts)
+fn is_fast(c: &ConfigControl) -> bool {
+  match c.kind {
+    Some(ControlType::Boolean) => c.id.split(['_', '-', ' ']).any(|w| w.eq_ignore_ascii_case("fast")),
+    None => c.options.len() == 2 && ["standard", "fast"].iter().all(|id| c.options.iter().any(|o| o.id == *id)),
+  }
+}
+
+/// The same for the built-in agent's own select, whose options are its own models: the levels and the Fast switch each
+/// came with as the lead (`shapes`), the effort picked for the sidekick kept while a model offers it and its Fast while
+/// a model has a fast tier (`sidekick_effort_of` / `sidekick_fast_of` in acpira-agent). None without that select
+pub(crate) fn native_option_shapes(options: &[ConfigControl], shapes: Option<&ModelShapes>) -> Option<ModelShapes> {
+  let select = options.iter().find(|o| o.category.as_deref() == Some(SIDEKICK_CATEGORY) && !ours(o))?;
+  let model = options.iter().find(|o| is_model_control(o))?;
+  let value = |category: &str| options.iter().find(|o| o.category.as_deref() == Some(category)).and_then(|o| o.value.as_deref());
+  let effort = value(SIDEKICK_EFFORT_CATEGORY);
+  let fast = value(SIDEKICK_FAST_CATEGORY).is_some_and(|v| v == "true" || v == "fast");
+  let mut out = ModelShapes::new();
+  for o in select.options.iter().filter(|o| o.id != NO_SIDEKICK) {
+    let Some(shape) = shape_for(shapes, model, &o.id) else { continue };
+    let mut controls: Vec<ConfigControl> = levels_in(shape).map(|levels| effort_select(NATIVE_EFFORT_CONFIG, levels, effort)).into_iter().collect();
+    if let Some(switch) = shape.iter().find(|c| is_fast(c)) {
+      let on = match switch.kind {
+        Some(ControlType::Boolean) => fast.to_string(),
+        None => (if fast { "fast" } else { "standard" }).to_owned(),
+      };
+      controls.push(ConfigControl {
+        id: NATIVE_FAST_CONFIG.into(),
+        name: "Sidekick fast".into(),
+        category: Some(SIDEKICK_FAST_CATEGORY.into()),
+        kind: switch.kind,
+        options: switch.options.clone(),
+        value: Some(on),
+      });
+    }
+    if !controls.is_empty() {
+      out.insert(o.id.clone(), controls);
+    }
+  }
+  Some(out)
 }
 
 /// A reopened record's pick and level, from the selects it was saved with
@@ -115,6 +201,12 @@ pub(crate) fn restored(options: &[ConfigControl]) -> HostSidekick {
     effort: value(SIDEKICK_EFFORT_CONFIG),
     ..Default::default()
   }
+}
+
+/// The host's select is set aside: the CLI has its own, or the model in use is a Fusion pair
+fn set_aside(c: &Core) -> bool {
+  let options = &c.state.controls.options;
+  native(options) || fusion_pair(options, |id| c.picks.values.get(id).map(|(v, _)| v.clone()))
 }
 
 impl AcpSession {
@@ -142,15 +234,17 @@ impl AcpSession {
     let Core { sidekick, state, .. } = c;
     state.controls.options.retain(|o| !ours(o));
     sidekick.controls = if sidekick.offered { build(&self.agent, &sidekick.sources, sidekick.pick.as_deref(), sidekick.effort.as_deref()) } else { vec![] };
+    sidekick.shapes = if sidekick.offered { option_shapes(&sidekick.sources, sidekick.effort.as_deref()) } else { ModelShapes::new() };
     self.place_host_sidekick(c);
   }
 
   /// Put the selects back after the options changed (`refine_controls`): an agent answer replaces the whole list.
   /// Before the first connection built them, the ones a record or an earlier session showed stay as they are
   pub(crate) fn place_host_sidekick(&self, c: &mut Core) {
+    let aside = set_aside(c);
     let Core { sidekick, state, .. } = c;
     let options = &mut state.controls.options;
-    if native(options) {
+    if aside {
       options.retain(|o| !ours(o));
       return;
     }
@@ -166,7 +260,7 @@ impl AcpSession {
     if id != SIDEKICK_CONFIG && id != SIDEKICK_EFFORT_CONFIG {
       return false;
     }
-    if !c.sidekick.offered || native(&c.state.controls.options) {
+    if !c.sidekick.offered || set_aside(&c) {
       return true;
     }
     let known = |agent: &str| self.deps.registry.try_get(agent).is_some();
@@ -184,7 +278,7 @@ impl AcpSession {
   /// The host's sidekick as picked now, picks in flight included: its CLI, its model id there and its level
   pub(crate) fn host_sidekick(&self) -> Option<(String, String, Option<String>)> {
     let c = self.core.lock();
-    if !c.sidekick.offered || native(&c.state.controls.options) {
+    if !c.sidekick.offered || set_aside(&c) {
       return None;
     }
     let held = |id: &str| c.picks.values.get(id).map(|(v, _)| v.clone());
@@ -276,6 +370,13 @@ mod tests {
   }
 
   #[test]
+  fn fusion_pairs_are_no_sidekick() {
+    let sources = [source("devin", "Devin", &[("swe-2-high", "SWE-2 High"), ("fusion-x", "Fusion (Claude Fable 5.2 Medium + SWE-2 Medium)")], None)];
+    let ids: Vec<String> = build("claude", &sources, None, None)[0].options.iter().map(|o| o.id.clone()).collect();
+    assert_eq!(ids, ["none", "devin/swe-2-high"]);
+  }
+
+  #[test]
   fn level_select_follows_the_picked_model() {
     let sources = [source("codex", "Codex", &[("luna", "Luna"), ("mini", "Mini")], Some(("luna", &["low", "high"])))];
     let built = build("claude", &sources, Some("codex/luna"), Some("low"));
@@ -290,6 +391,57 @@ mod tests {
     let built = build("claude", &[], Some("codex/gone"), None);
     assert_eq!(built[0].value.as_deref(), Some("codex/gone"));
     assert!(built[0].options.iter().any(|o| o.id == "codex/gone"));
+  }
+
+  #[test]
+  fn every_option_gets_the_effort_it_would_run_at() {
+    let sources = [
+      source("codex", "Codex", &[("luna", "Luna"), ("mini", "Mini")], Some(("luna", &["low", "high"]))),
+      source("claude", "Claude Code", &[("opus", "Opus")], Some(("opus", &["low", "medium", "high"]))),
+    ];
+    let shapes = option_shapes(&sources, Some("medium"));
+    // The picked level where the model has it, else the one its CLI showed; no known levels, no entry
+    assert_eq!(shapes["claude/opus"][0].value.as_deref(), Some("medium"));
+    assert_eq!(shapes["codex/luna"][0].value.as_deref(), Some("high"));
+    assert_eq!(shapes["codex/luna"][0].id, SIDEKICK_EFFORT_CONFIG);
+    assert!(!shapes.contains_key("codex/mini"));
+  }
+
+  #[test]
+  fn the_built_in_select_reads_its_models_lead_shapes() {
+    let model = ConfigControl { id: "model".into(), category: Some("model".into()), options: vec![option("a/x", "X"), option("a/y", "Y")], ..Default::default() };
+    let select = ConfigControl {
+      id: "sidekick".into(),
+      category: Some(SIDEKICK_CATEGORY.into()),
+      options: vec![option(NO_SIDEKICK, "None"), option("a/x", "X"), option("a/y", "Y")],
+      value: Some(NO_SIDEKICK.into()),
+      ..Default::default()
+    };
+    let levels = ConfigControl { id: "thought_level".into(), category: Some("thought_level".into()), options: vec![option("low", "Low"), option("high", "High")], value: Some("high".into()), ..Default::default() };
+    let fast = ConfigControl { id: "fast".into(), category: Some("model_config".into()), kind: Some(ControlType::Boolean), options: vec![option("false", "Off"), option("true", "On")], value: Some("true".into()), ..Default::default() };
+    let shapes = ModelShapes::from([("a/x".to_owned(), vec![levels, fast])]);
+    let out = native_option_shapes(&[model, select], Some(&shapes)).unwrap();
+    let x = &out["a/x"];
+    assert_eq!((x[0].id.as_str(), x[0].value.as_deref()), (NATIVE_EFFORT_CONFIG, Some("high")));
+    // Fast starts off for a sidekick: the lead's own switch is not the sidekick's
+    assert_eq!((x[1].id.as_str(), x[1].value.as_deref()), (NATIVE_FAST_CONFIG, Some("false")));
+    assert!(!out.contains_key("a/y"));
+  }
+
+  #[test]
+  fn a_fusion_pair_sets_the_select_aside() {
+    let model = ConfigControl {
+      id: "model".into(),
+      category: Some("model".into()),
+      options: vec![option("swe-2-high", "SWE-2 High"), option("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium", "Fusion (Claude Fable 5.2 Medium + SWE-2 Medium)")],
+      value: Some("swe-2-high".into()),
+      ..Default::default()
+    };
+    let none = |_: &str| None;
+    assert!(!fusion_pair(std::slice::from_ref(&model), none));
+    assert!(fusion_pair(&[ConfigControl { value: Some("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium".into()), ..model.clone() }], none));
+    // A switch in flight counts before the agent answers it
+    assert!(fusion_pair(&[model], |_| Some("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium".into())));
   }
 
   #[test]

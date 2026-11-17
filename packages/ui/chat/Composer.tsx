@@ -86,6 +86,7 @@ export interface ComposerProps {
   // What the engine remembers of the agent's models: the model panel's rows carry their own level and Fast
   modelMemory?: ModelMemory;
   modelShapes?: ModelShapes;
+  sidekickShapes?: ModelShapes;
   onCompact: () => void;
   // Session-level navigation is omitted from history and queued-message editors.
   toolbarStart?: ReactNode;
@@ -576,7 +577,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
               onConfigure={i === 0 && p.main && !p.edit ? p.onAddModel : undefined}
               toggleRef={i === 0 && p.main && !p.edit ? modelToggle : undefined}
               hiddenConfig={p.hidden} onSqueeze={i === 0 ? setSqueeze : undefined}
-              memory={i === 0 ? p.modelMemory : undefined} shapes={i === 0 ? p.modelShapes : undefined}
+              memory={i === 0 ? p.modelMemory : undefined} shapes={i === 0 ? p.modelShapes : undefined} sidekickShapes={i === 0 ? p.sidekickShapes : undefined}
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.onAddModel && p.main && !p.edit && !p.controlsLocked && !models.length && (

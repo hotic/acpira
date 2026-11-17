@@ -215,4 +215,13 @@ describe('shared composer controls', () => {
     expect(chipTags(cur, curVar, [effort], [fast], 'Standard')).toEqual([{ label: 'Ultra', short: 'U', ultra: true }, { label: 'Fast', short: '', fast: true }]);
     expect(chipTags(cur, curVar, [{ ...effort, value: 'high' }], [{ ...fast, value: 'false' }], 'Standard')).toEqual([{ label: 'High', short: 'H', ultra: false }]);
   });
+
+  it('reads a Fusion pair at its thought_level, not the level baked into its id', () => {
+    // Devin 3000.12.57: `fusion-claude-fable-5-2-medium-sidekick-swe-2-medium` plus its own thought_level select
+    const [cur] = groupModels([{ id: 'fusion-claude-fable-5-2-medium-sidekick-swe-2-medium', name: 'Fusion (Claude Fable 5.2 Medium + SWE-2 Medium)' }]);
+    const thought: ConfigControl = { id: 'thought_level', name: 'Thought level', category: 'thought_level', value: 'xhigh',
+      options: ['low', 'medium', 'high', 'xhigh', 'max'].map(id => ({ id, name: id[0]!.toUpperCase() + id.slice(1) })) };
+    expect(chipTags(cur, cur?.variants[0], [thought], [], 'Standard').map(tag => tag.label)).toEqual(['XHigh']);
+    expect(chipTags(cur, cur?.variants[0], [], [], 'Standard').map(tag => tag.label)).toEqual(['Medium']);
+  });
 });
