@@ -146,7 +146,8 @@ export struct ShareCard {
         }
       }
       .opacity(ShareTokens.watermark)
-      .padding({ top: Metrics.pad, bottom: Metrics.gap })
+      // In by the sheet's corner radius (--spacing-share-mark-x): the ends land where its straight edges begin
+      .padding({ left: Metrics.rMd, right: Metrics.rMd, top: Metrics.pad, bottom: Metrics.gap })
       .width('100%')
     }
     // The frame (.acp-share-card px/pt-share-frame, pb-gap-half): gap × 5/4 on the sides and top
