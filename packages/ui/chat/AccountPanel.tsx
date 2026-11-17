@@ -1,12 +1,11 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef } from 'react';
 import { Check, LockKeyhole, LogIn, Plus, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo } from '@acpira/shared/transcript';
 import type { AddAccountVia } from '@acpira/shared/protocol';
 import { PanelHeader } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
-import { AccountLabel } from '../ui/AccountLabel';
+import { AccountLabel, type AccountState } from '../ui/AccountLabel';
 import { QuotaBars } from '../ui/QuotaBars';
-import { Dot } from '../settings/controls';
 import { t } from '../i18n';
 
 export interface AccountPanelProps {
@@ -71,23 +70,24 @@ export function AccountPanel(p: AccountPanelProps) {
     <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
       {/* Stored accounts do not describe CLI credentials: a local API key can work with an empty account list. */}
       {!p.accounts.length && <StateLine>{t('settings.agent.accounts.none')}</StateLine>}
-      {p.accounts.map(a => <div key={a.id} className="group/item relative flex shrink-0 flex-col">
-        {/* Same skeleton as the official account: one identity line (state dot, email, plan, check), the quota bars below it.
-            No avatar: a stock person glyph said nothing and drew a second left edge the quota bars did not share. While the
-            keychain is locked the rows stay listed with an attention dot: they cannot be read until the header's unlock */}
+      {p.accounts.map((a, i) => <Fragment key={a.id}>
+        {/* Accounts are told apart by a rule that fades at both ends: the quota tubes are lines too */}
+        {i > 0 && <div role="presentation" className="mx-2 my-1 h-px shrink-0 bg-linear-to-r from-transparent via-line to-transparent" />}
+        <div className="group/item relative flex shrink-0 flex-col">
+        {/* Same skeleton as the official account: one identity line (email, plan, check), the quota bars below it.
+            No avatar and no state dot: a stock person glyph said nothing, and a dot that is green on every row said as
+            little. While the keychain is locked the rows stay listed, tagged: they cannot be read until the header's unlock */}
         <RadioGroup.Item value={a.id} onClick={() => { p.onSelectAccount(a.id); p.close(); }} className="min-h-0 flex-col items-stretch gap-0 py-1.5">
           {/* Only the email truncates. The trailing slot stands on the right text edge, where the quota bars end and the header's
               "+" stands: the check, or the remove button over it on hover. The radio's own `:has(+ …)` sees the remove button's
               keyboard focus; a group-level `:has()` restyled the whole shell on every keystroke */}
           <span className="flex min-w-0 items-center gap-2">
-            <StateDot tone={p.agent.credentialsLocked ? 'warn' : a.quotaIssue ? 'off' : 'ok'}
-              label={p.agent.credentialsLocked ? t('quota.short.locked') : a.quotaIssue && t(`quota.status.${a.quotaIssue}`)} />
-            <AccountLabel label={a.label} detail={a.detail} className="flex-1 text-fg-1" />
+            <AccountLabel label={a.label} detail={a.detail} state={savedState(p.agent, a)} className="flex-1 font-medium text-fg-1" />
             <span className="flex size-icon shrink-0 items-center justify-center transition-opacity group-hover/item:opacity-0 [button:has(+[data-remove-slot]_[data-remove]:focus-visible)_&]:opacity-0" aria-hidden>
               {a.id === p.accountId && <Check className="size-icon text-fg-1" strokeWidth={2} />}
             </span>
           </span>
-          {a.quota && <QuotaBars quota={a.quota} className={QUOTA_UNDER} />}
+          {a.quota && <QuotaBars quota={a.quota} stale={!!savedState(p.agent, a)} className={QUOTA_UNDER} />}
         </RadioGroup.Item>
         {/* A button cannot sit inside the radio's, so the remove button lies over the row in a copy of the identity line's box:
             the same padding and an invisible strut one text line tall, so it centres on that line at every density, not on a
@@ -102,20 +102,22 @@ export function AccountPanel(p: AccountPanelProps) {
             </button>
           </span>
         </span>
-      </div>)}
+        </div>
+      </Fragment>)}
     </RadioGroup.Root>
   </div>;
 }
 
-// One grammar for every account row: a state dot, the identity (or the state's word when there is none), and the
-// quota bars right under it when there are any. A state never adds a line of its own: its dot carries it, with the
-// reason as the tooltip, and its fix is the header's one action
-type Tone = 'ok' | 'warn' | 'off';
-function StateDot({ tone, label }: { tone: Tone; label?: string | false }) {
-  return <Dot ok={tone === 'ok'} warn={tone === 'warn'} label={label || undefined} />;
+// One grammar for every account row: the identity (or the state's word when there is none) and the quota bars right
+// under it when there are any. A login in order carries no mark. A state never adds a line of its own: it takes the plan
+// tag's place, with the reason as the tooltip, the bars it left stale turn grey, and its fix is the header's one action
+function savedState(agent: AgentInfo, a: AccountInfo): AccountState | undefined {
+  if (agent.credentialsLocked) return { text: t('quota.short.locked'), warn: true, title: t('notice.locked.short') };
+  if (!a.quotaIssue) return undefined;
+  return { text: t(`quota.short.${a.quotaIssue}`), warn: a.quotaIssue === 'expired', title: t(`quota.status.${a.quotaIssue}`) };
 }
-// The bars sit a gap under the identity line instead of their own taller top padding
-const QUOTA_UNDER = 'pt-1.5';
+// The bars stand twice as far under the identity line as they do from each other, so the identity reads as their title
+const QUOTA_UNDER = 'pt-3';
 
 // Nothing saved: the words alone, on the header title's left edge (with no rows there is no name column to line up with)
 function StateLine({ children }: { children: string }) {
@@ -143,14 +145,15 @@ export function localStateText(account: LocalAccount): string {
 // Official account: the same row as a saved one. Signed out, the state's word takes the identity's place
 function LocalAccountBody({ agent, account }: { agent: AgentInfo; account: LocalAccount }) {
   const known = knownLogin(agent, account);
-  const tone: Tone = localLoginNeeded(account) ? 'warn' : known && account.status === 'ready' ? 'ok' : 'off';
+  const state: AccountState | undefined = account.status === 'ready' || account.status === 'loading'
+    ? undefined
+    : { text: localStateText(account), warn: localLoginNeeded(account), title: t(`quota.status.${account.status}`) };
   return <div className="flex min-w-0 flex-col px-2 py-1.5 text-2">
     <span className="flex min-w-0 items-center gap-2">
-      <StateDot tone={tone} label={tone !== 'ok' && localStateText(account)} />
       {known
-        ? <AccountLabel label={account.label} detail={account.detail} className="text-fg-1" />
+        ? <AccountLabel label={account.label} detail={account.detail} state={state} className="font-medium text-fg-1" />
         : <span className="truncate text-fg-2">{localStateText(account)}</span>}
     </span>
-    {known && account.quota && <QuotaBars quota={account.quota} className={QUOTA_UNDER} />}
+    {known && account.quota && <QuotaBars quota={account.quota} stale={!!state} className={QUOTA_UNDER} />}
   </div>;
 }

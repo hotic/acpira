@@ -2,30 +2,36 @@
 //! wherever `--gemini-dir` points, so a directory alone cannot hold a second account. Inside an SSH session it leaves
 //! the keyring alone and keeps the login in `<gemini dir>/antigravity-cli/antigravity-oauth-token` (its log: "Using
 //! file-based token storage because SSH session detected"; any of SSH_CONNECTION / SSH_CLIENT / SSH_TTY does it, and
-//! nothing else asks for the file). A saved account is therefore a private gemini dir under
-//! ~/.acpira/accounts/antigravity/ whose process starts with `SSH_CONNECTION` set and `--gemini-dir` naming it. No
+//! nothing else asks for the file). A saved account is therefore a private home under ~/.acpira/accounts/antigravity/
+//! holding its own `.gemini`, whose process starts with `SSH_CONNECTION` set and `--gemini-dir` naming that dir. No
 //! environment variable moves the store, so the directory travels in the account env as `STORE_ENV` and `spawn_args`
-//! turns it into the flag. The account dir owns the token file and `antigravity-cli/cache` (the sign-in method and the
-//! account's default project); every other entry links into the regular ~/.gemini, so conversations, settings, skills
-//! and MCP config stay one store and a switched session loads its own conversation. The local login keeps the keyring
-//! and the regular dir. `agy` refreshes its tokens in place; Acpira only reads the email. Checked on macOS only
+//! turns it into the flag. The account's gemini dir owns the token file and `antigravity-cli/cache` (the sign-in method
+//! and the account's default project); every other entry links into the regular ~/.gemini, so conversations, settings,
+//! skills and MCP config stay one store and a switched session loads its own conversation. The local login keeps the
+//! keyring and the regular dir. `agy` refreshes its tokens in place; Acpira only reads the email.
+//!
+//! Quota: `agy -p /usage --output-format json` answers from the vendor without an agent turn or a conversation
+//! (`usage` all zero). Print mode has no `--gemini-dir`, so a saved account's read runs with HOME set to the account
+//! home, which is why the gemini dir is named `.gemini` there. Checked on macOS only
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use serde_json::Value;
 
-use acpira_shared::transcript::StrMap;
+use acpira_shared::num::Num;
+use acpira_shared::transcript::{AccountQuota, QuotaWindow, StrMap};
 
 use super::account_store::{AccountCredential, AccountDraft};
 use super::cli_home::{LOCAL_LOGIN, account_home, create_private_dir, home_meta, json_file, link_shared, poll_until, remove_home};
 use super::devin::BinaryFn;
-use super::provider::{AccountProvider, LoginFlow};
+use super::provider::{AccountProvider, LoginFlow, QuotaRead, QuotaTokenExpired};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
-use crate::util::random_uuid;
+use crate::util::{iso_of_ms, ms_of_iso, now_iso, random_uuid};
 
 /// The account env entry naming a saved account's gemini dir; `spawn_args` makes it `--gemini-dir`
 pub const STORE_ENV: &str = "ACPIRA_ANTIGRAVITY_GEMINI_DIR";
@@ -33,11 +39,15 @@ pub const STORE_ENV: &str = "ACPIRA_ANTIGRAVITY_GEMINI_DIR";
 const SSH_ENV: [&str; 3] = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"];
 /// Stands in for a session's addresses: `agy` only looks at whether the variable is set
 const SSH_STAND_IN: &str = "127.0.0.1 0 127.0.0.1 0";
+/// The gemini dir inside an account home, under the name `agy` looks for in a home directory
+const GEMINI_DIR: &str = ".gemini";
 /// `agy`'s data directory inside a gemini dir
 const APP_DIR: &str = "antigravity-cli";
 const TOKEN_FILE: &str = "antigravity-oauth-token";
 /// What an account's `antigravity-cli` keeps for itself: the login, and the cache that records how it signed in
 const OWN: [&str; 2] = [TOKEN_FILE, "cache"];
+/// A signed-out `agy` waits a minute for a sign-in before it answers; the read outlasts that to hear the answer
+const USAGE_TIMEOUT: Duration = Duration::from_secs(75);
 
 pub struct AntigravityAccountProvider {
   homes: PathBuf,
@@ -47,6 +57,11 @@ pub struct AntigravityAccountProvider {
 /// The regular gemini dir, where the CLI's own login and everything shared live
 fn default_home() -> PathBuf {
   home_dir().join(".gemini")
+}
+
+/// A saved account's gemini dir
+fn store_of(home: &Path) -> PathBuf {
+  home.join(GEMINI_DIR)
 }
 
 /// Whether this engine runs inside an SSH session, where `agy` already keeps every login in files
@@ -103,14 +118,19 @@ async fn local_login() -> Option<Value> {
 }
 
 /// Link the regular gemini dir into an account's, one level down for `agy`'s own data directory
-fn link_home(home: &Path, shared: &Path) {
-  let _ = std::fs::create_dir_all(home.join(APP_DIR));
-  link_shared(home, shared, &[APP_DIR]);
-  link_shared(&home.join(APP_DIR), &shared.join(APP_DIR), &OWN);
+fn link_store(store: &Path, shared: &Path) {
+  let _ = std::fs::create_dir_all(store.join(APP_DIR));
+  link_shared(store, shared, &[APP_DIR]);
+  link_shared(&store.join(APP_DIR), &shared.join(APP_DIR), &OWN);
+}
+
+/// The login in a saved account's own store
+async fn saved_login(home: &Path) -> Option<Value> {
+  json_file(&store_of(home).join(APP_DIR).join(TOKEN_FILE)).await
 }
 
 async fn draft_of(home: &Path) -> Option<AccountDraft> {
-  let label = email_of(&json_file(&home.join(APP_DIR).join(TOKEN_FILE)).await?)?;
+  let label = email_of(&saved_login(home).await?)?;
   Some(AccountDraft { label, detail: None, secret: home.to_string_lossy().into_owned(), meta: Some(home_meta(home)) })
 }
 
@@ -143,13 +163,15 @@ impl AccountProvider for AntigravityAccountProvider {
     Box::pin(async move {
       let bin = binary().await.ok_or_else(|| anyhow!(tp("host.notFound", &[("command", "agy"), ("agent", "Antigravity")])))?;
       let home = homes.join(random_uuid());
-      create_private_dir(&home).await?;
-      create_private_dir(&home.join(APP_DIR)).await?;
-      link_home(&home, &default_home());
+      let store = store_of(&home);
+      for dir in [&home, &store, &store.join(APP_DIR)] {
+        create_private_dir(dir).await?;
+      }
+      link_store(&store, &default_home());
       let env: BTreeMap<String, Option<String>> = [(SSH_ENV[0].to_owned(), Some(SSH_STAND_IN.to_owned()))].into();
       Ok(LoginFlow {
         command: bin,
-        args: vec!["acp".into(), "--login".into(), "--gemini-dir".into(), home.to_string_lossy().into_owned()],
+        args: vec!["acp".into(), "--login".into(), "--gemini-dir".into(), store.to_string_lossy().into_owned()],
         env,
         collect: Box::new(move |cancel| {
           Box::pin(async move {
@@ -165,10 +187,10 @@ impl AccountProvider for AntigravityAccountProvider {
   }
 
   fn spawn_env(&self, cred: &AccountCredential) -> Option<BTreeMap<String, String>> {
-    let home = account_home(cred)?;
-    // Entries the regular dir gained since the last spawn join the account dir
-    link_home(&home, &default_home());
-    let mut env: BTreeMap<String, String> = [(STORE_ENV.to_owned(), home.to_string_lossy().into_owned())].into();
+    let store = store_of(&account_home(cred)?);
+    // Entries the regular dir gained since the last spawn join the account's
+    link_store(&store, &default_home());
+    let mut env: BTreeMap<String, String> = [(STORE_ENV.to_owned(), store.to_string_lossy().into_owned())].into();
     // A real SSH session already has `agy` on files, and its own variables stay as they are
     if !in_ssh() {
       env.insert(SSH_ENV[0].to_owned(), SSH_STAND_IN.to_owned());
@@ -176,11 +198,87 @@ impl AccountProvider for AntigravityAccountProvider {
     Some(env)
   }
 
+  /// Every read starts `agy` for a few seconds
+  fn quota_min_interval(&self) -> Duration {
+    Duration::from_secs(60)
+  }
+
+  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {
+    let binary = self.binary.clone();
+    Some(Box::pin(async move {
+      let home = account_home(&cred);
+      // Signed out, `agy` would sit on its sign-in prompt instead of answering
+      let login = match &home {
+        Some(home) => saved_login(home).await,
+        None => local_login().await,
+      };
+      if login.as_ref().and_then(email_of).is_none() {
+        return Err(anyhow::Error::new(QuotaTokenExpired));
+      }
+      let bin = binary().await.ok_or_else(|| anyhow!("agy not found"))?;
+      Ok(parse_usage(&usage(&bin, home.as_deref()).await?).into())
+    }))
+  }
+
   fn forget(&self, cred: AccountCredential) -> Option<BoxFuture<()>> {
     let homes = self.homes.clone();
     let home = account_home(&cred)?;
     Some(Box::pin(async move { remove_home(&homes, &home).await }))
   }
+}
+
+/// `agy -p /usage` as JSON, for the CLI's own login or (`home`) a saved account's
+async fn usage(bin: &str, home: Option<&Path>) -> Result<Value> {
+  let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+  // Without the flag every read leaves a log file in the shared log dir
+  let args = ["-p", "/usage", "--output-format", "json", "--log-file", null].map(str::to_owned);
+  let mut cmd = crate::acp::agents::launch::command(bin, &args);
+  cmd.current_dir(std::env::temp_dir()).stdin(std::process::Stdio::null()).kill_on_drop(true);
+  if let Some(home) = home {
+    cmd.env("HOME", home);
+    if !in_ssh() {
+      cmd.env(SSH_ENV[0], SSH_STAND_IN);
+    }
+  }
+  let out = tokio::time::timeout(USAGE_TIMEOUT, cmd.output()).await.map_err(|_| anyhow!("agy /usage timed out"))??;
+  // A sign-in prompt may precede the answer, which is the last line
+  let text = String::from_utf8_lossy(&out.stdout);
+  let answer: Value = text.lines().rev().find_map(|l| serde_json::from_str(l.trim()).ok()).ok_or_else(|| anyhow!("agy /usage: no answer (exit {:?})", out.status.code()))?;
+  if answer.get("status").and_then(Value::as_str) != Some("SUCCESS") {
+    let why = answer.get("error").and_then(Value::as_str).unwrap_or("failed");
+    return Err(if why.contains("authentication") { anyhow::Error::new(QuotaTokenExpired) } else { anyhow!("agy /usage: {why}") });
+  }
+  Ok(answer)
+}
+
+/// The window id of a quota bucket: `<window><Group>` for the two model groups `agy` 1.5.9 reports, its own id otherwise.
+/// The view labels a window by its group alone (the reset time tells the 5-hour one from the weekly one)
+fn window_id(bucket: &str) -> String {
+  match bucket {
+    "gemini-5h" => "5hGemini",
+    "gemini-weekly" => "weeklyGemini",
+    "3p-5h" => "5hClaude",
+    "3p-weekly" => "weeklyClaude",
+    other => other,
+  }
+  .to_owned()
+}
+
+/// `/usage` → windows: `command.data.groups[].buckets[]`, each `{ id, window: "5h" | "weekly", remaining_fraction: 0..1,
+/// reset_time: ISO }`. Models share the allowance of their group (Gemini; Claude and GPT), so each group brings its own
+/// 5-hour and weekly window, listed in that order
+fn parse_usage(v: &Value) -> Option<AccountQuota> {
+  let mut windows = Vec::new();
+  for group in v.pointer("/command/data/groups").and_then(Value::as_array).into_iter().flatten() {
+    let mut buckets: Vec<&Value> = group.get("buckets").and_then(Value::as_array).into_iter().flatten().collect();
+    buckets.sort_by_key(|b| b.get("window").and_then(Value::as_str) != Some("5h"));
+    for b in buckets {
+      let (Some(id), Some(left)) = (b.get("id").and_then(Value::as_str), b.get("remaining_fraction").and_then(Value::as_f64)) else { continue };
+      let resets_at = b.get("reset_time").and_then(Value::as_str).and_then(ms_of_iso).map(iso_of_ms);
+      windows.push(QuotaWindow { id: window_id(id), remaining: Num(left.clamp(0.0, 1.0)), resets_at });
+    }
+  }
+  (!windows.is_empty()).then(|| AccountQuota { windows, on_demand_balance_usd: None, fetched_at: now_iso() })
 }
 
 #[cfg(test)]
@@ -205,17 +303,40 @@ mod tests {
   #[test]
   fn an_account_dir_shares_everything_but_its_login_and_cache() {
     let t = tempfile::tempdir().unwrap();
-    let (shared, home) = (t.path().join("shared"), t.path().join("home"));
+    let (shared, home) = (t.path().join("shared"), t.path().join("store"));
     for dir in ["config", "antigravity-cli/conversations", "antigravity-cli/cache"] {
       std::fs::create_dir_all(shared.join(dir)).unwrap();
     }
     std::fs::write(shared.join(APP_DIR).join(TOKEN_FILE), LOGIN).unwrap();
-    link_home(&home, &shared);
+    link_store(&home, &shared);
     assert!(same_file::is_same_file(home.join("config"), shared.join("config")).unwrap());
     assert!(same_file::is_same_file(home.join("antigravity-cli/conversations"), shared.join("antigravity-cli/conversations")).unwrap());
     // Its own data directory, so the login and the cache written there never reach the regular dir
     assert!(!std::fs::symlink_metadata(home.join(APP_DIR)).unwrap().file_type().is_symlink());
     assert!(!home.join(APP_DIR).join(TOKEN_FILE).exists() && !home.join("antigravity-cli/cache").exists());
+  }
+
+  #[test]
+  fn usage_groups_become_five_hour_then_weekly_windows() {
+    let v = serde_json::json!({ "status": "SUCCESS", "command": { "name": "usage", "data": { "groups": [
+      { "name": "Gemini Models", "buckets": [
+        { "id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.84, "reset_time": "2026-11-21T00:00:14Z" },
+        { "id": "gemini-5h", "window": "5h", "remaining_fraction": 0.91, "reset_time": "2026-11-16T19:16:47Z" },
+      ] },
+      { "name": "Claude and GPT models", "buckets": [
+        { "id": "3p-weekly", "window": "weekly", "remaining_fraction": 0.46, "reset_time": "2026-11-20T22:23:10Z" },
+        { "id": "3p-5h", "window": "5h", "remaining_fraction": 1 },
+        { "id": "later", "window": "monthly" },
+      ] },
+    ] } } });
+    let q = parse_usage(&v).unwrap();
+    assert_eq!(
+      q.windows.iter().map(|w| (w.id.as_str(), w.remaining.0)).collect::<Vec<_>>(),
+      [("5hGemini", 0.91), ("weeklyGemini", 0.84), ("5hClaude", 1.0), ("weeklyClaude", 0.46)]
+    );
+    assert_eq!(q.windows[0].resets_at.as_deref(), Some("2026-11-16T19:16:47.000Z"));
+    assert_eq!(q.windows[2].resets_at, None);
+    assert!(parse_usage(&serde_json::json!({ "status": "SUCCESS" })).is_none());
   }
 
   #[test]
