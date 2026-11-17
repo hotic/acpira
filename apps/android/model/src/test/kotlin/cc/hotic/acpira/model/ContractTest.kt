@@ -138,6 +138,19 @@ class ContractTest {
     assertEquals(ViewEarlier(2, 0), chunk.earlier)
   }
 
+  /** A session another engine holds is mirrored with revs counted up from -2^40 (session_manager.rs MIRROR_REV_BASE) */
+  @Test fun aMirroredViewsRevIsSixtyFourBit() {
+    val rev = -(1L shl 40) + 4
+    val session = SidecarMsg.decode(
+      """{"type":"hostMessage","viewId":"v","message":{"type":"session","session":${Samples.richView.replace("\"rev\":2", "\"rev\":$rev")}}}""",
+    )
+    assertEquals(rev, assertIs<HostMsg.Session>(assertIs<SidecarMsg.HostMessage>(session).message).session.rev)
+    val patch = SidecarMsg.decode(
+      """{"type":"hostMessage","viewId":"v","message":{"type":"sessionPatch","patch":{"id":"s1","base":$rev,"view":${Samples.richView},"keep":0}}}""",
+    )
+    assertEquals(rev, assertIs<HostMsg.Patch>(assertIs<SidecarMsg.HostMessage>(patch).message).patch.base)
+  }
+
   /** A windowed view says what it leaves out, and counts its turns from the session's first */
   @Test fun aWindowedViewCountsFromTheSessionsFirstTurn() {
     val view = WireJson.decodeFromString(SessionView.serializer(), Samples.richView)
@@ -184,7 +197,7 @@ class ContractTest {
       if (!subset) assertEquals(fields.toSet() - leftOut, kotlin, "$name does not mirror ${(fields.toSet() - leftOut - kotlin).sorted()}")
     }
     // modelMemory stays engine-side: the engine replays a model's own picks itself
-    check(SessionView.serializer(), TS.interfaceFields(transcript, "SessionView"), setOf("modelMemory"))
+    check(SessionView.serializer(), TS.interfaceFields(transcript, "SessionView"), setOf("modelMemory", "sidekickShapes"))
     check(ViewEarlier.serializer(), TS.interfaceFields(transcript, "ViewEarlier"))
     check(SessionEarlier.serializer(), TS.interfaceFields(shared("sessionWindow.ts"), "SessionEarlier"))
     // completedAt / question feed the page's plugin style hooks; the phone has none

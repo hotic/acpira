@@ -786,7 +786,7 @@ data class SubagentSummary(
  * One child's transcript as the `subagent` push carries it; `rev` grows with every change, so an older push never
  * replaces a newer one
  */
-data class SubagentTranscript(val rev: Int, val running: Boolean, val turns: List<Turn>)
+data class SubagentTranscript(val rev: Long, val running: Boolean, val turns: List<Turn>)
 
 /** Account metadata from the SSH engine owning this session; credentials never cross the peer wire */
 @Serializable
@@ -820,7 +820,8 @@ data class SessionView(
    */
   val earlier: ViewEarlier? = null,
   val running: Boolean = false,
-  val rev: Int? = null,
+  // 64-bit like the engine's i64: a mirrored session counts up from -2^40 (MIRROR_REV_BASE in session_manager.rs)
+  val rev: Long? = null,
   val controls: SessionControls = SessionControls(),
   val usage: Usage? = null,
   val commands: List<SlashCommand> = emptyList(),
