@@ -174,6 +174,7 @@ impl AcpSession {
         || c.pending_prompt.is_some()
         || c.queue.steering_id.is_some()
         || c.peer.detached
+        || c.late.capture.is_some()
       {
         return false;
       }
@@ -378,6 +379,7 @@ impl AcpSession {
   /// prompt response, hand a finished one to the workspace gate and let the queue move
   pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core, stop: TurnStop) {
     c.peer.detached = false;
+    c.late.open = false;
     let autonomous = std::mem::take(&mut c.peer.autonomous);
     if autonomous && stop == TurnStop::Cancelled {
       c.peer.autonomous_blocked = true;

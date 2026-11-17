@@ -7,7 +7,9 @@
 //! So a command still running at the end of a turn that ended on its own stays on its row as a background task, which
 //! keeps the row open and the process alive like any other. A watcher then asks for the session's time and reads the
 //! replay whenever it moved: a closed row settles its task, and what the replay holds past the known part runs as a
-//! detached turn. The session is held as detached while a replay is read, so a prompt sent meanwhile queues behind it
+//! detached turn. The model writes that reply step by step (thoughts, calls, words), each step moving the time, so the
+//! turn stays open across the reads and ends once, when the time has stood still. The session is held as detached
+//! while a replay is read or the turn is open, so a prompt sent meanwhile queues behind it
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,6 +30,10 @@ const SLOW_POLL: Duration = Duration::from_secs(10);
 const SLOW_AFTER: Duration = Duration::from_secs(300);
 /// How long after the last command exited its reply may still land
 const QUIET: Duration = Duration::from_secs(90);
+/// How long the session's time must stand still before an open late reply counts as over: short once the replay ends
+/// on the agent's words, as a finished reply does, long while it ends on a call or a thought
+const SETTLE: Duration = Duration::from_secs(10);
+const SETTLE_MID: Duration = Duration::from_secs(60);
 /// A watcher gives up here; a command still running keeps its row, and the next turn's end watches again
 const LIMIT: Duration = Duration::from_secs(1800);
 const LIST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -40,6 +46,8 @@ pub struct LateReply {
   pub capture: Option<Vec<Value>>,
   /// The watcher in charge; an older one retires
   pub watch: u64,
+  /// The detached turn of a late reply still being written: the watcher's own, ended by it or by any settle
+  pub open: bool,
 }
 
 enum Read {
@@ -72,6 +80,23 @@ fn tool_rows(turns: &[Turn]) -> impl Iterator<Item = &ToolCallBlock> {
     AgentBlock::ToolCall(tc) => Some(tc),
     _ => None,
   })
+}
+
+/// The calls an open late reply was still making when it was last read
+fn open_calls(c: &Core) -> Vec<String> {
+  let Some(Turn::Agent(turn)) = c.state.turns.last() else { return vec![] };
+  let open = |b: &AgentBlock| match b {
+    AgentBlock::ToolCall(tc) if matches!(tc.status, ToolStatus::InProgress | ToolStatus::Pending) && tc.async_task.is_none() => Some(tc.id.clone()),
+    _ => None,
+  };
+  turn.blocks.iter().filter_map(open).collect()
+}
+
+/// Whether the open late reply waits on a call no quiet spell may end it under: only a command goes to the background
+/// (past its `WaitMsBeforeAsync` the model moves on, and `settle` parks its row), any other call is one the model waits for
+fn waits_on_call(c: &Core) -> bool {
+  let Some(Turn::Agent(turn)) = c.state.turns.last() else { return false };
+  turn.blocks.iter().any(|b| matches!(b, AgentBlock::ToolCall(tc) if tc.kind != ToolKind::Execute && matches!(tc.status, ToolStatus::InProgress | ToolStatus::Pending) && tc.async_task.is_none()))
 }
 
 /// The calls whose background command is still running, as far as the transcript knows
@@ -144,12 +169,21 @@ impl AcpSession {
     let mut known: Option<usize> = None;
     let mut seen: Option<String> = None;
     let mut quiet: Option<Instant> = None;
+    // When the time last moved under an open late reply, and whether the replay then ended on the agent's words
+    let mut grew: Option<(Instant, bool)> = None;
     self.log("watching for late replies");
     loop {
       let (free, live) = {
-        let c = self.core.lock();
+        let mut c = self.core.lock();
+        if !self.late_current(&c, watch, proc_gen, &acp_id) {
+          // Nobody else ends a turn this watcher left open
+          if c.late.watch == watch {
+            self.release_late(&mut c, proc_gen);
+          }
+          return;
+        }
         // A prompt's turn has the session: its end starts a watcher of its own, with the replay as it is then
-        if !self.late_current(&c, watch, proc_gen, &acp_id) || c.phase.running {
+        if c.phase.running && !c.late.open {
           return;
         }
         (self.late_free(&c), !live_commands(&c).is_empty())
@@ -157,6 +191,7 @@ impl AcpSession {
       let moved = if free {
         let Some(now) = self.listed_time(&proc, &acp_id, &cwd).await else {
           self.log("late replies: the session is not in session/list, giving up");
+          self.close_late();
           return;
         };
         let moved = known.is_none() || seen.as_deref() != Some(now.as_str());
@@ -170,16 +205,30 @@ impl AcpSession {
           // The next look waits like any other: a CLI whose load moved the time must not be read in a loop
           Read::Replay(replay) => {
             let from = known.unwrap_or_else(|| self.replay_known(&replay));
-            self.apply_replay(&acp_id, &replay, from);
+            if !self.apply_replay(&acp_id, &replay, from, watch, proc_gen) {
+              return;
+            }
             known = Some(replay.len());
             quiet = None;
+            grew = Some((Instant::now(), antigravity::replay_ends_on_reply(&replay)));
           }
           // The time is asked again, and differs again, on the next round
           Read::Busy => seen = None,
           Read::Failed => return,
         }
       }
-      if live {
+      let (open, waiting) = {
+        let c = self.core.lock();
+        (c.late.open, c.late.open && waits_on_call(&c))
+      };
+      if open {
+        quiet = None;
+        // Only a look that found the time unmoved says the reply stopped growing
+        let still = free && !moved && !waiting && grew.is_none_or(|(at, on_reply)| at.elapsed() > if on_reply { SETTLE } else { SETTLE_MID });
+        if still {
+          self.close_late();
+        }
+      } else if live {
         quiet = None;
       } else if quiet.get_or_insert_with(Instant::now).elapsed() > QUIET {
         self.log("late replies: nothing more followed");
@@ -187,6 +236,7 @@ impl AcpSession {
       }
       if started.elapsed() > LIMIT {
         self.log("late replies: gave up watching");
+        self.close_late();
         return;
       }
       tokio::time::sleep(if started.elapsed() > SLOW_AFTER { SLOW_POLL } else { POLL }).await;
@@ -199,16 +249,24 @@ impl AcpSession {
     c.late.watch == watch && c.proc_gen == proc_gen && c.status == SessionStatus::Ready && c.acp_session_id.as_deref() == Some(acp_id)
   }
 
-  /// Nothing else is using the session or about to: a replay may be read
+  /// The late reply stopped growing (or can no longer be followed): its detached turn ends, once
+  fn close_late(self: &Arc<Self>) {
+    let mut c = self.core.lock();
+    if c.late.open {
+      self.end_detached(&mut c, TurnStop::EndTurn);
+      self.touch(&mut c);
+    }
+  }
+
+  /// Nothing else is using the session or about to: a replay may be read. An open late reply is the watcher's own turn
   fn late_free(&self, c: &Core) -> bool {
-    !(c.phase.running
+    !((!c.late.open && (c.phase.running || c.peer.detached))
       || c.phase.editing
       || c.phase.edit_waiting
       || c.replaying
       || c.switching
       || c.hooks.gating
       || c.ultracode.rebuilding
-      || c.peer.detached
       || c.pending_prompt.is_some()
       || c.late.capture.is_some())
   }
@@ -247,22 +305,35 @@ impl AcpSession {
     let result = proc.request_ordered("session/load", req).await;
     let mut c = self.core.lock();
     let replay = c.late.capture.take().unwrap_or_default();
+    // A stop retired this watcher while the load ran, or the session moved on: the replay is nobody's
+    let current = self.late_current(&c, watch, proc_gen, acp_id);
+    if let (Ok(_), true) = (&result, current) {
+      drop(c);
+      // Only now may the updates after the response go on: they are live ones
+      drop(result);
+      return Read::Replay(replay);
+    }
+    self.release_late(&mut c, proc_gen);
+    drop(c);
     match result {
-      Ok((_, handoff)) => {
-        drop(c);
-        // Only now may the updates after the response go on: they are live ones
-        drop(handoff);
-        Read::Replay(replay)
-      }
-      Err(e) => {
-        if c.proc_gen == proc_gen {
-          c.peer.detached = false;
-        }
-        drop(c);
-        self.log(&format!("late replies: session/load failed: {e}"));
-        self.flush_queue();
-        Read::Failed
-      }
+      Err(e) => self.log(&format!("late replies: session/load failed: {e}")),
+      Ok(_) => self.log("late replies: a replay read for a session that moved on is dropped"),
+    }
+    // A prompt held back while the replay was captured may go
+    self.flush_queue();
+    Read::Failed
+  }
+
+  /// This watcher lets go of the session: an open late reply ends, a hold taken for a read is released
+  fn release_late(self: &Arc<Self>, c: &mut Core, proc_gen: u64) {
+    if c.proc_gen != proc_gen {
+      return;
+    }
+    if c.late.open {
+      self.end_detached(c, TurnStop::EndTurn);
+      self.touch(c);
+    } else if !c.phase.running {
+      c.peer.detached = false;
     }
   }
 
@@ -277,43 +348,68 @@ impl AcpSession {
     antigravity::replay_known(replay, reply, |id| turn.blocks.iter().any(|b| matches!(b, AgentBlock::ToolCall(tc) if tc.id == id)))
   }
 
-  /// Settle the commands a replay shows closed, then run what it holds past `known` as a detached turn. Releases the
-  /// hold `read_replay` took
-  fn apply_replay(self: &Arc<Self>, acp_id: &str, replay: &[Value], known: usize) {
-    let live = live_commands(&self.core.lock());
-    for id in live {
-      let Some(row) = antigravity::replay_closed(replay, &id) else { continue };
-      // The receipt first, as the update the wire never sent; the row's status is its task's
+  /// Settle the commands a replay shows closed, then add what it holds past `known` to the late reply's detached turn,
+  /// opening it at the first of it. The turn stays open: `close_late` ends it. Releases the hold `read_replay` took
+  /// when there is no such turn. False when the watcher lost the session meanwhile (a stop): nothing is added
+  fn apply_replay(self: &Arc<Self>, acp_id: &str, replay: &[Value], known: usize, watch: u64, proc_gen: u64) -> bool {
+    let (live, calls) = {
+      let mut c = self.core.lock();
+      if !self.late_current(&c, watch, proc_gen, acp_id) {
+        self.release_late(&mut c, proc_gen);
+        drop(c);
+        self.flush_queue();
+        return false;
+      }
+      (live_commands(&c), if c.late.open { open_calls(&c) } else { vec![] })
+    };
+    // The receipt first, as the update the wire never sent
+    let close = |id: &str| {
+      let row = antigravity::replay_closed(replay, id)?;
       let mut update = row.clone();
       update["sessionUpdate"] = Value::from("tool_call_update");
       self.on_update(json!({ "sessionId": acp_id, "update": update }));
+      Some(closed_state(row))
+    };
+    for id in live {
+      // The row's status is its task's
+      let Some(state) = close(&id) else { continue };
       let mut c = self.core.lock();
-      self.async_task_update(&mut c, acp_id, &command_task(&id, Some(closed_state(row))));
+      self.async_task_update(&mut c, acp_id, &command_task(&id, Some(state)));
       self.touch(&mut c);
       self.log(&format!("background command {id} ended"));
     }
+    // A call read while it ran may be closed in place, before `known`, instead of by an update after it
+    for id in calls {
+      close(&id);
+    }
     let tail = antigravity::replay_tail(replay, known);
-    let opened = {
+    {
       let mut c = self.core.lock();
-      let open = !tail.is_empty() && matches!(c.state.turns.last(), Some(Turn::Agent(_)));
-      if open {
-        self.reopen_for_detached(&mut c);
-        self.touch(&mut c);
-      } else {
-        c.peer.detached = false;
+      // Checked again where the turn opens: the calls above ran without the lock
+      if !self.late_current(&c, watch, proc_gen, acp_id) {
+        self.release_late(&mut c, proc_gen);
+        drop(c);
+        self.flush_queue();
+        return false;
       }
-      open
-    };
-    if !opened {
-      self.flush_queue();
-      return;
+      if tail.is_empty() || !matches!(c.state.turns.last(), Some(Turn::Agent(_))) {
+        if !c.late.open {
+          c.peer.detached = false;
+          drop(c);
+          self.flush_queue();
+        }
+        return true;
+      }
+      if !c.late.open {
+        self.reopen_for_detached(&mut c);
+        c.late.open = true;
+      }
+      self.touch(&mut c);
     }
     self.log(&format!("late reply: {} update(s)", tail.len()));
     for update in tail {
       self.on_update(json!({ "sessionId": acp_id, "update": update }));
     }
-    let mut c = self.core.lock();
-    self.end_detached(&mut c, TurnStop::EndTurn);
-    self.touch(&mut c);
+    true
   }
 }

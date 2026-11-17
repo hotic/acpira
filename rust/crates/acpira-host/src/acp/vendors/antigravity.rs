@@ -120,6 +120,12 @@ pub fn replay_tail(replay: &[Value], known: usize) -> Vec<Value> {
   replay.iter().skip(known).filter(|u| REPLAY_AGENT_KINDS.contains(&kind_of(u))).cloned().collect()
 }
 
+/// Whether a replay ends on the agent's words, as a finished reply does: one still being written ends on a call or a
+/// thought
+pub fn replay_ends_on_reply(replay: &[Value]) -> bool {
+  replay.iter().rev().find(|u| REPLAY_AGENT_KINDS.contains(&kind_of(u))).is_some_and(|u| kind_of(u) == "agent_message_chunk")
+}
+
 static RECEIPT: LazyLock<Regex> = LazyLock::new(|| {
   acpira_shared::re::compile(r"(?s)\A(?:Created At: [^\n]*\n)?(?:Completed At: [^\n]*\n)?Command exited with code (-?\d+)\.\n\nCommand output:\n?(.*)\z")
 });

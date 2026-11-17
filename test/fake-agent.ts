@@ -177,14 +177,18 @@ const sessionDir = process.env.FAKE_SESSION_DIR;
 // FAKE_LATE_REPLY=<ms> → agy acp 1.5.9's background command: a "late-command" prompt leaves its `run_command` row
 // in_progress and ends the turn. The command exits <ms> later and the model's reply to that is stored <ms> after it, with
 // nothing sent for either: session/list moves the session's updatedAt each time, and session/load on the live process
-// replays the conversation as it stands (the row closed with its receipt, then the reply)
+// replays the conversation as it stands (the row closed with its receipt, then the reply). A "late-steps" prompt has the
+// model write that reply in steps, the time moving at each: a thought and a call still running, then (two <ms> later,
+// so a client polling sees the step between) the call closed and the words
 const lateMs = Number(process.env.FAKE_LATE_REPLY) || 0;
 // When each session's late-command turn ended
 const lateTurns = new Map<string, number>();
-// Where such a session stands: its command running (0), exited (1), exited and answered (2)
+const lateSteps = new Set<string>();
+// Where such a session stands: its command running (0), exited (1), exited and answered (2); with steps, 2 is the reply
+// begun and 3 the reply whole
 const lateStage = (sid: string): number => {
   const ms = Date.now() - (lateTurns.get(sid) ?? Date.now());
-  return ms >= lateMs * 2 ? 2 : ms >= lateMs ? 1 : 0;
+  return lateSteps.has(sid) && ms >= lateMs * 4 ? 3 : ms >= lateMs * 2 ? 2 : ms >= lateMs ? 1 : 0;
 };
 const lateCommand = (done: boolean): acp.SessionUpdate => ({
   sessionUpdate: 'tool_call', toolCallId: 'late-1', title: 'sleep 1; echo late-done', kind: 'execute', status: done ? 'completed' : 'in_progress',
@@ -474,7 +478,12 @@ const app = acp.agent({ name: 'fake-agent' })
       await replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started it.' } });
       if (stage > 1) {
         await replay({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'The command exited.' } });
-        await replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Late reply: late-done' } });
+        if (lateSteps.has(params.sessionId)) {
+          await replay({ sessionUpdate: 'tool_call', toolCallId: 'late-2', title: 'Read out.txt', kind: 'read', status: stage > 2 ? 'completed' : 'in_progress' });
+        }
+        if (stage > 2 || !lateSteps.has(params.sessionId)) {
+          await replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Late reply: late-done' } });
+        }
       }
       return {};
     }
@@ -1168,7 +1177,8 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
 
-    if (lateMs && text === 'late-command') {
+    if (lateMs && (text === 'late-command' || text === 'late-steps')) {
+      if (text === 'late-steps') lateSteps.add(sid);
       await send(lateCommand(false));
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started ' } });
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'it.' } });
