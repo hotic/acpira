@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../composerControls';
+import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, sidekickChannel, sidekickClis, thoughtCorrection } from '../composerControls';
 import { groupModels } from '../models';
 import type { ConfigControl } from '../transcript';
 
@@ -223,5 +223,21 @@ describe('shared composer controls', () => {
       options: ['low', 'medium', 'high', 'xhigh', 'max'].map(id => ({ id, name: id[0]!.toUpperCase() + id.slice(1) })) };
     expect(chipTags(cur, cur?.variants[0], [thought], [], 'Standard').map(tag => tag.label)).toEqual(['XHigh']);
     expect(chipTags(cur, cur?.variants[0], [], [], 'Standard').map(tag => tag.label)).toEqual(['Medium']);
+  });
+
+  it('files host sidekick options by CLI, and by channel inside one', () => {
+    const cli = (id: string, name: string) => ({ id, name });
+    const host = [
+      { id: 'none', name: 'None' },
+      { id: 'claude/opus', name: 'Opus 5.5', description: 'Claude Code', group: cli('claude', 'Claude Code') },
+      { id: 'acpira/or/opus', name: 'Opus 5.5', description: 'Acpira', group: cli('acpira', 'Acpira'), source: { id: 'or', name: 'OpenRouter', kind: 'custom' as const } },
+      { id: 'acpira/ds/flash', name: 'DeepSeek V4.1 Flash', description: 'Acpira', group: cli('acpira', 'Acpira'), source: { id: 'ds', name: 'DeepSeek', kind: 'custom' as const } },
+    ];
+    expect(sidekickClis(host).map(c => [c.id, c.options.length])).toEqual([['claude', 1], ['acpira', 2]]);
+    // The host's description is the CLI, never a channel; the built-in agent's own select puts its provider there
+    expect(host.map(sidekickChannel)).toEqual([undefined, undefined, 'OpenRouter', 'DeepSeek']);
+    const own = [{ id: 'none', name: 'None' }, { id: 'ds/flash', name: 'DeepSeek V4.1 Flash', description: 'DeepSeek' }];
+    expect(sidekickClis(own)).toEqual([]);
+    expect(sidekickChannel(own[1]!)).toBe('DeepSeek');
   });
 });

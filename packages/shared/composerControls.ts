@@ -171,6 +171,30 @@ export const SIDEKICK_EFFORT_CATEGORY = '_sidekick_effort';
 // The sidekick's Fast switch, offered while the sidekick's model has a fast tier (custom category, so it is never the lead's)
 export const SIDEKICK_FAST_CATEGORY = '_sidekick_fast';
 
+// One CLI a sidekick can run in, with its models in the select's order
+export interface SidekickCli { id: string; name: string; options: SessionOption[] }
+
+// The sidekick select's models by the CLI each runs in: the host's select (host_sidekick.rs) files every option under its
+// CLI in `group`, the session's own CLI first. None and options without a CLI (the built-in agent's own select) stay out,
+// so a list with fewer than two CLIs has no CLI to choose between
+export function sidekickClis(options: SessionOption[]): SidekickCli[] {
+  const clis = new Map<string, SidekickCli>();
+  for (const o of options) {
+    if (o.id === NO_SIDEKICK || !o.group) continue;
+    const cli = clis.get(o.group.id) ?? { id: o.group.id, name: o.group.name, options: [] };
+    cli.options.push(o);
+    clis.set(cli.id, cli);
+  }
+  return [...clis.values()];
+}
+
+// The channel a sidekick option comes through, the label its rows are filed under inside one CLI: its source; on the
+// built-in agent's own select (no CLI in `group`) the provider it puts in `description`. The host's select keeps the
+// CLI's name in `description`, which is no channel
+export function sidekickChannel(o: SessionOption): string | undefined {
+  return o.source?.name ?? (o.group ? undefined : o.description);
+}
+
 // A level as the folded side of the model panel's lead / sidekick switch shows it: the narrow chip's short form
 export function levelShort(label: string): string {
   return LEVEL_SHORT[label] ?? label;
