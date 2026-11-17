@@ -1,9 +1,9 @@
-import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Fragment, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Ban, Brain, Check, ChevronRight, Plus, Zap } from 'lucide-react';
 import type { ConfigControl } from '@acpira/shared/transcript';
 import { shapeFor, type ModelMemory, type ModelShapes } from '@acpira/shared/modelShapes';
 import { findFusionVariant, findVariant, fusionLabel, fusionSidekick, groupModels, modelBrand, optionBrand, parseModelName, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
-import { chipTags, composerControls, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
+import { chipTags, composerControls, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible, sidekickChannel, sidekickClis, type SidekickCli } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
 import { Chip, ChipTag, CORNER_CHIP } from '../ui/Button';
 import { SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
@@ -14,12 +14,14 @@ import { Command, SEARCH_FROM } from '../ui/Command';
 import { RadioGroup } from '../ui/RadioGroup';
 import { OptionContent } from '../ui/Panel';
 import { optionClass } from '../ui/DropdownMenu';
+import { AgentMark } from './AgentMark';
 import { ModelMark } from './ModelMark';
 import { PairSwitch, PairViews, type PairRole } from './SidekickPair';
 import { brandStyle } from './subagents/SidekickRelay';
 import { useFitStage, type SqueezeLevel } from './useFitStage';
 import { Collapsible } from '../ui/Collapsible';
 import { cssTimeVar } from '../ui/cssTime';
+import { useScrollFade } from '../ui/useScrollFade';
 
 
 interface OptionMenuProps {
@@ -450,7 +452,6 @@ function grouped<T>(groups: SourceGroup<T>[] | undefined, row: (item: T) => Reac
   );
 }
 type SidekickOption = ConfigControl['options'][number];
-const sidekickSource = (o: SidekickOption) => o.source?.name ?? o.group?.name ?? o.description;
 // A family's source as a category. An id that only tells two equally named models apart is no category: it stays on the row
 const familySource = (f: ModelFamily) => (f.source && !f.variants.some(v => v.id === f.source) ? f.source : undefined);
 
@@ -637,10 +638,13 @@ function FusionParams({ family: f, variant: v, onSelect }: { family: ModelFamily
   );
 }
 
-// The sidekick side: none, or any model the sidekick select offers, with sources grouped like the lead. Every row carries
-// the level and Fast its model would run with (the picked one its live selects, the others `shapes`, the view's
-// sidekickShapes) and opens them in the menu beside it, like a lead row: a level set on another row picks that model with
-// it. A pick keeps the panel open, since the level is set from that row. The side fills the lead's height (`.pair-view`)
+// The sidekick side: none, or any model the sidekick select offers. Every row carries the level and Fast its model would
+// run with (the picked one its live selects, the others `shapes`, the view's sidekickShapes) and opens them in the menu
+// beside it, like a lead row: a level set on another row picks that model with it. A pick keeps the panel open, since
+// the level is set from that row. The side fills the lead's height (`.pair-view`).
+// Models from two or more CLIs (the host's select) get a rail of CLI marks down the left edge: the list holds the open
+// CLI's models, filed by channel, so a group label always names a channel, never a CLI. A query searches every CLI, each
+// one's matches under its mark and, inside it, their channel (picked in lab/sidekick-source-pick.preview.html)
 function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig }: {
   control: ConfigControl; effort?: ConfigControl; fast?: ConfigControl; shapes?: ModelShapes; onSetConfig: (id: string, value: string, also?: Record<string, string>) => void;
 }) {
@@ -648,6 +652,13 @@ function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig
   const [menu, setMenu] = useState<{ id: string; row: HTMLElement }>();
   const list = useRef<HTMLDivElement>(null);
   const picked = cur && cur.id !== NO_SIDEKICK ? cur : undefined;
+  const clis = useMemo(() => sidekickClis(control.options), [control.options]);
+  const railed = clis.length > 1;
+  // Every open starts on the picked sidekick's CLI, else the session's own (the select lists it first)
+  const [openCli, setOpenCli] = useState(() => picked?.group?.id);
+  const open = clis.find(c => c.id === openCli) ?? clis.find(c => c.id === picked?.group?.id) ?? clis[0];
+  const [query, setQuery] = useState('');
+  const searching = railed && query.trim() !== '';
   const rowOf = (o: SidekickOption): { family: ModelFamily; view: FamilyView } | undefined => {
     if (o.id === NO_SIDEKICK) return;
     const variant: ModelVariant = { id: o.id, name: o.name, effort: '', fast: false, long: false };
@@ -661,7 +672,16 @@ function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig
     return { family, view: { variant, reasoning: split.sidekickEffort.filter(reasoningVisible), modelConfig: split.sidekickFast, live: false, picks } };
   };
   const rows = new Map(control.options.map(o => [o.id, rowOf(o)]));
-  const groups = useMemo(() => bySource(control.options, sidekickSource), [control.options]);
+  const items = useMemo((): SidekickOption[] | SidekickGroup[] => {
+    const none = control.options.filter(o => o.id === NO_SIDEKICK);
+    if (!railed || !open) return bySource(control.options, sidekickChannel) ?? control.options;
+    if (!searching) {
+      const shown = [...none, ...open.options];
+      return bySource(shown, sidekickChannel) ?? shown;
+    }
+    return [{ value: '', items: none }, ...clis.flatMap(cli => (bySource(cli.options, sidekickChannel) ?? [{ value: '', items: cli.options }])
+      .map(g => ({ value: `${cli.id}/${g.value}`, items: g.items, cli, channel: g.value || undefined })))];
+  }, [control.options, railed, open, searching, clis]);
   const closeMenu = () => {
     setMenu(undefined);
     requestAnimationFrame(() => (list.current?.querySelector<HTMLElement>('input') ?? list.current?.querySelector<HTMLElement>('[role="listbox"]'))?.focus({ preventScroll: true }));
@@ -673,42 +693,103 @@ function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig
     if (menu.id === picked?.id) onSetConfig(id, value);
     else onSetConfig(control.id, menu.id, { [id]: value });
   };
+  const openOn = (cli: string | undefined) => {
+    setMenu(undefined);
+    setQuery('');
+    setOpenCli(cli);
+  };
+  const row = (o: SidekickOption) => {
+    const r = rows.get(o.id);
+    const params = !!r && viewHasParams(r.family, r.view);
+    return <Command.Item key={o.id} value={o} data-family={o.id} data-has-params={params ? '' : undefined} data-params={menu?.id === o.id ? '' : undefined}
+      // A pick found by a query lands the list on its CLI
+      onClick={() => { onSetConfig(control.id, o.id); if (searching && o.group) openOn(o.group.id); }} className="group/row">
+      {o.id === NO_SIDEKICK
+        ? <OptionContent icon={<Ban className="text-fg-3" strokeWidth={1.75} />} checked={o === cur} checkSlot={!!cur}>{t('composer.sidekickNone')}</OptionContent>
+        : <OptionContent icon={<ModelMark family={o.name} brand={optionBrand(o)} />}
+          trail={<RowTrail checked={o === cur} label={params ? t('composer.modelParams', { model: o.name }) : undefined}
+            onOpen={params ? el => setMenu(m => (m?.id === o.id ? undefined : { id: o.id, row: el })) : undefined} />}>
+          <span className="flex min-w-0 items-baseline gap-1"><span className="truncate">{o.name}</span>{r && <RowParams family={r.family} view={r.view} />}</span>
+        </OptionContent>}
+    </Command.Item>;
+  };
+  const searchable = control.options.length >= SEARCH_FROM;
+  const body = <Command.List searchable={searchable} fill>
+    {searching ? searchGroup(row) : grouped(isGroups(items) ? items : undefined, row)}
+  </Command.List>;
   return <>
     <div ref={list} className="flex min-h-0 flex-1 flex-col"
       onKeyDown={e => {
         const input = e.target instanceof HTMLInputElement ? e.target : undefined;
         if (e.key !== 'ArrowRight' || (input && input.selectionStart !== input.value.length)) return;
-        const row = list.current?.querySelector<HTMLElement>('[data-highlighted][data-family][data-has-params]');
-        if (!row) return;
+        const el = list.current?.querySelector<HTMLElement>('[data-highlighted][data-family][data-has-params]');
+        if (!el) return;
         e.preventDefault();
-        setMenu({ id: row.dataset.family!, row });
+        setMenu({ id: el.dataset.family!, row: el });
       }}>
-      <Command.Root<SidekickOption> items={groups ?? control.options} value={cur ?? null} itemToStringValue={o => o.id} isItemEqualToValue={(a, b) => a.id === b.id}
-        itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, sidekickSource(o)].filter(Boolean).join(' '))}>
-        <Command.Input visible={control.options.length >= SEARCH_FROM} />
-        <Command.Empty />
-        <Command.List searchable={control.options.length >= SEARCH_FROM} fill>
-          {grouped(groups, (o: SidekickOption) => {
-            const row = rows.get(o.id);
-            const params = !!row && viewHasParams(row.family, row.view);
-            return <Command.Item key={o.id} value={o} data-family={o.id} data-has-params={params ? '' : undefined} data-params={menu?.id === o.id ? '' : undefined}
-              onClick={() => onSetConfig(control.id, o.id)} className="group/row">
-              {o.id === NO_SIDEKICK
-                ? <OptionContent icon={<Ban className="text-fg-3" strokeWidth={1.75} />} checked={o === cur} checkSlot={!!cur}>{t('composer.sidekickNone')}</OptionContent>
-                : <OptionContent icon={<ModelMark family={o.name} brand={optionBrand(o)} />}
-                  trail={<RowTrail checked={o === cur} label={params ? t('composer.modelParams', { model: o.name }) : undefined}
-                    onOpen={params ? el => setMenu(m => (m?.id === o.id ? undefined : { id: o.id, row: el })) : undefined} />}>
-                  <span className="flex min-w-0 items-baseline gap-1"><span className="truncate">{o.name}</span>{row && <RowParams family={row.family} view={row.view} />}</span>
-                </OptionContent>}
-            </Command.Item>;
-          })}
-        </Command.List>
+      <Command.Root<SidekickOption> items={items} value={cur ?? null} itemToStringValue={o => o.id} isItemEqualToValue={(a, b) => a.id === b.id}
+        inputValue={query} onInputValueChange={setQuery}
+        itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, sidekickChannel(o), o.group?.name].filter(Boolean).join(' '))}>
+        <Command.Input visible={searchable} />
+        {railed && open
+          ? <div className="flex min-h-0 flex-1">
+            <CliRail clis={clis} open={searching ? undefined : open.id} onOpen={openOn} />
+            <div className="flex min-w-0 flex-1 flex-col"><Command.Empty />{body}</div>
+          </div>
+          : <><Command.Empty />{body}</>}
       </Command.Root>
     </div>
     {menu && opened && menu.row.isConnected && <ParamsMenu anchor={menu.row} onClose={closeMenu}>
       <FamilyParams family={opened.family} view={opened.view} onSelect={() => {}} setParam={setParam} />
     </ParamsMenu>}
   </>;
+}
+
+// A group of the sidekick list: a channel's rows; while a query searches every CLI, also the CLI they run in
+interface SidekickGroup extends SourceGroup<SidekickOption> { cli?: SidekickCli; channel?: string }
+const isGroups = (items: SidekickOption[] | SidekickGroup[]): items is SidekickGroup[] => !!items[0] && 'items' in items[0];
+
+// The CLIs down the sidekick list's left edge, one mark per row so each lines up with a row beside it; the open one is
+// lit, none while a query searches them all. It scrolls on its own, with no bar, however many CLIs there are
+function CliRail({ clis, open, onOpen }: { clis: SidekickCli[]; open?: string; onOpen: (cli: string) => void }) {
+  const rail = useRef<HTMLDivElement>(null);
+  const fade = useScrollFade<HTMLDivElement>();
+  const scroller = useCallback((el: HTMLDivElement | null) => { rail.current = el; return fade(el); }, [fade]);
+  // The open CLI in view when the panel opens, scrolling the rail alone (scrollIntoView would move the conversation too)
+  useLayoutEffect(() => {
+    const el = rail.current, on = el?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!el || !on) return;
+    const er = el.getBoundingClientRect(), or = on.getBoundingClientRect();
+    if (or.top < er.top || or.bottom > er.bottom) el.scrollTop += or.top - er.top - (er.height - or.height) / 2;
+  }, []);
+  // A scrolled rail fades the edge that still hides marks instead of slicing one in half; the rule sits on the outer box
+  // so it stays whole while the marks fade
+  return <div className="mr-1 flex shrink-0 border-r border-line pr-1">
+    <div ref={scroller} role="group" aria-label={t('common.agent')} className="scroll-none scroll-fade flex flex-col overflow-y-auto">
+      {clis.map(cli => {
+        const on = cli.id === open;
+        return <button key={cli.id} type="button" title={cli.name} aria-label={cli.name} aria-pressed={on} onClick={() => onOpen(cli.id)}
+          className={cn('flex size-row shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
+            on ? 'bg-active text-fg-1' : 'text-fg-3 hover:text-fg-1')}>
+          <AgentMark id={cli.id} name={cli.name} />
+        </button>;
+      })}
+    </div>
+  </div>;
+}
+
+// A query's matches across every CLI, one group per CLI and channel under one label: the CLI's mark and name, then the
+// channel in the fainter ink. No second, stepped-in label line: a bare channel name between rows read as a broken row
+function searchGroup(row: (o: SidekickOption) => ReactNode) {
+  return (g: SidekickGroup) => (
+    <Command.Group key={g.value} items={g.items}>
+      {g.cli && <Command.GroupLabel className="flex items-center gap-2 pl-2">
+        <span className="flex size-icon shrink-0 items-center justify-center [&_svg]:size-3"><AgentMark id={g.cli.id} name={g.cli.name} /></span>
+        <span className="flex min-w-0 items-baseline gap-1.5"><span className="shrink-0 text-fg-2">{g.cli.name}</span>{g.channel && <span className="truncate">{g.channel}</span>}</span>
+      </Command.GroupLabel>}
+      <Command.Collection>{row}</Command.Collection>
+    </Command.Group>
+  );
 }
 
 // Params of the current family as a small form under the list: reasoning levels as one segmented scale (every level spelled out, one click),

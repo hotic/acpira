@@ -8,7 +8,7 @@ use acpira_shared::composer_controls::is_reasoning_control;
 use acpira_shared::model_shapes::{ModelShapes, is_model_control, shape_for};
 use acpira_shared::models::parse_fusion_name;
 use acpira_shared::subagents::SIDEKICK_ID;
-use acpira_shared::transcript::{ConfigControl, ControlType, SessionOption};
+use acpira_shared::transcript::{ConfigControl, ControlType, OptionGroup, OptionSource, SessionOption, SourceKind};
 
 use crate::acp::agents::registry::SELF_AGENT_ID;
 use crate::acp::session::relay::personas::{
@@ -83,9 +83,22 @@ fn effort_of<'a>(sources: &'a [SidekickSource], pick: &str) -> Option<&'a Config
   shape_for(src.shapes.as_ref(), &src.model, model)?.iter().find(|c| is_reasoning_control(c) && !c.options.is_empty())
 }
 
-/// The sidekick select over every source's models (the session's own CLI first, each option filed under its CLI's
-/// name), and the effort select of the picked model where its CLI has one. A pick no source lists any more stays
-/// offered, so a stale model list never drops it
+/// The CLI an option of the host's select runs in, as its `group` (the agent id and the CLI's name): clients file the
+/// rows by CLI first and by channel (`source`) inside one
+fn cli_group(agent: &str, name: &str) -> OptionGroup {
+  OptionGroup { id: agent.to_owned(), name: name.to_owned() }
+}
+
+/// The channel a CLI's model comes through, as that CLI's own list shows it: its source, else its ACP option group
+/// (the host's select takes `group` for the CLI)
+fn channel(o: &SessionOption) -> Option<OptionSource> {
+  o.source.clone().or_else(|| o.group.as_ref().map(|g| OptionSource { id: g.id.clone(), name: g.name.clone(), kind: SourceKind::Official }))
+}
+
+/// The sidekick select over every source's models (the session's own CLI first, each option filed under its CLI and,
+/// inside it, its channel), and the effort select of the picked model where its CLI has one. A pick no source lists
+/// any more stays offered, so a stale model list never drops it. `description` keeps the CLI's name for clients that
+/// file by it alone
 pub(crate) fn build(own: &str, sources: &[SidekickSource], pick: Option<&str>, effort: Option<&str>) -> Vec<ConfigControl> {
   let mut options = vec![SessionOption { id: NO_SIDEKICK.into(), name: "None".into(), ..Default::default() }];
   let ordered = sources.iter().filter(|s| s.agent == own).chain(sources.iter().filter(|s| s.agent != own));
@@ -94,13 +107,21 @@ pub(crate) fn build(own: &str, sources: &[SidekickSource], pick: Option<&str>, e
       id: format!("{}/{}", s.agent, o.id),
       name: o.name.clone(),
       description: Some(s.name.clone()),
+      group: Some(cli_group(&s.agent, &s.name)),
+      source: channel(o),
       ..Default::default()
     }));
   }
   if let Some(p) = pick.filter(|p| !options.iter().any(|o| o.id == *p))
     && let Some((agent, model)) = split_pick(p)
   {
-    options.push(SessionOption { id: p.to_owned(), name: model.to_owned(), description: Some(agent.to_owned()), ..Default::default() });
+    options.push(SessionOption {
+      id: p.to_owned(),
+      name: model.to_owned(),
+      description: Some(agent.to_owned()),
+      group: Some(cli_group(agent, agent)),
+      ..Default::default()
+    });
   }
   let value = pick.filter(|p| options.iter().any(|o| o.id == *p)).unwrap_or(NO_SIDEKICK);
   let mut out = vec![ConfigControl {
@@ -365,8 +386,24 @@ mod tests {
     let ids: Vec<&str> = built[0].options.iter().map(|o| o.id.as_str()).collect();
     assert_eq!(ids, ["none", "claude/haiku", "antigravity/flash"]);
     assert_eq!(built[0].options[2].description.as_deref(), Some("Antigravity"));
+    assert_eq!(built[0].options[2].group, Some(cli_group("antigravity", "Antigravity")));
     assert_eq!(built[0].value.as_deref(), Some("antigravity/flash"));
     assert_eq!(build("claude", &sources, None, None)[0].value.as_deref(), Some("none"));
+  }
+
+  #[test]
+  fn a_model_keeps_the_channel_its_cli_lists_it_under() {
+    let mut acpira = source("acpira", "Acpira", &[("openrouter/opus", "Opus 5.5"), ("deepseek/flash", "DeepSeek V4.1 Flash")], None);
+    acpira.model.options[0].source = Some(OptionSource { id: "openrouter".into(), name: "OpenRouter".into(), kind: SourceKind::Custom });
+    // An ACP option group stands in for a source the CLI does not mark
+    acpira.model.options[1].group = Some(OptionGroup { id: "deepseek".into(), name: "DeepSeek".into() });
+    let built = build("claude", &[acpira, source("claude", "Claude Code", &[("opus", "Opus 5.5")], None)], None, None);
+    let opus = |id: &str| built[0].options.iter().find(|o| o.id == id).unwrap().clone();
+    assert_eq!(opus("acpira/openrouter/opus").source.map(|s| s.name).as_deref(), Some("OpenRouter"));
+    assert_eq!(opus("acpira/openrouter/opus").group, Some(cli_group("acpira", "Acpira")));
+    assert_eq!(opus("acpira/deepseek/flash").source.map(|s| s.name).as_deref(), Some("DeepSeek"));
+    assert_eq!(opus("claude/opus").source, None);
+    assert_eq!(opus("claude/opus").group, Some(cli_group("claude", "Claude Code")));
   }
 
   #[test]
