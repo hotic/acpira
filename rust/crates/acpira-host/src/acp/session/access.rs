@@ -274,20 +274,20 @@ mod tests {
   }
 
   #[test]
-  fn antigravity_full_access_rides_on_auto_with_host_approval() {
+  fn antigravity_full_access_rides_on_accept_edits_with_host_approval() {
     let levels = agy();
     let mut c = modes(&["default", "accept-edits", "auto", "plan"], "default");
     let mut st = AccessState::default();
     split(&levels, &mut c, &mut st);
     assert_eq!(approval(&c), (vec!["ask".into(), "auto-edit".into(), "auto".into(), "full".into()], Some("ask".into())));
     st.level = Some("full".into());
-    assert_eq!(wire_for(&levels, &st, REST), ("auto".into(), true));
-    // The CLI echoing `auto` does not take full access away
-    adopt_wire(&levels, &mut st, "auto");
+    assert_eq!(wire_for(&levels, &st, REST), ("accept-edits".into(), true));
+    // The CLI echoing `accept-edits` does not take full access away
+    adopt_wire(&levels, &mut st, "accept-edits");
     assert_eq!(st.level.as_deref(), Some("full"));
-    st.level = Some("auto-edit".into());
-    adopt_wire(&levels, &mut st, "auto");
-    assert_eq!(st.level.as_deref(), Some("auto"));
+    st.level = Some("auto".into());
+    adopt_wire(&levels, &mut st, "accept-edits");
+    assert_eq!(st.level.as_deref(), Some("auto-edit"));
   }
 
   #[test]

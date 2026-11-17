@@ -363,8 +363,9 @@ pub fn antigravity() -> AgentDef {
   AgentDef {
     login: login("agy", &["acp", "--login"]),
     // agy 1.5.9 has no full-access mode over ACP (`--dangerously-skip-permissions` is a process flag): full access runs
-    // in `auto` with the host approving what still asks
-    access: access(&[("ask", "default", false), ("auto-edit", "accept-edits", false), ("auto", "auto", false), ("full", "auto", true)]),
+    // in `accept-edits` with the host approving every command. Not `auto`: that mode never asks, runs commands in agy's
+    // own sandbox (a repository's `.git` is read-only, so `git pull` / `commit` fail) and refuses a sandbox bypass itself
+    access: access(&[("ask", "default", false), ("auto-edit", "accept-edits", false), ("auto", "auto", false), ("full", "accept-edits", true)]),
     install: install(
       "curl -fsSL https://antigravity.google/cli/install.sh | bash",
       "irm https://antigravity.google/cli/install.ps1 | iex",
