@@ -62,10 +62,10 @@ struct NewSessionScreen: View {
                          recent: model.projects, sections: model.sections, chat: model.startsChat(draft.cwd), onAgent: pickAgent,
                          onProject: { draft.cwd = $0 }, onAdd: { model.addProject($0); draft.cwd = $0 },
                          // An empty folder is a chat (AppModel.startsChat); offered where the engine keeps chats
-                         onChat: model.chatRoot == nil ? nil : { draft.cwd = "" }, ring: $ring)
+                         onChat: model.chatRoot == nil ? nil : { draft.cwd = "" }, ring: $ring, aside: picking)
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.page)).maxY } action: { heroBottom = $0 }
             .opacity(covered || picking ? 0 : 1)
-            .allowsHitTesting(!covered)
+            .allowsHitTesting(!covered && !picking)
             .animation(motion ? .easeOut(duration: Motion.durOpen) : nil, value: covered)
             // Gone as the beans leave the chip, back only as they get home (the dim's own timing)
             .animation(motion ? picking ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut : nil, value: picking)
@@ -98,6 +98,8 @@ struct NewSessionScreen: View {
     // Animated, so the bar's items leave and come back with the hero rather than at once (`barAside`)
     .onPreferenceChange(ComposerPickerKey.self) { now in
       withAnimation(motion ? now ? .easeOut(duration: Motion.durOpen) : Motion.gooDimOut : nil) { picking = now }
+      // Two fingers can open a picker and the agent ring in the same frame: the picker wins
+      if now { ring = false }
     }
     .onAppear { if let initialDraft, text.isEmpty { text = initialDraft } }
     .ignoresSafeArea(.container, edges: .bottom)
@@ -207,6 +209,8 @@ struct NewSessionHero: View {
   /// Turns the draft into a chat; nil where the engine keeps no chats
   var onChat: (() -> Void)?
   @Binding var ring: Bool
+  /// A composer picker is out: the folder menu or popover a same-frame tap opened alongside it is put away
+  var aside = false
   /// The name and the folder are hidden while the ring is out and until AgentRing lets them back
   @State private var veil = false
   /// The agent picked on the ring while its mark flies into the centre (AgentRing): the name already shows it, so
@@ -259,6 +263,7 @@ struct NewSessionHero: View {
                          onAdd: { folders = false; adding = true },
                          onChat: onChat.map { chosen in { folders = false; chosen() } })
         }
+        .onChange(of: aside) { _, now in if now { folders = false } }
         .task {
           // `-popup folder`: the popover open on launch (screenshots)
           guard initialPopup == "folder" else { return }
@@ -274,6 +279,9 @@ struct NewSessionHero: View {
       // Keep local before remote and Add last, even when the system opens the menu upward.
       .menuOrder(.fixed)
       .buttonStyle(.plain)
+      // A SwiftUI menu cannot be closed from code, but a new identity takes its button out of the window and UIKit
+      // dismisses the menu with it
+      .id(aside)
     }
   }
 
