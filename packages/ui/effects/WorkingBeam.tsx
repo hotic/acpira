@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Beam } from './Beam';
 import { useAppearance } from '../appearance';
+import { useAttended } from './attention';
 import { BEAM_SIZE, BEAM_STRENGTH } from './presets';
 
 export interface WorkingBeamProps {
@@ -17,9 +18,13 @@ export function WorkingBeam({ active, theme, field, children }: WorkingBeamProps
   const hostRef = useRef<HTMLDivElement>(null);
   const [radius, setRadius] = useState(12);
 
+  const enabled = beam !== 'none' && motion !== 'none';
+  // The beam turns for as long as it is lit, so it is lit only while someone is there to see it (effects/attention)
+  const attended = useAttended(enabled && active);
+
   useLayoutEffect(() => {
     const el = hostRef.current?.firstElementChild as HTMLElement | null;
-    if (!el) return;
+    if (!el || !enabled) return;
     const r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
     let lastH = -1;
     const measure = (entries?: ResizeObserverEntry[]) => {
@@ -32,9 +37,8 @@ export function WorkingBeam({ active, theme, field, children }: WorkingBeamProps
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [beam, field]);
+  }, [enabled, beam, field]);
 
-  const enabled = beam !== 'none' && motion !== 'none';
   return (
     <div ref={hostRef} className="relative block w-full">
       {children}
@@ -44,13 +48,15 @@ export function WorkingBeam({ active, theme, field, children }: WorkingBeamProps
       {enabled && (
         <Beam
           key={beam}
+          // A plugin style hook (STYLE_HOOKS): `display: none` on it stops the beam's animations with it
+          data-part="composer-beam"
           className="pointer-events-none absolute! inset-0 contain-strict transform-gpu backface-hidden"
           size={BEAM_SIZE[beam]}
           colorVariant={beamColor}
           staticColors={beamColor === 'mono'}
           theme={theme}
           borderRadius={radius}
-          active={active}
+          active={active && attended}
           strength={BEAM_STRENGTH[motion]}
         >
           <div className="size-full" />
