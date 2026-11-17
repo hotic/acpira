@@ -132,7 +132,7 @@ class SessionViews {
     val onScreen = current?.takeIf { it.id == p.id }
     applySessionPatch(onScreen ?: views[p.id], p)?.let { return SessionPush.Show(show(newer(onScreen, it))) }
     val rev = onScreen?.rev
-    if (rev != null && rev >= (p.view.rev ?: 0)) return SessionPush.Stale
+    if (rev != null && rev >= (p.view.rev ?: 0L)) return SessionPush.Stale
     drop(p.id)
     return SessionPush.Unknown
   }

@@ -114,6 +114,9 @@ fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.tak
 /** An int field of a raw object, or null */
 fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
 
+/** A 64-bit integer field of a raw object (revs are the engine's i64), or null */
+fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+
 /** A boolean field of a raw object, or null */
 fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
 

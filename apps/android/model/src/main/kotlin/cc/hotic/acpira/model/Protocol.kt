@@ -353,7 +353,7 @@ data class InitState(
 @Serializable
 data class SessionPatch(
   val id: String,
-  val base: Int,
+  val base: Long,
   val view: SessionView,
   val keep: Int,
   val turns: List<Turn> = emptyList(),
@@ -465,7 +465,7 @@ sealed interface HostMsg {
   /** The answer to searchSessions with the same seq; a lower seq is stale */
   data class SessionHits(val seq: Int, val hits: List<SessionHit>) : HostMsg
   /** One observed subagent's transcript, pushed to the viewer that asked for it; rev grows with every change */
-  data class Subagent(val sessionId: String, val subagentId: String, val rev: Int, val running: Boolean, val turns: List<Turn>) : HostMsg {
+  data class Subagent(val sessionId: String, val subagentId: String, val rev: Long, val running: Boolean, val turns: List<Turn>) : HostMsg {
     val transcript: SubagentTranscript get() = SubagentTranscript(rev, running, turns)
   }
   /** The answer to searchFiles with the same seq */
@@ -562,7 +562,7 @@ sealed interface HostMsg {
         )
         "sessionHits" -> SessionHits(seq, list("hits", SessionHit.serializer()))
         "subagent" -> Subagent(
-          obj.string("sessionId") ?: "", obj.string("subagentId") ?: "", obj.int("rev") ?: 0, obj.bool("running") ?: false,
+          obj.string("sessionId") ?: "", obj.string("subagentId") ?: "", obj.long("rev") ?: 0, obj.bool("running") ?: false,
           list("turns", Turn.serializer()),
         )
         "files" -> Files(seq, list("files", FileHit.serializer()))

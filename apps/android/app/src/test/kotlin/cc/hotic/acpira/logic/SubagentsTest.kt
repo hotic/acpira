@@ -95,11 +95,11 @@ class SubagentsTest {
 
   @Test fun anOlderPushNeverReplacesANewerOne() {
     var feed = SubagentFeed()
-    val kept = listOf(2, 1, 2, 3).map { rev ->
+    val kept = listOf(2L, 1L, 2L, 3L).map { rev ->
       feed.receive("s", "a", SubagentTranscript(rev, true, emptyList()))?.also { feed = it } != null
     }
     assertEquals(listOf(true, false, false, true), kept)
-    assertEquals(3, feed.transcript("s", "a")?.rev)
+    assertEquals(3L, feed.transcript("s", "a")?.rev)
   }
 
   @Test fun followingAChildOfAnotherSessionDropsTheOldSessionsTranscripts() {
