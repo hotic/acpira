@@ -171,7 +171,9 @@
   .sidekick-flip { display: flex; width: var(--icon); height: var(--icon); perspective: 64px; }
   .sidekick-flip-inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transform: rotateY(180deg); }
   .sidekick-flip-face { position: absolute; inset: 0; display: flex; backface-visibility: hidden; }
-  .sidekick-flip-front { color: var(--fg-3); }
+  /* Hidden at rest, shown only while the flip runs: a flattened render (a WKWebView snapshot) ignores
+     backface-visibility and would draw the lead's mark under the sidekick's */
+  .sidekick-flip-front { color: var(--fg-3); visibility: hidden; }
   .sidekick-flip-back { transform: rotateY(180deg); color: var(--sidekick); }
   /* A sidekick running in another CLI: that CLI's logo on the corner of its mark, where a summoned child's row carries
      it (.subagent-harness-mark, whose slot is --subagent-mark wide around the same --icon mark) */
@@ -244,6 +246,7 @@
 
   /* Handoff: the mark flips from the lead to the sidekick, the light crosses, then the words and the clock land */
   .sidekick-head[data-enter] .sidekick-flip-inner { animation: sidekick-flip 720ms 80ms var(--sidekick-spring) backwards; }
+  .sidekick-head[data-enter] .sidekick-flip-front { animation: sidekick-front 720ms 80ms backwards; }
   .sidekick-head[data-enter] .sidekick-sheen::before { animation: sidekick-sheen 900ms 140ms var(--sidekick-sweep) backwards; }
   .sidekick-head[data-enter] .sidekick-label { animation: sidekick-slide 480ms 300ms var(--sidekick-expo) backwards; }
   .sidekick-head[data-enter] > .row-trailing { animation: acp-fade-in 300ms 520ms ease-out backwards; }
@@ -258,6 +261,7 @@
 }
 
 @keyframes sidekick-flip { from { transform: rotateY(0deg); } }
+@keyframes sidekick-front { from, to { visibility: visible; } }
 @keyframes sidekick-slide { from { opacity: 0; transform: translateX(-8px); } }
 @keyframes sidekick-pop { 0% { opacity: 0; transform: scale(0.5); } 40% { opacity: 1; } 100% { transform: none; } }
 @keyframes sidekick-sheen { 0% { opacity: 0; transform: translateX(-100%); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateX(260%); } }
