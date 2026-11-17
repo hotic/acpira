@@ -97,6 +97,7 @@ pub struct Env {
 #[derive(Debug, Clone)]
 pub struct Staged {
   pub version: String,
+  pub notes: Option<String>,
   pub path: PathBuf,
   /// The folder it was assembled in, removed after the swap
   pub dir: PathBuf,
@@ -110,6 +111,8 @@ pub struct Updater {
   running: AtomicBool,
   cancel: AtomicBool,
   staged: Mutex<Option<Staged>>,
+  /// Serializes publishing/pruning a replacement with installation; true once installation has started.
+  installing: Mutex<bool>,
   on_change: Listener,
 }
 
@@ -143,6 +146,7 @@ impl Updater {
       running: AtomicBool::new(false),
       cancel: AtomicBool::new(false),
       staged: Mutex::new(None),
+      installing: Mutex::new(false),
       on_change: Box::new(on_change),
     })
   }
@@ -154,6 +158,10 @@ impl Updater {
   fn set(&self, f: impl FnOnce(&mut UpdateState)) {
     let snap = {
       let mut s = self.state.lock();
+      // A cancelled refresh can still finish an I/O callback after installation has taken over.
+      if s.phase == Phase::Applying && self.cancel.load(Ordering::SeqCst) {
+        return;
+      }
       f(&mut s);
       s.clone()
     };
@@ -203,7 +211,7 @@ impl Updater {
   fn cycle(&self, download: bool) {
     if let Err(e) = self.run(download) {
       self.log(&e);
-      if e != "cancelled" {
+      if e != "cancelled" && !self.cancel.load(Ordering::SeqCst) {
         self.set(|s| {
           s.phase = Phase::Failed;
           s.error = Some(e);
@@ -243,24 +251,33 @@ impl Updater {
 
   /// The blocking cycle: manifest, then (when asked and possible) download, assemble and verify
   pub fn run(&self, download: bool) -> Result<(), String> {
-    if self.staged().is_some() {
-      // One update per run of the app: the staged version waits for the restart
-      return Ok(());
+    if self.cancel.load(Ordering::SeqCst) {
+      return Err("cancelled".into());
     }
+    let staged = self.staged();
     let cfg = &self.env.config;
     if let Some(installed) = &self.env.installed {
       swap::remove_aside(installed);
     }
-    self.set(|s| {
-      s.phase = Phase::Checking;
-      s.error = None;
-    });
+    // Keep a ready update visible during a recheck; an unchanged manifest must not trigger another ready toast.
+    if staged.is_none() {
+      self.set(|s| {
+        s.phase = Phase::Checking;
+        s.error = None;
+      });
+    }
     let agent = fetch::agent((self.env.proxy)().as_deref());
     let bytes = fetch::get_small(&agent, &cfg.policy, &cfg.manifest_url, MAX_MANIFEST)?;
     let sig = fetch::get_small(&agent, &cfg.policy, &format!("{}.sig", cfg.manifest_url), 1024)?;
     let m = manifest::verify(&bytes, &sig, &cfg.keys)?;
     let build = manifest::platform_key().and_then(|k| m.platforms.get(&k).cloned());
     let checked = now_ms();
+    if let Some(staged) = staged
+      && (build.is_none() || !manifest::is_newer(&m.version, &staged.version))
+    {
+      self.ready(&staged, checked);
+      return Ok(());
+    }
     let Some(build) = build.filter(|_| manifest::is_newer(&m.version, &self.env.current)) else {
       self.log(&format!("{} is current (latest {})", self.env.current, m.version));
       self.set(|s| {
@@ -294,7 +311,13 @@ impl Updater {
       return Err(format!("the {version} build for this platform is not one {}", swap::EXE_NAME));
     }
     let dir = stage::staging_dir(&installed, &self.env.cache, &version);
-    self.prune(&version);
+    {
+      let installing = self.installing.lock();
+      if *installing || self.cancel.load(Ordering::SeqCst) {
+        return Err("cancelled".into());
+      }
+      self.prune(&version);
+    }
     // An earlier update to this version left the bundle it replaced here, and an engine's launcher still runs from it
     // (apply): set it aside under a name prune knows, instead of building over it
     if in_use(&dir) {
@@ -349,21 +372,39 @@ impl Updater {
       stage::verify_notarized(&app).inspect_err(|_| _ = remove_any(&app))?;
     }
     let path = layout.staged_item(&app);
+    // Installation may have claimed the old package while its replacement was downloading.
+    let installing = self.installing.lock();
+    if *installing || self.cancel.load(Ordering::SeqCst) {
+      return Err("cancelled".into());
+    }
     self.log(&format!("{version} is staged at {}", path.display()));
-    *self.staged.lock() = Some(Staged { version, path, dir });
-    self.set(|s| {
-      s.phase = Phase::Ready;
-      s.done = None;
-      s.total = None;
-    });
+    let staged = Staged { version, notes: (!m.notes.is_empty()).then_some(m.notes), path, dir };
+    *self.staged.lock() = Some(staged.clone());
+    self.prune(&staged.version);
+    drop(installing);
+    self.ready(&staged, checked);
     Ok(())
   }
 
+  fn ready(&self, staged: &Staged, checked: i64) {
+    self.set(|s| {
+      s.phase = Phase::Ready;
+      s.version = Some(staged.version.clone());
+      s.notes = staged.notes.clone();
+      s.done = None;
+      s.total = None;
+      s.error = None;
+      s.checked_at = Some(checked);
+    });
+  }
+
   fn fetch(&self, agent: &ureq::Agent, asset: &manifest::Asset, to: &std::path::Path) -> Result<(), String> {
+    if self.cancel.load(Ordering::SeqCst) {
+      return Err("cancelled".into());
+    }
     if let Some(dir) = to.parent() {
       std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    self.cancel.store(false, Ordering::SeqCst);
     let mut last: Option<Instant> = None;
     let mut progress = |done: u64, total: u64| {
       if last.is_some_and(|t| t.elapsed() < PROGRESS_EVERY) && done < total {
@@ -379,11 +420,14 @@ impl Updater {
     fetch::download(agent, &self.env.config.policy, asset, to, &mut progress, &self.cancel)
   }
 
-  /// Earlier versions' downloads and staged bundles go; this version's partial download stays for the resume
+  /// Keep the pending package until its replacement is verified, plus this version's partial download for resume.
+  /// Called under `installing` so a swap cannot move the installed bundle into a directory being pruned.
   fn prune(&self, keep: &str) {
+    let staged = self.staged();
+    let pending = staged.as_ref().map(|s| s.dir.as_path());
     if let Ok(entries) = std::fs::read_dir(&self.env.cache) {
       for e in entries.flatten() {
-        if e.file_name().to_str() != Some(keep) && !in_use(&e.path()) {
+        if e.file_name().to_str() != Some(keep) && pending != Some(e.path().as_path()) && !in_use(&e.path()) {
           let _ = remove_any(&e.path());
         }
       }
@@ -394,7 +438,7 @@ impl Updater {
       let own = format!(".Acpira-{keep}.staging");
       for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with(".Acpira-") && name.ends_with(".staging") && name != own && !in_use(&e.path()) {
+        if name.starts_with(".Acpira-") && name.ends_with(".staging") && name != own && pending != Some(e.path().as_path()) && !in_use(&e.path()) {
           let _ = remove_any(&e.path());
         }
       }
@@ -404,8 +448,12 @@ impl Updater {
   /// Puts the staged bundle in the installed one's place (at quit, or before a restart) and deletes the old one, unless
   /// a process still runs from it; a running exe is only moved aside, and deleted on a later start. Returns the version now installed
   pub fn apply(&self) -> Result<String, String> {
-    let staged = self.staged.lock().take().ok_or("no update is ready")?;
+    let mut installing = self.installing.lock();
     let installed = self.env.installed.clone().ok_or("not running from an app bundle")?;
+    let staged = self.staged.lock().take().ok_or("no update is ready")?;
+    *installing = true;
+    self.stop();
+    drop(installing);
     self.set(|s| s.phase = Phase::Applying);
     let placed = match Layout::of(&installed) {
       Layout::Bundle => swap::swap(&staged.path, &installed),
@@ -415,7 +463,12 @@ impl Updater {
     if let Err(e) = placed {
       let msg = format!("could not replace {}: {e}", installed.display());
       self.log(&msg);
-      *self.staged.lock() = Some(staged);
+      {
+        let mut installing = self.installing.lock();
+        *self.staged.lock() = Some(staged);
+        *installing = false;
+        self.cancel.store(false, Ordering::SeqCst);
+      }
       self.set(|s| {
         s.phase = Phase::Failed;
         s.error = Some(msg.clone());
@@ -513,25 +566,25 @@ mod tests {
     url: String,
   }
 
-  /// Packs `new` as version 1.1.0 (full package and a delta from `old` as 1.0.0) and serves it with its signed manifest
-  fn release(dir: &Path, old: &Path, new: &Path, broken_delta: bool) -> Release {
+  /// Packs `new` (full package and a delta from `old` as 1.0.0) and serves it with its signed manifest
+  fn release(dir: &Path, old: &Path, new: &Path, version: &str, broken_delta: bool) -> Release {
     let full = dir.join("full.tar.zst");
     let files = delta::pack_full(new, &full, 3).unwrap();
     let dpath = dir.join("d.delta");
-    delta::make_delta(old, new, "1.0.0", "1.1.0", &dpath, 3).unwrap();
+    delta::make_delta(old, new, "1.0.0", version, &dpath, 3).unwrap();
     let (full_bytes, mut delta_bytes) = (std::fs::read(&full).unwrap(), std::fs::read(&dpath).unwrap());
     if broken_delta {
       // A delta from another 1.0.0: its sources do not match the installed files
       let other = dir.join("other.app");
       bundle(&other, "9.9.9");
-      delta::make_delta(&other, new, "1.0.0", "1.1.0", &dpath, 3).unwrap();
+      delta::make_delta(&other, new, "1.0.0", version, &dpath, 3).unwrap();
       delta_bytes = std::fs::read(&dpath).unwrap();
     }
     let mut files_srv = vec![("full.tar.zst".to_owned(), full_bytes.clone()), ("d.delta".to_owned(), delta_bytes.clone())];
     let srv = serve_with_manifest(&mut files_srv, |base| {
       let m = Manifest {
         schema: 1,
-        version: "1.1.0".into(),
+        version: version.into(),
         notes: "Fixes".into(),
         minimum_system_version: None,
         platforms: BTreeMap::from([(
@@ -604,7 +657,7 @@ mod tests {
     let (installed, new) = (d.path().join("Applications/Acpira.app"), d.path().join("build/Acpira.app"));
     bundle(&installed, "1.0.0");
     bundle(&new, "1.1.0");
-    let r = release(d.path(), &installed, &new, false);
+    let r = release(d.path(), &installed, &new, "1.1.0", false);
     let (u, seen, lines) = updater(d.path(), installed.clone(), r.url.clone(), "1.0.0");
     u.run(true).unwrap();
     assert!(!lines.lock().iter().any(|l| l.contains("did not apply")), "{:?}", lines.lock());
@@ -619,6 +672,133 @@ mod tests {
     delta::verify_tree(&installed, &delta::scan(&new).unwrap()).unwrap();
     assert!(!staged.dir.exists());
     assert!(u.apply().is_err());
+  }
+
+  #[test]
+  fn a_staged_update_is_checked_again_and_superseded_without_an_intermediate_install() {
+    let d = tempfile::tempdir().unwrap();
+    let (installed, new, newest) = (d.path().join("Applications/Acpira.app"), d.path().join("new.app"), d.path().join("newest.app"));
+    bundle(&installed, "1.0.0");
+    bundle(&new, "1.1.0");
+    bundle(&newest, "1.2.0");
+    let first = release(d.path(), &installed, &new, "1.1.0", false);
+    let next = release(d.path(), &installed, &newest, "1.2.0", false);
+    let (mut u, seen, _) = updater(d.path(), installed.clone(), first.url.clone(), "1.0.0");
+    u.run(true).unwrap();
+    let old_stage = u.staged().unwrap();
+    seen.lock().clear();
+    let hits = first._srv.hits.load(Ordering::SeqCst);
+    u.run(true).unwrap();
+    // A repeat check fetches the manifest and signature, never the same package or another ready toast.
+    assert_eq!(first._srv.hits.load(Ordering::SeqCst), hits + 2);
+    assert_eq!(*seen.lock(), [Phase::Ready]);
+    Arc::get_mut(&mut u).unwrap().env.config.manifest_url = next.url;
+    u.run(false).unwrap();
+    assert_eq!((u.state().phase, u.state().version.as_deref()), (Phase::Available, Some("1.2.0")));
+    assert_eq!(u.staged().unwrap().version, "1.1.0");
+    assert!(old_stage.path.exists());
+    u.run(true).unwrap();
+    let staged = u.staged().unwrap();
+    assert_eq!((u.state().phase, staged.version.as_str()), (Phase::Ready, "1.2.0"));
+    assert!(!old_stage.dir.exists());
+    assert_eq!(std::fs::read(installed.join("Contents/Info.plist")).unwrap(), b"<plist>1.0.0</plist>");
+    delta::verify_tree(&staged.path, &delta::scan(&newest).unwrap()).unwrap();
+    // A stale manifest must not replace a newer, already verified package.
+    Arc::get_mut(&mut u).unwrap().env.config.manifest_url = first.url;
+    u.run(true).unwrap();
+    assert_eq!(u.state().version.as_deref(), Some("1.2.0"));
+    assert_eq!(u.apply().unwrap(), "1.2.0");
+    delta::verify_tree(&installed, &delta::scan(&newest).unwrap()).unwrap();
+  }
+
+  #[test]
+  fn a_failed_replacement_keeps_the_previously_verified_update_installable() {
+    let d = tempfile::tempdir().unwrap();
+    let (installed, new) = (d.path().join("Applications/Acpira.app"), d.path().join("new.app"));
+    bundle(&installed, "1.0.0");
+    bundle(&new, "1.1.0");
+    let first = release(d.path(), &installed, &new, "1.1.0", false);
+    let mut files = vec![];
+    let failed = serve_with_manifest(&mut files, |base| {
+      serde_json::to_vec(&Manifest {
+        schema: 1,
+        version: "1.2.0".into(),
+        notes: "A later release".into(),
+        minimum_system_version: None,
+        platforms: BTreeMap::from([(
+          manifest::platform_key().unwrap(),
+          PlatformBuild { full: asset(base, "missing.tar.zst", b"missing"), files: vec![], deltas: BTreeMap::new() },
+        )]),
+      })
+      .unwrap()
+    });
+    let (mut u, _, _) = updater(d.path(), installed.clone(), first.url.clone(), "1.0.0");
+    u.run(true).unwrap();
+    let ready = u.staged().unwrap();
+    Arc::get_mut(&mut u).unwrap().env.config.manifest_url = format!("{}/desktop-update.json", failed.base);
+    u.cycle(true);
+    assert_eq!(u.state().phase, Phase::Failed);
+    assert!(u.state().error.as_deref().unwrap().contains("HTTP 404"));
+    assert_eq!(u.staged().unwrap().version, "1.1.0");
+    delta::verify_tree(&ready.path, &delta::scan(&new).unwrap()).unwrap();
+    // A later check of the same release restores the original ready state, not the failed target's notes.
+    Arc::get_mut(&mut u).unwrap().env.config.manifest_url = first.url;
+    u.run(true).unwrap();
+    assert_eq!((u.state().phase, u.state().version.as_deref(), u.state().notes.as_deref()), (Phase::Ready, Some("1.1.0"), Some("Fixes")));
+    assert!(u.state().error.is_none());
+    assert_eq!(u.apply().unwrap(), "1.1.0");
+    delta::verify_tree(&installed, &delta::scan(&new).unwrap()).unwrap();
+    // An in-flight refresh cannot publish another update once installation has started.
+    assert_eq!(u.run(true).unwrap_err(), "cancelled");
+  }
+
+  #[test]
+  fn installing_the_pending_update_cancels_an_in_flight_replacement() {
+    let d = tempfile::tempdir().unwrap();
+    let (installed, new, newest) = (d.path().join("Applications/Acpira.app"), d.path().join("new.app"), d.path().join("newest.app"));
+    bundle(&installed, "1.0.0");
+    bundle(&new, "1.1.0");
+    bundle(&newest, "1.2.0");
+    let first = release(d.path(), &installed, &new, "1.1.0", false);
+    let next = release(d.path(), &installed, &newest, "1.2.0", false);
+    let (mut u, _, _) = updater(d.path(), installed.clone(), first.url, "1.0.0");
+    u.run(true).unwrap();
+    let started = Arc::new(std::sync::Barrier::new(2));
+    let resume = Arc::new(std::sync::Barrier::new(2));
+    let (at_stage, continue_stage) = (started.clone(), resume.clone());
+    let inner = Arc::get_mut(&mut u).unwrap();
+    inner.env.config.manifest_url = next.url;
+    let paused = AtomicBool::new(false);
+    inner.on_change = Box::new(move |s| {
+      if s.phase == Phase::Staging && !paused.swap(true, Ordering::SeqCst) {
+        at_stage.wait();
+        continue_stage.wait();
+      }
+    });
+    let worker = u.clone();
+    let thread = std::thread::spawn(move || worker.cycle(true));
+    started.wait();
+    // The verified old package remains usable while its replacement is being assembled.
+    assert_eq!(u.apply().unwrap(), "1.1.0");
+    resume.wait();
+    thread.join().unwrap();
+    assert_eq!(u.state().phase, Phase::Applying);
+    assert!(u.staged().is_none());
+    delta::verify_tree(&installed, &delta::scan(&new).unwrap()).unwrap();
+  }
+
+  #[test]
+  fn an_older_install_without_a_delta_jumps_directly_to_the_latest_full_package() {
+    let d = tempfile::tempdir().unwrap();
+    let (installed, new) = (d.path().join("Applications/Acpira.app"), d.path().join("new.app"));
+    bundle(&installed, "0.1.0");
+    bundle(&new, "1.2.0");
+    let r = release(d.path(), &installed, &new, "1.2.0", false);
+    let (u, _, _) = updater(d.path(), installed.clone(), r.url, "0.1.0");
+    u.run(true).unwrap();
+    assert_eq!(u.state().version.as_deref(), Some("1.2.0"));
+    assert_eq!(u.apply().unwrap(), "1.2.0");
+    delta::verify_tree(&installed, &delta::scan(&new).unwrap()).unwrap();
   }
 
   #[test]
@@ -679,7 +859,7 @@ mod tests {
     let (old, new) = (d.path().join("old.app"), d.path().join("new.app"));
     bundle(&old, "1.0.0");
     bundle(&new, "1.1.0");
-    let r = release(d.path(), &old, &new, false);
+    let r = release(d.path(), &old, &new, "1.1.0", false);
     let (u, _, _) = updater(d.path(), installed.clone(), r.url, "1.0.0");
     u.cycle(true);
     let s = u.state();
@@ -694,7 +874,7 @@ mod tests {
     let (installed, new) = (d.path().join("Applications/Acpira.app"), d.path().join("build/Acpira.app"));
     bundle(&installed, "1.0.0");
     bundle(&new, "1.1.0");
-    let r = release(d.path(), &installed, &new, true);
+    let r = release(d.path(), &installed, &new, "1.1.0", true);
     let (u, _, lines) = updater(d.path(), installed.clone(), r.url.clone(), "1.0.0");
     u.run(true).unwrap();
     assert_eq!(u.state().phase, Phase::Ready);
@@ -712,7 +892,7 @@ mod tests {
     let (installed, new) = (d.path().join("Applications/Acpira.app"), d.path().join("build/Acpira.app"));
     bundle(&installed, "1.0.0");
     bundle(&new, "1.1.0");
-    let r = release(d.path(), &installed, &new, false);
+    let r = release(d.path(), &installed, &new, "1.1.0", false);
     let (u, _, _) = updater(d.path(), installed.clone(), r.url.clone(), "1.1.0");
     u.run(true).unwrap();
     assert_eq!(u.state().phase, Phase::UpToDate);
@@ -770,9 +950,20 @@ mod tests {
     let mut child = std::process::Command::new(&exe).arg("30").spawn().unwrap();
     // The swap renames the running bundle away; its process is still found there
     std::fs::rename(&old, &aside).unwrap();
-    assert!(in_use(&aside));
+    // The kernel can take a moment to report the child's executable under its renamed path.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let used = loop {
+      if in_use(&aside) {
+        break true;
+      }
+      if Instant::now() >= deadline {
+        break false;
+      }
+      std::thread::sleep(Duration::from_millis(10));
+    };
     child.kill().unwrap();
     child.wait().unwrap();
+    assert!(used);
     assert!(!in_use(&aside));
   }
 }
