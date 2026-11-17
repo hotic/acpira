@@ -58,7 +58,7 @@ export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; o
       <div className="flex min-h-0 flex-col p-1">
         <Crumbs path={path} home={home} onGo={go} />
         <div className="my-1 h-px shrink-0 bg-line" />
-        <div className="scroll-thin flex h-pop min-h-0 flex-col overflow-y-auto">
+        <div className="scroll-none flex h-pop min-h-0 flex-col overflow-y-auto">
           {!ready && view && <ConnectStatus retry className="px-2 py-1"
             view={view.state === 'off' ? { ...view, state: 'connecting', step: 'ssh' } : view} />}
           {ready && loading && <div className="flex min-h-row shrink-0 items-center px-2 text-3 text-fg-3"><Shimmer active>{t('connections.loadingDir')}</Shimmer></div>}

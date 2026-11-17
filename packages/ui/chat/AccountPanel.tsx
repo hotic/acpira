@@ -67,7 +67,7 @@ export function AccountPanel(p: AccountPanelProps) {
   const add = { label: t('composer.addAccount'), icon: <Plus strokeWidth={1.75} />, onClick: () => { p.onAddAccount(p.agent.id, 'auto'); p.close(); } };
   return <div className="flex flex-col">
     <PanelHeader action={unlock ?? add}>{p.agent.name}</PanelHeader>
-    <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+    <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-none flex max-h-pop flex-col overflow-y-auto">
       {/* Stored accounts do not describe CLI credentials: a local API key can work with an empty account list. */}
       {!p.accounts.length && <StateLine>{t('settings.agent.accounts.none')}</StateLine>}
       {p.accounts.map((a, i) => <Fragment key={a.id}>

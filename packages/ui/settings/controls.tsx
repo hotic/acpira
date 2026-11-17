@@ -449,7 +449,7 @@ export function Select<V extends string>({ options, value, onChange, label, clas
   return <DropdownMenu.Root open={open} onOpenChange={onOpen}>
     <DropdownMenu.Trigger render={field} />
     <DropdownMenu.Portal><DropdownMenu.Positioner {...place}><DropdownMenu.Popup style={tone}>
-      <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+      <DropdownMenu.RadioGroup value={value} className="scroll-none flex max-h-pop flex-col overflow-y-auto">
         {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} title={o.hint ?? o.label} disabled={o.disabled} onClick={() => onChange(o.value)} className={rowClass}>
           {content(o)}
         </DropdownMenu.RadioItem>)}
@@ -474,7 +474,7 @@ export function MultiSelect<V extends string>({ options, on, onChange, summary, 
   return <DropdownMenu.Root open={open} onOpenChange={next => { setOpen(next); if (next) setTone(fieldTone(trigger.current)); }}>
     <DropdownMenu.Trigger render={field} />
     <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="anchor" className="w-max max-w-pop-xl min-w-(--anchor-width)"><DropdownMenu.Popup style={tone}>
-      <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+      <div className="scroll-none flex max-h-pop flex-col overflow-y-auto">
         {options.map(o => <DropdownMenu.CheckboxItem key={o.value} checked={on.includes(o.value)} onCheckedChange={next => onChange(o.value, next)} closeOnClick={false}
           render={<button type="button" />} nativeButton className={optionClass}>
           <OptionContent checked={on.includes(o.value)} checkSlot>{o.label}</OptionContent>

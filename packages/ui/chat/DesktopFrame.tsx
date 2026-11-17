@@ -258,7 +258,7 @@ function QuickChoice<V extends string>({ icon, label, value, options, labelOf, o
         <ChevronRight className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />
       </DropdownMenu.SubmenuTrigger>
       <DropdownMenu.Portal><DropdownMenu.Positioner side="inline-end" align="end" width="sm"><DropdownMenu.Popup>
-        <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+        <div className="scroll-none flex max-h-pop flex-col overflow-y-auto">
           {options.map(v => <DropdownMenu.Item key={v} closeOnClick={false} onClick={() => onPick(v)}><OptionContent checked={v === value} checkSlot>{labelOf(v)}</OptionContent></DropdownMenu.Item>)}
         </div>
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>

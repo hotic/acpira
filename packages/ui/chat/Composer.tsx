@@ -644,7 +644,7 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeL
         {mode ? labelOf(mode) : title}
       </Chip>} />
       <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="sm"><DropdownMenu.Popup>
-        <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+        <DropdownMenu.RadioGroup value={value} className="scroll-none flex max-h-pop flex-col overflow-y-auto">
           {modes.map(m => {
             const Icon = iconOf(m);
             const label = labelOf(m);

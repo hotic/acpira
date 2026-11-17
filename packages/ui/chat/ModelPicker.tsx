@@ -782,7 +782,7 @@ function OptionMenu({ control: c, end, onSelect, onOpenChange }: OptionMenuProps
   return <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
     <DropdownMenu.Trigger render={trigger} />
     <DropdownMenu.Portal><DropdownMenu.Positioner side="top" align={end ? 'end' : 'start'} width="md"><DropdownMenu.Popup>
-      <DropdownMenu.RadioGroup value={c.value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+      <DropdownMenu.RadioGroup value={c.value} className="scroll-none flex max-h-pop flex-col overflow-y-auto">
         {c.options.map(o => <DropdownMenu.RadioItem key={o.id} value={o.id} onClick={() => onSelect(o.id)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>{content(o)}</DropdownMenu.RadioItem>)}
       </DropdownMenu.RadioGroup>
     </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>

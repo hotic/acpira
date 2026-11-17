@@ -22,7 +22,7 @@ export function SummonMenu({ personas, onPick, onOpenChange }: {
       <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="md"><DropdownMenu.Popup>
         {/* No caption above the list: what a summon does is the chip's tooltip. Two-line items get room above and below
             their text and a small gap between them, so the names do not stack into one block */}
-        <DropdownMenu.Group className="scroll-thin flex max-h-pop flex-col gap-0.5 overflow-y-auto">
+        <DropdownMenu.Group className="scroll-none flex max-h-pop flex-col gap-0.5 overflow-y-auto">
           {personas.map(p => (
             <DropdownMenu.Item key={p.id} className="py-1.5" onClick={() => onPick(p)}>
               {/* The CLI's mark spans both lines (lead size, not the one-line icon); the CLI's name outranks the model */}

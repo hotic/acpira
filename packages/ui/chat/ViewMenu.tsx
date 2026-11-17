@@ -34,7 +34,7 @@ function Sub({ icon, label, value, dot, side, children }: { icon: ReactNode; lab
         <ChevronRight className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />
       </DropdownMenu.SubmenuTrigger>
       <DropdownMenu.Portal><DropdownMenu.Positioner side={side} align="start" width="sm"><DropdownMenu.Popup>
-        <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">{children}</div>
+        <div className="scroll-none flex max-h-pop flex-col overflow-y-auto">{children}</div>
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.SubmenuRoot>
   );

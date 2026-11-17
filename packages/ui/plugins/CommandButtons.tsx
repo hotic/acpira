@@ -133,7 +133,7 @@ function CommandMenu({ command: c, sessionId, disabled, onOpenChange }: { comman
         {look === 'icon' ? null : c.button}
       </Chip>} />
       <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width={wide ? 'md' : 'sm'}><DropdownMenu.Popup>
-        <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+        <div className="scroll-none flex max-h-pop flex-col overflow-y-auto">
           {menuRuns(items).map((run, i) => <MenuRun key={i} run={run} onPick={pick} />)}
         </div>
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>

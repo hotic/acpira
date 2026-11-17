@@ -76,7 +76,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
           } />
           <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
             {forkOpen && (
-              <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+              <div className="scroll-none flex max-h-pop flex-col overflow-y-auto">
                 {forkTargets(ctx.agents ?? [], ctx.agentId).map(a => (
                   <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined}
                     onClick={() => ctx.fork!(turnIndex, a.id)}>

@@ -143,7 +143,7 @@ function BuildMenu({ model, hidden, extra, ready, canBuild, onSelect, onChoose, 
   };
   if (approvals) return <>
     <PanelHeader lead={model ? { label: t('plan.backToExecutor'), icon: <ArrowLeft />, onClick: event => showPage(event, false) } : undefined}>{t('plan.moreApprovals')}</PanelHeader>
-    <RadioGroup.Root ref={approvalList} value={null} aria-label={t('plan.moreApprovals')} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+    <RadioGroup.Root ref={approvalList} value={null} aria-label={t('plan.moreApprovals')} className="scroll-none flex max-h-pop flex-col overflow-y-auto">
       {extra.map(o => <RadioGroup.Item key={o.id} value={o.id} disabled={o.kind.startsWith('allow') ? !canBuild : !ready}
         onClick={() => { onChoose(o.id); close(); }}><OptionContent>{permissionOption(o, getLocale(), true).label}</OptionContent></RadioGroup.Item>)}
     </RadioGroup.Root>
