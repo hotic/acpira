@@ -212,6 +212,39 @@ async fn a_timeout_or_a_cancel_kills_the_whole_group() {
   assert!(client.call("stat", json!({ "path": ROOT })).await.is_ok());
 }
 
+/// A command started with `graceMs` is asked to end before it is killed, on a cancel and when the helper ends: a
+/// server that runs commands in sessions of their own ends them when asked, and leaves them behind when killed
+#[tokio::test]
+async fn a_command_with_a_grace_is_asked_to_end_before_it_is_killed() {
+  let dir = tempfile::tempdir().unwrap();
+  let client = start(dir.path()).await;
+  let mark = dir.path().join("asked");
+  let asked = || std::fs::read_to_string(&mark).unwrap_or_default().lines().count();
+  let polite = format!("trap 'echo asked >> {}; exit 0' TERM; echo $$; while :; do sleep 0.05; done", mark.display());
+  let mut call = client.request("exec", json!({ "command": polite, "graceMs": 1000 }));
+  let pid = first_line_pid(&mut call).await;
+  drop(call);
+  assert!(gone_within(pid, Duration::from_secs(3)).await, "{pid} survived the cancel");
+  assert_eq!(asked(), 1, "ended by asking");
+
+  // One that does not listen is killed once its grace passed
+  let mut call = client.request("exec", json!({ "command": "trap '' TERM; echo $$; while :; do sleep 0.05; done", "graceMs": 300 }));
+  let deaf = first_line_pid(&mut call).await;
+  drop(call);
+  assert!(gone_within(deaf, Duration::from_secs(3)).await, "{deaf} survived its grace");
+
+  // The helper ending asks too, and still kills a deaf one whose cancel was waiting out its grace
+  let mut call = client.request("exec", json!({ "command": polite, "graceMs": 1000 }));
+  let pid = first_line_pid(&mut call).await;
+  let mut cancelled = client.request("exec", json!({ "command": "trap '' TERM; echo $$; while :; do sleep 0.05; done", "graceMs": 1000 }));
+  let deaf = first_line_pid(&mut cancelled).await;
+  drop(cancelled);
+  client.close();
+  assert!(gone_within(pid, Duration::from_secs(5)).await, "{pid} survived the helper");
+  assert_eq!(asked(), 2, "asked by the ending helper too");
+  assert!(gone_within(deaf, Duration::from_secs(5)).await, "{deaf} outlived the helper that was ending it");
+}
+
 #[tokio::test]
 async fn closing_the_channel_ends_the_helper_and_what_it_started() {
   let dir = tempfile::tempdir().unwrap();

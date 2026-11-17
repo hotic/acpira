@@ -5,10 +5,11 @@
 export const REMOTE_SCHEME = 'ssh://';
 
 /** The agents that can run on this machine in a folder on an SSH host, only their tools running there: the built-in
- * agent, plus Claude Code and Antigravity with their own file and shell tools swapped for Acpira's (rust
- * vendors/claude_remote.rs). Which of them do is the `sshLocalAgents` setting; every other agent, and these when off,
- * runs in the host's own engine. Mirrors acpira_shared::remote::SSH_LOCAL_AGENTS */
-export const SSH_LOCAL_AGENTS: readonly string[] = ['acpira', 'claude', 'antigravity'];
+ * agent, Claude Code and Antigravity with their own file and shell tools swapped for Acpira's (rust
+ * vendors/claude_remote.rs), and Codex with its own tools in its exec-server on the host (rust remote/codex_exec.rs).
+ * Which of them do is the `sshLocalAgents` setting; every other agent, and these when off, runs in the host's own
+ * engine. Mirrors acpira_shared::remote::SSH_LOCAL_AGENTS */
+export const SSH_LOCAL_AGENTS: readonly string[] = ['acpira', 'claude', 'antigravity', 'codex'];
 
 export interface RemoteFolder { alias: string; path: string }
 

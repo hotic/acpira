@@ -1,6 +1,6 @@
 //! Commands run here, each in its own process group; the groups still running die with the helper
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -14,22 +14,31 @@ use super::Out;
 use super::files::host_path;
 use crate::remote::wire::{CHUNK, WireError};
 
-/// Process groups this helper started and has not seen end; all of them die with the helper
-static GROUPS: std::sync::LazyLock<Mutex<HashSet<u32>>> = std::sync::LazyLock::new(Mutex::default);
+/// Process groups this helper started and has not seen end, each with the grace it asked for; all of them die with
+/// the helper
+static GROUPS: std::sync::LazyLock<Mutex<HashMap<u32, Option<Duration>>>> = std::sync::LazyLock::new(Mutex::default);
 
-fn kill_group(pid: u32) {
+fn signal_group(pid: u32, kill: bool) {
   #[cfg(unix)]
   // SAFETY: kill has no memory preconditions; a negative pid addresses the group the child leads
   unsafe {
-    libc::kill(-(pid as i32), libc::SIGKILL);
+    libc::kill(-(pid as i32), if kill { libc::SIGKILL } else { libc::SIGTERM });
   }
   #[cfg(not(unix))]
-  let _ = pid;
+  let _ = (pid, kill);
 }
 
+/// Ends the groups still running. One started with a grace is asked first and killed once the longest grace passed:
+/// a server that runs commands in sessions of their own ends them when asked, and leaves them behind when killed
 pub fn kill_all_groups() {
-  for pid in GROUPS.lock().drain() {
-    kill_group(pid);
+  let groups: Vec<(u32, Option<Duration>)> = GROUPS.lock().drain().collect();
+  for (pid, grace) in &groups {
+    signal_group(*pid, grace.is_none());
+  }
+  let Some(wait) = groups.iter().filter_map(|g| g.1).max() else { return };
+  std::thread::sleep(wait);
+  for (pid, _) in groups.iter().filter(|g| g.1.is_some()) {
+    signal_group(*pid, true);
   }
 }
 
@@ -38,9 +47,9 @@ pub fn kill_all_groups() {
 struct Group(Option<u32>);
 
 impl Group {
-  fn new(pid: Option<u32>) -> Group {
+  fn new(pid: Option<u32>, grace: Option<Duration>) -> Group {
     if let Some(pid) = pid {
-      GROUPS.lock().insert(pid);
+      GROUPS.lock().insert(pid, grace);
     }
     Group(pid)
   }
@@ -54,15 +63,34 @@ impl Group {
 
 impl Drop for Group {
   fn drop(&mut self) {
-    if let Some(pid) = self.0.take() {
-      GROUPS.lock().remove(&pid);
-      kill_group(pid);
+    let Some(pid) = self.0.take() else { return };
+    let mut groups = GROUPS.lock();
+    match groups.get(&pid).copied() {
+      // `kill_all_groups` took it and is ending it: a kill from here would cut its grace short
+      None => {}
+      Some(None) => {
+        groups.remove(&pid);
+        signal_group(pid, true);
+      }
+      // Asked now, killed once its grace passed. It stays listed until then, so a helper that ends first still
+      // kills it on its way out instead of leaving the kill to a thread that dies with the process
+      Some(Some(grace)) => {
+        drop(groups);
+        signal_group(pid, false);
+        std::thread::spawn(move || {
+          std::thread::sleep(grace);
+          if GROUPS.lock().remove(&pid).is_some() {
+            signal_group(pid, true);
+          }
+        });
+      }
     }
   }
 }
 
 /// Run a command: `argv` as given, or `command` under `sh -c`; output streamed as `out` / `err` chunks, stdin from
-/// `stdin` frames when asked for. The answer: exit code, signal, whether the timeout killed it
+/// `stdin` frames when asked for. `graceMs` has a command that is stopped asked to end (SIGTERM) that long before it
+/// is killed. The answer: exit code, signal, whether the timeout killed it
 pub(super) async fn exec(a: &Value, id: u64, out: &Out, stdin_rx: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result<Value, WireError> {
   let argv: Vec<String> = match (a.get("argv").and_then(Value::as_array), a.get("command").and_then(Value::as_str)) {
     (Some(v), _) => v.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect(),
@@ -90,7 +118,7 @@ pub(super) async fn exec(a: &Value, id: u64, out: &Out, stdin_rx: Option<mpsc::U
   #[cfg(unix)]
   cmd.process_group(0);
   let mut child = cmd.spawn().map_err(|e| WireError::io(&e, program))?;
-  let mut group = Group::new(child.id());
+  let mut group = Group::new(child.id(), a.get("graceMs").and_then(Value::as_u64).map(Duration::from_millis));
   if let (Some(mut pipe), Some(mut rx)) = (child.stdin.take(), stdin_rx) {
     tokio::spawn(async move {
       while let Some(Some(bytes)) = rx.recv().await {

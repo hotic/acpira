@@ -152,6 +152,8 @@ pub struct Connections {
   /// Where this machine's built-in agent settings last landed on each host (`remote/host_models.rs`): kept apart
   /// (true) or merged into the host's own (false). Kept while the host is away
   settings_apart: Mutex<std::collections::HashMap<String, bool>>,
+  /// Opens a Codex session's way to its `codex exec-server` on a host (`remote/codex_exec.rs`)
+  pub codex: super::codex_exec::Tunnels,
   me: Weak<Connections>,
 }
 
@@ -182,6 +184,7 @@ impl Connections {
       kick: Default::default(),
       engine_features: Default::default(),
       settings_apart: Default::default(),
+      codex: Default::default(),
       me: me.clone(),
     })
   }
@@ -283,6 +286,20 @@ impl Connections {
     let current = self.client(alias)?;
     let offers = self.engine_features.lock().get(alias).filter(|(t, _)| t.is(&current)).map(|(_, f)| f.iter().any(|x| x == feature))?;
     Some((current, offers))
+  }
+
+  /// The host as this manager's ssh reaches it, for a command of its own beside the helper channel (a bulk upload)
+  pub(crate) fn host(&self, alias: &str) -> Host {
+    Host::new(self.opts.ssh.clone(), alias)
+  }
+
+  /// Where uploads are prepared: `<ACPIRA_HOME>/run/remote`
+  pub(crate) fn cache_dir(&self) -> &Path {
+    &self.cache
+  }
+
+  pub(crate) fn log_line(&self, line: &str) {
+    (self.log)(line);
   }
 
   /// The host's helper channel while it is up

@@ -85,11 +85,11 @@ impl AcpSession {
     FileReader::Host(crate::workspace::Workspace::open(&self.cwd, self.deps.remote.as_deref()).await.ok())
   }
 
-  /// Refuse an agent that cannot work in the session's folder: under local run only the built-in agent's tools and
-  /// stand-in agents' project tools (`remote_claude.rs`) go to the host
+  /// Refuse an agent that cannot work in the session's folder: under local run only the built-in agent's tools,
+  /// stand-in agents' project tools (`remote_claude.rs`) and Codex's own (`remote_exec_env`) go to the host
   pub(crate) fn check_remote_agent(&self, name: &str) -> anyhow::Result<()> {
     match self.remote_folder() {
-      Some(f) if self.agent != crate::acp::agents::registry::SELF_AGENT_ID && self.remote_stand().is_none() => {
+      Some(f) if self.agent != crate::acp::agents::registry::SELF_AGENT_ID && self.remote_stand().is_none() && !self.vendor.remote_exec() => {
         anyhow::bail!(crate::i18n::tp("host.remoteBuiltinOnly", &[("agent", name), ("host", &f.alias)]))
       }
       _ => Ok(()),
@@ -178,6 +178,30 @@ impl AcpSession {
     let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
     let argv: Vec<String> = std::iter::once(spec.command).chain(spec.args).collect();
     Ok(client.request("exec", json!({ "argv": argv, "cwd": spec.cwd, "env": spec.env, "stdin": true })))
+  }
+
+  /// Codex in a folder on an SSH host: the variable that makes the host's exec-server the only place its tools run
+  /// (`remote::codex_exec`), for the codex build the adapter at `binary` runs. The build is put on the host first when
+  /// it is missing, which the session's start waits for. None for any other session
+  pub(crate) async fn remote_exec_env(&self, def: &crate::acp::agents::registry::AgentDef, binary: &str) -> anyhow::Result<Option<acpira_shared::transcript::StrMap>> {
+    use crate::remote::codex_exec;
+    let Some(f) = self.remote_folder().filter(|_| self.vendor.remote_exec()) else { return Ok(None) };
+    let connections = self.deps.remote.clone().ok_or_else(|| anyhow::anyhow!("this engine has no SSH connections"))?;
+    let codex = codex_exec::local_codex(binary, def).await?;
+    let tunnel = connections.codex.open(&connections, &f.alias, &codex).await?;
+    let url = tunnel.url();
+    self.log(&format!("remote: {} {} runs its tools on {} through {}", def.name, codex.version, f.alias, codex_exec::redact(&url)));
+    // The CLI before this one is gone: its tunnel and server go here
+    *self.exec_tunnel.lock() = Some(tunnel);
+    Ok(Some([(codex_exec::ENV.to_owned(), url)].into_iter().collect()))
+  }
+
+  /// The user's stop ends what Codex still runs on the host, which its own cancel leaves running
+  /// (`ExecTunnel::stop_commands`)
+  pub(crate) fn stop_exec_commands(&self) {
+    if let Some(t) = self.exec_tunnel.lock().as_ref() {
+      t.stop_commands();
+    }
   }
 
   async fn host_places(&self, f: &RemoteFolder) -> anyhow::Result<Value> {

@@ -189,6 +189,8 @@ impl ClientHandlers for SessionHandlers {
     if c.proc_gen != self.gen_id || c.status == SessionStatus::Closed {
       return;
     }
+    // A CLI that died took its Codex exec-server's only client with it: the commands there end now, not at the restart
+    s.exec_tunnel.lock().take();
     let def = s.def();
     c.status = SessionStatus::Error;
     if c.error.is_none() {

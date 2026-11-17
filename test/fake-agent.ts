@@ -208,7 +208,9 @@ function saveSession(id: string, prompts = readSession(id)?.prompts ?? [], cwd =
 const canonicalCwd = (cwd: string) => { try { return realpathSync(cwd); } catch { return cwd; } };
 // FAKE_MCP_TRACE: one line per session/new, resume and load with the mcpServers the client handed over
 function logMeta(method: string, meta: unknown, cwd?: string, dirs?: string[]) {
-  if (process.env.FAKE_META_LOG) appendFileSync(process.env.FAKE_META_LOG, `${JSON.stringify({ method, meta: meta ?? null, cwd, ...(dirs ? { dirs } : {}) })}\n`);
+  // `execServer`: where a Codex in a folder on an SSH host was told its tools run (rust remote/codex_exec.rs)
+  const execServer = process.env.CODEX_EXEC_SERVER_URL;
+  if (process.env.FAKE_META_LOG) appendFileSync(process.env.FAKE_META_LOG, `${JSON.stringify({ method, meta: meta ?? null, cwd, ...(dirs ? { dirs } : {}), ...(execServer ? { execServer } : {}) })}\n`);
 }
 // FAKE_REBUILD: the settings each live session was built with, the part of the adapter's fingerprint the host changes
 const builtWith = new Map<string, string>();

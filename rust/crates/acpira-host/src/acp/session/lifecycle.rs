@@ -156,6 +156,8 @@ impl AcpSession {
   /// Kill the current CLI; its exit / updates must not touch the session after this. session/close goes out first
   /// when the agent advertises it (close is not delete: it lets the agent flush and release its lock)
   pub(crate) fn drop_process(&self, c: &mut Core) -> Option<BoxFuture<()>> {
+    // Codex's exec-server on an SSH host ends with its CLI, also one that never came up
+    self.exec_tunnel.lock().take();
     let proc = c.proc.take()?;
     c.proc_gen += 1;
     c.perms.epoch += 1;
@@ -278,8 +280,10 @@ impl AcpSession {
     self.load_host_sidekick().await;
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
+    // Codex in a folder on an SSH host takes its exec-server's address at start, which no warm process was given
+    let on_host = self.vendor.remote_exec() && self.remote_folder().is_some();
     let borrowed = match &self.deps.pool {
-      Some(pool) if !launched => pool.take(&self.agent, &dir, account.as_deref(), handlers.clone()).await,
+      Some(pool) if !launched && !on_host => pool.take(&self.agent, &dir, account.as_deref(), handlers.clone()).await,
       _ => None,
     };
     let proc = match borrowed {
@@ -295,11 +299,15 @@ impl AcpSession {
           .await
           .ok_or_else(|| crate::acp::agents::registry::not_found(&def))?;
         self.log(&format!("spawn {bin} {} (cwd {}){account_note}", def.args.join(" "), self.cwd));
-        let env = match (&account, &self.deps.accounts) {
+        let mut env = match (&account, &self.deps.accounts) {
           (Some(a), Some(h)) => h.spawn_env(self.agent.clone(), a.clone()).await,
           _ => None,
         };
-        AgentProcess::spawn(&def, &bin, &dir, handlers, env.as_ref(), None).await?
+        if let Some(exec) = self.remote_exec_env(&def, &bin).await? {
+          env.get_or_insert_with(Default::default).extend(exec);
+        }
+        // A CLI that did not start leaves no exec-server behind on the host
+        AgentProcess::spawn(&def, &bin, &dir, handlers, env.as_ref(), None).await.inspect_err(|_| drop(self.exec_tunnel.lock().take()))?
       }
     };
     let info = proc.init.get("agentInfo");

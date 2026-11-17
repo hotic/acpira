@@ -339,6 +339,8 @@ pub struct AcpSession {
   /// A Claude Code session's calls of the project tools on its SSH host, by the model's call id, until their rows
   /// complete (`remote_claude.rs`)
   pub(crate) remote_calls: parking_lot::Mutex<std::collections::HashMap<String, remote_claude::RemoteCall>>,
+  /// Codex in a folder on an SSH host: the way to its exec-server there, as long as its CLI runs (`remote_exec_env`)
+  pub(crate) exec_tunnel: parking_lot::Mutex<Option<crate::remote::codex_exec::ExecTunnel>>,
   /// The `clientId`s of the actions the session ran, newest last (`claim_client_id`); saved with the record
   client_ids: parking_lot::Mutex<std::collections::VecDeque<String>>,
   /// The plugin host each card offered by `plugin_activate` came through, by card id (`plugin_card.rs`)
@@ -518,6 +520,7 @@ impl AcpSession {
         epoch,
         host_stdio: Default::default(),
         remote_calls: Default::default(),
+        exec_tunnel: Default::default(),
         client_ids: parking_lot::Mutex::new(record.client_ids.iter().cloned().collect()),
         plugin_offers: Default::default(),
         settings_from: parking_lot::Mutex::new(record.settings_from),

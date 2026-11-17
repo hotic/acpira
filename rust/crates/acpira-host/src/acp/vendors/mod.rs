@@ -208,6 +208,12 @@ impl Vendor {
     }
   }
 
+  /// Runs on this machine for an SSH workspace with its own tools on the host, in its exec-server there
+  /// (`remote::codex_exec`): no stand-in folder, the session's folder is the host's path
+  pub fn remote_exec(self) -> bool {
+    self == Vendor::Codex
+  }
+
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
   pub fn plan_exit_in_tool_output(self) -> bool {
     self == Vendor::Kimi
