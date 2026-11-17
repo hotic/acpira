@@ -19,9 +19,9 @@ const PHONE_H: number = 780;
 const SCENES: string[][] = [
   ['running', ''], ['queued', ''], ['question', ''], ['failure', ''], ['context', 'context'], ['goal', ''], ['plan', ''],
   ['showcase', 'model'], ['showcase', 'model.2'], ['showcase', 'attach'], ['showcase', 'focus'], ['builtin', 'model'],
-  ['builtin', 'model.0.sidekick'], ['fusion', 'model'],
+  ['builtin', 'model.0.sidekick'], ['sidekicks', 'model.1.sidekick'], ['sidekicks', 'model.2.sidekick'], ['fusion', 'model'],
   ['media', 'staged'], ['showcase', 'quotes'], ['showcase', 'edit'], ['showcase', 'slash'], ['showcase', 'mention'],
-  ['showcase', ''], ['new', 'model']
+  ['showcase', ''], ['new', 'model'], ['builtin', 'mode']
 ];
 
 /** A frame: a chat on a fixture with the composer in one state */
@@ -77,6 +77,12 @@ struct Scene {
     if (this.popup === 'mention') {
       draft.text = '@src';
     }
+    // A working mode in force beside the permission bean (the bar's pill), the `/` list open over it with the modes
+    const controls = model.view?.controls;
+    if (this.popup === 'mode' && controls !== undefined) {
+      controls.modeId = controls.modes[1]?.id;
+      draft.text = '/';
+    }
     this.model = model;
   }
 
@@ -87,7 +93,7 @@ struct Scene {
       } else {
         ChatPage({
           model: this.model, showBack: true, actions: new ChatBarActions(),
-          popup: this.popup === 'slash' || this.popup === 'mention' ? 'focus' : this.popup
+          popup: this.popup === 'slash' || this.popup === 'mention' || this.popup === 'mode' ? 'focus' : this.popup
         })
       }
     }

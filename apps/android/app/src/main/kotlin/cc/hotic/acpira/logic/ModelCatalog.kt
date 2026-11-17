@@ -253,6 +253,18 @@ object ModelCatalog {
 object ComposerControls {
   private val levels = listOf("None", "Minimal", "Low", "Medium", "High", "XHigh", "Max", "Ultra", "Thinking")
   const val permissionCategory = "_permission_mode"
+
+  /**
+   * Composer.tsx `split`: beside a permission control the modes get no bean. The first is the resting one; the rest are
+   * working modes, entered by name from the `/` list and shown as a pill while in force. null without that split
+   */
+  fun workingModes(controls: SessionControls): List<SessionOption>? {
+    if (controls.modes.isEmpty() || controls.options.none { it.category == permissionCategory && it.type != "boolean" }) return null
+    return controls.modes.drop(1)
+  }
+
+  /** The working mode in force (the pill), null at rest or without the split */
+  fun workingMode(controls: SessionControls): SessionOption? = workingModes(controls)?.firstOrNull { it.id == controls.modeId }
   /**
    * The sidekick select (custom category), its level and its Fast, the model chip's last bean: the built-in agent's own,
    * or the host's for another CLI's session, under ids of its own (`host_sidekick`). Found by category, set by its id
@@ -262,6 +274,42 @@ object ComposerControls {
   const val sidekickFastCategory = "_sidekick_fast"
   /** The sidekick's value for none */
   const val noSidekick = "none"
+
+  /** One CLI a sidekick can run in, with its models in the select's order */
+  data class SidekickCli(val id: String, val name: String, val options: List<SessionOption>)
+
+  /**
+   * composerControls.ts `sidekickClis`: the select's models by the CLI each runs in, which the host's select
+   * (host_sidekick.rs) puts in `group`, the session's own CLI first. None and options without a CLI (the built-in
+   * agent's own select) stay out, so fewer than two CLIs leave none to choose between
+   */
+  fun sidekickClis(options: List<SessionOption>): List<SidekickCli> {
+    val out = linkedMapOf<String, SidekickCli>()
+    for (o in options) {
+      val g = o.group ?: continue
+      if (o.id == noSidekick) continue
+      val cli = out[g.id] ?: SidekickCli(g.id, g.name, emptyList())
+      out[g.id] = cli.copy(options = cli.options + o)
+    }
+    return out.values.toList()
+  }
+
+  /**
+   * composerControls.ts `sidekickChannel`: the channel a sidekick option comes through, its source; on the built-in
+   * agent's own select (no CLI in `group`) the provider it puts in `description`. The host's select keeps the CLI's
+   * name there, which is no channel
+   */
+  fun sidekickChannel(o: SessionOption): String? = o.source?.name ?: if (o.group == null) o.description else null
+
+  /**
+   * Rows filed under their channel in first-seen order, those without one first unlabelled; null with fewer than two
+   * channels, where the list stays flat (ModelPicker.tsx `bySource`)
+   */
+  fun byChannel(options: List<SessionOption>): List<Pair<String, List<SessionOption>>>? {
+    val groups = options.groupBy { sidekickChannel(it).orEmpty() }.toList()
+    if (groups.count { it.first.isNotEmpty() } < 2) return null
+    return groups.filter { it.first.isEmpty() } + groups.filter { it.first.isNotEmpty() }
+  }
 
   private fun compact(value: String) =
     value.lowercase().replace(Regex("reasoning|thinking|effort|level"), "").replace(Regex("[\\s_-]"), "")
@@ -402,7 +450,8 @@ class ModelChoices(
     nativeFast = split.modelConfig.firstOrNull { ComposerControls.isFast(it) }?.let { nativeToggle(it) }
     effort = effortOf(split, standard)
     mode = controls.modes.firstOrNull { it.id == controls.modeId } ?: controls.modes.firstOrNull()
-    modes = if (controls.modes.size > 1) controls.modes else emptyList()
+    // Beside a permission control the modes have no bean: the working ones are picked from the `/` list (Composer.tsx)
+    modes = if (controls.modes.size > 1 && ComposerControls.workingModes(controls) == null) controls.modes else emptyList()
     collaboration = split.collaboration.firstOrNull { it.options.size > 1 }
     access = split.permission.firstOrNull { it.options.size > 1 }
     sidekick = split.sidekick.firstOrNull()

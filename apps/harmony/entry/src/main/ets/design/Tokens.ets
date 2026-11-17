@@ -214,6 +214,8 @@ export class Cmp {
   /** The beans: their column gap, a panel's row, width, rows shown and corners, a caption's room */
   static readonly gooGap: number = 12;
   static readonly gooRow: number = 40;
+  /** A group label among a panel's rows: the channel a run of sidekick models comes through */
+  static readonly gooSection: number = 28;
   static readonly gooPanelW: number = 232;
   static readonly gooPanelRows: number = 6.5;
   static readonly rGooPanel: number = 22;

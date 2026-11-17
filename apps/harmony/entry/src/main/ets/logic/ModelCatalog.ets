@@ -426,14 +426,101 @@ export interface ControlSplit {
   sidekickFast: ConfigControl[];
 }
 
+/** One CLI a sidekick can run in, with its models in the select's order */
+export interface SidekickCli {
+  id: string;
+  name: string;
+  options: SessionOption[];
+}
+
+/** A run of sidekick models under one channel ('' for those without one) */
+export interface ChannelGroup {
+  channel: string;
+  options: SessionOption[];
+}
+
 export class ComposerControls {
   static readonly sidekickCategory: string = '_sidekick';
   static readonly sidekickEffortCategory: string = '_sidekick_effort';
   static readonly sidekickFastCategory: string = '_sidekick_fast';
   /** The sidekick's value for none */
   static readonly noSidekick: string = 'none';
-  /** A permission level offered as a config option (the built-in agent's approval) */
+  /** A permission level offered as a config option (the built-in agent's approval, Claude's levels split off its modes) */
   static readonly permissionCategory: string = '_permission_mode';
+
+  /**
+   * Composer.tsx `split`: beside a permission control the modes get no bean. The first is the resting one; the rest are
+   * working modes, entered by name from the `/` list and shown as a pill while in force. undefined without that split
+   */
+  static workingModes(controls: SessionControls | undefined): SessionOption[] | undefined {
+    if (controls === undefined || controls.modes.length === 0 ||
+      !controls.options.some((c: ConfigControl) => c.category === ComposerControls.permissionCategory && c.type !== 'boolean')) {
+      return undefined;
+    }
+    return controls.modes.slice(1);
+  }
+
+  /** The working mode in force (the pill), undefined at rest or without the split */
+  static workingMode(controls: SessionControls | undefined): SessionOption | undefined {
+    return ComposerControls.workingModes(controls)?.find((m: SessionOption) => m.id === controls?.modeId);
+  }
+
+  /**
+   * composerControls.ts `sidekickClis`: the select's models by the CLI each runs in, which the host's select
+   * (host_sidekick.rs) puts in `group`, the session's own CLI first. None and options without a CLI (the built-in
+   * agent's own select) stay out, so fewer than two CLIs leave none to choose between
+   */
+  static sidekickClis(options: SessionOption[]): SidekickCli[] {
+    const out: SidekickCli[] = [];
+    for (const o of options) {
+      const g = o.group;
+      if (o.id === ComposerControls.noSidekick || g === undefined) {
+        continue;
+      }
+      const cli = out.find((c: SidekickCli) => c.id === g.id);
+      if (cli !== undefined) {
+        cli.options.push(o);
+      } else {
+        const added: SidekickCli = { id: g.id, name: g.name, options: [o] };
+        out.push(added);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * composerControls.ts `sidekickChannel`: the channel a sidekick option comes through, its source; on the built-in
+   * agent's own select (no CLI in `group`) the provider it puts in `description`. The host's select keeps the CLI's
+   * name there, which is no channel
+   */
+  static sidekickChannel(o: SessionOption): string | undefined {
+    if (o.source !== undefined) {
+      return o.source.name;
+    }
+    return o.group === undefined ? o.description : undefined;
+  }
+
+  /**
+   * Rows filed under their channel in first-seen order, those without one first unlabelled; undefined with fewer than
+   * two channels, where the list stays flat (ModelPicker.tsx `bySource`)
+   */
+  static byChannel(options: SessionOption[]): ChannelGroup[] | undefined {
+    const groups: ChannelGroup[] = [];
+    for (const o of options) {
+      const channel = ComposerControls.sidekickChannel(o) ?? '';
+      const group = groups.find((g: ChannelGroup) => g.channel === channel);
+      if (group !== undefined) {
+        group.options.push(o);
+      } else {
+        const added: ChannelGroup = { channel: channel, options: [o] };
+        groups.push(added);
+      }
+    }
+    if (groups.filter((g: ChannelGroup) => g.channel.length > 0).length < 2) {
+      return undefined;
+    }
+    return groups.filter((g: ChannelGroup) => g.channel.length === 0).concat(groups.filter((g: ChannelGroup) => g.channel.length > 0));
+  }
 
   private static compact(value: string): string {
     return value.toLowerCase().replace(/reasoning|thinking|effort|level/g, '').replace(/[\s_-]/g, '');
@@ -639,7 +726,8 @@ export class ModelChoices {
     this.nativeFast = fastControl !== undefined ? nativeToggle(fastControl, onSetConfig) : undefined;
     this.effort = this.effortOf(split);
     this.mode = controls.modes.find((m: SessionOption) => m.id === controls.modeId) ?? controls.modes[0];
-    this.modes = controls.modes.length > 1 ? controls.modes : [];
+    // Beside a permission control the modes have no bean: the working ones are picked from the `/` list (Composer.tsx)
+    this.modes = controls.modes.length > 1 && ComposerControls.workingModes(controls) === undefined ? controls.modes : [];
     this.collaboration = split.collaboration.find((c: ConfigControl) => c.options.length > 1);
     this.access = split.permission.find((c: ConfigControl) => c.options.length > 1);
     this.sidekick = split.sidekick.length > 0 ? ModelChoices.visible(split.sidekick[0], off) : undefined;
@@ -865,6 +953,37 @@ export function modeLabel(mode: SessionOption): string {
 /** A collaboration mode's name: Codex's `default` is its Build mode, not the permission default beside it */
 export function workLabel(mode: SessionOption): string {
   return mode.id === 'default' ? t('composer.modeShort.build') : modeLabel(mode);
+}
+
+/**
+ * modeIcons.ts `modeName`: a working mode where it is picked by name (the `/` list, the bar's pill), the bare name
+ * without the bean labels' padding to one length; unknown modes keep the label
+ */
+export function modeName(mode: SessionOption): string {
+  if (mode.id === 'plan' || mode.id === 'team' || mode.id === 'raw') {
+    return t(`composer.modeName.${mode.id}`);
+  }
+  return modeLabel(mode);
+}
+
+/** modeIcons.ts `modeHint`: one line on what the mode does, else the agent's own description */
+export function modeHint(mode: SessionOption): string | undefined {
+  if (mode.id === 'plan' || mode.id === 'team' || mode.id === 'raw') {
+    return t(`composer.modeHint.${mode.id}`);
+  }
+  return mode.description;
+}
+
+const ACCESS_ICONS: Map<string, string> = new Map<string, string>([
+  ['ask', 'shieldEllipsis'], ['auto-edit', 'shieldCheck'], ['auto', 'shieldHalf'], ['full', 'shieldOff']
+]);
+
+/**
+ * modeIcons.ts `accessIcon`: the approval levels (the built-in agent's, and `auto` from the engine's split of Claude's
+ * modes) as one shield family, so the bean reads as a scale; other levels keep their mode glyph
+ */
+export function accessIcon(levelOption: SessionOption): string {
+  return ACCESS_ICONS.get(levelOption.id) ?? modeIcon(levelOption);
 }
 
 /** The built-in agent's approval levels by id, any other level its short mode label */

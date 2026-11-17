@@ -234,7 +234,8 @@ export struct NewSession {
             onSend: (text: string, staged: Attachment[]) => {
               this.model.prepareStart(this.agent(), staged);
               this.onStart(this.agent(), this.cwd(), text);
-            }
+            },
+            onSetMode: (mode: string) => this.model.setNewMode(this.agent(), mode)
           })
         }
         .justifyContent(FlexAlign.Center)

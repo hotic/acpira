@@ -1,4 +1,5 @@
-import { FileHit, SlashCommand } from '../../wire/Wire';
+import { FileHit, SessionOption, SlashCommand } from '../../wire/Wire';
+import { modeHint, modeIcon, modeName } from '../../logic/ModelCatalog';
 import { Cmp, Metrics, Type } from '../../design/Tokens';
 import { MentionPersona, SlashCommands } from '../../logic/SlashCommands';
 import { AgentMark, Lucide } from '../Glyphs';
@@ -14,15 +15,40 @@ function imageFile(path: string): boolean {
   return IMAGE_EXTENSIONS.includes((path.split('.').pop() ?? '').toLowerCase());
 }
 
-/** The command list: a row per hit, scrolling past gooPanelRows */
+/**
+ * The command list: a row per hit, scrolling past gooPanelRows. The working modes beside a permission bean lead by name
+ * (Composer.tsx `hostActions`): the mode's glyph, its name bright, one line on what it does faint after it
+ */
 @ComponentV2
 export struct CommandList {
+  @Param modes: SessionOption[] = [];
   @Param items: SlashCommand[] = [];
+  @Event pickMode: (mode: SessionOption) => void = () => {};
   @Event pick: (command: SlashCommand) => void = () => {};
 
   build() {
     Scroll() {
       Column() {
+        ForEach(this.modes, (m: SessionOption) => {
+          Row({ space: Metrics.s2 }) {
+            Lucide({ name: modeIcon(m), tint: $r('app.color.fg1'), extent: Metrics.icon })
+            Text(modeName(m))
+              .fontSize(Type.text2)
+              .fontColor($r('app.color.fg_strong'))
+              .maxLines(1)
+              .flexShrink(0)
+            if ((modeHint(m) ?? '').length > 0) {
+              Text(modeHint(m) ?? '')
+                .fontSize(Type.text3)
+                .fontColor($r('app.color.fg3'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+            }
+          }
+          .suggestionRow()
+          .onClick(() => this.pickMode(m))
+        }, (m: SessionOption) => `mode:${m.id}`)
         ForEach(this.items, (c: SlashCommand) => {
           Row({ space: Metrics.s2 }) {
             Lucide({ name: 'squareSlash', tint: $r('app.color.fg3'), extent: Metrics.icon })
@@ -55,7 +81,7 @@ export struct CommandList {
       }
       .padding({ top: Cmp.s1_5, bottom: Cmp.s1_5 })
     }
-    .suggestionCard(this.items.length)
+    .suggestionCard(this.modes.length + this.items.length)
   }
 }
 

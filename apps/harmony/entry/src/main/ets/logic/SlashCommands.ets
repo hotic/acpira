@@ -1,4 +1,4 @@
-import { AgentInfo, FileHit, SettingsView, SlashCommand, SubagentGroup, SubagentPersona } from '../wire/Wire';
+import { AgentInfo, FileHit, SessionOption, SettingsView, SlashCommand, SubagentGroup, SubagentPersona } from '../wire/Wire';
 import { ComposerControls } from './ModelCatalog';
 import { t } from '../store/L10n';
 
@@ -126,6 +126,27 @@ export class SlashCommands {
     const rest = commands.filter((c: SlashCommand) => !c.name.toLowerCase().startsWith(q) &&
       (c.name.toLowerCase().includes(q) || wordStart(c.description)));
     return SlashCommands.mergeSkillCopies(prefix.concat(rest));
+  }
+
+  /**
+   * Slash.tsx `matchActions`: the working modes the `/` list leads with, matched on the shown name or the id (so `/plan`
+   * finds Plan in any language), prefixes first, then names containing the query. An empty query lists all
+   */
+  static matchModes(modes: SessionOption[], name: (m: SessionOption) => string, query: string): SessionOption[] {
+    const q = query.toLowerCase();
+    if (q.length === 0) {
+      return modes;
+    }
+    const prefix = modes.filter((m: SessionOption) => name(m).toLowerCase().startsWith(q) || m.id.toLowerCase().startsWith(q));
+    return prefix.concat(modes.filter((m: SessionOption) => !prefix.includes(m) && name(m).toLowerCase().includes(q)));
+  }
+
+  /** A host action picked from the `/` list runs at once: its token leaves the draft with what the caret had left of it */
+  static dropCommand(text: string, span: SigilSpan, caret: number): PromptEdit {
+    const head = text.slice(0, Math.min(span.start, text.length));
+    const rest = text.slice(Math.min(caret, text.length)).replace(/^\S*/, '').replace(/^\s+/, '');
+    const edit: PromptEdit = { text: head + rest, caret: head.length };
+    return edit;
   }
 
   /** A skill listed from both `~/.agents/skills` and `~/.claude/skills` (`agents:dig`, `claude:dig`) shows once */

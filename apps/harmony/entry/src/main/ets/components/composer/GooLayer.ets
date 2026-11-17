@@ -36,9 +36,10 @@ export function BeanGlyphView(g: BeanGlyph, extent: number) {
 }
 
 /** The panel's height: its rows up to gooPanelRows, no taller than the room above the chip */
-function panelHeight(rows: number, room: number): number {
+function panelHeight(rows: GooChoice[], room: number): number {
   const pad = Cmp.s1_5 * 2;
-  const natural = Math.min(rows, Cmp.gooPanelRows) * Cmp.gooRow + pad;
+  const labels = rows.filter((r: GooChoice) => r.section !== undefined).length;
+  const natural = Math.min(rows.length * Cmp.gooRow + labels * Cmp.gooSection, Cmp.gooPanelRows * Cmp.gooRow) + pad;
   return Math.max(Cmp.gooRow + pad, Math.min(natural, room));
 }
 
@@ -164,18 +165,18 @@ export struct GooLayer {
       GooList({ rows: b.rows, current: b.current })
     }
     .width(Cmp.gooPanelW)
-    .height(panelHeight(b.rows.length, this.bottom() - Cmp.bar * 2))
+    .height(panelHeight(b.rows, this.bottom() - Cmp.bar * 2))
     .padding({ top: Cmp.s1_5, bottom: Cmp.s1_5 })
     .backgroundColor($r('app.color.menu_bg'))
     .border({ width: Metrics.hairline, color: $r('app.color.menu_line') })
     .borderRadius(Cmp.rGooPanel)
     .clip(true)
-    .position({ x: this.left(), y: this.bottom() - panelHeight(b.rows.length, this.bottom() - Cmp.bar * 2) })
+    .position({ x: this.left(), y: this.bottom() - panelHeight(b.rows, this.bottom() - Cmp.bar * 2) })
     // Taps inside the panel stay there
     .onClick(() => {})
     .transition(TransitionEffect.scale({
       x: Cmp.panelSeed, y: Cmp.panelSeed, centerX: 0,
-      centerY: panelHeight(b.rows.length, this.bottom() - Cmp.bar * 2)
+      centerY: panelHeight(b.rows, this.bottom() - Cmp.bar * 2)
     }).combine(TransitionEffect.OPACITY).animation(this.spring(0)))
   }
 }
@@ -191,8 +192,22 @@ export struct GooList {
     Scroll(this.scroller) {
       Column() {
         ForEach(this.rows, (row: GooChoice) => {
-          GooRowView({ row: row })
-        }, (row: GooChoice) => `${row.id}:${row.checked}:${row.toggle?.on ?? ''}`)
+          Column() {
+            if (row.section !== undefined) {
+              // A channel's label, fainter and smaller than a row, on the rows' inset, sitting on the row it names
+              Text(row.section)
+                .fontSize(Type.text3)
+                .fontColor($r('app.color.fg3'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+                .height(Cmp.gooSection)
+                .align(Alignment.BottomStart)
+                .padding({ left: Cmp.gooPadX, right: Cmp.gooPadX })
+            }
+            GooRowView({ row: row })
+          }
+        }, (row: GooChoice) => `${row.id}:${row.checked}:${row.toggle?.on ?? ''}:${row.section ?? ''}`)
       }
       .width('100%')
     }
@@ -235,12 +250,6 @@ export struct GooRowView {
           .fontColor($r('app.color.fg3'))
           .maxLines(1)
       } else {
-        if (this.row.source !== undefined && this.row.source.length > 0) {
-          Text(this.row.source)
-            .fontSize(Type.text3)
-            .fontColor($r('app.color.fg3'))
-            .maxLines(1)
-        }
         Lucide({ name: 'check', tint: $r('app.color.fg_strong'), extent: Metrics.icon })
           .opacity(this.row.checked ? 1 : 0)
       }

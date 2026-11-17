@@ -373,8 +373,65 @@ enum ComposerControls {
   /// The sidekick's value for none
   static let noSidekick = "none"
 
-  /// A permission level offered as a config option (the built-in agent's approval): it rides in the mode bean
+  /// One CLI a sidekick can run in, with its models in the select's order
+  struct SidekickCli: Identifiable, Equatable {
+    let id: String
+    let name: String
+    var options: [SessionOption]
+  }
+
+  /// composerControls.ts `sidekickClis`: the select's models by the CLI each runs in, which the host's select
+  /// (host_sidekick.rs) puts in `group`, the session's own CLI first. None and options without a CLI (the built-in
+  /// agent's own select) stay out, so fewer than two CLIs leave none to choose between
+  static func sidekickClis(_ options: [SessionOption]) -> [SidekickCli] {
+    var out: [SidekickCli] = []
+    for o in options where o.id != noSidekick {
+      guard let g = o.group else { continue }
+      if let i = out.firstIndex(where: { $0.id == g.id }) {
+        out[i].options.append(o)
+      } else {
+        out.append(SidekickCli(id: g.id, name: g.name, options: [o]))
+      }
+    }
+    return out
+  }
+
+  /// composerControls.ts `sidekickChannel`: the channel a sidekick option comes through, its source; on the built-in
+  /// agent's own select (no CLI in `group`) the provider it puts in `description`. The host's select keeps the CLI's
+  /// name there, which is no channel
+  static func sidekickChannel(_ o: SessionOption) -> String? {
+    o.source?.name ?? (o.group == nil ? o.description : nil)
+  }
+
+  /// Rows filed under their channel in first-seen order, those without one first unlabelled; nil with fewer than two
+  /// channels, where the list stays flat (ModelPicker.tsx `bySource`)
+  static func byChannel(_ options: [SessionOption]) -> [(channel: String, options: [SessionOption])]? {
+    var groups: [(channel: String, options: [SessionOption])] = []
+    for o in options {
+      let channel = sidekickChannel(o) ?? ""
+      if let i = groups.firstIndex(where: { $0.channel == channel }) { groups[i].options.append(o) } else { groups.append((channel, [o])) }
+    }
+    guard groups.filter({ !$0.channel.isEmpty }).count >= 2 else { return nil }
+    return groups.filter { $0.channel.isEmpty } + groups.filter { !$0.channel.isEmpty }
+  }
+
+  /// A permission level offered as a config option (the built-in agent's approval, Claude's levels split off its modes
+  /// by the engine): a bean of its own
   static let permissionCategory = "_permission_mode"
+
+  /// Composer.tsx `split`: beside a permission control the modes get no bean. The first is the resting one; the rest
+  /// are working modes, entered by name from the `/` list and shown as a pill while in force. nil without that split
+  static func workingModes(_ controls: SessionControls) -> [SessionOption]? {
+    guard !controls.modes.isEmpty, controls.options.contains(where: { $0.category == permissionCategory && $0.type != "boolean" }) else {
+      return nil
+    }
+    return Array(controls.modes.dropFirst())
+  }
+
+  /// The working mode in force (the pill), nil at rest or without the split
+  static func workingMode(_ controls: SessionControls) -> SessionOption? {
+    workingModes(controls)?.first { $0.id == controls.modeId }
+  }
 
   /// The toolbar's split: model selectors, reasoning, model parameters, working modes, the permission level, the
   /// sidekick, the rest
