@@ -127,5 +127,5 @@
  "createdAt": "2026-10-09T08:40:00Z",
  "updatedAt": "2026-10-09T09:05:18Z",
  "canTakeOver": true,
- "error": "Another Acpira engine has this session open right now; take it over to continue here."
+ "error": "Another Acpira engine has this session open right now. Take it over to continue here."
 }

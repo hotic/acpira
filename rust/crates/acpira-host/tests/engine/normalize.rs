@@ -1065,7 +1065,7 @@ fn adapter_retry_prose_labels_the_turn_and_logs_one_retry_row() {
   assert!(retry_of(&s).is_null());
   expect_eq(&retry_rows(&s)[0]["retry"]["status"], json!("in_progress"));
   apply(&mut s, chunk("Retrying..."));
-  expect_match(retry_of(&s), json!({ "detail": "Model request failed; retrying…" }));
+  expect_match(retry_of(&s), json!({ "detail": "Model request failed, retrying…" }));
   // Content after it: the retries worked
   apply(&mut s, chunk(" Done"));
   let blocks = v(&s.turns[0])["blocks"].clone();
