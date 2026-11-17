@@ -851,13 +851,15 @@ mod tests {
 
   #[test]
   fn agy_guard_reads_only_the_tool_paths() {
-    let home = Path::new("/Users/me");
+    // An absolute home on every platform: `/Users/me` has no drive on Windows, so it is not absolute there
+    let me = if cfg!(windows) { "C:/Users/me" } else { "/Users/me" };
+    let home = Path::new(me);
     // Every payload carries agy's own ~/.gemini transcript and artifact paths, which must not let a call through
     let payload = |args: Value| {
       json!({
         "toolCall": { "id": "t1", "name": "view_file", "args": args },
-        "transcriptPath": "/Users/me/.gemini/antigravity-cli/brain/c1/transcript.jsonl",
-        "artifactDirectoryPath": "/Users/me/.gemini/antigravity-cli/brain/c1",
+        "transcriptPath": format!("{me}/.gemini/antigravity-cli/brain/c1/transcript.jsonl"),
+        "artifactDirectoryPath": format!("{me}/.gemini/antigravity-cli/brain/c1"),
         "hookEventName": "PreToolUse",
       })
       .to_string()
@@ -865,14 +867,14 @@ mod tests {
     let denied = |args: Value| agy_guard(&payload(args), home).is_some();
     assert!(denied(json!({ "AbsolutePath": "/etc/hosts" })));
     assert!(denied(json!({ "TargetFile": "src/a.rs", "CodeContent": "x" })));
-    assert!(denied(json!({ "AbsolutePath": "/Users/me/.gemini/../.ssh/id_ed25519" })));
-    assert!(denied(json!({ "TargetFile": "/Users/me/.gemini/x.md", "DirectoryPath": "/Users/me/proj" })));
-    assert!(denied(json!({ "Query": "/Users/me/.gemini/x" })));
+    assert!(denied(json!({ "AbsolutePath": format!("{me}/.gemini/../.ssh/id_ed25519") })));
+    assert!(denied(json!({ "TargetFile": format!("{me}/.gemini/x.md"), "DirectoryPath": format!("{me}/proj") })));
+    assert!(denied(json!({ "Query": format!("{me}/.gemini/x") })));
     assert!(denied(json!({})));
     assert!(agy_guard("not json", home).is_some());
-    assert!(!denied(json!({ "AbsolutePath": "/Users/me/.gemini/skills/a/SKILL.md" })));
+    assert!(!denied(json!({ "AbsolutePath": format!("{me}/.gemini/skills/a/SKILL.md") })));
     assert!(!denied(json!({ "TargetFile": "~/.gemini/antigravity-cli/brain/c1/plan.md", "CodeContent": "/* x */" })));
-    assert!(!denied(json!("{\"Path\":\"/Users/me/.gemini/x.md\"}")));
+    assert!(!denied(json!(format!("{{\"Path\":\"{me}/.gemini/x.md\"}}"))));
   }
 
   #[test]
@@ -912,7 +914,10 @@ mod tests {
     assert!(!runs_here("Read", &json!({ "file_path": "/Users/me/.acpira/remote/antigravity/gen1/home/u/proj/a.rs" }), &agy, data, &agy_roots));
     assert!(is_blocked_local_tool(&agy, &json!({ "name": "run_command", "rawInput": { "CommandLine": "ls" } }), home, data));
     assert!(is_blocked_local_tool(&agy, &json!({ "name": "read_file", "rawInput": { "Path": "/etc/hosts" } }), home, data));
-    assert!(!is_blocked_local_tool(&agy, &json!({ "name": "read_file", "rawInput": { "Path": "/Users/me/.gemini/skills/a/SKILL.md" } }), home, data));
+    // agy's own files pass under an absolute home (`/Users/me` has no drive on Windows)
+    let me = if cfg!(windows) { "C:/Users/me" } else { "/Users/me" };
+    let own = format!("{me}/.gemini/skills/a/SKILL.md");
+    assert!(!is_blocked_local_tool(&agy, &json!({ "name": "read_file", "rawInput": { "Path": own } }), Path::new(me), data));
   }
 
   #[test]
