@@ -305,6 +305,8 @@ impl AcpSession {
         || c.ultracode.rebuilding
         || c.phase.running
         || c.peer.detached
+        // A replay being read for a late reply (`late_reply.rs`) would swallow this turn's updates
+        || c.late.capture.is_some()
         || (!auto && c.pending_prompt.is_some()))
     {
       Gate::Queue
@@ -809,6 +811,10 @@ impl AcpSession {
   }
 
   pub(crate) fn settle(&self, c: &mut Core, stop: TurnStop, error: Option<TurnError>) {
+    // Whatever settles the turn of a late reply still being written (`late_reply.rs`) ends its hold with it
+    if std::mem::take(&mut c.late.open) {
+      c.peer.detached = false;
+    }
     if let Some(f) = c.usage.finish_refresh.take() {
       let _ = f.send(false);
     }
@@ -917,8 +923,14 @@ impl AcpSession {
     if let Some(sid) = c.acp_session_id.clone() {
       proc.notify("session/cancel", json!({ "sessionId": sid }));
     }
-    // An autonomous cycle has no prompt response to settle it: the stop does
-    if c.peer.autonomous {
+    // After the cancel, so Codex takes its host command's end as the stop's and not as a failure to retry
+    self.stop_exec_commands();
+    // An autonomous cycle has no prompt response to settle it, nor has a late reply's turn: the stop does
+    if c.peer.autonomous || c.late.open {
+      // The stop is the user's: the watcher that followed the late reply retires, and a replay it is reading is dropped
+      if c.late.open {
+        c.late.watch += 1;
+      }
       self.end_detached(&mut c, TurnStop::Cancelled);
       self.touch(&mut c);
     }
