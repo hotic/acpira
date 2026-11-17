@@ -133,6 +133,8 @@ export const ja = {
   'goal.pause': '目標を一時停止',
   'goal.resume': '目標を再開',
   'goal.clear': '目標をクリア',
+  'goal.setFromPrompt': '目標に設定',
+  'goal.setFromPromptHint': 'このメッセージを目標にして、完了するまで続けます',
   'goal.rounds': '{n} 回目',
   'goal.tokens': '{used} トークン',
   'goal.tokensOf': '{used} / {budget} トークン',

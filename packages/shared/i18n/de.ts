@@ -130,6 +130,8 @@ export const de = {
   'goal.pause': 'Ziel pausieren',
   'goal.resume': 'Ziel fortsetzen',
   'goal.clear': 'Ziel entfernen',
+  'goal.setFromPrompt': 'Als Ziel setzen',
+  'goal.setFromPromptHint': 'An dieser Nachricht weiterarbeiten, bis sie erledigt ist',
   'goal.rounds': 'Runde {n}',
   'goal.tokens': '{used} Tokens',
   'goal.tokensOf': '{used} / {budget} Tokens',

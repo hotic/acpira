@@ -125,6 +125,8 @@
   "goal.pause": "Mettre l’objectif en pause",
   "goal.resume": "Reprendre l’objectif",
   "goal.clear": "Effacer l’objectif",
+  "goal.setFromPrompt": "Définir comme objectif",
+  "goal.setFromPromptHint": "Continuer sur ce message jusqu’à ce qu’il soit terminé",
   "goal.rounds": "Tour {n}",
   "goal.elapsed.hm": "{h} h {m} min",
   "session.noneAgent": "{name} n’a encore aucune session",

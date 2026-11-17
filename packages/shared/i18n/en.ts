@@ -131,6 +131,9 @@ export const en = {
   'goal.pause': 'Pause goal',
   'goal.resume': 'Resume goal',
   'goal.clear': 'Clear goal',
+  // The phone apps' Set as goal on a sent prompt (the webview's moved to the prompt.actions plugin slot)
+  'goal.setFromPrompt': 'Set as goal',
+  'goal.setFromPromptHint': 'Keep working on this message until it is done',
   'goal.rounds': 'Round {n}',
   'goal.tokens': '{used} tokens',
   'goal.tokensOf': '{used} / {budget} tokens',
