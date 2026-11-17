@@ -146,6 +146,9 @@ final class PairingModel {
     watching?.cancel()
     connection?.close()
     connection = nil
+    // The up time was the closed wire's: a switch to another computer (or a new pairing) whose first dial fails is a
+    // computer that did not answer, not a lost wire, so it shows offline instead of minutes of quick redials
+    wiredAt = nil
     guard let computer = selected else {
       link = .idle
       return

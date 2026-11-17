@@ -33,10 +33,13 @@ final class ScriptedService: PairingService, @unchecked Sendable {
   let wires = Mutex<[ScriptedWire]>([])
   private let reportedVersion: String?
   private let cachedVersion = Mutex<String?>(nil)
+  /// A second paired computer to switch to (dialed from the same script)
+  private let other: PairedComputer?
 
-  init(_ outcomes: [ConnectionError?], version: String? = nil) {
+  init(_ outcomes: [ConnectionError?], version: String? = nil, other: PairedComputer? = nil) {
     script = Mutex(outcomes)
     reportedVersion = version
+    self.other = other
   }
 
   var dials: Int { wires.withLock { $0.count } + failed.withLock { $0 } }
@@ -47,7 +50,7 @@ final class ScriptedService: PairingService, @unchecked Sendable {
   func computers() async -> [PairedComputer] {
     var current = computer
     current.version = cachedVersion.withLock { $0 }
-    return [current]
+    return [current] + (other.map { [$0] } ?? [])
   }
   func computerName(link: String) throws -> String { "Mac" }
   func pair(link: String) async throws -> PairedComputer { computer }
@@ -155,5 +158,19 @@ struct PairingModelTests {
     #expect(pairing.link == .failed(.revoked))
     try await Task.sleep(for: .milliseconds(400))
     #expect(service.dials == 1)
+  }
+
+  /// The wire to the previous computer was up: a switch to one that does not answer shows the offline page at once,
+  /// not the connecting page of a lost wire's quick redials
+  @Test func aSwitchToAComputerThatDoesNotAnswerShowsOffline() async throws {
+    let service = ScriptedService([], other: PairedComputer(id: "pc", name: "PC"))
+    let pairing = PairingModel(service: service, remembers: false)
+    await pairing.load()
+    try await until { pairing.link == .online(.relay) }
+    service.then([.offline])
+    pairing.select("pc")
+    try await until { pairing.link != .connecting }
+    #expect(pairing.link == .failed(.offline))
+    #expect(service.dials == 2)
   }
 }
