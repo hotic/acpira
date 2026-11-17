@@ -311,7 +311,7 @@ extension InlineBuilder {
       case .code(let text):
         let codeStyle = TextStyle(size: WebType.mono.size, lineHeight: style.lineHeight, mono: true)
         let padStyle = TextStyle(size: WebType.mono.size * 0.4 / 0.6, lineHeight: style.lineHeight, mono: true)
-        let pad = selectionDecoration("\u{00A0}", style: padStyle)
+        let pad = selectionDecoration(InlineBuilder.codePad, style: padStyle)
         let opens = before.last?.unicodeScalars.first.map {
           [.openPunctuation, .initialPunctuation].contains($0.properties.generalCategory)
         } == true

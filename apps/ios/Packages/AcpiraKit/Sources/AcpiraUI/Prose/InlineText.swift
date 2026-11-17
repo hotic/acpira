@@ -240,11 +240,13 @@ struct InlineBuilder {
   /// Code text between two narrow pads, all three on the chip. The pads are no-break spaces so they never stay
   /// behind at a line end, which also hides the break CSS finds at the chip's edges (UAX #14 forbids one before a
   /// no-break space after an ideograph or a space in CoreText); a zero-width space outside the chip gives it back,
-  /// except after opening punctuation or before closing punctuation, where CSS has none either
+  /// except after opening punctuation or before closing punctuation, where CSS has none either.
+  /// The pad is a figure space, not U+00A0: when the code is wider than a whole line, TextKit's fallback break still
+  /// splits after a U+00A0 and leaves the leading pad as an empty chip on the line before (iOS 27 / macOS 27)
   func code(_ s: String, after previous: Character?, before next: Character?) -> Text {
     let mono = WebType.mono
-    // A mono space is .6em; the pad is .4em of the code size
-    let pad = Text(web: "\u{00A0}").font(Font(MonoFont.ctFont(size: mono.size * 0.4 / 0.6, weight: .regular)))
+    // A mono figure space is .6em; the pad is .4em of the code size
+    let pad = Text(web: Self.codePad).font(Font(MonoFont.ctFont(size: mono.size * 0.4 / 0.6, weight: .regular)))
     // A word joiner after each slash: Chrome finds no break opportunity after `/` before a letter, CoreText does
     var text = CJKWidth.attributed(s.replacingOccurrences(of: "/", with: "/\u{2060}"), size: WebType.mono.size, paragraph: false)
     // A path in backticks opens the file page (chat/Link.tsx InlineFileCode), still looking like code
@@ -258,6 +260,9 @@ struct InlineBuilder {
     let trail = next.map { !$0.isWhitespace && !$0.isPunctuation && !$0.isSymbol } ?? false ? "\u{200B}" : ""
     return Text("\(Text(web: lead))\(chip)\(Text(web: trail))")
   }
+
+  /// The no-break space on each side of a code chip, shared with the selection text (TextSelection.swift)
+  static let codePad = "\u{2007}"
 
   /// The app's link for a workspace path (FileLinks.swift); a session link stays itself
   private func fileTarget(_ text: String) -> URL? {
