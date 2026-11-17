@@ -173,6 +173,10 @@ export function App() {
   useEffect(() => setAgentMarks(agents), [agents]);
   const [hidden, setHidden] = useState<HiddenMap>({});
   const [session, setSession] = useState<SessionView>();
+  // `views.catchingUp` mirrored into state: a catch-up reply that brings nothing new hands back the view already on
+  // screen, so `setSession` renders nothing, and a flag read off the cache during render stayed set. The thread then
+  // kept treating every commit as restored history (no fold transitions, no entrances) until the next real change
+  const [catchingUp, setCatchingUp] = useState<string>();
   // A project shell (the desktop app) with no project to show a session of: init came without one, or noSession
   const [noProject, setNoProject] = useState(false);
   // The session picked while its view is on the way: the page holds no copy of it, and a long one read from disk (or
@@ -455,6 +459,8 @@ export function App() {
           break;
         }
       }
+      // Any message above may have moved it (init, a whole view, a patch, a switch); unchanged is a bail-out
+      setCatchingUp(views.catchingUp);
     };
     window.addEventListener('message', onMsg);
     post({ type: 'ready', patches: true });
@@ -517,6 +523,7 @@ export function App() {
     selectSession: id => {
       const kept = views.select(id);
       if (kept) { setNoProject(false); setSession(kept); }
+      setCatchingUp(views.catchingUp);
       setPending(kept ? undefined : id);
       post({ type: 'selectSession', id });
     },
@@ -778,7 +785,7 @@ export function App() {
       subagentTranscripts={subagentTranscripts}
       on={on}
       replayKey={session?.id}
-      catchingUp={!!session && views.catchingUp === session.id}
+      catchingUp={!!session && catchingUp === session.id}
       onOpenSettings={openSettings}
       desktop={desktop}
       noProject={desktop && noProject}
