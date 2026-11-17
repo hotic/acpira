@@ -125,7 +125,7 @@ export function ProjectPick({ cwd, projects, home, onPick, onOpenOther, chat, ch
             {chat && <Check className="size-icon shrink-0 text-fg-1" strokeWidth={1.75} />}
           </button>
         )}
-        <div className="scroll-thin flex h-pop flex-col overflow-y-auto" role="listbox" aria-label={t('start.project')}>
+        <div className="scroll-none flex h-pop flex-col overflow-y-auto" role="listbox" aria-label={t('start.project')}>
           {shown.map(p => (
             <button key={p} type="button" role="option" aria-selected={p === cwd} title={p} onClick={() => { close(); if (p !== cwd) onPick(p); }}
               className="flex shrink-0 items-center gap-gap rounded-md px-2 py-1 text-left transition-colors hover:bg-hover focus-visible:bg-hover">

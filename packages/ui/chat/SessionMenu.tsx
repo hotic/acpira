@@ -74,7 +74,7 @@ export function Submenu({ icon, label, value, side = 'inline-start', children }:
         <ChevronRight className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />
       </DropdownMenu.SubmenuTrigger>
       <DropdownMenu.Portal><DropdownMenu.Positioner side={side} align="start" width="md"><DropdownMenu.Popup>
-        <div className="scroll-thin flex max-h-pop min-h-0 flex-col overflow-y-auto">{children}</div>
+        <div className="scroll-none flex max-h-pop min-h-0 flex-col overflow-y-auto">{children}</div>
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.SubmenuRoot>
   );

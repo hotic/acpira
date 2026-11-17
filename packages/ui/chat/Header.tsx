@@ -182,7 +182,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
         {!sessionNav && !onNewIn && <DropdownMenu.Root>
           <DropdownMenu.Trigger render={<IconButton data-land="agents" data-part="header-new" title={t('session.new')} aria-label={t('session.new')}><Plus strokeWidth={1.5} /></IconButton>} />
           <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
-            <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+            <div className="scroll-none flex max-h-pop flex-col overflow-y-auto">
               {launchable(agents).map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => on.newSession(a.id)}>
                 <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
               </DropdownMenu.Item>)}

@@ -59,7 +59,7 @@ export function SelectRow<V extends string>({ label, options, value, onChange }:
         <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN)} strokeWidth={1.75} />
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width={twoLine ? 'md' : 'sm'}><DropdownMenu.Popup>
-        <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+        <DropdownMenu.RadioGroup value={value} className="scroll-none flex max-h-pop flex-col overflow-y-auto">
           {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} disabled={o.disabled} onClick={() => onChange(o.value)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
             <OptionContent description={o.description} checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>
           </DropdownMenu.RadioItem>)}

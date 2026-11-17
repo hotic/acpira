@@ -998,7 +998,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger render={<button type="button" data-land="agents" data-part="session-new" className={NAV_ROW}><span className={NAV_LEAD}><SquarePen className="size-icon" strokeWidth={1.5} /></span><span className="min-w-0 truncate">{t('session.new')}</span></button>} />
                 <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="md"><DropdownMenu.Popup>
-                  <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+                  <div className="scroll-none flex max-h-pop flex-col overflow-y-auto">
                     {fresh.map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => onNew(a.id)}>
                       <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
                     </DropdownMenu.Item>)}
@@ -1524,7 +1524,7 @@ export function ImportSessions({ agents, agentFilter, activeAgent, native, onLis
           <PanelHeader tail={<ChannelFilter agents={candidates} value={agent} onChange={id => setPicked(id || undefined)} />}>
             {t('session.import.title', { agent: name })}
           </PanelHeader>
-          <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto" role="listbox" aria-label={t('session.import.title', { agent: name })}>
+          <div className="scroll-none flex max-h-pop flex-col overflow-y-auto" role="listbox" aria-label={t('session.import.title', { agent: name })}>
             {(!mine || mine.loading) && <div className="flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{t('session.import.loading')}</div>}
             {mine && !mine.loading && mine.error && <div className="flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{mine.error}</div>}
             {mine && !mine.loading && !mine.error && !mine.sessions.length && <div className="flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{t('session.import.none')}</div>}

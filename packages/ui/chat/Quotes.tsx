@@ -39,7 +39,7 @@ export function QuoteChip({ quotes, onEdit, onRemove }: {
           <span className="truncate">{label}</span>
         </button>} />
       <Popover.Portal><Popover.Positioner side="top" align="start" width="xl"><Popover.Popup>
-        <ol className="scroll-thin flex max-h-pop flex-col gap-3 overflow-y-auto py-1">
+        <ol className="scroll-none flex max-h-pop flex-col gap-3 overflow-y-auto py-1">
           {quotes.map((q, i) => (
             <QuoteEntry key={i} index={i} quote={q} editing={editing === i}
               onStartEdit={onEdit && (() => setEditing(i))}

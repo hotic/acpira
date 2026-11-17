@@ -85,7 +85,7 @@ export function QuickOpen({
               ref={list}
               role="listbox"
               onPointerMove={() => { pointer.current = true; }}
-              className="scroll-thin scroll-stable flex h-pop flex-col overflow-y-auto"
+              className="scroll-none flex h-pop flex-col overflow-y-auto"
             >
               {hits.map((h, i) => {
                 const name = nameOf(h.path);

@@ -110,7 +110,7 @@ function PermissionMenu({ options, onChoose }: { options: DisplayOption[]; onCho
   const sharedDetail = commonDetail && options.filter(o => !o.bypass).every(o => o.detail === commonDetail) ? commonDetail : undefined;
   const ordered = [...options.filter(o => !o.bypass), ...options.filter(o => o.bypass)];
   return (
-    <div className="scroll-thin max-h-pop overflow-y-auto">
+    <div className="scroll-none max-h-pop overflow-y-auto">
       {ordered.map((option, index) => (
         <div key={option.id} className={option.bypass && index > 0 && !ordered[index - 1]?.bypass ? 'border-t border-line' : undefined}>
           {/* Menu rows stay inside the panel; conversation rows extend their hit area. */}

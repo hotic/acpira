@@ -11,6 +11,8 @@ export const overlayWidth = { sm: 'w-pop-sm', md: 'w-pop-md', lg: 'w-pop-lg', xl
 // list navigation calls scrollIntoView on the highlighted row. Clearing a combobox query regrows the list for a frame
 // before the positioner moves the popup back, so that call scrolled the shell root (and the whole window) a few pixels
 // and the next layout snapped it back.
+// A list inside a popup scrolls with `scroll-none` (wheel and keys, no bar): a reserved gutter takes room on the right
+// only, so its rows' highlight stood further from the popup's right edge than from its left (ui/Command.tsx List likewise)
 export const popupClass = 'popup-surface group/popup flex max-h-(--available-height) flex-col overflow-clip rounded-lg border p-1 shadow-pop outline-none';
 
 // Count actual open lifetimes, including a controlled root or an unmounted trigger.
