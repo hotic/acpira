@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.4] - 2026-11-17
+
+### Added
+
+- **Long sessions open fast on paired phones.** iOS, Android and HarmonyOS open a long session at its tail and load earlier parts as the reader nears the top, keeping their place when one lands. The engine sends only the turns that changed. An older phone app that cannot take a session this large is told to update instead of losing the link.
+- **Codex in SSH folders.** Codex runs locally while its commands and file edits run on the SSH host, and joins the local-run switch in settings. Claude Code running locally for an SSH host also gets MultiEdit, LS and background Bash there.
+- **Sidekicks filed by CLI.** When sidekick models come from two or more CLIs, the desktop sidekick panel gets a rail of CLI marks and lists the open CLI's models by channel, and search covers every CLI. The phone apps lead with a CLI pick the same way.
+- Devin's Fusion pairs read as a lead plus Devin's own sidekick: the chip and model panel name both, switch between the sidekicks Devin pairs with the lead, and the sidekick's calls show as relay rounds.
+- Antigravity accounts show their quota: Gemini and Claude/GPT groups as 5-hour and weekly windows. The last known bars stay, greyed with the problem, when a re-read fails.
+- Plugins can add buttons under each typed prompt and on the transcript's selection bar.
+- A long file write from the built-in agent shows as under way, with its file, as soon as the model names the path.
+- On the phone apps, the working modes lead the `/` list beside an approval control, and the mode in force shows as a pill that leaves it on a tap. Only the newest reply shows its action row; a tap opens an older reply's row. Screen readers keep every row.
+
+### Changed
+
+- Antigravity under full access runs with edits accepted and Acpira approving the rest, so `git pull` and commits work. Its file tools are refused outside its own files in SSH folders.
+- An Antigravity account saved in 2.1.3 needs to sign in again: saved accounts now keep their files in a layout `agy` also reads quota from.
+- The composer beam lights only while the window is focused and input is recent, and the orb and metal ring cost less to draw in WebKit.
+- Popup lists scroll without a bar. The desktop sheet title and header buttons line up with the cards' edges, and session rows open on a single finger tap.
+- English interface text no longer uses semicolons.
+
+### Fixed
+
+- A desktop update already verified stays installable while a newer one downloads, and an older install without a delta jumps straight to the latest full package.
+- An Antigravity reply written after a background command keeps its turn open until the model finishes, and a prompt sent meanwhile waits behind it.
+- A restored session that brings nothing new no longer leaves the thread treating every later update as restored history.
+- The Android app reads mirrored sessions again, and reads pairing codes from dark-theme cards with zxing-cpp. Its toast follows the theme.
+- On iOS, a computer that does not answer after a switch shows as offline, a composer picker wins over a folder menu opened in the same tap, and wide inline code no longer leaves an empty chip on the line before.
+- A shared reply's watermark sits inside the sheet's rounded corner, and the sidekick flip no longer shows its front face in screenshots.
+
 ## [2.1.3] - 2026-11-16
 
 ### Added

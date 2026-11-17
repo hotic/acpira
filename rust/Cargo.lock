@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acpira-agent"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "acpira-agent",
  "acpira-rpc",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-desktop"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "acpira-host",
  "acpira-shared",
@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-gateway"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "acpira-desktop",
  "acpira-host",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-host"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "acpira-agent",
  "acpira-desktop",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-mobile"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "acpira-gateway",
  "acpira-host",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-mobile-ohos"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "acpira-gateway",
  "acpira-host",
@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-net"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "acpira-shared",
  "anyhow",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-rpc"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "parking_lot",
  "serde_json",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-shared"
-version = "2.1.3"
+version = "2.1.4"
 dependencies = [
  "miniz_oxide 0.8.9",
  "regex",
