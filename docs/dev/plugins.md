@@ -25,7 +25,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Manifest
 
-- Fields: `plugins/manifest.rs` (parser, static check), `acpira-shared/src/plugins.rs`, `packages/shared/plugins.ts`. A `package.json` is read only for dependencies.
+- Fields: `plugins/manifest.rs`, with the parser and static check in `plugins/manifest/validate.rs`; `acpira-shared/src/plugins.rs`, `packages/shared/plugins.ts`. A `package.json` is read only for dependencies.
 - `id` = folder name, at most 24 chars so `mcp__acpira__<id>_<tool>` fits providers' 64-char tool-name limit; no `_`, so `<id>_<name>` is unique.
 - An unknown `schema` skips the plugin; unknown keys elsewhere are reported and ignored.
 
