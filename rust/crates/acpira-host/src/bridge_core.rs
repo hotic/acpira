@@ -1,29 +1,32 @@
 //! One per view: routes WebviewMsgs to its viewer / the manager / the
 //! settings center, resolves paths before asking the platform for an IDE action, and pushes changes back coalesced
 
-use std::path::Path;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use serde_json::Value;
 
 use acpira_shared::appearance::Appearance;
-use acpira_shared::protocol::{ExportFormat, FileHit, HostMsg, InitState, ProjectBase, WebviewHost, WebviewMsg, is_safe_external_url};
-use acpira_shared::remote::normalize_remote_path;
-use acpira_shared::session_patch::{Delivery, SentViews};
+use acpira_shared::protocol::{ExportFormat, HostMsg, WebviewHost, WebviewMsg, is_safe_external_url};
+use acpira_shared::session_patch::SentViews;
 use acpira_shared::session_window::VIEW_WINDOW_BYTES;
 use acpira_shared::settings::is_setting_key;
 use acpira_shared::sidecar::{InitialView, PlanTarget, ToastOpen};
 
-use crate::acp::transcript::normalize::file_url_to_path;
 use crate::i18n::{t, tp};
 use crate::project_files;
 use crate::remote::connections::Connections;
 use crate::session_manager::{SessionManager, Viewer, ViewerShell};
 use crate::settings::SettingsCenter;
 use crate::sidecar::platform::SidecarPlatform;
-use crate::store::data_dir::{home_dir, normalize};
 use crate::terminal::TerminalHub;
+
+mod files;
+mod push;
+mod ready;
+mod settings;
+
+pub use self::push::{MsgBatch, Pushed};
 
 /// Manager events within this window collapse to one post per message type
 pub const BATCH_WINDOW: Duration = Duration::from_millis(30);
@@ -33,68 +36,6 @@ pub const BATCH_WINDOW: Duration = Duration::from_millis(30);
 const HOST_VIEW_WAIT: Duration = Duration::from_secs(2);
 
 pub type Post = Arc<dyn Fn(HostMsg) + Send + Sync>;
-
-/// Streaming updates are dense: within one batch window only the latest message per key survives, and an idle session edge
-/// goes out at once together with whatever was pending. Only the edge: a session whose own turn is over may still stream
-/// (a summoned child the turn left running), and those idle views coalesce like running ones
-#[derive(Default)]
-pub struct MsgBatch {
-  pending: Vec<(String, HostMsg)>,
-  armed: bool,
-  /// The running flag of the last session view pushed; None before the first
-  running: Option<bool>,
-  /// The id of the last session view pushed: switching to another session flushes at once instead of waiting out the window
-  session_id: Option<String>,
-}
-
-/// What a push asks of the owner
-pub enum Pushed {
-  /// Post these now
-  Flush(Vec<HostMsg>),
-  /// Start the window timer, then flush
-  Arm,
-  /// A timer is already running
-  Wait,
-}
-
-impl MsgBatch {
-  pub fn push(&mut self, m: HostMsg) -> Pushed {
-    let immediate = match &m {
-      HostMsg::Session { running, parts, .. } => {
-        let switched = match parts.as_ref().map(|p| p.0.id.as_str()) {
-          Some(id) => self.session_id.replace(id.to_owned()).as_deref() != Some(id),
-          None => false,
-        };
-        let idle = self.running.replace(*running) != Some(false) && !*running;
-        switched || idle
-      }
-      HostMsg::DeleteSessionResult { .. } => true,
-      _ => false,
-    };
-    let key = m.batch_key();
-    match self.pending.iter().position(|(k, _)| *k == key) {
-      Some(i) => self.pending[i].1 = m,
-      None => self.pending.push((key, m)),
-    }
-    if immediate {
-      return Pushed::Flush(self.flush());
-    }
-    if self.armed {
-      return Pushed::Wait;
-    }
-    self.armed = true;
-    Pushed::Arm
-  }
-
-  pub fn flush(&mut self) -> Vec<HostMsg> {
-    self.armed = false;
-    std::mem::take(&mut self.pending).into_iter().map(|(_, m)| m).collect()
-  }
-
-  pub fn clear(&mut self) {
-    self.pending.clear();
-  }
-}
 
 /// `tokio::spawn` keeping the page's wire as `ORIGIN`: a task-local does not cross a spawn, and without it a request the
 /// task makes later (a fetched remote file opening, a toast) would go to whichever window is active by then
@@ -274,125 +215,7 @@ impl BridgeCore {
     let (manager, platform) = (&self.manager, &self.platform);
     match m {
       W::ViewFocus => {}
-      W::Ready { patches, list_patches, window } => {
-        self.patches.store(patches, std::sync::atomic::Ordering::Release);
-        // A window moves with the patches that follow it: without them every push would open it again
-        self.window.store(window && patches, std::sync::atomic::Ordering::Release);
-        self.list_patches.store(list_patches, std::sync::atomic::Ordering::Release);
-        // A view (re)opening is a cheap moment to re-check executables and pick up sessions another window created
-        let m2 = manager.clone();
-        spawn_on(self.wire, async move { m2.reprobe().await });
-        manager.refresh_index().await;
-        // Init waits for the session on screen to have a view, not for its agent: a stored session is shown as soon as
-        // its record is read, while starting the agent and resuming can take seconds, and the page stays blank until init
-        let ensure = {
-          let (m, v) = (manager.clone(), self.viewer.clone());
-          let preload = self.preload.lock().take();
-          spawn_on(self.wire, async move {
-            // The load begun at attach goes first: a session it could not open is replaced below, as without it
-            if let Some(load) = preload {
-              let _ = load.await;
-            }
-            m.ensure_active_for(&v).await
-          })
-        };
-        tokio::select! {
-          _ = ensure => {}
-          _ = self.view_shown.notified() => {}
-        }
-        // A host session (remote run) is opened by asking its host for a view, and `ensure` returns before that view comes
-        // back: init without it reads as "no project" on a project shell (the desktop's empty sheet flashes), so it waits
-        // for the view, bounded. Looped because `view_shown` may hold a stale wake-up from an earlier push
-        if let Some(id) = self.viewer.active_id() {
-          let until = tokio::time::Instant::now() + HOST_VIEW_WAIT;
-          while manager.awaits_host_view(&id) && tokio::time::timeout_at(until, self.view_shown.notified()).await.is_ok() {}
-        }
-        // A session another engine runs: its live view, not the read-only record copy shown until the first push lands
-        manager.first_view_settled(self.viewer.active_id().as_deref()).await;
-        // A page's first pushes start only now: init below carries everything they would have, and opening a long session
-        // during the awaits above used to send its whole view once before init and once inside it.
-        // The sent views stay locked from here until init is out: a session push racing init (the agent starting, a status
-        // change) waits in `deliver` and goes as a patch against init's view. Before, it found no base yet and went whole,
-        // a second copy of a long transcript just before init
-        let mut sent = self.sent.lock();
-        self.ready.store(true, std::sync::atomic::Ordering::Release);
-        let (whole, active_parts) = match manager.session_msg(self.viewer.active_id().as_deref()) {
-          Some(HostMsg::Session { session, parts, .. }) => (Some(session), parts),
-          _ => (None, None),
-        };
-        // Put together only when the page gets it whole: a window is cut from the parts
-        let mut active = None;
-        // The page takes init's view as a whole and starts its cache over, keeping that view as the one on screen: it
-        // becomes the base the next push of that session patches against, instead of a second copy of the transcript
-        sent.clear();
-        if let Some(parts) = active_parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire)) {
-          if !self.window.load(std::sync::atomic::Ordering::Acquire) {
-            sent.deliver(Some(parts));
-          } else if let Delivery::Window(view) = sent.deliver_window(parts, VIEW_WINDOW_BYTES) {
-            active = Some(view);
-          }
-        }
-        let active = active.or_else(|| whole.map(|w| w.raw().clone()));
-        let state = InitState {
-          host: self.host,
-          appearance: (self.appearance)(),
-          agents: manager.agents(),
-          accounts: manager.accounts(),
-          account_actions: Some(manager.account_actions()),
-          agent_installs: Some(manager.agent_installs()),
-          hidden: manager.hidden(),
-          sessions: self.viewer.listed_sessions(manager.sessions()),
-          categories: manager.categories(),
-          active,
-          settings: self.settings.view_for(self.wire),
-          locale: self.settings.locale_for(self.wire),
-          home: platform.home(),
-          // A project shell without a project yet has the home directory here, like a shell without a workspace
-          cwd: manager.folder_for(Some(&self.viewer), None).unwrap_or_else(|| platform.home()),
-          blob_base: self.blob_base.clone(),
-          chats: Some(manager.chat_root().to_string_lossy().into_owned()),
-        };
-        // Init's list is the base of the next list patch, so the corrective list below goes as a patch (none if equal)
-        *self.listed.lock() = list_patches.then(|| (0, state.sessions.clone()));
-        self.emit(HostMsg::Init { state: Box::new(state) });
-        drop(sent);
-        let refused = std::mem::take(&mut *self.refused.lock());
-        refused.into_iter().for_each(|m| self.queue(m));
-        // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
-        // unchanged list: the batch gets the current one, ordered against every other list push
-        manager.sessions_in_order(&self.viewer);
-        // A reloaded page lost its theme layer: it goes again after every init (a task of its own: `sent`'s guard above
-        // keeps this future from crossing an await)
-        *self.theme.lock() = None;
-        *self.ui.lock() = None;
-        let me = self.clone();
-        spawn_on(self.wire, async move {
-          me.push_theme().await;
-          me.push_ui().await;
-        });
-        let mut sub = self.theme_sub.lock();
-        if sub.is_none() {
-          let weak = self.me.clone();
-          *sub = Some(self.plugins.subscribe(Arc::new(move || {
-            if let Some(c) = weak.upgrade() {
-              spawn_on(c.wire, async move {
-                c.push_theme().await;
-                c.push_ui().await;
-              });
-            }
-          })));
-        }
-        drop(sub);
-        let mut pages = self.pages_sub.lock();
-        if pages.is_none() {
-          let weak = self.me.clone();
-          *pages = Some(self.plugins.runtimes().subscribe_pages(Arc::new(move |msg| {
-            if let Some(c) = weak.upgrade() {
-              c.post_now(msg);
-            }
-          })));
-        }
-      }
+      W::Ready { patches, list_patches, window } => self.on_ready(patches, list_patches, window).await?,
       // The page could not apply a patch of the session on screen: that session goes whole, the rest it keeps stay patchable
       W::Resync => {
         if let Some(id) = self.viewer.active_id() {
@@ -425,68 +248,7 @@ impl BridgeCore {
         manager.sessions_in_order(&self.viewer);
       }
       W::OpenInEditor { session_id } => platform.open_in_editor(session_id.or_else(|| self.viewer.active_id())),
-      W::OpenFile { session_id, path, line, reveal } => {
-        // Tool references are relative to the session they came from; a view showing another session ignores them
-        let Some(active) = self.viewer.active_id().filter(|a| *a == session_id) else { return Ok(()) };
-        let Some(cwd) = manager.session_cwd(&active) else { return Ok(()) };
-        // A file on an SSH host opens as a read-only copy fetched here, so the editor of choice works with the file the
-        // agent names; the copy has no folder worth revealing
-        if let Some(f) = acpira_shared::remote::parse_remote_folder(&cwd) {
-          let named = if crate::platform::file_url::is_file_url(&path) { file_url_to_path(&path) } else { Some(path.clone()) };
-          let root = manager.data_root();
-          let host_path = named
-            .filter(|p| !reveal && *p != "~" && !p.starts_with("~/"))
-            .and_then(|p| normalize_remote_path(&crate::acp::vendors::claude_remote::resolve_host_path(&f.alias, &f.path, &root, &p)));
-          let Some(host_path) = host_path else {
-            platform.toast("info", &tp("host.remoteFile", &[("path", &path), ("host", &f.alias)]));
-            return Ok(());
-          };
-          let core = self.clone();
-          let copy = remote_copy_path(&manager.data_root(), &f.alias, &host_path);
-          spawn_on(self.wire, async move { core.open_remote_file(cwd, f.alias, host_path, copy, line.filter(|l| *l > 0)).await });
-          return Ok(());
-        }
-        let resolved = if crate::platform::file_url::is_file_url(&path) {
-          file_url_to_path(&path).ok_or_else(|| anyhow::anyhow!("File URL must be absolute"))
-        } else {
-          Ok(normalize(&resolve_open_path(&cwd, &path)).to_string_lossy().into_owned())
-        };
-        match resolved {
-          Ok(mut p) => {
-            let missing = |p: &str| {
-              let p = p.to_owned();
-              async move { tokio::fs::metadata(&p).await.is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) }
-            };
-            // The session folder wins. A name missing there may be relative to another folder of the project, or lead
-            // with a folder further up (`acpira-web/out/x.mp4` said from `acpira/rust`): the first that exists opens
-            if missing(&p).await {
-              let roots: Vec<String> = std::iter::once(cwd.clone())
-                .chain(manager.categories().other_folders(&cwd).into_iter().filter(|f| !crate::workspace::is_remote(f)).map(|f| crate::workspace::folder_path(&f).to_string_lossy().into_owned()))
-                .collect();
-              for cand in fallback_open_paths(&roots, &path) {
-                if !missing(&cand).await {
-                  p = cand;
-                  break;
-                }
-              }
-            }
-            // Localize a missing link before the OS opener returns its own untranslated error.
-            if missing(&p).await {
-              platform.toast("error", &tp("host.fileMissing", &[("path", &p)]));
-              return Ok(());
-            }
-            let res = if reveal {
-              platform.reveal_in_os(&p).await
-            } else {
-              platform.open_resolved_file(&p, line.filter(|l| *l > 0)).await
-            };
-            if let Err(e) = res {
-              platform.toast("error", &e.to_string());
-            }
-          }
-          Err(e) => platform.toast("error", &e.to_string()),
-        }
-      }
+      W::OpenFile { session_id, path, line, reveal } => self.on_open_file(session_id, path, line, reveal).await?,
       W::OpenBlob { session_id, name } => {
         if let Some(p) = manager.blob_path(&session_id, &name)
           && let Err(e) = platform.open_resolved_file(&p.to_string_lossy(), None).await
@@ -515,30 +277,7 @@ impl BridgeCore {
           platform.log(&format!("openExternal refused: scheme not on the allowlist ({head})"));
         }
       }
-      W::SearchFiles { query, seq } => {
-        // Always answer, even on failure: the webview holds a promise per seq
-        let root = manager.folder_for(Some(&self.viewer), None);
-        // A folder on an SSH host is searched there; the shell's own search only knows this machine
-        if let Some(root) = root.clone().filter(|r| crate::workspace::is_remote(r)) {
-          let core = self.clone();
-          spawn_on(self.wire, async move {
-            let files = match core.workspace(Some(root)).await {
-              Ok(ws) => ws.search_files(&query).await,
-              Err(_) => vec![],
-            };
-            core.post_now(HostMsg::Files { seq, files });
-          });
-          return Ok(());
-        }
-        let files: Vec<FileHit> = match platform.search_files(root.as_deref(), &query).await {
-          Ok(f) => f,
-          Err(e) => {
-            platform.log(&format!("searchFiles failed: {e}"));
-            vec![]
-          }
-        };
-        self.post_now(HostMsg::Files { seq, files });
-      }
+      W::SearchFiles { query, seq } => self.on_search_files(query, seq).await?,
       W::SearchSessions { query, seq } => {
         // Always answer, like searchFiles: the history list holds a promise per seq
         let hits = manager.search_sessions_for(&self.viewer, &query).await;
@@ -551,39 +290,8 @@ impl BridgeCore {
       }
       // Stage a file a page shows from its path into the session's blob store: a row's image, video or widget kept as a
       // path (every one of a session on an SSH host), or a file reference clicked for preview
-      W::ImageBlob { session_id, path, seq, shown } => {
-        let (core, cwd) = (self.clone(), manager.session_cwd(&session_id));
-        spawn_on(self.wire, async move {
-          let blob = async {
-            // A paired device may stage only what the session shows, never any path of this machine
-            if shown && !core.manager.shows_file(&session_id, &path) {
-              return None;
-            }
-            let cwd = cwd?;
-            let resolved = core.staged_path(&cwd, &path)?;
-            let ws = core.workspace(Some(cwd)).await.ok()?;
-            core.manager.stage_file(&session_id, &ws, &resolved).await
-          }
-          .await;
-          core.post_now(HostMsg::ImageBlob { seq, blob });
-        });
-      }
-      W::StageFile { session_id, path, seq } => {
-        let (core, cwd) = (self.clone(), manager.session_cwd(&session_id));
-        spawn_on(self.wire, async move {
-          let staged = async {
-            let ws = core.workspace(cwd.clone()).await?;
-            let resolved = cwd.as_deref().and_then(|c| core.staged_path(c, &path)).ok_or(project_files::ProjectError::Outside)?;
-            core.manager.stage_any_file(&session_id, &ws, &resolved).await
-          }
-          .await;
-          let msg = match staged {
-            Ok((blob, size)) => HostMsg::StagedFile { seq, blob: Some(blob), size: Some(size), error: None },
-            Err(e) => HostMsg::StagedFile { seq, blob: None, size: None, error: Some(e.code()) },
-          };
-          core.post_now(msg);
-        });
-      }
+      W::ImageBlob { session_id, path, seq, shown } => self.on_image_blob(session_id, path, seq, shown).await?,
+      W::StageFile { session_id, path, seq } => self.on_stage_file(session_id, path, seq).await?,
       // The desktop tool panel's reads (project_files.rs). Each is always answered, and runs on its own task: a git
       // status or a large file must not hold up the messages behind it
       W::ProjectDir { session_id, dir, seq } => {
@@ -619,78 +327,7 @@ impl BridgeCore {
           core.post_now(HostMsg::ProjectStatus { seq, root, marks });
         });
       }
-      W::ProjectFile { session_id, path, base, seq } => {
-        let (core, mut root) = (self.clone(), manager.session_cwd(&session_id));
-        // A `~` / `~/…` path on a local workspace resolves against the user's home, and an absolute path inside `root`
-        // shortens to its relative path so git marks and HEAD lookups apply
-        let path = match root.clone() {
-          Some(r) if !crate::workspace::is_remote(&r) => {
-            let expanded = if path == "~" {
-              home_dir().to_string_lossy().into_owned()
-            } else if let Some(rest) = path.strip_prefix("~/").or_else(|| if cfg!(windows) { path.strip_prefix("~\\") } else { None }) {
-              home_dir().join(rest).to_string_lossy().into_owned()
-            } else {
-              path
-            };
-            let root_path = crate::workspace::folder_path(&r);
-            match Path::new(&expanded).strip_prefix(&root_path) {
-              Ok(rel) if !rel.as_os_str().is_empty() => project_files::relative(&root_path, &expanded),
-              // A file in another folder of the session's project reads from that folder, its own git marks and HEAD
-              _ => {
-                let other = manager.categories().other_folders(&r).into_iter().find(|f| !crate::workspace::is_remote(f) && Path::new(&expanded).starts_with(crate::workspace::folder_path(f)));
-                match other {
-                  Some(f) => {
-                    let rel = project_files::relative(&crate::workspace::folder_path(&f), &expanded);
-                    root = Some(f);
-                    rel
-                  }
-                  None => expanded,
-                }
-              }
-            }
-          }
-          _ => path,
-        };
-        // The session's base is looked up now, while its view is at hand
-        let session_base = match root.as_ref() {
-          Some(r) => {
-            let abs = crate::workspace::folder_path(r).join(&path);
-            manager.edit_bases(&session_id).await.into_iter().find(|(p, _)| Path::new(p) == abs).and_then(|(_, b)| b)
-          }
-          None => None,
-        };
-        spawn_on(self.wire, async move {
-          let ws = match core.workspace(root).await {
-            Ok(ws) => ws,
-            Err(e) => {
-              core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some(e.code()) });
-              return;
-            }
-          };
-          let text = match ws.read_text(&path).await {
-            Ok(text) => text,
-            Err(e) => {
-              core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some(e.code()) });
-              return;
-            }
-          };
-          let base_text = match base {
-            Some(ProjectBase::Session) => session_base,
-            Some(ProjectBase::Head) => ws.head_text(&path).await.or(session_base),
-            None => None,
-          };
-          let (text, hunks) = match base_text {
-            Some(b) => tokio::task::spawn_blocking(move || {
-              let h = project_files::hunks(&b, &text);
-              (text, h)
-            })
-            .await
-            .unwrap_or_default(),
-            None => (text, vec![]),
-          };
-          core.post_now(HostMsg::ProjectFile { seq, text: Some(text), hunks, error: None });
-        });
-      }
+      W::ProjectFile { session_id, path, base, seq } => self.on_project_file(session_id, path, base, seq).await?,
       // The tool panel's terminal tabs (terminal.rs). Handled inline, so keys reach the shell in the order typed
       W::TerminalOpen { id, cwd, cols, rows } => {
         let weak = self.me.clone();
@@ -878,24 +515,7 @@ impl BridgeCore {
         let view = self.settings.shared_view(&self.folder()).await;
         self.post_now(HostMsg::Shared { view, error: None });
       }
-      W::SharedAction { action } => {
-        let error = match self.settings.shared_action(action, &self.folder()).await {
-          Ok(outcome) => {
-            // A created file opens in the editor, a folder is revealed in the OS
-            if let Some(p) = outcome.open {
-              let path = p.to_string_lossy().into_owned();
-              let r = if p.is_dir() { platform.reveal_in_os(&path).await } else { platform.open_resolved_file(&path, None).await };
-              if let Err(e) = r {
-                platform.log(&format!("shared config: opening {path} failed: {e}"));
-              }
-            }
-            None
-          }
-          Err(e) => Some(format!("{e:#}")),
-        };
-        let view = self.settings.shared_view(&self.folder()).await;
-        self.post_now(HostMsg::Shared { view, error });
-      }
+      W::SharedAction { action } => self.on_shared_action(action).await?,
       W::Storage { detail } => {
         let view = self.manager.storage_view(&detail).await;
         self.post_now(HostMsg::Storage { view, outcome: None, error: None });
@@ -914,39 +534,8 @@ impl BridgeCore {
         let reply = self.manager.storage_action(action, &detail).await;
         self.post_now(HostMsg::Storage { view: reply.view, outcome: reply.outcome, error: reply.error });
       }
-      // The plugin page (plugins/host.rs): every change, another engine's included, sends the view again
-      W::Plugins => {
-        {
-          let mut sub = self.plugins_sub.lock();
-          if sub.is_none() {
-            let weak = self.me.clone();
-            *sub = Some(self.plugins.subscribe(Arc::new(move || {
-              if let Some(c) = weak.upgrade() {
-                spawn_on(c.wire, async move {
-                  let view = c.plugins_view().await;
-                  c.post_now(HostMsg::Plugins { view, error: None });
-                });
-              }
-            })));
-          }
-        }
-        let view = self.plugins_view().await;
-        self.post_now(HostMsg::Plugins { view, error: None });
-      }
-      W::PluginAction { action } => {
-        let error = match self.plugins.action(action).await {
-          Ok(Some(dir)) => {
-            if let Err(e) = platform.reveal_in_os(&dir.to_string_lossy()).await {
-              platform.log(&format!("plugins: revealing {} failed: {e}", dir.display()));
-            }
-            None
-          }
-          Ok(None) => None,
-          Err(e) => Some(format!("{e:#}")),
-        };
-        let view = self.plugins_view().await;
-        self.post_now(HostMsg::Plugins { view, error });
-      }
+      W::Plugins => self.on_plugins().await?,
+      W::PluginAction { action } => self.on_plugin_action(action).await?,
       // A card's thumbnail: the backdrop of the version it offers, read from the frozen copy
       W::PluginBackdrop { plugin, snapshot } => {
         let (me, plugins) = (self.clone(), self.plugins.clone());
@@ -984,28 +573,7 @@ impl BridgeCore {
           me.post_now(HostMsg::ProviderProbed { id, outcome });
         });
       }
-      W::Controls { agent, fresh, cwd } => {
-        // A new session in a folder on an SSH host may start in the host's engine: then the models are the host CLI's
-        if let Some(c) = match cwd.as_deref() {
-          Some(folder) => manager.host_controls(&agent, folder, fresh == Some(true)).await,
-          None => None,
-        } {
-          self.post_now(HostMsg::Controls { agent, controls: c.controls, shapes: c.shapes, commands: c.commands, cwd });
-        } else if fresh != Some(true) {
-          let controls = manager.known_controls(&agent).await;
-          let shapes = manager.model_shapes(&agent);
-          let commands = manager.known_commands(&agent).await;
-          self.post_now(HostMsg::Controls { agent, controls, shapes, commands, cwd });
-        } else {
-          // The probe's initialize brings the version back too; a fresh inventory keeps the facts card in step
-          let controls = manager.probe_controls(&agent).await;
-          let shapes = manager.model_shapes(&agent);
-          let commands = manager.known_commands(&agent).await;
-          self.post_now(HostMsg::Controls { agent: agent.clone(), controls, shapes, commands, cwd });
-          let inventory = self.settings.inventory(&agent, &self.folder()).await;
-          self.post_now(HostMsg::Inventory { agent, inventory });
-        }
-      }
+      W::Controls { agent, fresh, cwd } => self.on_controls(agent, fresh, cwd).await?,
       other => manager.handle_for(&self.viewer, other).await,
     }
     Ok(())
@@ -1016,194 +584,6 @@ impl BridgeCore {
   fn folder(&self) -> String {
     // A folder on an SSH host has no project files here: the scans read only the user's own
     self.manager.folder_for(Some(&self.viewer), None).filter(|f| !crate::workspace::is_remote(f)).unwrap_or_else(|| self.platform.home())
-  }
-
-  /// A session folder's files (`workspace.rs`); "noProject" without one
-  /// The file a staging request names, read against the session's folder: a file URL or a path, `~` for this machine's
-  /// home. On an SSH host the host's own path (the Claude stand-in moved back, a relative one read against the host
-  /// folder, `/` joins even on a Windows engine); `~` would name this machine's home there, so it is refused
-  fn staged_path(&self, cwd: &str, path: &str) -> Option<std::path::PathBuf> {
-    let named = if crate::platform::file_url::is_file_url(path) { file_url_to_path(path)? } else { path.to_owned() };
-    match acpira_shared::remote::parse_remote_folder(cwd) {
-      Some(f) => {
-        if named == "~" || named.starts_with("~/") {
-          return None;
-        }
-        let resolved = crate::acp::vendors::claude_remote::resolve_host_path(&f.alias, &f.path, &self.manager.data_root(), &named);
-        Some(std::path::PathBuf::from(normalize_remote_path(&resolved)?))
-      }
-      None => Some(normalize(&resolve_open_path(cwd, &named))),
-    }
-  }
-
-  async fn workspace(&self, root: Option<String>) -> Result<crate::workspace::Workspace, project_files::ProjectError> {
-    let root = root.ok_or_else(|| project_files::ProjectError::Other("noProject".into()))?;
-    crate::workspace::Workspace::open(&root, Some(&self.connections)).await
-  }
-
-  /// A file on an SSH host fetched into its read-only copy here (`remote_copy_path`), then opened as a local file is. Every
-  /// open fetches again, so the copy shows the host's file as it is now
-  async fn open_remote_file(&self, folder: String, alias: String, host_path: String, copy: std::path::PathBuf, line: Option<i64>) {
-    let fetched = match self.workspace(Some(folder)).await {
-      Ok(ws) => ws.read_file(Path::new(&host_path), REMOTE_OPEN_MAX).await,
-      Err(e) => {
-        self.platform.log(&format!("openFile {alias}:{host_path}: {e:?}"));
-        None
-      }
-    };
-    let Some(bytes) = fetched else {
-      self.platform.toast("error", &tp("host.remoteFileFailed", &[("path", &host_path), ("host", &alias)]));
-      return;
-    };
-    let res = match write_read_only(&copy, &bytes).await {
-      Ok(()) => self.platform.open_resolved_file(&copy.to_string_lossy(), line).await,
-      Err(e) => Err(e.into()),
-    };
-    if let Err(e) = res {
-      self.platform.toast("error", &e.to_string());
-    }
-  }
-
-  fn queue(&self, m: HostMsg) {
-    if !self.ready.load(std::sync::atomic::Ordering::Acquire) {
-      // Dropped: init carries the current state. A session view means the one being opened can go into init now
-      // (`notify_one` keeps the wake-up when the ready handler is not waiting yet)
-      if matches!(m, HostMsg::Session { .. }) {
-        self.view_shown.notify_one();
-      }
-      // Not state: init says nothing of a session that could not be opened, and the page waiting for it would wait on
-      if matches!(m, HostMsg::SessionUnavailable { .. }) {
-        self.refused.lock().push(m);
-      }
-      return;
-    }
-    let _order = self.order.lock();
-    let pushed = self.batch.lock().push(m);
-    match pushed {
-      Pushed::Flush(queued) => queued.into_iter().for_each(|m| self.deliver(m)),
-      Pushed::Arm => {
-        let weak = self.me.clone();
-        tokio::spawn(async move {
-          tokio::time::sleep(BATCH_WINDOW).await;
-          if let Some(c) = weak.upgrade() {
-            c.flush();
-          }
-        });
-      }
-      Pushed::Wait => {}
-    }
-  }
-
-  fn flush(&self) {
-    let _order = self.order.lock();
-    let queued = self.batch.lock().flush();
-    for m in queued {
-      self.deliver(m);
-    }
-  }
-
-  /// Post a batched message; a session view goes out as a patch against the last view of that session the page was sent,
-  /// the one on screen or one it keeps from before a switch (`SentViews`). The diff and the post happen under one lock, so
-  /// two flushes racing on different threads can never post patches out of order
-  fn deliver(&self, m: HostMsg) {
-    let m = match m {
-      HostMsg::Sessions { sessions } => return self.deliver_list(sessions),
-      m => m,
-    };
-    let HostMsg::Session { parts, running, .. } = &m else { return self.emit(m) };
-    let mut sent = self.sent.lock();
-    let next = parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire));
-    let delivery = match next {
-      Some(next) if self.window.load(std::sync::atomic::Ordering::Acquire) => sent.deliver_window(next, VIEW_WINDOW_BYTES),
-      next => sent.deliver(next),
-    };
-    match delivery {
-      // Older than what the page shows: it carries nothing the page does not have and must not become a patch base
-      Delivery::Stale => {}
-      Delivery::Patch(patch) => self.emit(HostMsg::SessionPatch { patch }),
-      Delivery::Window(session) => self.emit(HostMsg::Session { session: session.into(), running: *running, parts: None }),
-      Delivery::Whole => self.emit(m),
-    }
-  }
-
-  /// A session list goes out as runs over the list the page holds when the page takes list patches; an unchanged list
-  /// is not sent at all. Diffed and posted under `sent`, ordered against init like session views
-  fn deliver_list(&self, sessions: Vec<acpira_shared::transcript::SessionSummary>) {
-    if !self.list_patches.load(std::sync::atomic::Ordering::Acquire) {
-      return self.emit(HostMsg::Sessions { sessions });
-    }
-    let _order = self.sent.lock();
-    let mut listed = self.listed.lock();
-    match listed.take() {
-      Some((rev, held)) => {
-        let next = match acpira_shared::sessions_patch::diff(&held, &sessions, rev) {
-          Some(patch) => {
-            self.emit(HostMsg::SessionsPatch { patch });
-            rev + 1
-          }
-          None => rev,
-        };
-        *listed = Some((next, sessions));
-      }
-      None => {
-        *listed = Some((0, sessions.clone()));
-        self.emit(HostMsg::Sessions { sessions });
-      }
-    }
-  }
-
-  pub fn post_now(&self, m: HostMsg) {
-    self.emit(m);
-  }
-
-  /// Every post to the page goes through here. The read guard is held across the post, so once `dispose` has taken the
-  /// write side nothing is mid-post and nothing posts again: a batch timer or a handler still running after detachView
-  /// cannot reach the shell behind the detach
-  fn emit(&self, m: HostMsg) {
-    let disposed = self.disposed.read();
-    if !*disposed {
-      (self.post)(m);
-    }
-  }
-
-  pub fn push_appearance(&self) {
-    self.post_now(HostMsg::Appearance { appearance: (self.appearance)() });
-  }
-
-  /// The plugin page's view, built off the runtime threads (it reads and hashes the source folders)
-  /// Send the theme layer when it differs from what the page has (nothing for a page that never had one and gets none)
-  async fn push_theme(&self) {
-    let plugins = self.plugins.clone();
-    let Ok((css, skin, generation)) = tokio::task::spawn_blocking(move || plugins.theme()).await else { return };
-    {
-      // Compared without the generation: a commit that left the look alone sends nothing
-      let key = format!("{css}\u{0}{}", skin.as_ref().map(|s| format!("{}/{}", s.plugin, s.snapshot)).unwrap_or_default());
-      let mut last = self.theme.lock();
-      if last.as_deref() == Some(key.as_str()) || (last.is_none() && css.is_empty() && skin.is_none()) {
-        return;
-      }
-      *last = Some(key);
-    }
-    self.post_now(HostMsg::PluginTheme { css, skin, generation });
-  }
-
-  /// Send the interface pieces when they differ from what the page has, like the theme layer
-  async fn push_ui(&self) {
-    let plugins = self.plugins.clone();
-    let Ok(slots) = tokio::task::spawn_blocking(move || plugins.ui_slots()).await else { return };
-    {
-      let mut last = self.ui.lock();
-      if last.as_ref() == Some(&slots) || (last.is_none() && slots.is_empty()) {
-        return;
-      }
-      *last = Some(slots.clone());
-    }
-    self.post_now(HostMsg::PluginUi { slots });
-  }
-
-  async fn plugins_view(&self) -> acpira_shared::plugins::PluginsView {
-    let plugins = self.plugins.clone();
-    tokio::task::spawn_blocking(move || plugins.view()).await.unwrap_or_default()
   }
 
   pub fn dispose(&self) {
@@ -1238,74 +618,13 @@ impl BridgeCore {
 /// The largest file on an SSH host a click fetches to open here
 const REMOTE_OPEN_MAX: u64 = 32 * 1024 * 1024;
 
-/// Where a file on an SSH host is copied to open here: `<data root>/run/remote/files/<alias>/<host path>`, a cache apart
-/// from the Claude stand-in folders, which must stay empty. `host_path` is normalized (no `..`); each segment is made a
-/// safe local name, so neither an alias like `..` nor a character Windows refuses leaves the cache or fails the write
-fn remote_copy_path(data_root: &Path, alias: &str, host_path: &str) -> std::path::PathBuf {
-  let safe = |seg: &str| -> String {
-    let s: String = seg.chars().map(|c| if c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\\') { '_' } else { c }).collect();
-    if s.chars().all(|c| c == '.') { s.replace('.', "_") } else { s }
-  };
-  let mut p = data_root.join("run").join("remote").join("files").join(safe(alias));
-  for seg in host_path.split('/').filter(|s| !s.is_empty()) {
-    p.push(safe(seg));
-  }
-  p
-}
-
-/// The copy written tmp + rename and left read-only, so an edit there is not mistaken for one on the host. The old copy
-/// goes first: Windows refuses to rename over a read-only file
-async fn write_read_only(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-  let dir = path.parent().ok_or_else(|| std::io::Error::other("no parent folder"))?;
-  tokio::fs::create_dir_all(dir).await?;
-  let tmp = dir.join(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
-  tokio::fs::write(&tmp, bytes).await?;
-  let mut perms = tokio::fs::metadata(&tmp).await?.permissions();
-  perms.set_readonly(true);
-  tokio::fs::set_permissions(&tmp, perms).await?;
-  let _ = tokio::fs::remove_file(path).await;
-  tokio::fs::rename(&tmp, path).await
-}
-
-fn resolve_open_path(cwd: &str, path: &str) -> std::path::PathBuf {
-  if path == "~" {
-    return home_dir();
-  }
-  if let Some(rest) = path.strip_prefix("~/").or_else(|| if cfg!(windows) { path.strip_prefix("~\\") } else { None }) {
-    return home_dir().join(rest);
-  }
-  Path::new(cwd).join(path)
-}
-
-/// Where else a relative name may live, in order: under each other folder of the project, then under each folder above
-/// the roots (nearest first, never the filesystem root). Only a plain relative name qualifies: absolute, `~` and
-/// explicitly anchored (`./`, `../`) paths mean exactly what they say. `roots[0]` is the session folder, already tried
-fn fallback_open_paths(roots: &[String], path: &str) -> Vec<String> {
-  let rel = Path::new(path);
-  let plain = matches!(rel.components().next(), Some(std::path::Component::Normal(_)));
-  // Path::components drops a leading `./`, so check the text itself
-  if !plain || path.starts_with('~') || path.starts_with("./") || (cfg!(windows) && path.starts_with(".\\")) {
-    return vec![];
-  }
-  let under_roots = roots.iter().skip(1).map(|r| Path::new(r).to_path_buf());
-  let above_roots = roots.iter().flat_map(|r| Path::new(r).ancestors().skip(1).filter(|a| a.parent().is_some()).map(Path::to_path_buf));
-  let mut out: Vec<String> = Vec::new();
-  for base in under_roots.chain(above_roots) {
-    let cand = normalize(&base.join(rel)).to_string_lossy().into_owned();
-    if !out.contains(&cand) {
-      out.push(cand);
-    }
-  }
-  out
-}
-
 #[cfg(test)]
 mod tests {
   use std::path::Path;
 
   #[cfg(unix)]
-  use super::fallback_open_paths;
-  use super::remote_copy_path;
+  use super::files::fallback_open_paths;
+  use super::files::remote_copy_path;
 
   #[cfg(unix)]
   #[test]
