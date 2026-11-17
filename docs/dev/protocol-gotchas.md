@@ -42,7 +42,7 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 - Nothing is hardcoded into model / mode buckets: every select or boolean configOption is a control; `modes` keep `_meta.kind`.
 - Booleans go out as real `type: 'boolean'` values (a `"false"` string parses truthy on some agents); the client advertises `session.configOptions.boolean` so adapters do not degrade them to selects.
 - A `category=mode` configOption stands in for modes only when none were sent (legacy Grok); beside modes it duplicates.
-- Claude / Antigravity mix permission levels and working modes in one list: `session/access.rs` shows the levels as the `approval` select beside `default` + working modes, so `mode_id` is that view; the CLI's mode is `AccessState::wire`. agy 1.5.9 has no full-access mode over ACP (`--dangerously-skip-permissions` is a process flag): its full access is `auto` plus host approval.
+- Claude / Antigravity mix permission levels and working modes in one list: `session/access.rs` shows the levels as the `approval` select beside `default` + working modes, so `mode_id` is that view; the CLI's mode is `AccessState::wire`. agy 1.5.9 has no full-access mode over ACP: full access is `accept-edits` plus host approval (`agent-quirks.md`).
 - User picks overlay the view and revert on failure; `agentControls` / `toRecord()` stay agent truth.
 - Every Fast shape is one switch (`isFastControl`): Devin `speed` select, Codex `fast-mode`, Claude `fast` boolean, model-name variants.
 - Advertising AIR `recommendedValue` makes claude-agent-acp report concrete values, not `default` rows.
