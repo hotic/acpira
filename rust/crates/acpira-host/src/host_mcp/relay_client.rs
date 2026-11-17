@@ -58,11 +58,15 @@ const ROSTER_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 /// Failed polls in a row after which the watch ends: the grant is gone (session closed) or the sidecar with it
 const ROSTER_POLL_FAILURES: u32 = 3;
 
-/// The part of the roster `ask_agent` lists, as compared between polls. The built-in agent's sidekick is left out:
-/// that agent keeps its tool table as first sent and tells a sidekick change in a note instead (`builtin-agent.md`)
-fn roster_fingerprint(personas: &[acpira_shared::subagents::SubagentPersona], groups: &[acpira_shared::subagents::SubagentGroup]) -> String {
-  let personas: Vec<_> = personas.iter().filter(|p| p.id != acpira_shared::subagents::SIDEKICK_ID).collect();
-  serde_json::to_string(&(personas, groups)).unwrap_or_default()
+/// The part of the roster `ask_agent` lists, as compared between polls. A session's sidekick is left out: the lead
+/// keeps its tool table as first sent and hears of a sidekick change in a note instead (`builtin-agent.md`,
+/// `host_sidekick_note`). Only a sidekick that is the whole roster counts, since it alone decides whether `ask_agent`
+/// is listed at all: a pick in a home with no personas would otherwise name a tool the lead never got
+pub(super) fn roster_fingerprint(personas: &[acpira_shared::subagents::SubagentPersona], groups: &[acpira_shared::subagents::SubagentGroup]) -> String {
+  let listed: Vec<_> = personas.iter().filter(|p| p.id != acpira_shared::subagents::SIDEKICK_ID).collect();
+  let sidekick_alone = listed.is_empty() && !personas.is_empty();
+  let print = serde_json::to_string(&(listed, groups)).unwrap_or_default();
+  if sidekick_alone { format!("{print}+sidekick") } else { print }
 }
 
 /// What a listing depends on besides the fixed tools: the roster (`roster_fingerprint`), the plugin tools in effect and

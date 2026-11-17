@@ -244,6 +244,8 @@ export interface ShellProps {
   controls: SessionControls;
   // Remembered per-model parameters, so a model switch in the history editor shows that model's own
   modelShapes?: ModelShapes;
+  // What each sidekick option runs with once picked (SessionView.sidekickShapes)
+  sidekickShapes?: ModelShapes;
   // What the user last ran each model with (the model panel's rows)
   modelMemory?: ModelMemory;
   usage?: Usage;
@@ -1123,9 +1125,9 @@ export function Shell(p: ShellProps) {
       if (steerNow) on.send(text, attachments, true);
       else on.send(text, attachments);
     }, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
-    onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas, modelMemory: p.modelMemory, modelShapes: p.modelShapes,
+    onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas, modelMemory: p.modelMemory, modelShapes: p.modelShapes, sidekickShapes: p.sidekickShapes,
     onAddModel: p.onOpenSettings ? () => p.onOpenSettings!({ kind: 'agent', id: p.agent.id, tab: p.agent.id === BUILTIN_AGENT_ID ? 'sources' : 'models' }) : undefined,
-  }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings, p.modelMemory, p.modelShapes]);
+  }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings, p.modelMemory, p.modelShapes, p.sidekickShapes]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const plans = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PlanDocumentBlock => b.type === 'plan_document') : []), [p.turns]));

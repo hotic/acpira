@@ -756,6 +756,7 @@ export function App() {
       forkedFrom={session?.forkedFrom}
       controls={session?.controls ?? EMPTY_CONTROLS}
       modelShapes={session?.modelShapes}
+      sidekickShapes={session?.sidekickShapes}
       modelMemory={session?.modelMemory}
       usage={session?.usage}
       commands={session?.commands}

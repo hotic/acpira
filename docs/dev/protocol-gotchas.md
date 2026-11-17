@@ -1,6 +1,6 @@
 # Protocol gotchas
 
-Cross-agent ACP behaviour the host depends on and its invariants; trust it over the spec. Single-CLI wire facts: `agent-quirks.md` (plus `-claude` / `-codex`); verified / source / unverified matrix: `docs/acp-agents-compat.md`.
+Cross-agent ACP behaviour the host depends on and its invariants; trust it over the spec. Single-CLI wire facts: `agent-quirks.md` (plus `-claude` / `-codex` / `-devin`); verified / source / unverified matrix: `docs/acp-agents-compat.md`.
 
 ## Edits and retries
 

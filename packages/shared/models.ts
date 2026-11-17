@@ -189,6 +189,14 @@ export function fusionLabel(v: ModelVariant): string {
   return [[v.lead, v.effort].filter(Boolean).join(' '), [v.sidekick, v.fast && 'Fast'].filter(Boolean).join(' ')].filter(Boolean).join(' + ');
 }
 
+// A Fusion pair's sidekick as its model and level ("SWE-2 Medium" → SWE-2 at Medium), for the chip's and the pair switch's
+// sidekick side
+export function fusionSidekick(v: ModelVariant): { name: string; effort: string } | undefined {
+  if (!v.lead || !v.sidekick) return;
+  const p = parseModelName(v.sidekick);
+  return { name: p.family, effort: p.effort };
+}
+
 // Preferences stored before the family had a source: its bare name, or the `Provider/Name` Pi and OpenCode used to show
 const nameLegacyKeys = (f: ModelFamily, name: string): string[] => {
   const keys = f.source ? [name, `${f.source}/${name}`] : [name];
@@ -363,6 +371,11 @@ export function optionBrand(o: Pick<SessionOption, 'id' | 'name'>): string | und
 const OWN_BRANDS: Record<string, string[]> = {
   claude: ['claude'], codex: ['openai'], grok: ['grok'], kimi: ['kimi'], dsh: ['deepseek'], antigravity: ['gemini', 'google'], devin: ['devin', 'windsurf'],
 };
+
+// The vendor of an agent's own models, for a model label that names none (Codex calls its models "6 Luna")
+export function agentBrand(agent: string): string | undefined {
+  return OWN_BRANDS[agent]?.[0];
+}
 
 // The model's mark key when its vendor is not the agent's own (Devin on Claude, OpenCode on GPT): the session list turns
 // such a row's agent mark over to it on hover

@@ -2,7 +2,7 @@ import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState, 
 import { SIDEKICK_ID, type SubagentSummary } from '@acpira/shared/subagents';
 import type { ConfigControl, ToolCallBlock } from '@acpira/shared/transcript';
 import { composerControls, effortLabel } from '@acpira/shared/composerControls';
-import { brandColor, brandLayers, modelBrand, optionBrand } from '@acpira/shared/models';
+import { agentBrand, brandColor, brandLayers, modelBrand, optionBrand, parseFusionName } from '@acpira/shared/models';
 import { t, useLocale } from '../../i18n';
 import { ChipTag } from '../../ui/Button';
 import { EntranceScopeContext, QuietEntranceContext, Row, RowEntranceContext, RowLabel, RowTarget, pageHidden, useEntranceEnd } from '../../ui/Row';
@@ -14,7 +14,7 @@ import { commandDuration } from '../commandDuration';
 import { CommandOutcome } from '../CommandOutcome';
 import { toolTarget, toolVerb } from '../folding';
 import { useToolSeconds } from '../useToolSeconds';
-import { isWaiting, resultText, stateLabel, subagentTitle } from './subagentState';
+import { isWaiting, resultText, stateLabel } from './subagentState';
 import { useElapsed } from './useElapsed';
 
 // A round of the session's sidekick: the lead's own second hand, not a summoned helper
@@ -64,9 +64,11 @@ export function SidekickRelay({ node, onInspect }: { node: SubagentSummary; onIn
   const cli = node.harness?.agent;
   const model = node.model ? names.get(node.model) ?? (cli && names.get(`${cli}/${node.model}`)) ?? node.model : t('subagents.untitled');
   const away = cli && agent && cli !== agent ? cli : undefined;
-  const brand = (node.model && modelBrand(node.model)) ?? modelBrand(model);
+  // Once a round is connected its model is the CLI's own label, which may name no vendor: the CLI's own stands in
+  const brand = (node.model && modelBrand(node.model)) ?? modelBrand(model) ?? (cli ? agentBrand(cli) : undefined);
   const mark = <ModelMark family={model} brand={brand} colored />;
-  const title = subagentTitle(node, t);
+  // A CLI's own sidekick (Devin Fusion) shows nothing of its brief: its row names the model and no task
+  const title = node.title;
   const elapsed = useElapsed(node);
   const waiting = isWaiting(node);
   const status = waiting ? (node.permissions?.length ? t('host.awaitingApproval') : t('host.awaitingAnswers')) : running ? stateLabel(node, t) : undefined;
@@ -107,7 +109,7 @@ export function SidekickRelay({ node, onInspect }: { node: SubagentSummary; onIn
         className="sidekick-head"
         data-enter={handoff ? '' : undefined}
         title={node.task ?? title}
-        aria-label={`${t('sidekick.relay', { model })} ${t('sidekick.takes')} ${title}${status ? ` ${status}` : ''} ${elapsed}`}
+        aria-label={`${t('sidekick.relay', { model })} ${t('sidekick.takes')}${title ? ` ${title}` : ''}${status ? ` ${status}` : ''} ${elapsed}`}
         onClick={() => onInspect(node.id)}
         lead={<Flip from={lead && <ModelMark family={lead.name} brand={lead.brand} />}
           to={away ? <>{mark}<AgentMark id={away} className="subagent-harness-mark sidekick-cli" /></> : mark} />}
@@ -124,7 +126,7 @@ export function SidekickRelay({ node, onInspect }: { node: SubagentSummary; onIn
           <span className="sidekick-name min-w-0 truncate text-fg-1">{model}</span>
           <span className="shrink-0 text-fg-2">{t('sidekick.takes')}</span>
           {(node.harness?.round ?? 1) > 1 && <span className="shrink-0 text-3 text-fg-3">{t('subagents.round', { n: node.harness!.round })}</span>}
-          <span className="min-w-0 truncate text-fg-3 [flex-shrink:1000]">{title}</span>
+          {title && <span className="min-w-0 truncate text-fg-3 [flex-shrink:1000]">{title}</span>}
         </span>
       </Row>
       <div className="sidekick-window" data-more={items.length > slots ? '' : undefined} style={{ '--sidekick-slots': slots } as CSSProperties}>
@@ -257,7 +259,9 @@ export function useSidekickModels(options: ConfigControl[], agent?: string): Sid
   const { models, sidekick } = composerControls(options);
   const control = models[0];
   const picked = control?.options.find(o => o.id === control.value);
-  const lead = picked ? { name: picked.name, brand: optionBrand(picked) } : undefined;
+  // A Fusion pair (Devin) is one option naming both models: the relay starts from its lead half
+  const pair = picked && parseFusionName(picked.name)?.lead;
+  const lead = pair ? { name: pair, brand: modelBrand(pair) } : picked ? { name: picked.name, brand: optionBrand(picked) } : undefined;
   const list = sidekick[0]?.options ?? [];
   const key = [agent, lead?.name, lead?.brand, ...list.flatMap(o => [o.id, o.name])].join('\u0000');
   // `key` spells out everything the value reads

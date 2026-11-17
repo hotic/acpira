@@ -26,7 +26,12 @@ struct SidekickModels: Equatable {
     self.agent = agent
     let split = ComposerControls.split(controls.options)
     if let control = split.models.first, let picked = control.options.first(where: { $0.id == control.value }) {
-      lead = Lead(name: picked.name, brand: ModelCatalog.optionBrand(picked))
+      // A Fusion pair (Devin) is one option naming both models: the relay starts from its lead half
+      if let pair = ModelCatalog.parseFusion(picked.name)?.lead {
+        lead = Lead(name: pair, brand: VendorBrand.of(pair))
+      } else {
+        lead = Lead(name: picked.name, brand: ModelCatalog.optionBrand(picked))
+      }
     }
     names = Dictionary((split.sidekick.first?.options ?? []).map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
   }
@@ -252,7 +257,8 @@ private struct Head: View {
   let play: Bool
   @Environment(\.clockOffset) private var offset
   var body: some View {
-    let title = subagentTitle(node)
+    // A CLI's own sidekick (Devin Fusion) shows nothing of its brief: its row names the model and no task
+    let title = node.title ?? ""
     // Where a summoned child's row carries it (`SubagentLead`), whose slot is `subagentMark` wide around the same mark
     // (subagents.css `.sidekick-flip .sidekick-cli`)
     let reach = (WebMetrics.subagentMark - WebMetrics.icon) / 2 - WebMetrics.subagentBadgeInset
@@ -281,7 +287,7 @@ private struct Head: View {
     }
     .overlay { Sheen(play: play, stops: mark.sheen, delay: Motion.sidekickSheenDelay) }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(Text(web: [t("sidekick.relay", ["model": model]), t("sidekick.takes"), title, status,
+    .accessibilityLabel(Text(web: [t("sidekick.relay", ["model": model]), t("sidekick.takes"), title.isEmpty ? nil : title, status,
                                    elapsedText(node, now: (Date().timeIntervalSince1970 + offset) * 1000)]
       .compactMap { $0 }.joined(separator: " ")))
   }
@@ -295,7 +301,7 @@ private struct Head: View {
         Text(web: t("subagents.round", ["n": round])).cssBaseline().textStyle(WebType.text3)
           .foregroundStyle(Palette.fg3).lineLimit(1).fixedSize().layoutPriority(2)
       }
-      SqueezedTitle(title: title)
+      if !title.isEmpty { SqueezedTitle(title: title) }
       if level, let effort = node.harness?.effort {
         EffortTag(label: ComposerControls.effortLabel(SessionOption(id: effort, name: effort)))
       }

@@ -37,6 +37,13 @@ pub fn parse_fusion_name(name: &str) -> Option<ParsedModel> {
   })
 }
 
+/// The sidekick half of a Fusion pair's name, as (model family, effort label; empty when the name carries none)
+pub fn fusion_sidekick(name: &str) -> Option<(String, String)> {
+  let m = FUSION_NAME.captures(name.trim())?;
+  let sk = parse_model_name(&m[2]);
+  Some((sk.family, sk.effort))
+}
+
 fn level(word: &str) -> Option<&'static str> {
   Some(match word {
     "none" => "None",
@@ -260,5 +267,8 @@ mod tests {
     assert_eq!(f.lead.as_deref(), Some("GPT-6 Astra"));
     assert_eq!(f.sidekick.as_deref(), Some("GPT-5.6 Luna High"));
     assert!(f.fast);
+    assert_eq!(fusion_sidekick("Fusion (Claude Opus 5.5 Medium + SWE-2 Medium)"), Some(("SWE-2".into(), "Medium".into())));
+    assert_eq!(fusion_sidekick("Fusion (Claude Opus 5.5 + SWE-2)"), Some(("SWE-2".into(), String::new())));
+    assert_eq!(fusion_sidekick("SWE-2 High"), None);
   }
 }

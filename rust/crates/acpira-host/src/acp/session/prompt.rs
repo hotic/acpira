@@ -831,6 +831,10 @@ impl AcpSession {
     // The parent prompt returned: children still reported running are disconnected, never failed. A stopped or failed
     // turn keeps the cut: the interrupt may have killed them with no word on the wire
     let native_outlive = error.is_none() && stop == TurnStop::EndTurn && self.vendor.children_outlive_prompt();
+    // The agent's own sidekick (Devin Fusion) was cut with the turn; one whose turn ended is handed back by `settle`
+    if error.is_some() || stop == TurnStop::Cancelled {
+      c.tree.native_rounds_end(acpira_shared::subagents::SubagentState::Cancelled);
+    }
     c.tree.settle("prompt-returned", native_outlive);
     self.drain_terminal(c);
     let failed = error.is_some();

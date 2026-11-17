@@ -2,10 +2,10 @@ import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode, t
 import { Ban, Brain, Check, ChevronRight, Plus, Zap } from 'lucide-react';
 import type { ConfigControl } from '@acpira/shared/transcript';
 import { shapeFor, type ModelMemory, type ModelShapes } from '@acpira/shared/modelShapes';
-import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
+import { findFusionVariant, findVariant, fusionLabel, fusionSidekick, groupModels, modelBrand, optionBrand, parseModelName, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
 import { chipTags, composerControls, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
-import { Chip, ChipTag } from '../ui/Button';
+import { Chip, ChipTag, CORNER_CHIP } from '../ui/Button';
 import { SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
 import { cn } from '../ui/cn';
 import { Popover } from '../ui/Popover';
@@ -53,7 +53,7 @@ export function ModelOptions({ control, hidden, onSelect, close }: {
 
 // Every ACP uses the Devin-style model chip and panel. Native reasoning and model
 // parameters join the footer, while embedded variants retain their wire IDs.
-export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, sidekickLive, hiddenConfig, onSetConfig, memory, shapes, onSqueeze, onOpenChange, onConfigure, toggleRef }: OptionMenuProps & {
+export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, sidekickLive, sidekickShapes, hiddenConfig, onSetConfig, memory, shapes, onSqueeze, onOpenChange, onConfigure, toggleRef }: OptionMenuProps & {
   hidden?: string[];
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
@@ -64,6 +64,8 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   sidekickFast?: ConfigControl;
   // The sidekick is working a round (chat/subagents/SidekickRelay.tsx)
   sidekickLive?: boolean;
+  // What each sidekick option runs with once picked (SessionView.sidekickShapes)
+  sidekickShapes?: ModelShapes;
   hiddenConfig?: Record<string, string[]>;
   // `also`: parameters to set once the pick has landed (a model picked together with its level)
   onSetConfig: (id: string, value: string, also?: Record<string, string>) => void;
@@ -80,40 +82,47 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const [open, setOpen] = useState(false);
   if (toggleRef) toggleRef.current = () => setOpen(o => !o);
   const c = useMemo(() => ({ ...control, options: visibleOptions(control.options, hidden, control.value) }), [control, hidden]);
-  // The sidekick offers the models the model list does: the ones hidden there stay out (unless picked)
-  const sk = useMemo(() => sidekick && { ...sidekick, options: visibleOptions(sidekick.options, hidden, sidekick.value) }, [sidekick, hidden]);
   const families = useMemo(() => groupModels(c.options), [c.options]);
   const cur = families.find(f => f.variants.some(v => v.id === c.value));
   const curVar = cur?.variants.find(v => v.id === c.value);
+  // A Fusion pair is a lead and a sidekick of Devin's own: the chip and the panel spell it like a picked sidekick, and the
+  // host's sidekick is not offered beside it (the engine sets its select aside too, host_sidekick.rs)
+  const fusion = curVar && fusionSidekick(curVar);
+  const own = !fusion;
+  // The sidekick offers the models the model list does: the ones hidden there stay out (unless picked)
+  const sk = useMemo(() => (own && sidekick ? { ...sidekick, options: visibleOptions(sidekick.options, hidden, sidekick.value) } : undefined), [own, sidekick, hidden]);
   const tags = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard'));
-  // A Fusion pair is too long for the chip: it reads "Fusion" plus the lead's badges and keeps the pair in the tooltip and the panel
   // A picked sidekick is spelled out after the lead, `Opus 5.5 [High] + GPT-6 Luna [Medium]`, stepping down (CHIP_STAGES)
   // when the toolbar has no room; without it the pair was only visible with the panel open (reported 2026-10-26)
-  const skPicked = sidekick?.options.find(o => o.id === sidekick.value && o.id !== NO_SIDEKICK);
+  const skPicked = own ? sidekick?.options.find(o => o.id === sidekick.value && o.id !== NO_SIDEKICK) : undefined;
   const skLevel = skPicked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined;
-  const skLabel = skPicked && [skPicked.name, skLevel, sidekickFast && fastOn(sidekickFast) ? 'Fast' : undefined].filter(Boolean).join(' ');
-  const lead = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
-  const title = skLabel ? `${lead} + ${skLabel}` : lead;
+  const skFast = !!skPicked && !!sidekickFast && fastOn(sidekickFast);
+  const tail = fusion
+    ? { name: fusion.name, brand: modelBrand(fusion.name), level: fusion.effort || undefined, fast: false }
+    : skPicked && { name: skPicked.name, brand: optionBrand(skPicked), level: skLevel, fast: skFast };
+  const skLabel = tail && [tail.name, tail.level, tail.fast ? 'Fast' : undefined].filter(Boolean).join(' ');
+  const leadName = curVar?.lead ?? cur?.name ?? c.name;
+  const lead = [leadName, tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
+  const pair = skLabel ? `${lead} + ${skLabel}` : lead;
+  const title = fusion ? `${cur!.name} (${pair})` : pair;
   // A single model steps down too (its level to the short form first), not only a pair: it used to keep its full width and
   // run past the send button in a narrow window. Below the compact form the toolbar folds its other chips first (onSqueeze)
   // The title spells every form's text: a pick that changes it fits the chip again before it paints
   const fit = useFitStage<HTMLButtonElement, HTMLSpanElement>(true, onSqueeze && { stage: 1, set: onSqueeze }, title);
-  // Keep the last picked sidekick, its level and its fit stage while the chip's trail folds back for None
-  const skFast = !!skPicked && !!sidekickFast && fastOn(sidekickFast);
   // The chip follows every pick at once, also while the panel is open (effort / Fast keep it open): it used to hold its
   // content until close, which read as a pick that had not landed (reported 2026-10-16). The panel is end-aligned to the
   // chip's right edge, so a chip resizing leftwards does not move the panel
-  const chip = { title, family: cur?.name ?? c.name, brand: cur?.brand, tags, name: cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name };
+  const chip = { title, family: leadName, brand: fusion ? undefined : cur?.brand, tags, name: fusion ? leadName : cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name };
   const at = (stage: number, ref?: typeof fit.item) => {
     const on = CHIP_STAGES[stage]!;
     return <Chip ref={ref} data-land="models" data-part={ref ? 'composer-model' : undefined} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
-      trail={skPicked && <SidekickTail live={!!sidekickLive} name={skPicked.name} brand={optionBrand(skPicked)} named={on.names} level={on.levels ? skLevel : undefined} fast={on.levels && skFast} />}
-      tags={on.levels && chip.tags.length ? chip.tags.map(tag => <ChipParam key={tag.label} tag={tag} />) : undefined}>
+      trail={tail && <SidekickTail live={!!sidekickLive} name={tail.name} brand={tail.brand} named={on.names} level={on.levels ? tail.level : undefined} fast={on.levels && tail.fast} />}
+      tags={on.levels && chip.tags.length ? chip.tags.map((tag, i) => <ChipParam key={i} tag={tag} />) : undefined}>
       {on.names ? chip.name : null}
     </Chip>;
   };
   // The glyph sits in the rows' check column: the chip's own padding hangs past the line's inset
-  const add = onConfigure && <Chip caret={false} className="-mr-1.5 shrink-0" icon={<Plus strokeWidth={1.75} />}
+  const add = onConfigure && <Chip caret={false} className={cn('-mr-1.5 shrink-0', CORNER_CHIP)} icon={<Plus strokeWidth={1.75} />}
     title={t('settings.providers.addModel')} aria-label={t('settings.providers.addModel')}
     onClick={() => { setOpen(false); onConfigure(); }}>{null}</Chip>;
   return (<>
@@ -122,13 +131,13 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
         {/* Adding models belongs to the agent, not the currently selected side: a bare + at the end of the model search,
             or on a head line of its own for a lone model, which lists no search */}
-        {add && !modelSearch(families, true) && <div className="mb-1 flex min-h-ctl-sm shrink-0 items-center justify-between px-2">
+        {add && !modelSearch(families, true) && <div className="mb-1 flex shrink-0 items-center justify-between px-2 pt-0.5">
           <span className="text-3 text-fg-3">{t('settings.agentTab.models')}</span>
           {add}
         </div>}
         <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={(value, also) => onSetConfig(c.id, value, also)} close={() => setOpen(false)} fold add={add}
           model={c} memory={memory} shapes={shapes}
-          reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} sidekickFast={sidekickFast} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
+          reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} sidekickFast={sidekickFast} sidekickShapes={sidekickShapes} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
     {/* Every stage laid out once, out of sight and out of the row's flow, for useFitStage to measure */}
@@ -220,6 +229,8 @@ interface ModelPanelProps {
   add?: ReactNode;
   sidekickEffort?: ConfigControl;
   sidekickFast?: ConfigControl;
+  // What each sidekick option runs with once picked (SessionView.sidekickShapes)
+  sidekickShapes?: ModelShapes;
   hiddenConfig?: Record<string, string[]>;
   onSetConfig?: (id: string, value: string, also?: Record<string, string>) => void;
   // The composer's panel, where a lone model offers no sidekick and its effort fits one row (a plan's Build menu keeps the
@@ -239,9 +250,23 @@ function FastRow({ fast }: { fast: FastState }) {
 const thinkingIcon = <Brain strokeWidth={1.75} aria-hidden />;
 
 function ModelPanel(props: ModelPanelProps) {
-  const { cur, curVar, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, onSetConfig } = props;
+  const { cur, curVar, reasoning = [], modelConfig = [], sidekick, sidekickEffort, sidekickFast, onSetConfig, onSelect, fold } = props;
   // Every open starts on the lead
   const [role, setRole] = useState<PairRole>('lead');
+  // A Fusion pair in the composer switches between its own two sides: the model list, and the sidekicks Devin pairs with
+  // the lead in use
+  const fusion = fold && curVar ? fusionSidekick(curVar) : undefined;
+  if (fusion && cur?.fusion && curVar?.lead) {
+    const sidekicks = cur.fusion.sidekicks.filter(s => cur.variants.some(v => v.lead === curVar.lead && v.sidekick === s));
+    const leadLevel = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard')).find(tag => !tag.fast)?.label;
+    return <>
+      <PairViews role={role} lead={<LeadPanel {...props} />} rows={sidekicks.length}
+        sidekick={<FusionSidekicks family={cur} variant={curVar} sidekicks={sidekicks} onSelect={id => onSelect(id)} />} />
+      <PairSwitch role={role} onRole={setRole}
+        lead={{ name: curVar.lead, brand: modelBrand(curVar.lead), level: leadLevel }}
+        sidekick={{ name: fusion.name, brand: modelBrand(fusion.name), level: fusion.effort || undefined }} />
+    </>;
+  }
   if (!sidekick) return <LeadPanel {...props} />;
   const picked = sidekick.options.find(o => o.id === sidekick.value && o.id !== NO_SIDEKICK);
   // A lone model offers no sidekick: the panel is its parameters alone. One still picked from a longer list keeps the pair,
@@ -250,7 +275,7 @@ function ModelPanel(props: ModelPanelProps) {
   const leadLevel = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard')).find(tag => !tag.fast)?.label;
   return <>
     <PairViews role={role} lead={<LeadPanel {...props} />} rows={sidekick.options.length + new Set(sidekick.options.map(o => o.description).filter(Boolean)).size}
-      sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} fast={sidekickFast} onSetConfig={(id, value) => onSetConfig?.(id, value)} />} />
+      sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} fast={sidekickFast} shapes={props.sidekickShapes} onSetConfig={(id, value, also) => onSetConfig?.(id, value, also)} />} />
     {/* Under the lists, next to the chip it spells out: the search line stays the panel's top edge on either side */}
     <PairSwitch role={role} onRole={setRole}
       lead={{ name: cur?.name, brand: cur?.brand, level: leadLevel }}
@@ -268,7 +293,8 @@ function isLone({ families, cur, curVar, reasoning = [], modelConfig = [], fold 
 // reads the live controls; another one reads the shape the engine remembers of it, or, never seen yet, borrows the live
 // reasoning levels as a guess (`guessed`: menu only, no level on the row). A guessed level the model turns out not to take
 // is dropped by the engine once the switch has landed (protocol-gotchas: queued picks validate after the model answer)
-interface FamilyView { variant: ModelVariant; reasoning: ConfigControl[]; modelConfig: ConfigControl[]; live: boolean; guessed?: boolean; picks?: Record<string, string> }
+// `recent`: the variant is one this model last ran, not one carried over from the model in use
+interface FamilyView { variant: ModelVariant; reasoning: ConfigControl[]; modelConfig: ConfigControl[]; live: boolean; guessed?: boolean; recent?: boolean; picks?: Record<string, string> }
 
 function familyView(f: ModelFamily, { cur, curVar, reasoning = [], modelConfig = [], model, memory, shapes }: ModelPanelProps): FamilyView {
   if (f === cur && curVar) return { variant: curVar, reasoning: reasoning.filter(reasoningVisible), modelConfig, live: true };
@@ -287,21 +313,27 @@ function familyView(f: ModelFamily, { cur, curVar, reasoning = [], modelConfig =
   const live = new Map([...reasoning, ...modelConfig].map(c => [c.id, c.value]));
   const landed = (c: ConfigControl) => [picks?.[c.id], live.get(c.id)].find(v => v !== undefined && c.options.some(o => o.id === v));
   const kept = composerControls(shape.map(c => { const value = landed(c); return value === undefined ? c : { ...c, value }; }));
-  return { variant, reasoning: kept.reasoning.filter(reasoningVisible), modelConfig: kept.modelConfig, live: false, guessed: !known, picks };
+  return { variant, reasoning: kept.reasoning.filter(reasoningVisible), modelConfig: kept.modelConfig, live: false, guessed: !known, recent: !!recent, picks };
 }
 
 const viewHasParams = (f: ModelFamily, v: FamilyView) => f.variants.length > 1 || v.reasoning.length > 0 || v.modelConfig.length > 0;
 
 // A row's parameters after its name, read as one phrase with it: the level faint on the name's baseline, Fast as its bolt
 function RowParams({ family: f, view }: { family: ModelFamily; view: FamilyView }) {
-  if (f.fusion) return <span className="min-w-0 truncate text-3 text-fg-3">{fusionLabel(view.variant)}</span>;
-  // A guessed shape stays in the menu: the row only spells out what the model is known to run with
-  const tags = view.guessed ? chipTags(f, view.variant, [], [], t('composer.standard')) : chipTags(f, view.variant, view.reasoning, view.modelConfig, t('composer.standard'));
+  if (f.fusion) {
+    // The pair in use runs its lead at the agent's own level select when there is one (chipTags), not the one in its name
+    const level = view.live ? view.reasoning.map(reasoningChip).find(Boolean) : undefined;
+    return <span className="min-w-0 truncate text-3 text-fg-3">{fusionLabel(level ? { ...view.variant, effort: level } : view.variant)}</span>;
+  }
+  // Another model's row spells out only its own settings: a level carried over from the model in use (what a switch would
+  // land on) stays in the menu, else every never-picked row would follow the live effort. A guessed shape has none
+  const own = (c: ConfigControl) => view.live || (!view.guessed && view.picks?.[c.id] === c.value);
+  const tags = chipTags(f, view.live || view.recent ? view.variant : undefined, view.reasoning.filter(own), view.modelConfig.filter(own), t('composer.standard'));
   if (!tags.length) return null;
   return <span className="flex shrink-0 items-baseline gap-0.5 text-3 text-fg-3">
-    {tags.map(tag => (tag.fast
-      ? <Zap key={tag.label} className="inline size-3 shrink-0 self-center fill-current text-fast" strokeWidth={2} aria-label="Fast" />
-      : <span key={tag.label} className={tag.ultra ? 'text-ultra' : undefined}>{tag.label}</span>))}
+    {tags.map((tag, i) => (tag.fast
+      ? <Zap key={i} className="inline size-3 shrink-0 self-center fill-current text-fast" strokeWidth={2} aria-label="Fast" />
+      : <span key={i} className={tag.ultra ? 'text-ultra' : undefined}>{tag.label}</span>))}
   </span>;
 }
 
@@ -314,7 +346,7 @@ function RowTrail({ checked, label, onOpen }: { checked: boolean; label?: string
   return (
     <span role="button" tabIndex={-1} title={label} aria-label={label}
       onClick={e => { e.preventDefault(); e.stopPropagation(); const row = e.currentTarget.closest<HTMLElement>('[data-family]'); if (row) onOpen(row); }}
-      className="-m-1 flex shrink-0 rounded-sm p-1 text-fg-3 hover:bg-active hover:text-fg-1">
+      className="-mx-1 flex h-row-trail shrink-0 items-center rounded-sm px-1 text-fg-3 hover:bg-active hover:text-fg-1">
       {checked && check}
       <ChevronRight strokeWidth={1.75} className={cn('size-icon shrink-0 group-data-[params]/row:block group-data-[params]/row:opacity-100',
         checked ? 'hidden group-hover/row:block' : 'opacity-0 group-data-[highlighted]/row:opacity-100')} />
@@ -327,7 +359,9 @@ function RowTrail({ checked, label, onOpen }: { checked: boolean; label?: string
 function ParamsMenu({ anchor, onClose, children }: { anchor: HTMLElement; onClose: () => void; children: ReactNode }) {
   return (
     <Popover.Root open onOpenChange={next => { if (!next) onClose(); }}>
-      <Popover.Portal><Popover.Positioner anchor={anchor} side="right" align="end" width="sm">
+      {/* The menu rides along with its row while the list scrolls and hides once the list has clipped the row away
+          (Floating UI's hide middleware sets data-anchor-hidden), back when the row scrolls into view again */}
+      <Popover.Portal><Popover.Positioner anchor={anchor} side="right" align="end" width="sm" className="data-[anchor-hidden]:invisible">
         <Popover.Popup palette="menu" initialFocus aria-label={t('composer.effort')}
           onKeyDown={e => {
             if (e.key !== 'ArrowLeft' || (e.target as HTMLElement).closest('input, [role="menu"], [role="listbox"]')) return;
@@ -508,6 +542,32 @@ function LoneParams({ cur, curVar, onSelect, reasoning = [], modelConfig = [], h
   );
 }
 
+// The pair switch's sidekick side of a Fusion pair: the sidekicks Devin pairs with the lead in use, each with its level as
+// the pair names it. A pick is the pair with that sidekick, the lead, its level and Fast staying (findFusionVariant)
+function FusionSidekicks({ family: f, variant: v, sidekicks, onSelect }: { family: ModelFamily; variant: ModelVariant; sidekicks: string[]; onSelect: (id: string) => void }) {
+  const pick = (sidekick: string) => {
+    const hit = findFusionVariant(f, { lead: v.lead ?? '', effort: v.effort, sidekick, fast: v.fast });
+    if (hit) onSelect(hit.id);
+  };
+  const searchable = sidekicks.length >= SEARCH_FROM;
+  return <div className="flex min-h-0 flex-1 flex-col">
+    <Command.Root<string> items={sidekicks} value={v.sidekick ?? null}>
+      <Command.Input visible={searchable} />
+      <Command.Empty />
+      <Command.List searchable={searchable} fill>
+        {(s: string) => {
+          const p = parseModelName(s);
+          return <Command.Item key={s} value={s} onClick={() => pick(s)}>
+            <OptionContent icon={<ModelMark family={p.family} />} checked={s === v.sidekick} checkSlot>
+              <span className="flex min-w-0 items-baseline gap-1"><span className="truncate">{p.family}</span>{p.effort && <span className="shrink-0 text-3 text-fg-3">{p.effort}</span>}</span>
+            </OptionContent>
+          </Command.Item>;
+        }}
+      </Command.List>
+    </Command.Root>
+  </div>;
+}
+
 // Every native Fast shape (Devin's Standard / Fast select, an adapter boolean) as one toggle; hidden values stay respected
 function nativeFastState(control: ConfigControl, hidden: string[] | undefined, onChange: (value: string) => void): FastState {
   const on = fastOn(control);
@@ -577,24 +637,41 @@ function FusionParams({ family: f, variant: v, onSelect }: { family: ModelFamily
   );
 }
 
-// The built-in agent's sidekick side: none, or any model the model list offers, with sources grouped like the lead. The
-// picked one carries its level and Fast on its row like a lead does, and opens them in the menu beside it; a pick keeps
-// the panel open, since the level is set from that row. The side fills the lead's height (`.pair-view`)
-function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { control: ConfigControl; effort?: ConfigControl; fast?: ConfigControl; onSetConfig: (id: string, value: string) => void }) {
+// The sidekick side: none, or any model the sidekick select offers, with sources grouped like the lead. Every row carries
+// the level and Fast its model would run with (the picked one its live selects, the others `shapes`, the view's
+// sidekickShapes) and opens them in the menu beside it, like a lead row: a level set on another row picks that model with
+// it. A pick keeps the panel open, since the level is set from that row. The side fills the lead's height (`.pair-view`)
+function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig }: {
+  control: ConfigControl; effort?: ConfigControl; fast?: ConfigControl; shapes?: ModelShapes; onSetConfig: (id: string, value: string, also?: Record<string, string>) => void;
+}) {
   const cur = control.options.find(o => o.id === (control.value ?? NO_SIDEKICK));
-  const [menu, setMenu] = useState<HTMLElement>();
+  const [menu, setMenu] = useState<{ id: string; row: HTMLElement }>();
   const list = useRef<HTMLDivElement>(null);
   const picked = cur && cur.id !== NO_SIDEKICK ? cur : undefined;
-  const view: FamilyView | undefined = picked && {
-    variant: { id: picked.id, name: picked.name, effort: '', fast: false, long: false },
-    reasoning: effort && reasoningVisible(effort) ? [effort] : [], modelConfig: fastControl ? [fastControl] : [], live: true,
+  const rowOf = (o: SidekickOption): { family: ModelFamily; view: FamilyView } | undefined => {
+    if (o.id === NO_SIDEKICK) return;
+    const variant: ModelVariant = { id: o.id, name: o.name, effort: '', fast: false, long: false };
+    const family: ModelFamily = { key: o.id, name: o.name, variants: [variant], efforts: [], hasFast: false, hasLong: false };
+    if (o === picked) return { family, view: { variant, reasoning: effort && reasoningVisible(effort) ? [effort] : [], modelConfig: fastControl ? [fastControl] : [], live: true } };
+    const shape = shapes?.[o.id];
+    if (!shape) return;
+    // What the engine would pick with it is this row's own, so the row spells it out (RowParams reads `picks`)
+    const picks = Object.fromEntries(shape.flatMap(c => (c.value === undefined ? [] : [[c.id, c.value]])));
+    const split = composerControls(shape);
+    return { family, view: { variant, reasoning: split.sidekickEffort.filter(reasoningVisible), modelConfig: split.sidekickFast, live: false, picks } };
   };
-  const family: ModelFamily | undefined = picked && { key: picked.id, name: picked.name, variants: [view!.variant], efforts: [], hasFast: false, hasLong: false };
-  const params = !!view && viewHasParams(family!, view);
+  const rows = new Map(control.options.map(o => [o.id, rowOf(o)]));
   const groups = useMemo(() => bySource(control.options, sidekickSource), [control.options]);
   const closeMenu = () => {
     setMenu(undefined);
     requestAnimationFrame(() => (list.current?.querySelector<HTMLElement>('input') ?? list.current?.querySelector<HTMLElement>('[role="listbox"]'))?.focus({ preventScroll: true }));
+  };
+  const opened = menu && rows.get(menu.id);
+  // Another row's parameter is picked together with its model: the engine sets it once the pick has landed
+  const setParam = (id: string, value: string) => {
+    if (!menu) return;
+    if (menu.id === picked?.id) onSetConfig(id, value);
+    else onSetConfig(control.id, menu.id, { [id]: value });
   };
   return <>
     <div ref={list} className="flex min-h-0 flex-1 flex-col"
@@ -604,7 +681,7 @@ function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { co
         const row = list.current?.querySelector<HTMLElement>('[data-highlighted][data-family][data-has-params]');
         if (!row) return;
         e.preventDefault();
-        setMenu(row);
+        setMenu({ id: row.dataset.family!, row });
       }}>
       <Command.Root<SidekickOption> items={groups ?? control.options} value={cur ?? null} itemToStringValue={o => o.id} isItemEqualToValue={(a, b) => a.id === b.id}
         itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, sidekickSource(o)].filter(Boolean).join(' '))}>
@@ -612,23 +689,24 @@ function SidekickPanel({ control, effort, fast: fastControl, onSetConfig }: { co
         <Command.Empty />
         <Command.List searchable={control.options.length >= SEARCH_FROM} fill>
           {grouped(groups, (o: SidekickOption) => {
-            const own = o === picked && params;
-            return <Command.Item key={o.id} value={o} data-family={o.id} data-has-params={own ? '' : undefined} data-params={own && menu ? '' : undefined}
+            const row = rows.get(o.id);
+            const params = !!row && viewHasParams(row.family, row.view);
+            return <Command.Item key={o.id} value={o} data-family={o.id} data-has-params={params ? '' : undefined} data-params={menu?.id === o.id ? '' : undefined}
               onClick={() => onSetConfig(control.id, o.id)} className="group/row">
               {o.id === NO_SIDEKICK
                 ? <OptionContent icon={<Ban className="text-fg-3" strokeWidth={1.75} />} checked={o === cur} checkSlot={!!cur}>{t('composer.sidekickNone')}</OptionContent>
                 : <OptionContent icon={<ModelMark family={o.name} brand={optionBrand(o)} />}
-                  trail={<RowTrail checked={o === cur} label={own ? t('composer.modelParams', { model: o.name }) : undefined}
-                    onOpen={own ? row => setMenu(m => (m ? undefined : row)) : undefined} />}>
-                  <span className="flex min-w-0 items-baseline gap-1"><span className="truncate">{o.name}</span>{o === picked && <RowParams family={family!} view={view!} />}</span>
+                  trail={<RowTrail checked={o === cur} label={params ? t('composer.modelParams', { model: o.name }) : undefined}
+                    onOpen={params ? el => setMenu(m => (m?.id === o.id ? undefined : { id: o.id, row: el })) : undefined} />}>
+                  <span className="flex min-w-0 items-baseline gap-1"><span className="truncate">{o.name}</span>{row && <RowParams family={row.family} view={row.view} />}</span>
                 </OptionContent>}
             </Command.Item>;
           })}
         </Command.List>
       </Command.Root>
     </div>
-    {menu && view && menu.isConnected && <ParamsMenu anchor={menu} onClose={closeMenu}>
-      <FamilyParams family={family!} view={view} onSelect={() => {}} setParam={onSetConfig} />
+    {menu && opened && menu.row.isConnected && <ParamsMenu anchor={menu.row} onClose={closeMenu}>
+      <FamilyParams family={opened.family} view={opened.view} onSelect={() => {}} setParam={setParam} />
     </ParamsMenu>}
   </>;
 }

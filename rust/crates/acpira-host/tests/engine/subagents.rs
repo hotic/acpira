@@ -297,6 +297,35 @@ async fn devin_nested_shape_stamps_the_delegation_routes_tools_and_isolates_usag
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn devin_fusion_sidekick_calls_become_relay_rounds_off_the_root() {
+  let fake = fake_or_skip!();
+  let pair = "Fusion (Claude Opus 5.5 + SWE-2 Medium)";
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_MODELS": pair } }));
+  let s = session(&h).await;
+  s.set_config("model".into(), pair.into()).await.unwrap();
+  prompt(&s, "subagents-fusion").await;
+  let view = view(&s);
+  let nodes = view["subagents"].as_array().unwrap();
+  assert_eq!(nodes.len(), 2, "{nodes:?}");
+  let thread = nodes[0]["id"].as_str().unwrap();
+  // The lead spoke while the first call was open (side by side); its next words, with nothing open, took the work back
+  expect_match(&nodes[0], json!({ "visibility": "nested", "state": "completed", "stateSource": "local", "model": "SWE-2", "toolCount": 2,
+    "harness": { "agent": "devin", "persona": "sidekick", "thread": thread, "round": 1, "effort": "Medium" } }));
+  // The round still open when the prompt returned is handed back, not cut
+  expect_match(&nodes[1], json!({ "state": "completed", "toolCount": 1, "harness": { "thread": thread, "round": 2 } }));
+  assert_eq!(nodes[1]["steps"][0]["id"], "sk::exec:2");
+  // The root keeps the lead's own row and one stand-in row per round, where the round began
+  let root = root_blocks(&s);
+  assert!(!has(&root, |b| b["id"].as_str().is_some_and(|id| id.starts_with("sk::"))));
+  let rows: Vec<&Value> = root.iter().filter(|b| b["type"] == "tool_call").collect();
+  assert_eq!(rows.len(), 3, "{rows:?}");
+  assert_eq!(rows[0]["id"], "toolu_lead_1");
+  assert_eq!(rows[1]["subagentId"], nodes[0]["id"]);
+  assert_eq!(rows[2]["subagentId"], nodes[1]["id"]);
+  assert!(has(&child_blocks(&s, thread), |b| b["id"] == "sk::read:1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn claude_legacy_updates_and_an_async_launched_receipt_link_the_root_call() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));

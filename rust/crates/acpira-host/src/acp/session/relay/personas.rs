@@ -94,5 +94,5 @@ pub(crate) const SIDEKICK_EFFORT_CONFIG: &str = "sidekick_effort";
 pub(crate) const SIDEKICK_EFFORT_CATEGORY: &str = "_sidekick_effort";
 
 /// Its Fast switch, there while the sidekick's model has a fast tier
-pub(super) const SIDEKICK_FAST_CONFIG: &str = "sidekick_fast";
-pub(super) const SIDEKICK_FAST_CATEGORY: &str = "_sidekick_fast";
+pub(crate) const SIDEKICK_FAST_CONFIG: &str = "sidekick_fast";
+pub(crate) const SIDEKICK_FAST_CATEGORY: &str = "_sidekick_fast";
