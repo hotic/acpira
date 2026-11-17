@@ -28,6 +28,17 @@ struct ProtocolTests {
     try roundTrip(WebviewMsg.ready(), #"{"type":"ready"}"#)
     try roundTrip(WebviewMsg.ready(patches: true), #"{"type":"ready","patches":true}"#)
     try roundTrip(WebviewMsg.ready(patches: true, listPatches: true), #"{"type":"ready","patches":true,"listPatches":true}"#)
+    try roundTrip(WebviewMsg.ready(patches: true, listPatches: true, window: true),
+                  #"{"type":"ready","patches":true,"listPatches":true,"window":true}"#)
+    try roundTrip(WebviewMsg.loadEarlier(sessionId: "s1"), #"{"type":"loadEarlier","sessionId":"s1"}"#)
+    // The answer, and the window a view opened at its tail names; a view without one is whole
+    let chunk = #"{"type":"sessionEarlier","chunk":{"id":"s1","from":{"turns":2,"blocks":1},"turns":[]}}"#
+    try roundTrip(HostMsg.sessionEarlier(chunk: SessionEarlier(id: "s1", from: ViewEarlier(turns: 2, blocks: 1), turns: [])), chunk)
+    let windowed = try decode(SessionView.self, #"{"id":"s1","agent":"fake","turns":[],"earlier":{"turns":2,"blocks":1}}"#)
+    #expect(windowed.earlier == ViewEarlier(turns: 2, blocks: 1) && windowed.turnBase == 2 && windowed.turnCount == 2)
+    #expect(try JSONObject.of(windowed)["earlier"] as? [String: Int] == ["turns": 2, "blocks": 1])
+    let whole = try decode(SessionView.self, #"{"id":"s1","agent":"fake","turns":[{"role":"user","text":"hi"}]}"#)
+    #expect(whole.earlier == nil && whole.turnBase == 0 && whole.turnCount == 1)
     try roundTrip(WebviewMsg.resyncSessions, #"{"type":"resyncSessions"}"#)
   }
 

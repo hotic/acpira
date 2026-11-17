@@ -102,8 +102,9 @@ private func seatSidekickEffort(_ controls: SessionControls, sidekick: String, s
 }
 
 /// A sent prompt being rewritten in the composer. `turnCount` is the transcript's length when the edit began, so the
-/// engine refuses the edit as stale once the conversation moved on; `keptText` / `keptStaged` are what the composer held
-/// before, back once the edit is sent or dropped
+/// engine refuses the edit as stale once the conversation moved on; it and `turnIndex` count from the session's first
+/// turn (`SessionView.turnBase`), not from the first one the view holds. `keptText` / `keptStaged` are what the composer
+/// held before, back once the edit is sent or dropped
 struct TurnEdit: Equatable {
   var turnIndex: Int
   var turnCount: Int

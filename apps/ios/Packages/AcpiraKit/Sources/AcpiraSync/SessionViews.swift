@@ -15,6 +15,16 @@ public enum SessionPush: Equatable, Sendable {
   case unknown
 }
 
+/// What a `sessionEarlier` chunk does to the page
+public enum EarlierPush: Equatable, Sendable {
+  /// The view of the chunk's session, on screen or kept, with the chunk in front
+  case took(SessionView)
+  /// The page holds no view of that session, or a kept one the chunk did not fit (dropped): nothing changes on screen
+  case stale
+  /// The chunk does not fit the view on screen: ask for the whole view (`resync`)
+  case unknown
+}
+
 /// What the page shows plus the last view of each recent session (packages/ui/sessionViews.ts, the reference for every
 /// rule here). Switching back to a kept session arrives as a patch against the kept view, not the whole transcript.
 /// A whole view (init, `session`) is always taken: the engine sends one only when the page holds nothing it can patch,
@@ -77,6 +87,24 @@ public struct SessionViews: Sendable {
     return .unknown
   }
 
+  /// The part right ahead of a view the page holds, on screen or kept (the reader may have switched away since the
+  /// thread asked): that view with the chunk in front, where it stands. The engine moved its record of where the
+  /// page's copy starts when it cut the chunk, so a chunk that does not fit a held view leaves the two apart, and every
+  /// later patch and chunk would count from the wrong turn: the copy is dropped as unknown, as after a patch that did
+  /// not fit (sessionWindow.ts only drops the chunk)
+  public mutating func earlier(_ c: SessionEarlier) -> EarlierPush {
+    let onScreen = current?.id == c.id
+    guard let held = onScreen ? current : views[c.id] else { return .stale }
+    guard let next = applySessionEarlier(held, c) else {
+      drop(c.id)
+      return onScreen ? .unknown : .stale
+    }
+    // In place: taking in an earlier part is no reason to count the session as shown more recently
+    if views[c.id] != nil { views[c.id] = next }
+    if onScreen { current = next }
+    return .took(next)
+  }
+
   /// Ids kept, least recently shown first
   public var kept: [String] { order }
 
@@ -96,11 +124,15 @@ public struct SessionViews: Sendable {
 }
 
 /// The page's handling of session pushes (packages/ui/App.tsx, its `init`, `session`, `noSession` and `sessionPatch`
-/// cases): the view to show, and a `resync` asked once for a patch that does not fit, until a whole view lands
+/// cases, plus `sessionEarlier`): the view to show, and a `resync` asked once for a patch or chunk that does not fit,
+/// until a whole view lands
 public struct SessionFeed: Sendable {
   public enum Outcome: Equatable, Sendable {
     /// Show this view (nil: no session)
     case show(SessionView?)
+    /// A view the page already holds, with the earlier part it asked for in front: nothing in the session changed,
+    /// and the session on screen stays the one it was
+    case earlier(SessionView)
     case unchanged
     /// Post `resync`: the engine sends the whole view again
     case resync
@@ -124,14 +156,23 @@ public struct SessionFeed: Sendable {
       switch views.patch(patch) {
       case .show(let view): return .show(view)
       case .stale: return .unchanged
-      case .unknown:
-        if resyncAsked { return .unchanged }
-        resyncAsked = true
-        return .resync
+      case .unknown: return askResync()
+      }
+    case .sessionEarlier(let chunk):
+      switch views.earlier(chunk) {
+      case .took(let view): return .earlier(view)
+      case .stale: return .unchanged
+      case .unknown: return askResync()
       }
     default:
       return .unchanged
     }
+  }
+
+  private mutating func askResync() -> Outcome {
+    if resyncAsked { return .unchanged }
+    resyncAsked = true
+    return .resync
   }
 
   /// A tap on a session: its kept view at once, or nil to wait for the engine's

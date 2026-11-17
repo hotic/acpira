@@ -2004,6 +2004,7 @@
   "devices.buttonOnline": "设备（{n} 台在线）",
   "devices.online": "{n} 台设备在线",
   "devices.noneOnline": "没有设备在线",
+  "devices.sessionTooLong": "这个会话太长，当前版本的 App 打不开。请更新这台设备上的 Acpira。",
   "devices.encrypted": "端到端加密",
   "devices.add": "添加设备",
   "devices.code": "配对码",

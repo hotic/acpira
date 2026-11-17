@@ -131,6 +131,31 @@ class ContractTest {
     assertEquals("high", controls.shapes!!["opus"]!!.single().value)
     val subagent = assertIs<HostMsg.Subagent>(push("subagent"))
     assertEquals(2, subagent.turns.size)
+    val chunk = assertIs<HostMsg.Earlier>(push("sessionEarlier")).chunk
+    assertEquals(ViewEarlier(3, 1), chunk.from)
+    assertIs<UserTurn>(chunk.turns.single())
+    assertIs<TextBlock>(chunk.blocks!!.single())
+    assertEquals(ViewEarlier(2, 0), chunk.earlier)
+  }
+
+  /** A windowed view says what it leaves out, and counts its turns from the session's first */
+  @Test fun aWindowedViewCountsFromTheSessionsFirstTurn() {
+    val view = WireJson.decodeFromString(SessionView.serializer(), Samples.richView)
+    assertEquals(ViewEarlier(3, 0), view.earlier)
+    assertEquals(3, view.turnsBefore)
+    assertEquals(5, view.turnCount)
+    assertTrue(view.windowed)
+    val whole = view.copy(earlier = null)
+    assertEquals(0, whole.turnsBefore)
+    assertEquals(2, whole.turnCount)
+    assertTrue(!whole.windowed)
+    // The window round-trips, and a whole view writes no field
+    assertEquals(view, WireJson.decodeFromString(SessionView.serializer(), WireJson.encodeToString(SessionView.serializer(), view)))
+    assertTrue("earlier" !in WireJson.encodeToJsonElement(SessionView.serializer(), whole).jsonObject)
+    // The last chunk names nothing left out: the view is whole
+    val last = WireJson.decodeFromString(SessionEarlier.serializer(), """{"id":"s1","from":{"turns":1,"blocks":0},"turns":[{"role":"user","text":"go"}]}""")
+    assertNull(last.earlier)
+    assertNull(last.blocks)
   }
 
   /** A sessionsPatch applies to the list it was made against and refuses any other */
@@ -160,6 +185,8 @@ class ContractTest {
     }
     // modelMemory stays engine-side: the engine replays a model's own picks itself
     check(SessionView.serializer(), TS.interfaceFields(transcript, "SessionView"), setOf("modelMemory"))
+    check(ViewEarlier.serializer(), TS.interfaceFields(transcript, "ViewEarlier"))
+    check(SessionEarlier.serializer(), TS.interfaceFields(shared("sessionWindow.ts"), "SessionEarlier"))
     // completedAt / question feed the page's plugin style hooks; the phone has none
     check(SessionSummary.serializer(), TS.interfaceFields(transcript, "SessionSummary"), setOf("completedAt", "question"))
     check(AgentInfo.serializer(), TS.interfaceFields(transcript, "AgentInfo"))
@@ -357,8 +384,9 @@ private object Samples {
   )
 
   val actions: List<WebviewMsg> = listOf(
-    WebviewMsg.Ready(patches = true, listPatches = true),
+    WebviewMsg.Ready(patches = true, listPatches = true, window = true),
     WebviewMsg.Resync,
+    WebviewMsg.LoadEarlier("s1"),
     WebviewMsg.ResyncSessions,
     WebviewMsg.Send("s1", "hi", listOf(drafts[0]), steer = true, clientId = "c1"),
     WebviewMsg.Stop("s1", "c2"),
@@ -455,7 +483,7 @@ private object Samples {
   private const val userTurn = """{"role":"user","id":"u1","text":"go","command":"goal","attachments":[{"kind":"text","blob":"b.txt","name":"notes.txt","context":{"sourceId":"browser","sourceName":"Browser"}},{"kind":"selection","blob":"s.txt","uri":"file:///w/a.ts","name":"a.ts","startLine":1,"endLine":3}],"settings":{"modeId":"agent","config":{"model":"opus"}},"edited":true,"planId":"p1","auto":true,"autoReason":"goal","goalContinue":true}"""
   private val agentTurn = """{"role":"agent","observation":"unknown","blocks":[${blocks[11]}],"usage":{"input":10,"output":20,"cachedRead":5,"cachedWrite":1,"reasoning":3,"total":39,"modelCalls":2,"decodeMs":800,"model":"opus","requestId":"r1","context":{"used":1000,"size":200000}},"startedAt":1000,"respondedAt":1100,"endedAt":2000,"idleMs":300,"activity":{"kind":"read","label":"Reading"},"stop":"error","error":{"message":"boom","code":-32603,"kind":"overloaded","retryable":true,"failureId":"f1","actions":["retry"]},"command":{"name":"goal","mode":"agent","options":[{"name":"Model","value":"opus"}]},"retry":{"attempt":1,"max":3,"detail":"retrying"}}"""
   private val subagent = """{"id":"n1","parentId":"n0","turnIndex":1,"visibility":"session","title":"Scout","task":"find it","role":"scout","state":"running","stateSource":"agent","controls":{"cancel":true},"cancelRequested":false,"background":true,"announcedAt":1000,"endedAt":2000,"model":"opus","usage":{"used":10,"size":100},"peer":{"sessionId":"ps1","agentId":"a1","toolCallId":"call-1","sidechainId":"sc1"},"activity":"Reading","toolCount":3,"result":"done","hasProcess":true,"permissions":[${blocks[4]}],"question":${blocks[7]},"harness":{"agent":"codex","persona":"scout","mode":"consult","thread":"n1","round":1,"sessionId":"cs1","effort":"high","group":"g1"}}"""
-  val richView = """{"id":"s1","agent":"claude","accountId":"acc-1","title":"t","cwd":"/w","status":"auth_required","error":"sign in","canTakeOver":true,"authMethods":[{"id":"chatgpt","name":"ChatGPT","description":"browser login","terminal":{"args":["login"],"env":{"NO_COLOR":"1"}}}],"turns":[$userTurn,$agentTurn],"running":true,"rev":2,"controls":{"modes":[],"options":[]},"modelShapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]},"usage":{"used":1000,"size":200000,"cost":0.5,"compactedFrom":150000},"commands":[],"queued":[{"id":"q1","text":"next","attachments":[],"sending":true}],"canSteer":true,"goal":{"objective":"ship it","status":"active","iterations":2,"tokenBudget":100000,"tokensUsed":1200,"timeUsedSeconds":40,"updatedAt":1761593614971},"goalActions":["set","pause","resume","clear"],"subagents":[$subagent],"forkedFrom":{"sessionId":"s0","turnIndex":3,"agent":"codex"},"createdAt":"2026-10-27T19:33:34.971Z","updatedAt":"2026-10-27T19:33:34.971Z"}"""
+  val richView = """{"id":"s1","agent":"claude","accountId":"acc-1","title":"t","cwd":"/w","status":"auth_required","error":"sign in","canTakeOver":true,"authMethods":[{"id":"chatgpt","name":"ChatGPT","description":"browser login","terminal":{"args":["login"],"env":{"NO_COLOR":"1"}}}],"turns":[$userTurn,$agentTurn],"earlier":{"turns":3,"blocks":0},"running":true,"rev":2,"controls":{"modes":[],"options":[]},"modelShapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]},"usage":{"used":1000,"size":200000,"cost":0.5,"compactedFrom":150000},"commands":[],"queued":[{"id":"q1","text":"next","attachments":[],"sending":true}],"canSteer":true,"goal":{"objective":"ship it","status":"active","iterations":2,"tokenBudget":100000,"tokensUsed":1200,"timeUsedSeconds":40,"updatedAt":1761593614971},"goalActions":["set","pause","resume","clear"],"subagents":[$subagent],"forkedFrom":{"sessionId":"s0","turnIndex":3,"agent":"codex"},"createdAt":"2026-10-27T19:33:34.971Z","updatedAt":"2026-10-27T19:33:34.971Z"}"""
 
   /** In HostMsg.types order */
   val pushes = listOf(
@@ -466,6 +494,7 @@ private object Samples {
     """{"type":"noSession"}""",
     """{"type":"session","session":$view}""",
     """{"type":"sessionPatch","patch":{"id":"s1","base":1,"view":$view,"keep":3,"turns":[{"role":"agent","blocks":[]}],"keepBlocks":1,"blocks":[{"type":"text","markdown":"yz"}]}}""",
+    """{"type":"sessionEarlier","chunk":{"id":"s1","from":{"turns":3,"blocks":1},"turns":[{"role":"user","text":"go"}],"blocks":[{"type":"text","markdown":"ab"}],"earlier":{"turns":2,"blocks":0}}}""",
     """{"type":"sessionsPatch","patch":{"base":3,"rev":4,"size":2,"runs":[{"id":"s3","title":"t","agent":"claude","cwd":"/w","updatedAt":"2026-10-27T19:33:34.971Z"},[0,2]]}}""",
     """{"type":"accounts","accounts":[{"id":"acc-1","agent":"claude","label":"me@example.com","addedAt":"2026-10-27T19:33:28.658Z"}]}""",
     """{"type":"accountActions","actions":[{"agent":"claude","via":"login","status":"pending"}]}""",

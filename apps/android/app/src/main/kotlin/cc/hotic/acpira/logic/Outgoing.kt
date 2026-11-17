@@ -30,7 +30,10 @@ data class Outgoing(
   val attachments: List<Attachment>,
   /** Sent with steering on into a running turn: it stands as a steer card, not as a new prompt */
   val steer: Boolean,
-  /** The session's turn count when it was sent */
+  /**
+   * The session's turn count when it was sent, the turns a windowed view leaves out included (`SessionView.turnCount`):
+   * a chunk of the earlier part moves every index in the view, never this
+   */
   val turns: Int,
   /** The queue entries the session held when it was sent */
   val queued: Set<String>,
@@ -57,10 +60,13 @@ data class Outgoing(
    */
   internal fun copies(session: SessionView): List<Pair<String, Boolean>> {
     val all = session.turns
+    val before = session.turnsBefore
+    // Where the turns that came after it start in the view; all of it when the view opened on a later window since
+    val from = maxOf(turns - before, 0)
     val found = ArrayList<Pair<String, Boolean>>()
-    for (i in turns until all.size) (all[i] as? UserTurn)?.let { found += (it.id ?: "#$i") to false }
+    for (i in from until all.size) (all[i] as? UserTurn)?.let { found += (it.id ?: "#${before + i}") to false }
     // A steer lands in the turn that ran when it was sent, or in a later one
-    if (steer) found += steerIds(all.drop(maxOf(turns - 1, 0))).filter { it !in steers }.map { it to false }
+    if (steer) found += steerIds(all.drop(maxOf(from - 1, 0))).filter { it !in steers }.map { it to false }
     found += session.queued.orEmpty().filter { it.id !in queued }.map { it.id to (steer && it.sending == true) }
     return found.filter { it.first !in taken }
   }
@@ -71,7 +77,7 @@ data class Outgoing(
       text = text,
       attachments = attachments,
       steer = steer,
-      turns = session.turns.size,
+      turns = session.turnCount,
       queued = session.queued.orEmpty().map { it.id }.toSet(),
       steers = if (steer) steerIds(session.turns.takeLast(1)).toSet() else emptySet(),
     )

@@ -2037,6 +2037,7 @@ export const en = {
   'devices.buttonOnline': 'Devices ({n} online)',
   'devices.online': '{n} online',
   'devices.noneOnline': 'No device online',
+  'devices.sessionTooLong': 'This session is too long for this version of the app. Update Acpira on this device to open it.',
   'devices.encrypted': 'End-to-end encrypted',
   'devices.add': 'Add device',
   'devices.code': 'Pairing code',

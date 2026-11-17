@@ -83,7 +83,10 @@ function sectionSig(s: PlanSection): string {
 @ComponentV2
 export struct AgentMessage {
   @Param turn: Turn = { role: 'agent' };
-  /** The turn's place in the session (fork from here) and the scope its fold choices are kept under */
+  /**
+   * The turn's place in the session, counted from its first turn whatever the view's window holds (fork from here, the
+   * subagents announced in it), and the scope its fold choices are kept under
+   */
   @Param index: number = 0;
   @Param scope: string = '';
   /**

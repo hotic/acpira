@@ -40,6 +40,7 @@ import cc.hotic.acpira.sync.VIEW_CACHE_ENTRIES
 import cc.hotic.acpira.sync.WebSocketTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
@@ -196,6 +197,11 @@ class AppModel(
   private var carried: List<String> = emptyList()
   /** After newSession: the next session the engine shows that is not `from` is the one it made */
   private var awaiting: Pair<String?, (String) -> Unit>? = null
+  /**
+   * Sessions whose earlier part was asked for and not answered yet (`loadEarlier`), each with the wait that gives up on
+   * the answer. One request a session at a time: the engine cuts each chunk for the window it sent last
+   */
+  private val earlierAsked = mutableStateMapOf<String, Job>()
   private var demoSeq = 0
 
   val live: Boolean get() = client != null
@@ -361,6 +367,28 @@ class AppModel(
   /** The wait page's retry: the session is picked again */
   fun retryOpen(id: String) = select(id)
 
+  /** The part ahead of the chat's view is on its way (the thread's lead spinner) */
+  fun loadingEarlier(id: String): Boolean = id in earlierAsked
+
+  /**
+   * Asks for the part of the session right ahead of what the view holds (a windowed view, `SessionView.earlier`). The
+   * engine answers with one `sessionEarlier`, or with the whole `session` again when it no longer knows what the phone
+   * holds; one that takes the view for whole, or lost the session, answers nothing. So the wait also ends by itself,
+   * and the reader's next reach for the start asks again
+   */
+  fun loadEarlier(id: String) {
+    if (!live || !current || id in earlierAsked || views[id]?.windowed != true) return
+    post(WebviewMsg.LoadEarlier(id))
+    earlierAsked[id] = scope.launch(Dispatchers.Main) {
+      delay(EARLIER_WAIT_MS)
+      earlierAsked.remove(id)
+    }
+  }
+
+  private fun earlierAnswered(id: String) {
+    earlierAsked.remove(id)?.cancel()
+  }
+
   private fun select(id: String) {
     if (!live) return
     // A new pick is a new try
@@ -437,11 +465,13 @@ class AppModel(
 
   /**
    * Fork from a turn: a new session holding the transcript through that turn, opened over this one (apps/ios AppModel
-   * `fork` / `engineFork`). The engine makes it and shows it on this view; that view opens its chat
+   * `fork` / `engineFork`). The engine makes it and shows it on this view; that view opens its chat. [turnIndex] is the
+   * turn's place in the session, as the engine counts it: a windowed view's own indices start `turnsBefore` in
    */
   fun fork(sessionId: String, turnIndex: Int) {
     val source = views[sessionId] ?: return
-    if (turnIndex !in source.turns.indices) return
+    val at = turnIndex - source.turnsBefore
+    if (at !in source.turns.indices) return
     val opened: (String) -> Unit = { id ->
       path.add(Screen.Chat(id))
       showToast(t("mobile.forked"))
@@ -455,7 +485,7 @@ class AppModel(
     val stamp = now().toString()
     val title = t("session.forkTitle", "title" to source.title)
     views[id] = source.copy(
-      id = id, title = title, turns = source.turns.take(turnIndex + 1), running = false, queued = null, createdAt = stamp, updatedAt = stamp,
+      id = id, title = title, turns = source.turns.take(at + 1), running = false, queued = null, createdAt = stamp, updatedAt = stamp,
     )
     summaries = listOf(SessionSummary(id = id, title = title, agent = source.agent, cwd = source.cwd, updatedAt = stamp, accountId = source.accountId)) + summaries
     opened(id)
@@ -711,8 +741,9 @@ class AppModel(
     )
     val c = EngineClient(transport, hello)
     client = c
-    // listPatches: the whole list is hundreds of KB and changes whenever any session starts, waits or ends
-    c.post(WebviewMsg.Ready(patches = true, listPatches = true))
+    // listPatches: the whole list is hundreds of KB and changes whenever any session starts, waits or ends. window: a
+    // long session's whole view is tens of MB, more than a paired link's send queue holds, so views open on their tail
+    c.post(WebviewMsg.Ready(patches = true, listPatches = true, window = true))
     scope.launch(Dispatchers.Main) { c.events.collect { receive(it) } }
     // The wire is read and decoded off the main thread (a long session's init is megabytes); pushes land on it
     c.start(CoroutineScope(scope.coroutineContext + Dispatchers.Default))
@@ -754,6 +785,9 @@ class AppModel(
   private fun receive(message: HostMsg) {
     when (message) {
       is HostMsg.Init -> {
+        // The engine starts its record of what the page holds over: nothing asked before is answered any more
+        earlierAsked.values.forEach { it.cancel() }
+        earlierAsked.clear()
         val s = message.state
         agents = s.agents
         settings = s.settings
@@ -806,7 +840,18 @@ class AppModel(
         if (shapes != null) agentShapes[key ?: message.agent] = shapes else agentShapes.remove(key ?: message.agent)
       }
       is HostMsg.Files -> fileSearch.receive(message.seq, message.files)
-      is HostMsg.Session, is HostMsg.Patch, HostMsg.NoSession -> present(message)
+      is HostMsg.Session -> {
+        // A whole view is also the answer to a loadEarlier the engine could not cut a chunk for
+        earlierAnswered(message.session.id)
+        present(message)
+      }
+      is HostMsg.Earlier -> {
+        earlierAnswered(message.chunk.id)
+        // Nothing in the session changed, so nothing else follows it: the view on screen only starts earlier. A view
+        // kept off screen grows in the feed, which `select` reads
+        (feed.receive(message) as? SessionFeed.Outcome.Show)?.view?.let { views[it.id] = it }
+      }
+      is HostMsg.Patch, HostMsg.NoSession -> present(message)
       is HostMsg.SessionUnavailable -> if (views[message.id] == null) unavailable[message.id] = message.reason
       is HostMsg.LocalDir -> folders.receive(message)
       is HostMsg.Providers -> sources.receive(message)
@@ -930,6 +975,8 @@ class AppModel(
     const val BUILTIN_AGENT = "acpira"
     private const val TAG = "acpira"
     private const val TOAST_MS = 3200L
+    /** How long a loadEarlier waits for its answer before the reader may ask again */
+    private const val EARLIER_WAIT_MS = 15_000L
     private const val DEMO_STEP_MS = 700L
     private const val DEMO_WORD_MS = 60L
   }

@@ -288,9 +288,9 @@ pub enum HostMsg {
     id: String,
     reason: String,
   },
-  /// The session view, already serialized once for every viewer that shows it
+  /// The session view, serialized at most once for every viewer that shows it
   Session {
-    session: RawJson,
+    session: ViewJson,
     /// Not on the wire: an idle edge flushes the batch at once
     #[serde(skip)]
     running: bool,
@@ -301,6 +301,11 @@ pub enum HostMsg {
   /// The changes since the view this viewer was sent last (`session_patch.rs`); only for pages that asked for patches
   SessionPatch {
     patch: RawJson,
+  },
+  /// Reply to loadEarlier: the part of the session right ahead of what this viewer holds (`session_window.rs`); only for
+  /// pages that take windowed views
+  SessionEarlier {
+    chunk: RawJson,
   },
   /// The session list as runs over the list this viewer was sent last (`sessions_patch.rs`); only for pages that asked
   /// for list patches
@@ -620,6 +625,7 @@ impl HostMsg {
       HostMsg::SessionUnavailable { .. } => "sessionUnavailable",
       HostMsg::Session { .. } => "session",
       HostMsg::SessionPatch { .. } => "sessionPatch",
+      HostMsg::SessionEarlier { .. } => "sessionEarlier",
       HostMsg::SessionsPatch { .. } => "sessionsPatch",
       HostMsg::Subagent { .. } => "subagent",
       HostMsg::Accounts { .. } => "accounts",
@@ -667,6 +673,54 @@ impl HostMsg {
   }
 }
 
+/// A session view as a push carries it: whole already, or still in its parts until a viewer needs it whole. A page that
+/// takes patches never does, and putting it together costs the size of the transcript on every streamed chunk
+#[derive(Debug, Clone)]
+pub struct ViewJson(std::sync::Arc<ViewJsonInner>);
+
+#[derive(Debug)]
+struct ViewJsonInner {
+  parts: Option<crate::session_patch::ViewParts>,
+  whole: std::sync::OnceLock<RawJson>,
+}
+
+impl ViewJson {
+  /// The view of `parts`, put together when first asked for and then shared by every copy of this message
+  pub fn of(parts: crate::session_patch::ViewParts) -> ViewJson {
+    ViewJson(std::sync::Arc::new(ViewJsonInner { parts: Some(parts), whole: std::sync::OnceLock::new() }))
+  }
+
+  pub fn raw(&self) -> &RawJson {
+    self.0.whole.get_or_init(|| match &self.0.parts {
+      Some(parts) => crate::session_patch::whole_view(&parts.0),
+      // Not reached: a view without parts is made whole (`From<RawJson>`)
+      None => RawJson::new(&serde_json::Value::Null),
+    })
+  }
+
+  pub fn get(&self) -> &str {
+    self.raw().get()
+  }
+}
+
+impl From<RawJson> for ViewJson {
+  fn from(whole: RawJson) -> Self {
+    ViewJson(std::sync::Arc::new(ViewJsonInner { parts: None, whole: std::sync::OnceLock::from(whole) }))
+  }
+}
+
+impl PartialEq for ViewJson {
+  fn eq(&self, other: &Self) -> bool {
+    self.get() == other.get()
+  }
+}
+
+impl Serialize for ViewJson {
+  fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+    self.raw().serialize(s)
+  }
+}
+
 /// A pre-serialized JSON fragment shared between viewers: a session view is encoded once per change, not once per view
 #[derive(Debug, Clone)]
 pub struct RawJson(pub std::sync::Arc<serde_json::value::RawValue>);
@@ -702,11 +756,20 @@ pub enum WebviewMsg {
   },
   /// `patches`: the page applies `sessionPatch` messages (the real webview always does; scripts and tests take whole views)
   /// `listPatches`: the page applies `sessionsPatch` messages (the paired phone, where the whole list is costly)
+  /// `window`: the page takes a session view that starts at its tail (`SessionView.earlier`) and asks for the rest with
+  /// `loadEarlier` (the paired phone, where a long transcript neither fits the link nor is worth its wait); needs `patches`
   Ready {
     #[serde(default)]
     patches: bool,
     #[serde(default)]
     list_patches: bool,
+    #[serde(default, skip_serializing_if = "crate::transcript::is_false")]
+    window: bool,
+  },
+  /// The part of `sessionId` right ahead of what the page holds, answered with one `sessionEarlier`; a page that holds
+  /// no view of it the engine knows of gets the view again instead
+  LoadEarlier {
+    session_id: String,
   },
   /// A `sessionPatch` did not fit the view the page holds: send the whole view again
   Resync,
@@ -1338,9 +1401,9 @@ mod tests {
     let m: WebviewMsg = serde_json::from_str(r#"{"type":"openFile","sessionId":"s","path":"a.ts","line":3}"#).unwrap();
     assert!(matches!(m, WebviewMsg::OpenFile { line: Some(3), .. }));
     let r: WebviewMsg = serde_json::from_str(r#"{"type":"ready"}"#).unwrap();
-    assert_eq!(r, WebviewMsg::Ready { patches: false, list_patches: false });
+    assert_eq!(r, WebviewMsg::Ready { patches: false, list_patches: false, window: false });
     let r: WebviewMsg = serde_json::from_str(r#"{"type":"ready","patches":true}"#).unwrap();
-    assert_eq!(r, WebviewMsg::Ready { patches: true, list_patches: false });
+    assert_eq!(r, WebviewMsg::Ready { patches: true, list_patches: false, window: false });
   }
 
   #[test]

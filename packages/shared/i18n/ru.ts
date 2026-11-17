@@ -2016,6 +2016,7 @@ export const ru = {
   'devices.buttonOnline': 'Устройства ({n} в сети)',
   'devices.online': 'В сети: {n}',
   'devices.noneOnline': 'Нет устройств в сети',
+  'devices.sessionTooLong': 'Этот сеанс слишком длинный для этой версии приложения. Обновите Acpira на этом устройстве, чтобы открыть его.',
   'devices.encrypted': 'Сквозное шифрование',
   'devices.add': 'Добавить устройство',
   'devices.code': 'Код связывания',

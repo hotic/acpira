@@ -12,7 +12,7 @@ import UIKit
 struct Dock: View {
   /// The chat hands its dock `dockSession(_:)`, a copy without the streamed transcript
   let session: SessionView
-  /// The session's turn count, which that copy does not keep; nil counts the given session's turns
+  /// The session's turn count (`SessionView.turnCount`), which that copy does not keep; nil counts the given session's
   var turns: Int?
   @Binding var draft: String
   @Binding var staged: [Attachment]
@@ -28,7 +28,7 @@ struct Dock: View {
     let question = openQuestion(session)
     let alertTurn = shortStop(session)
     let editing = edit.wrappedValue
-    let turnCount = turns ?? session.turns.count
+    let turnCount = turns ?? session.turnCount
     VStack(spacing: Metrics.dockGap) {
       if let question {
         QuestionCard(block: question) { actions.answer(question.id, $0, $1) }
@@ -82,6 +82,8 @@ func dockSession(_ session: SessionView) -> SessionView {
   view.rev = nil
   view.updatedAt = ""
   view.turns = session.turns.last.map { [dockTurn($0)] } ?? []
+  // Where the view starts moves as earlier parts land, which is nothing the dock shows
+  view.earlier = nil
   return view
 }
 

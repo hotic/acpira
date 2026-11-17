@@ -1977,6 +1977,7 @@ export const ko = {
   'devices.buttonOnline': '기기({n}대 온라인)',
   'devices.online': '{n}대 온라인',
   'devices.noneOnline': '온라인 기기 없음',
+  'devices.sessionTooLong': '이 세션은 너무 길어서 이 버전의 앱에서는 열 수 없습니다. 이 기기의 Acpira를 업데이트하세요.',
   'devices.encrypted': '종단 간 암호화',
   'devices.add': '기기 추가',
   'devices.code': '페어링 코드',

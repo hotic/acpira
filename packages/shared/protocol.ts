@@ -11,6 +11,7 @@ import type { PluginAction, PluginCardOp, PluginSkin, PluginSlot, PluginsView } 
 import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from './storage';
 import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
+import type { SessionEarlier } from './sessionWindow';
 import type { PageContextOp } from './picker';
 import type { ModelShapes } from './modelShapes';
 
@@ -304,6 +305,8 @@ export type HostMsg =
   | { type: 'session'; session: SessionView }
   // Only to pages that said `patches` in ready: the changes since the view sent last (sessionPatch.ts)
   | { type: 'sessionPatch'; patch: SessionPatch }
+  // Reply to loadEarlier, only to pages that said `window` in ready: the part right ahead of what the page holds (sessionWindow.ts)
+  | { type: 'sessionEarlier'; chunk: SessionEarlier }
   // Only to pages that said `listPatches` in ready: the session list as runs over the list sent last (sessions_patch.rs)
   | { type: 'sessionsPatch'; patch: SessionsPatch }
   // One observed subagent's transcript, pushed to the viewer that asked for it; rev grows with every change
@@ -434,7 +437,11 @@ export interface AgentInstallProgress {
 export type WebviewMsg =
   | { type: 'editTurn'; requestId: string; edit: EditTurnRequest }
   // patches: the page applies sessionPatch messages; without it every push is the whole view
-  | { type: 'ready'; patches?: boolean; listPatches?: boolean }
+  // window: the page takes a session view that starts at its tail (SessionView.earlier) and asks for the rest with
+  // loadEarlier (the paired phone); needs patches
+  | { type: 'ready'; patches?: boolean; listPatches?: boolean; window?: boolean }
+  // The part of the session right ahead of what the page holds, answered with one sessionEarlier
+  | { type: 'loadEarlier'; sessionId: string }
   // A sessionPatch did not fit the view the page holds: the host sends the whole view again
   | { type: 'resync' }
   // A sessionsPatch did not fit the list the page holds: the host sends the whole list again

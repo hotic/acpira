@@ -710,4 +710,130 @@ struct EngineModelTests {
     #expect(model.liveSessions.contains(sid))
     #expect(EntranceClaim().enter(id: "c4:tool", scope: scope))
   }
+
+  /// A long session opens at its tail (`SessionView.earlier`): the view starts three turns in, inside the fourth. The
+  /// thread's ask for the part ahead goes out one at a time and its answer lands in front of the view; the rows, and the
+  /// indices the app sends, name every turn by its place in the session throughout
+  @Test func aShortThreadFillsItselfAFewPartsThenWaitsForTheReader() async throws {
+    let (model, wire) = try await connected()
+    let window = { (rev: Int) in
+      #"{"type":"session","session":{"id":"s2","agent":"fake","title":"Long","cwd":"/w","rev":\#(rev),"earlier":{"turns":3,"blocks":9},"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"b"}],"stop":"end_turn"}]}}"#
+    }
+    // Each part is one more block of the turn the view was cut in: inside a closed fold it adds no height
+    let part = { (left: Int) in
+      #"{"type":"sessionEarlier","chunk":{"id":"s2","from":{"turns":3,"blocks":\#(left + 1)},"turns":[],"blocks":[{"type":"text","markdown":"a"}],"earlier":{"turns":3,"blocks":\#(left)}}}"#
+    }
+    push(wire, window(4))
+    try await until { model.views["s2"] != nil }
+    let asks = { wire.types.filter { $0 == "webviewMessage:loadEarlier" }.count }
+    // The thread, still short after every part, asks four in a row (one under way at a time)
+    for left in [8, 7, 6, 5] {
+      model.fillEarlier("s2")
+      model.fillEarlier("s2")
+      try await until { asks() == 9 - left }
+      push(wire, part(left))
+      try await until { model.views["s2"]?.earlier?.blocks == left }
+    }
+    model.fillEarlier("s2")
+    #expect(model.loadingEarlier["s2"] == nil && model.earlierFills["s2"] == 0)
+    // The reader's own scrolling still loads, and gives the thread no new allowance
+    #expect(model.loadEarlier("s2"))
+    try await until { asks() == 5 }
+    push(wire, part(4))
+    try await until { model.views["s2"]?.earlier?.blocks == 4 }
+    model.fillEarlier("s2")
+    #expect(model.loadingEarlier["s2"] == nil)
+    // A view sent afresh starts over
+    push(wire, window(5))
+    try await until { model.views["s2"]?.rev == 5 }
+    model.fillEarlier("s2")
+    #expect(model.loadingEarlier["s2"] != nil && model.earlierFills["s2"] == 3)
+    try await until { asks() == 6 }
+  }
+
+  @Test func aWindowedViewLoadsItsEarlierPartAndCountsTurnsFromTheSessionsStart() async throws {
+    let (model, wire) = try await connected()
+    #expect(wire.sent.contains { $0.contains(#""window":true"#) })
+    let node = { (id: String, turn: Int) in
+      #"{"id":"\#(id)","turnIndex":\#(turn),"visibility":"session","state":"completed","stateSource":"agent","announcedAt":1000}"#
+    }
+    push(wire, #"{"type":"session","session":{"id":"s2","agent":"fake","title":"Long","cwd":"/w","rev":4,"earlier":{"turns":3,"blocks":1},"subagents":[\#(node("ahead", 1)),\#(node("held", 5))],"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"b"}],"stop":"end_turn"},{"role":"user","id":"u4","text":"again"},{"role":"agent","blocks":[{"type":"text","markdown":"c"}],"stop":"end_turn"}]}}"#)
+    try await until { model.views["s2"] != nil }
+    let asks = { wire.types.filter { $0 == "webviewMessage:loadEarlier" }.count }
+    // A whole view has nothing ahead of it; the windowed one asks once until the answer is in
+    model.loadEarlier("s1")
+    model.loadEarlier("s2")
+    model.loadEarlier("s2")
+    try await until { asks() == 1 }
+    #expect(wire.sent.last?.contains(#""sessionId":"s2""#) == true)
+
+    func rows() throws -> [ThreadItem] { threadItems(try #require(model.views["s2"])) }
+    func children(_ item: ThreadItem) -> [String] {
+      if case let .agent(_, _, _, _, _, _, _, subagents) = item.kind { subagents.map(\.id) } else { [] }
+    }
+    // The spinner, then the turn the view was cut in (no prompt before it). A child announced ahead of the view has no
+    // row yet; one announced in a held turn sits on that turn
+    #expect(try rows().map(\.id) == ["e", "a3", "u4", "a5"])
+    // Its spinner is for an ask under way, which the screen reads off the model
+    #expect(try rows()[0].kind == .earlier(loading: false) && model.loadingEarlier["s2"] != nil)
+    #expect(threadItems(try #require(model.views["s2"]), loadingEarlier: true)[0].kind == .earlier(loading: true))
+    #expect(try rows().map(children) == [[], [], [], ["held"]])
+    if case let .agent(_, index, scope, _, last, _, _, _) = try rows()[3].kind {
+      #expect(index == 5 && scope == "s2:5" && last)
+    } else { Issue.record("no agent row") }
+
+    // editTurn names the prompt and the transcript's length as the session counts them
+    model.beginEdit("s2", turn: 4)
+    let edit = try #require(model.draft(for: "s2").edit)
+    #expect(edit.turnIndex == 4 && edit.turnCount == 6 && edit.original.text == "again")
+    // Not a prompt, and a turn the view does not hold
+    model.cancelEdit("s2")
+    model.beginEdit("s2", turn: 3)
+    model.beginEdit("s2", turn: 1)
+    #expect(model.draft(for: "s2").edit == nil)
+    model.beginEditLast("s2")
+    #expect(model.draft(for: "s2").edit?.turnIndex == 4)
+    model.cancelEdit("s2")
+    // forkSession too; a turn ahead of the view is no row to fork from
+    model.fork("s2", through: 1)
+    model.fork("s2", through: 5)
+    try await until { wire.types.last == "webviewMessage:forkSession" }
+    #expect(wire.types.filter { $0 == "webviewMessage:forkSession" }.count == 1)
+    #expect(wire.sent.last?.contains(#""turnIndex":5"#) == true)
+
+    // The answer: the cut turn's first block and the prompt before it. No row changes its name
+    push(wire, #"{"type":"sessionEarlier","chunk":{"id":"s2","from":{"turns":3,"blocks":1},"turns":[{"role":"user","id":"u2","text":"first"}],"blocks":[{"type":"text","markdown":"a"}],"earlier":{"turns":2,"blocks":0}}}"#)
+    try await until { model.views["s2"]?.turns.count == 4 }
+    let view = try #require(model.views["s2"])
+    #expect(view.earlier == ViewEarlier(turns: 2, blocks: 0) && view.rev == 4 && view.turnCount == 6)
+    #expect(try rows().map(\.id) == ["e", "u2", "a3", "u4", "a5"])
+    #expect(!model.liveSessions.contains("s2"))
+    // Answered: the next ask goes out, and a whole view of the session ends that one's wait as well
+    model.loadEarlier("s2")
+    try await until { asks() == 2 }
+    push(wire, #"{"type":"session","session":{"id":"s2","agent":"fake","title":"Long","cwd":"/w","rev":5,"earlier":{"turns":5,"blocks":0},"turns":[{"role":"agent","blocks":[{"type":"text","markdown":"c"}],"stop":"end_turn"}]}}"#)
+    try await until { model.views["s2"]?.rev == 5 }
+    #expect(try rows().map(\.id) == ["e", "a5"])
+    model.loadEarlier("s2")
+    try await until { asks() == 3 }
+    #expect(asks() == 3)
+  }
+
+  /// A prompt still on its way while an earlier part lands: the turns that went in ahead of the view are not the
+  /// engine's copy of it, and the copy is still found after them
+  @Test func aPromptOnItsWayIsNotMatchedByTurnsLoadedAheadOfTheView() throws {
+    let view = try JSONDecoder().decode(SessionView.self, from: Data(#"{"id":"s1","agent":"fake","rev":2,"earlier":{"turns":3,"blocks":0},"turns":[{"role":"agent","blocks":[]},{"role":"user","id":"u4","text":"again"},{"role":"agent","blocks":[],"stop":"end_turn"}]}"#.utf8))
+    let sent = Outgoing(text: "next", attachments: [], after: view)
+    var grown = view
+    grown.turns.insert(contentsOf: [.user(UserTurn(text: "first")), .agent(AgentTurn())], at: 0)
+    grown.earlier = ViewEarlier(turns: 1, blocks: 0)
+    #expect([sent].pending(in: grown).count == 1)
+    grown.turns.append(.user(UserTurn(text: "next")))
+    #expect([sent].pending(in: grown).isEmpty)
+    // The engine opened the session at its tail again, past where the prompt was sent: what it holds came after
+    var tail = view
+    tail.turns = [.user(UserTurn(text: "next"))]
+    tail.earlier = ViewEarlier(turns: 6, blocks: 0)
+    #expect([sent].pending(in: tail).isEmpty)
+  }
 }

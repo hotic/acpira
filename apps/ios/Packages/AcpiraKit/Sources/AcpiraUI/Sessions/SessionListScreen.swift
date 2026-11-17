@@ -356,7 +356,7 @@ struct SessionListScreen: View {
         archive: { archived in withAnimation(Motion.ease) { model.setArchived(s.id, archived) } },
         rename: { newTitle = s.title; renaming = s },
         export: { model.export(s.id, format: $0) },
-        exportJSON: model.holdsView(s.id),
+        exportJSON: model.holdsWholeView(s.id),
         copy: { kind in Task { await model.copy(s.id, kind) } },
         cwd: s.cwd, projects: projects, sections: model.sections, chat: model.isChat(s.cwd),
         move: { model.move(s.id, to: $0) },

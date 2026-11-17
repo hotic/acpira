@@ -142,7 +142,10 @@ export function groupedNumber(n: number): string {
 
 // Prompt edits
 
-/** A sent prompt being rewritten in the composer; what the composer held before comes back afterwards */
+/**
+ * A sent prompt being rewritten in the composer; what the composer held before comes back afterwards. `turnIndex` and
+ * `turnCount` count the whole session as `editTurn` does, not the turns a windowed view holds
+ */
 export interface TurnEdit {
   turnIndex: number;
   turnCount: number;

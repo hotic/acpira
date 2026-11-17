@@ -10,7 +10,8 @@ use acpira_host::acp::session::attachments::{FileReader, PromptCaps, prepare_pro
 use acpira_host::acp::transcript::diff::diff_lines;
 use acpira_host::acp::transcript::normalize::{NormalizeState, activity_of, apply_update, latest_step, live_activity};
 use acpira_host::util::mock_now;
-use acpira_shared::session_patch::{ViewPartsData, encode_turns, raw, session_patch};
+use acpira_shared::session_patch::{Delivery, SentViews, ViewParts, ViewPartsData, encode_turns, raw, session_patch};
+use acpira_shared::session_window::Earlier;
 use acpira_shared::transcript::{Draft, SessionView, Turn};
 
 use crate::support::{expect_eq, v};
@@ -139,6 +140,99 @@ fn session_patches_match_the_recorded_fixtures() {
     write("engine-patches.json", &out);
   } else {
     assert_eq!(out, read("engine-patches.json"));
+  }
+}
+
+/// A whole view as a page that holds it from `at` on has it
+fn windowed(whole: &Value, at: Earlier) -> Value {
+  let mut v = whole.clone();
+  let turns = v["turns"].as_array_mut().unwrap();
+  turns.drain(..at.turns);
+  if at.blocks > 0 {
+    turns[0]["blocks"].as_array_mut().unwrap().drain(..at.blocks);
+  }
+  if !at.is_whole() {
+    v["earlier"] = json!({ "turns": at.turns, "blocks": at.blocks });
+  }
+  v
+}
+
+/// test/fixtures/engine-window.json: what a page that takes windowed views is sent (`session_window.rs`) while a
+/// conversation longer than the window streams, an earlier turn is rewritten and the page asks for the part ahead of what
+/// it holds until it has everything. A page that applies the steps in order (sessionWindow.ts and its ports) must hold
+/// `view` after each
+#[test]
+fn windowed_views_match_the_recorded_fixture() {
+  const BUDGET: usize = 420;
+  let user = |id: &str| serde_json::from_value::<Turn>(json!({ "role": "user", "id": id, "text": id })).unwrap();
+  let reply = |name: &str, n: usize| {
+    let blocks: Vec<Value> = (0..n).map(|i| json!({ "type": "text", "markdown": format!("{name}.{i} {}", "-".repeat(48)) })).collect();
+    serde_json::from_value::<Turn>(json!({ "role": "agent", "blocks": blocks })).unwrap()
+  };
+  let ending = |last: &str| serde_json::from_value::<Turn>(json!({ "role": "agent", "blocks": [{ "type": "text", "markdown": "c.0" }, { "type": "text", "markdown": last }] })).unwrap();
+  // A long first reply, then a reply larger than the window on its own, then the live one
+  let opening = |first: Turn, last: &str| vec![user("u1"), first, user("u2"), reply("b", 12), user("u3"), ending(last)];
+
+  let mut sent = SentViews::default();
+  let mut steps = Vec::new();
+  let mut rev = 0;
+  let mut first = None;
+  let mut whole = Value::Null;
+  let mut push = |sent: &mut SentViews, steps: &mut Vec<Value>, running: bool, turns: Vec<Turn>| {
+    let (parts, view) = patch_view(rev, running, &turns);
+    rev += 1;
+    let delivery = sent.deliver_window(&ViewParts(std::sync::Arc::new(parts)), BUDGET);
+    let held = windowed(&view, sent.window_of("s").unwrap());
+    whole = view;
+    match delivery {
+      Delivery::Window(w) => {
+        let w: Value = serde_json::from_str(w.get()).unwrap();
+        assert_eq!(w, held, "a window is the whole view from where it starts");
+        match first {
+          None => first = Some(w),
+          Some(_) => steps.push(json!({ "session": w, "view": held })),
+        }
+      }
+      Delivery::Patch(p) => steps.push(json!({ "patch": serde_json::from_str::<Value>(p.get()).unwrap(), "view": held })),
+      Delivery::Whole | Delivery::Stale => panic!("a view this long is sent as a window or a patch"),
+    }
+    whole.clone()
+  };
+  let ask = |sent: &mut SentViews, steps: &mut Vec<Value>, whole: &Value| {
+    let chunk = sent.earlier("s", BUDGET).expect("something is left out");
+    steps.push(json!({ "chunk": serde_json::from_str::<Value>(chunk.get()).unwrap(), "view": windowed(whole, sent.window_of("s").unwrap()) }));
+  };
+
+  push(&mut sent, &mut steps, true, opening(reply("a", 6), "d"));
+  let view = push(&mut sent, &mut steps, true, opening(reply("a", 6), "de"));
+  ask(&mut sent, &mut steps, &view);
+  let view = push(&mut sent, &mut steps, true, opening(reply("a", 6), "def"));
+  ask(&mut sent, &mut steps, &view);
+  // An earlier turn rewritten ahead of the window: the window opens again
+  let view = push(&mut sent, &mut steps, true, opening(reply("a2", 6), "def"));
+  assert!(steps.last().unwrap().get("session").is_some());
+  // Everything that is left, a streamed chunk in between
+  ask(&mut sent, &mut steps, &view);
+  let mut view = push(&mut sent, &mut steps, false, opening(reply("a2", 6), "defg"));
+  let mut asked = 0;
+  while !sent.window_of("s").unwrap().is_whole() {
+    ask(&mut sent, &mut steps, &view);
+    asked += 1;
+  }
+  assert!(asked > 3, "the reply larger than the window comes in pieces");
+  assert_eq!(steps.last().unwrap()["view"], view);
+  // The view is whole now: a new prompt patches as for any page
+  let mut turns = opening(reply("a2", 6), "defg");
+  turns.push(user("u4"));
+  view = push(&mut sent, &mut steps, true, turns);
+  assert_eq!(steps.last().unwrap()["view"], view);
+  assert!(steps.iter().any(|s| s["chunk"].get("blocks").is_some()) && steps.iter().any(|s| s["chunk"]["earlier"]["blocks"].as_u64().is_some_and(|b| b > 0)));
+
+  let out = json!({ "first": first.unwrap(), "steps": steps });
+  if update_mode() {
+    write("engine-window.json", &out);
+  } else {
+    assert_eq!(out, read("engine-window.json"));
   }
 }
 

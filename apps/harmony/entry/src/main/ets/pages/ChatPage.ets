@@ -1,4 +1,7 @@
-import { AgentBlock, Attachment, QuestionAnswer, QueuedPrompt, SessionControls, SlashCommand, Turn } from '../wire/Wire';
+import { LengthMetrics } from '@kit.ArkUI';
+import {
+  AgentBlock, Attachment, earlierTurns, QuestionAnswer, QueuedPrompt, SessionControls, SessionView, SlashCommand, Turn
+} from '../wire/Wire';
 import { Cmp, ListMetrics, Metrics, Type } from '../design/Tokens';
 import { AppModel } from '../store/AppModel';
 import { t } from '../store/L10n';
@@ -19,7 +22,27 @@ import { turnKey } from '../store/Thread';
 // The chat (apps/ios Chat/ChatView.swift): the bar with back and the title, the thread in the reading column, the
 // dock under it (Chat/Dock.swift: question, alert, the prompt being edited, the composer), the to-do card floating over
 // the thread's foot, and the liquid picker's beans over everything while one is out. The thread follows new output
-// while it is at its end.
+// while it is at its end. A view that starts at the session's tail (SessionView.earlier) gets the part ahead as the
+// reader scrolls near the thread's top, under a spinner row, and what is in sight keeps its place when it lands. Only
+// the reader's own scrolling asks: a finished turn's steps sit in a closed fold, so the parts of a huge cut turn add no
+// height, and a thread that asked again whenever its top stayed in sight would pull the whole turn part after part.
+
+/** Where the thread's rows sit for a view: its session, where its window starts, its turns, and the spinner row ahead */
+interface Shown {
+  id: string;
+  ahead: number;
+  cut: number;
+  turns: number;
+  head: number;
+}
+
+function shownOf(view: SessionView | undefined): Shown {
+  const shown: Shown = {
+    id: view?.id ?? '', ahead: earlierTurns(view), cut: view?.earlier?.blocks ?? 0, turns: view?.turns.length ?? 0,
+    head: view?.earlier !== undefined ? 1 : 0
+  };
+  return shown;
+}
 
 @ComponentV2
 export struct ChatPage {
@@ -39,20 +62,145 @@ export struct ChatPage {
   @Local scrolled: boolean = false;
   private scroller: Scroller = new Scroller();
   private atEnd: boolean = true;
+  /** The thread's first row in sight (a list index) and its height: what holds the reader's place when a part lands */
+  private first: number = 0;
+  private threadH: number = 0;
+  /** The view the thread's rows were last built for, and the model's count of whole views when it came */
+  private shown: Shown = shownOf(undefined);
+  private windows: number = 0;
+  /** Parts the thread may still ask for on its own: a fresh window too short to scroll gives the reader no way to */
+  private fill: number = 0;
+  /** The gesture under way began on a thread too short to scroll (only a pull down at its top asks), and has asked */
+  private shortPull: boolean = false;
+  private pulled: boolean = false;
 
   aboutToAppear(): void {
     this.model.thread.follow(this.model.view);
+    this.shown = shownOf(this.model.view);
+    this.windows = this.model.windows;
+    this.fill = Metrics.earlierFill;
   }
 
   @Monitor('model.view')
   onView(): void {
-    this.model.thread.follow(this.model.view);
+    const view = this.model.view;
+    this.model.thread.follow(view);
+    // A monitor runs before the rows update: the list still lays `held` out
+    const held = this.shown;
+    this.shown = shownOf(view);
+    const moved = view !== undefined && held.id === view.id && (held.ahead !== this.shown.ahead || held.cut !== this.shown.cut);
+    // A whole view from the engine, not a patch or a part in front: a fresh window may be filled again
+    const fresh = this.windows !== this.model.windows;
+    if (fresh) {
+      this.windows = this.model.windows;
+      this.fill = Metrics.earlierFill;
+    }
     // A new or longer thread keeps its end in view, unless the reader scrolled up
     if (this.atEnd) {
+      if (moved) {
+        // Rows came in front: asked for now, the end is kept by the layout that brings them
+        this.scroller.scrollEdge(Edge.Bottom);
+      }
       setTimeout(() => {
         this.scroller.scrollEdge(Edge.Bottom);
       }, 0);
+    } else if (moved) {
+      this.holdPlace(held);
     }
+    if ((fresh || moved) && this.fill > 0 && this.shown.head > 0) {
+      // Once the list has laid the new rows out (a list already on the page reports no layout of its own)
+      setTimeout(() => this.fillShort(), Metrics.earlierSettleMs);
+    }
+  }
+
+  /**
+   * The view's window moved (earlier turns came in front, the first turn got its leading blocks, or the engine sent the
+   * session's tail again) while the reader is away from the end: the first turn in sight keeps its place. List indices
+   * shift with the turns in front and ForEach keeps no position, so the list jumps to the same turn's new index in the
+   * layout that brings the new rows. The row keeps its bottom edge, since a cut turn grows at its head
+   */
+  private holdPlace(held: Shown): void {
+    const row = Math.max(this.first, held.head);
+    const turn = row - held.head;
+    // The same turn in the new view, by its index in the session
+    const next = turn + held.ahead - this.shown.ahead;
+    let rect: RectResult;
+    try {
+      rect = this.scroller.getItemRect(row);
+    } catch (e) {
+      // No list on the page to hold a place in
+      return;
+    }
+    // A row out of sight has no rect: nothing to hold, the list keeps what it shows
+    if (turn >= held.turns || next < 0 || next >= this.shown.turns || rect.height <= 0 || this.threadH <= 0) {
+      return;
+    }
+    // END puts the row's bottom on the content's end; a positive extra offset scrolls on towards the end from there
+    const foot = this.threadH - this.footPad();
+    this.scroller.scrollToIndex(next + this.shown.head, false, ScrollAlign.END,
+      { extraOffset: LengthMetrics.vp(foot - (rect.y + rect.height)) });
+  }
+
+  /**
+   * Asks for the part ahead of a windowed view when the reader's own scrolling leaves the thread's top within reach.
+   * A drag reports Scroll and its inertia Fling; a part landing, the jump that holds the place and any other layout
+   * report Idle and never ask, so after a landing the next part waits for the reader to scroll on
+   */
+  private readerScrolled(state: ScrollState): void {
+    if ((state !== ScrollState.Scroll && state !== ScrollState.Fling) || this.model.view?.earlier === undefined) {
+      return;
+    }
+    const offset = this.scroller.currentOffset()?.yOffset;
+    if (offset === undefined || offset > Metrics.earlierAhead) {
+      return;
+    }
+    if (this.shortPull) {
+      // Nothing to scroll: a pull down past the top asks, once however long it is held
+      if (this.pulled || offset >= 0) {
+        return;
+      }
+      this.pulled = true;
+    }
+    this.model.loadEarlier();
+  }
+
+  /** The thread's content does not fill the page: there is nothing to scroll */
+  private short(): boolean {
+    // No offset while the list is off the page
+    const offset = this.scroller.currentOffset()?.yOffset;
+    return offset !== undefined && offset <= 0 && this.scroller.isAtEnd();
+  }
+
+  /**
+   * A fresh window too short to scroll asks for the part ahead on its own, since the reader cannot: a few parts at
+   * most (they may add no height), and no more once the thread scrolls
+   */
+  private fillShort(): void {
+    if (this.fill <= 0 || this.model.view?.earlier === undefined || this.model.loadingEarlier) {
+      return;
+    }
+    if (!this.short()) {
+      this.fill = 0;
+      return;
+    }
+    this.fill--;
+    this.model.loadEarlier();
+  }
+
+  /** The list index of the last turn's row: the spinner row ahead of the turns counts */
+  private lastRow(): number {
+    const view = this.model.view;
+    return (view?.earlier !== undefined ? 1 : 0) + (view?.turns.length ?? 0) - 1;
+  }
+
+  /** A row's turn as the engine counts it, from the session's first turn: what its key, fold scope and actions carry */
+  private at(i: number): number {
+    return i + earlierTurns(this.model.view);
+  }
+
+  /** The thread's bottom padding: the to-do card floats over its foot, so the end stops above it */
+  private footPad(): number {
+    return Metrics.gap + (this.planShown() ? this.planHeight : 0);
   }
 
   /** The composer's pickers act on a rewritten prompt's own selections while one is edited */
@@ -109,9 +257,13 @@ export struct ChatPage {
     return this.model.view !== undefined ? shortStop(this.model.view) : undefined;
   }
 
-  /** Which stop the alert card speaks for: a retry that fails again leaves as many turns, but a new turn */
+  /**
+   * Which stop the alert card speaks for: a retry that fails again leaves as many turns, but a new turn. The count is
+   * the session's, so earlier turns landing in front of a windowed view bring no dismissed card back
+   */
   private alertKey(turn: Turn): string {
-    return `${this.model.view?.turns.length ?? 0}:${turn.id ?? ''}:${turn.startedAt ?? ''}:${turn.endedAt ?? ''}`;
+    const view = this.model.view;
+    return `${earlierTurns(view) + (view?.turns.length ?? 0)}:${turn.id ?? ''}:${turn.startedAt ?? ''}:${turn.endedAt ?? ''}`;
   }
 
   /** The to-do card shows (a plan or a goal): only then does its height push the thread's end up */
@@ -253,17 +405,30 @@ export struct ChatPage {
   @Builder
   thread() {
     // A chat opens at its end, as the other apps do
-    List({ scroller: this.scroller, space: Metrics.msgGap, initialIndex: Math.max(0, (this.model.view?.turns.length ?? 0) - 1) }) {
+    List({ scroller: this.scroller, space: Metrics.msgGap, initialIndex: Math.max(0, this.lastRow()) }) {
+      // More of the session lies ahead of the first turn held: the row it loads under, its spinner out while it is asked for
+      if (this.model.view?.earlier !== undefined) {
+        ListItem() {
+          LoadingProgress()
+            .color($r('app.color.fg3'))
+            .enableLoading(this.model.loadingEarlier)
+            .width(Metrics.icon)
+            .height(Metrics.icon)
+        }
+        .id('chat.earlier')
+        .height(Metrics.lead)
+      }
+      // The first turn held may be an agent turn with only its trailing blocks, with no prompt ahead of it
       ForEach(this.model.view?.turns ?? [], (turn: Turn, i: number) => {
         ListItem() {
           if (turn.role === 'user') {
             UserBubble({ text: turn.text ?? '', turn: turn, thread: this.model.thread })
-              .bindContextMenu(this.promptMenu(i, turn), ResponseType.LongPress)
+              .bindContextMenu(this.promptMenu(this.at(i), turn), ResponseType.LongPress)
           } else {
             AgentMessage({
               turn: turn,
               onPermission: (blockId: string, optionId: string) => this.model.permission(blockId, optionId),
-              index: i,
+              index: this.at(i),
               scope: this.model.view?.id ?? '',
               thread: this.model.thread,
               now: (): number => this.model.now(),
@@ -273,12 +438,12 @@ export struct ChatPage {
               onBuild: (planId: string, optionId: string, configId: string, value: string) =>
                 this.model.buildPlan(planId, optionId, configId, value)
             })
-              .bindContextMenu(this.replyMenu(i), ResponseType.LongPress)
+              .bindContextMenu(this.replyMenu(this.at(i)), ResponseType.LongPress)
           }
         }
         .constraintSize({ maxWidth: Metrics.contentW })
         .width('100%')
-      }, (turn: Turn, i: number) => turnKey(turn, i))
+      }, (turn: Turn, i: number) => turnKey(turn, this.at(i)))
       // Queued prompts are faint bubbles at the end of the thread, in send order
       if ((this.model.view?.queued ?? []).length > 0) {
         ListItem() {
@@ -300,22 +465,34 @@ export struct ChatPage {
     .id('chat.thread')
     .alignListItem(ListItemAlign.Center)
     .padding({
-      left: Metrics.pad + Metrics.s1, right: Metrics.pad + Metrics.s1, top: Metrics.gap,
-      // The to-do card floats over the thread's foot: the end stops above it
-      bottom: Metrics.gap + (this.planShown() ? this.planHeight : 0)
+      left: Metrics.pad + Metrics.s1, right: Metrics.pad + Metrics.s1, top: Metrics.gap, bottom: this.footPad()
     })
     .scrollBar(BarState.Off)
-    .edgeEffect(EdgeEffect.Spring)
+    // A list shorter than the page takes no drag by default: with more of the session ahead, a pull at its top asks
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: this.model.view?.earlier !== undefined })
     .onReachEnd(() => {
       this.atEnd = true;
     })
-    .onDidScroll(() => this.trackTop())
+    .onScrollStart(() => {
+      this.shortPull = this.short();
+      this.pulled = false;
+    })
+    .onDidScroll((_: number, state: ScrollState) => {
+      this.trackTop();
+      this.readerScrolled(state);
+    })
     // A chat opens at its end without a scroll of its own to report
     .onAppear(() => {
       setTimeout(() => this.trackTop(), 0);
     })
     .onScrollIndex((start: number, end: number) => {
-      this.atEnd = end >= (this.model.view?.turns.length ?? 0) - 1;
+      this.first = start;
+      this.atEnd = end >= this.lastRow();
+      // The first layout of a list just put on the page
+      this.fillShort();
+    })
+    .onAreaChange((_: Area, now: Area) => {
+      this.threadH = Number(now.height);
     })
     .height('100%')
     .width('100%')
@@ -361,7 +538,10 @@ export struct ChatPage {
     .blur(this.receded() ? Cmp.gooBlur : 0)
   }
 
-  /** A sent prompt's long press: rewrite it in the composer (while the session is ready and idle) */
+  /**
+   * A sent prompt's long press: rewrite it in the composer (while the session is ready and idle). `index` counts from
+   * the session's first turn, here and in the reply's menu
+   */
   @Builder
   promptMenu(index: number, turn: Turn) {
     Menu() {

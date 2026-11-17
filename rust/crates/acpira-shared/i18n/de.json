@@ -1957,6 +1957,7 @@
   "devices.buttonPairing": "Geräte (Kopplung läuft)",
   "devices.buttonOnline": "Geräte ({n} online)",
   "devices.noneOnline": "Kein Gerät online",
+  "devices.sessionTooLong": "Diese Sitzung ist für diese Version der App zu lang. Aktualisiere Acpira auf diesem Gerät, um sie zu öffnen.",
   "devices.encrypted": "Ende-zu-Ende-verschlüsselt",
   "devices.add": "Gerät hinzufügen",
   "devices.code": "Kopplungscode",

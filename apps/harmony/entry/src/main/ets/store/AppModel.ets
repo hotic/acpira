@@ -1,6 +1,6 @@
 import {
-  AgentInfo, applySessionPatch, applySessionsPatch, HostMsg, SessionPatchMsg, SessionsPatchMsg, SessionSummary,
-  SessionView, Turn
+  AgentInfo, applySessionEarlier, applySessionPatch, applySessionsPatch, earlierTurns, HostMsg, SessionEarlierMsg,
+  SessionPatchMsg, SessionsPatchMsg, SessionSummary, SessionView, Turn
 } from '../wire/Wire';
 import { EngineClient, EngineTransport, replayable, WebviewMsg } from '../wire/EngineClient';
 import { demoAgents, demoNow, demoSessions, demoView } from './Demo';
@@ -37,6 +37,12 @@ interface StartExtras {
   controls?: SessionControls;
 }
 
+/**
+ * How long an answer to `loadEarlier` is waited for before the thread may ask again. A late answer still fits: the
+ * engine has moved the window over it, and the next one continues from there
+ */
+const EARLIER_TIMEOUT_MS = 15000;
+
 export enum Connection {
   Demo,
   Connecting,
@@ -55,6 +61,11 @@ export class AppModel implements ListHost {
   @Trace openId: string | undefined = undefined;
   /** Why the session the chat page waits for never showed (`sessionUnavailable`); a retry or its view clears it */
   @Trace unavailable: string | undefined = undefined;
+  /** The session whose earlier part was asked for and has not come (`loadEarlier`): one request at a time */
+  @Trace earlierAsked: string | undefined = undefined;
+  private earlierTimer: number | undefined = undefined;
+  /** Whole views taken from the engine (`session`): by it the thread tells a fresh window from one patched or grown */
+  windows: number = 0;
   /** What the chat's rows read from the view beyond their own turn; the chat page keeps it in step with `view` */
   readonly thread: ThreadContext = new ThreadContext();
   @Trace toast: string | undefined = undefined;
@@ -116,8 +127,9 @@ export class AppModel implements ListHost {
       }
     });
     this.client = client;
-    // listPatches: the whole list is hundreds of KB and changes whenever any session starts, waits or ends
-    client.post({ type: 'ready', patches: true, listPatches: true });
+    // listPatches: the whole list is hundreds of KB and changes whenever any session starts, waits or ends. window: a
+    // session view starts at its tail, so a session of any size fits a paired link's bounded queue
+    client.post({ type: 'ready', patches: true, listPatches: true, window: true });
     client.start();
   }
 
@@ -222,7 +234,7 @@ export class AppModel implements ListHost {
     }, transport);
     this.client = client;
     // The open chat is selected again once init is in (`reopen`): the engine refuses actions before it
-    client.post({ type: 'ready', patches: true, listPatches: true });
+    client.post({ type: 'ready', patches: true, listPatches: true, window: true });
     client.start();
   }
 
@@ -344,6 +356,40 @@ export class AppModel implements ListHost {
     this.send(text);
   }
 
+  /** The chat on screen waits for the part ahead of its window: the thread's head shows it */
+  get loadingEarlier(): boolean {
+    return this.earlierAsked !== undefined && this.earlierAsked === this.view?.id;
+  }
+
+  /**
+   * Asks for the part of the chat right ahead of what its view holds (the thread, as the reader nears its top). Nothing
+   * while the answer to the last request is out, or while a paired wire is down: its next init brings the view again
+   */
+  loadEarlier(): void {
+    const view = this.view;
+    if (view === undefined || view.earlier === undefined || this.earlierAsked === view.id || !this.live || this.holding) {
+      return;
+    }
+    const id = view.id;
+    clearTimeout(this.earlierTimer);
+    this.earlierAsked = id;
+    this.earlierTimer = setTimeout(() => this.earlierSettled(id), EARLIER_TIMEOUT_MS);
+    this.post({ type: 'loadEarlier', sessionId: id });
+  }
+
+  /**
+   * The request for the earlier part of `id` (undefined: of any session) is over: answered, overtaken by a whole view
+   * of the session (the engine's answer when it no longer knows what the app holds), or given up on
+   */
+  private earlierSettled(id: string | undefined): void {
+    if (this.earlierAsked === undefined || (id !== undefined && id !== this.earlierAsked)) {
+      return;
+    }
+    clearTimeout(this.earlierTimer);
+    this.earlierTimer = undefined;
+    this.earlierAsked = undefined;
+  }
+
   permission(blockId: string, optionId: string): void {
     const view = this.view;
     if (view !== undefined) {
@@ -393,6 +439,8 @@ export class AppModel implements ListHost {
           return;
         }
         this.synced = true;
+        // A request the last wire carried is never answered on this one
+        this.earlierSettled(undefined);
         this.agents = state.agents;
         this.home = state.home;
         this.takeList(state.sessions);
@@ -436,6 +484,8 @@ export class AppModel implements ListHost {
         if (view === undefined) {
           return;
         }
+        this.earlierSettled(view.id);
+        this.windows++;
         // A session made for a new prompt: the chat opens on it and the prompt goes. A late push of the session on
         // screen before is not it (AppModel+Engine.swift `awaiting.from`)
         if (this.awaiting !== undefined && this.openId === undefined && view.id !== this.awaitingFrom) {
@@ -473,6 +523,16 @@ export class AppModel implements ListHost {
           return;
         }
         this.view = next;
+        break;
+      }
+      case 'sessionEarlier': {
+        const chunk = (message as Object as SessionEarlierMsg).chunk;
+        this.earlierSettled(chunk.id);
+        // Only the chat on screen is held; a chunk for a view that has gone, or cut for another window, is dropped
+        const next = chunk.id === this.openId ? applySessionEarlier(this.view, chunk) : undefined;
+        if (next !== undefined) {
+          this.view = next;
+        }
         break;
       }
       case 'toast':
@@ -1161,10 +1221,14 @@ export class AppModel implements ListHost {
 
   // Prompt edits
 
-  /** Takes the sent prompt at `index` into the composer; what the composer held waits until the edit ends */
+  /**
+   * Takes the sent prompt at `index` (counted from the session's first turn) into the composer; what the composer held
+   * waits until the edit ends
+   */
   beginEdit(index: number): void {
     const view = this.view;
-    const prompt = view?.turns[index];
+    const ahead = earlierTurns(view);
+    const prompt = view?.turns[index - ahead];
     if (view === undefined || prompt === undefined || prompt.role !== 'user' || prompt.auto === true || !canEditPrompts(view)) {
       return;
     }
@@ -1173,7 +1237,7 @@ export class AppModel implements ListHost {
     const keptStaged = draft.edit?.keptStaged ?? draft.staged;
     const live: SessionControls = view.controls ?? { modes: [], options: [] };
     draft.edit = {
-      turnIndex: index, turnCount: view.turns.length, original: prompt, controls: openTurnControls(live, prompt.settings),
+      turnIndex: index, turnCount: ahead + view.turns.length, original: prompt, controls: openTurnControls(live, prompt.settings),
       keptText: keptText, keptStaged: keptStaged
     };
     draft.text = prompt.text ?? '';
@@ -1215,7 +1279,7 @@ export class AppModel implements ListHost {
       this.post({ type: 'editTurn', requestId: request, edit: editTurnRequest(view.id, edit, text, staged) });
       return;
     }
-    const next = viewWithTurns(view, view.turns.slice(0, edit.turnIndex));
+    const next = viewWithTurns(view, view.turns.slice(0, Math.max(0, edit.turnIndex - earlierTurns(view))));
     next.controls = edit.controls;
     this.view = next;
     this.send(text, staged);
@@ -1341,10 +1405,14 @@ export class AppModel implements ListHost {
     this.view = next;
   }
 
-  /** Fork from a turn: a new session holding the transcript up to and including it, opened in place of this one */
+  /**
+   * Fork from a turn (`turnIndex` counted from the session's first turn): a new session holding the transcript up to
+   * and including it, opened in place of this one
+   */
   fork(turnIndex: number): void {
     const view = this.view;
-    if (view === undefined || turnIndex < 0 || turnIndex >= view.turns.length) {
+    const at = turnIndex - earlierTurns(view);
+    if (view === undefined || at < 0 || at >= view.turns.length) {
       return;
     }
     if (this.live) {
@@ -1358,7 +1426,7 @@ export class AppModel implements ListHost {
     }
     const id = `demo-fork-${++this.composerSeq}`;
     const title = t('session.forkTitle', new Map<string, string>([['title', view.title]]));
-    const fork = viewWithTurns(view, view.turns.slice(0, turnIndex + 1));
+    const fork = viewWithTurns(view, view.turns.slice(0, at + 1));
     fork.id = id;
     fork.title = title;
     fork.running = false;

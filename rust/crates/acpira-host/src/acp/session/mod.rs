@@ -312,7 +312,9 @@ pub(crate) struct Core {
   pub plugin_events: crate::acp::session::plugin_events::EventState,
   pub plugin_state: crate::acp::session::plugin_hooks::PluginState,
   /// The last encoded view for `(rev, status, running, (model_shapes, model_memory))`: selecting an unchanged live session reuses it without re-serializing
-  pub cached_view: Option<(i64, SessionStatus, bool, ViewPrefs, acpira_shared::protocol::RawJson, acpira_shared::session_patch::ViewParts)>,
+  pub cached_view: Option<(i64, SessionStatus, bool, ViewPrefs, acpira_shared::protocol::ViewJson, acpira_shared::session_patch::ViewParts)>,
+  /// What the last view's turns were encoded from: the next view encodes only the turns and blocks that changed
+  pub encoded: acpira_shared::session_patch::Reuse,
 }
 
 pub struct AcpSession {
@@ -512,6 +514,7 @@ impl AcpSession {
           plugin_events: Default::default(),
           plugin_state: plugin_hooks::PluginState { menus: record.plugin_menus, ..Default::default() },
           cached_view: None,
+          encoded: Default::default(),
         }),
         deps,
         me: me.clone(),

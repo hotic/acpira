@@ -8,6 +8,10 @@ import SwiftUI
 /// travel with the rows as `top` and `bottom`
 struct ThreadItem: Equatable {
   enum Kind: Equatable {
+    /// The view starts at the session's tail (`SessionView.earlier`): the room where the part ahead of it lands, with
+    /// a spinner while that part is on its way (`TranscriptCollection.loadEarlier`) and empty otherwise, since a
+    /// spinner turning with nothing loading reads as stuck. The same height either way, so nothing below it moves
+    case earlier(loading: Bool)
     case user(UserTurn, index: Int, editable: Bool, goal: Bool)
     case returns([SubagentReport])
     case agent(AgentTurn, index: Int, scope: String, running: Bool, last: Bool, settings: TurnSettings?, retry: Bool,
@@ -15,7 +19,10 @@ struct ThreadItem: Equatable {
     case queue([QueuedPrompt], steer: Bool)
   }
 
-  /// Stable across pushes: prompt and agent rows by their turn's index, the returns by their exchange's
+  /// Stable across pushes: prompt and agent rows by their turn's index, the returns by their exchange's. Every index a
+  /// row carries (its id, `index`, the entrance `scope`) is the turn's place in the session, not in a windowed view's
+  /// turns (`SessionView.turnBase`): an earlier part landing ahead moves no row's identity, fold memory or entrance
+  /// claims, and the actions the rows post (edit, fork) hand the index on as the engine counts it
   var id: String
   var kind: Kind
   /// The exchange the row belongs to (`Exchange.id`); the queue counts as part of the last one
@@ -24,12 +31,15 @@ struct ThreadItem: Equatable {
   var bottom: CGFloat = 0
   /// Folds opened before any tap, in the last exchange only (renders and previews)
   var preOpen: Set<PreOpen> = []
+
+  /// The spinner row's id (`Kind.earlier`)
+  static let earlierID = "e"
 }
 
 /// The thread's rows in order, with the spacing ThreadContent's stacked sections had: a prompt card, then its replies a
 /// message gap below it and a message gap apart, and the gap to the next exchange under the exchange's last row (only a
 /// row gap after a reply's action row, whose own height already separates them)
-func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = []) -> [ThreadItem] {
+func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarlier: Bool = false) -> [ThreadItem] {
   let groups = exchanges(session.turns)
   let activeAgent = session.turns.lastIndex { if case .agent = $0 { true } else { false } }
   // Each child reaches only the turn that announced it
@@ -38,7 +48,12 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = []) -> [ThreadI
   let editable = canEditPrompts(session)
   let goalPrompt = canSetGoal(session) ? lastTypedPrompt(session.turns) : nil
   let retry = retryableTurn(session)
+  // The exchanges, `activeAgent`, `goalPrompt` and `retry` index the view's own turns; the rows get the session's
+  let base = session.turnBase
   var out: [ThreadItem] = []
+  if session.earlier != nil {
+    out.append(ThreadItem(id: ThreadItem.earlierID, kind: .earlier(loading: loadingEarlier), exchange: groups.first?.id ?? 0))
+  }
   for (n, exchange) in groups.enumerated() {
     let lastExchange = n == groups.count - 1
     let opened: Set<PreOpen> = lastExchange ? preOpen : []
@@ -46,8 +61,8 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = []) -> [ThreadI
       ? (endsWithActions(exchange, running: session.running, active: activeAgent) ? Metrics.gap : WebMetrics.msgGap) : 0
     let start = out.count
     if let user = exchange.user, user.auto != true {
-      out.append(ThreadItem(id: "u\(exchange.id)", kind: .user(user, index: exchange.id, editable: editable,
-                                                                 goal: exchange.id == goalPrompt),
+      out.append(ThreadItem(id: "u\(exchange.id + base)", kind: .user(user, index: exchange.id + base, editable: editable,
+                                                                        goal: exchange.id == goalPrompt),
                             exchange: exchange.id, preOpen: opened))
     }
     // The replies sit a message gap under a prompt (shown or automatic) and a message gap apart
@@ -55,17 +70,19 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = []) -> [ThreadI
     if let user = exchange.user, user.auto == true, user.autoReason == "subagents" {
       let reports = shownReports(user.text)
       if !reports.isEmpty {
-        out.append(ThreadItem(id: "r\(exchange.id)", kind: .returns(reports), exchange: exchange.id, top: gap, preOpen: opened))
+        out.append(ThreadItem(id: "r\(exchange.id + base)", kind: .returns(reports), exchange: exchange.id, top: gap, preOpen: opened))
         gap = WebMetrics.msgGap
       }
     }
     for item in exchange.agents {
+      let index = item.index + base
       out.append(ThreadItem(
-        id: "a\(item.index)",
-        kind: .agent(item.turn, index: item.index, scope: "\(session.id):\(item.index)",
+        id: "a\(index)",
+        kind: .agent(item.turn, index: index, scope: "\(session.id):\(index)",
                      running: session.running && item.index == activeAgent && item.turn.stop == nil,
                      last: item.index == session.turns.count - 1, settings: exchange.user?.settings,
-                     retry: item.index == retry, subagents: nodes[item.index] ?? []),
+                     // A child announced in a turn ahead of the view has no row until that turn is loaded
+                     retry: item.index == retry, subagents: nodes[index] ?? []),
         exchange: exchange.id, top: gap, preOpen: opened))
       gap = WebMetrics.msgGap
     }
@@ -107,6 +124,12 @@ struct ThreadItemView: View {
 
   @ViewBuilder private var content: some View {
     switch item.kind {
+    case .earlier(let loading):
+      // The system's spinner alone, no copy and no card; hidden, it still holds the row's height
+      Group {
+        if loading { ProgressView().tint(Palette.fg2) } else { ProgressView().hidden() }
+      }
+      .frame(maxWidth: .infinity).padding(.bottom, Metrics.padY)
     case let .user(turn, index, editable, goal):
       UserMessageCard(turn: turn, index: index, editable: editable, goal: goal)
     case let .returns(reports):

@@ -223,6 +223,240 @@ import UIKit
     }
   }
 
+  /// A view that starts at the session's tail (`SessionView.earlier`), read at its top: the spinner, the turn the view
+  /// was cut in, a prompt. The part ahead lands as a prompt above the cut turn and blocks at that turn's head. Neither
+  /// may move what the reader sees: the cut turn grows upwards, its end and the rows after it stay where they were
+  @Test func anEarlierPartLandsAboveWhatTheReaderSees() async throws {
+    let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(120))
+    let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
+    let view = TranscriptCollectionView(frame: CGRect(x: 0, y: 0, width: 402, height: 874),
+                                        collectionViewLayout: UICollectionViewCompositionalLayout(section: NSCollectionLayoutSection(group: group)))
+    view.contentInsetAdjustmentBehavior = .never
+    view.contentInset = UIEdgeInsets(top: 116, left: 0, bottom: 222, right: 0)
+    view.motion = false
+    let controller = UIViewController()
+    controller.view.addSubview(view)
+    let window = UIWindow(frame: view.frame)
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let control = TranscriptControl()
+    var asks = 0, fills = 0
+    view.loadEarlier = { asks += 1 }
+    view.fillEarlier = { fills += 1 }
+    let coordinator = TranscriptCollection.Coordinator(control: control)
+    coordinator.connect(view)
+    var environment = EnvironmentValues()
+    environment.hostedTranscript = true
+    environment.motionEnabled = false
+    let paragraph = { (name: String) in AgentBlock.text(TextBlock(markdown: "\(name): " + String(repeating: "measured reply text ", count: 30))) }
+    func agent(_ index: Int, _ blocks: [String]) -> ThreadItem {
+      ThreadItem(id: "a\(index)", kind: .agent(AgentTurn(blocks: blocks.map(paragraph), stop: .end_turn), index: index, scope: "s:\(index)",
+                                               running: false, last: false, settings: nil, retry: false, subagents: []), exchange: 0)
+    }
+    func prompt(_ index: Int) -> ThreadItem {
+      ThreadItem(id: "u\(index)", kind: .user(UserTurn(text: "A measured prompt"), index: index, editable: false, goal: false), exchange: index)
+    }
+    let spinner = ThreadItem(id: ThreadItem.earlierID, kind: .earlier(loading: false), exchange: 0)
+    let tail = [prompt(4), agent(5, ["e", "f", "g", "h"]), prompt(6), agent(7, ["i", "j", "k", "l"])]
+    coordinator.update(items: [spinner, agent(3, ["c", "d"])] + tail, earlier: ViewEarlier(turns: 3, blocks: 2),
+                       environment: environment, in: view)
+    try await Task.sleep(for: .milliseconds(200))
+    view.layoutIfNeeded()
+    // Opened at its end, well below the spinner: nothing is asked for
+    #expect(view.maintainsBottomAnchor && asks == 0)
+
+    // The reader jumps to the top (the status bar): the scroll that brings the top within a screen asks
+    _ = coordinator.scrollViewShouldScrollToTop(view)
+    view.contentOffset.y = -116
+    coordinator.scrollViewDidScrollToTop(view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(asks == 1)
+    func place(_ id: String) throws -> CGRect {
+      let indexPath = try #require(view.readerIndexPath?(id))
+      let frame = try #require(view.collectionViewLayout.layoutAttributesForItem(at: indexPath)).frame
+      return frame.offsetBy(dx: 0, dy: -view.contentOffset.y)
+    }
+    let cut = try place("a3"), next = try place("u4")
+    #expect(cut.minY < 874 - 222 && cut.height > 100)
+
+    coordinator.update(items: [spinner, prompt(2), agent(3, ["a", "b", "c", "d"])] + tail, earlier: ViewEarlier(turns: 2, blocks: 0),
+                       environment: environment, in: view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(200))
+    view.layoutIfNeeded()
+    let grown = try place("a3")
+    #expect(grown.height > cut.height + 100)
+    #expect(abs(grown.maxY - cut.maxY) <= 0.5)
+    #expect(abs(try place("u4").minY - next.minY) <= 0.5)
+    // The earlier blocks and the prompt went in above the top edge: the reader scrolls up to them
+    #expect(try place("u2").maxY < grown.minY + 0.5 && grown.minY < cut.minY - 100)
+    // The part landing asked for nothing, and neither does one that changes no row (blocks inside a closed fold),
+    // though the top is still within a screen: the next ask is the reader's next scroll
+    coordinator.update(items: [spinner, prompt(2), agent(3, ["a", "b", "c", "d"])] + tail, earlier: ViewEarlier(turns: 1, blocks: 7),
+                       environment: environment, in: view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(100))
+    view.layoutIfNeeded()
+    #expect(asks == 1 && fills == 0)
+    // A move that is not the reader's (no finger, no jump) asks for nothing even right under the spinner
+    let held = view.contentOffset.y
+    view.contentOffset.y = -116 + 60
+    #expect(asks == 1)
+    _ = coordinator.scrollViewShouldScrollToTop(view)
+    view.contentOffset.y = -116 + 50
+    coordinator.scrollViewDidScrollToTop(view)
+    #expect(asks == 2)
+    view.contentOffset.y = held
+    view.layoutIfNeeded()
+
+    // The last part: the spinner goes, and still nothing moves
+    let before = try place("u4")
+    coordinator.update(items: [prompt(0), agent(1, ["x", "y"]), prompt(2), agent(3, ["a", "b", "c", "d"])] + tail, earlier: nil,
+                       environment: environment, in: view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(200))
+    view.layoutIfNeeded()
+    #expect(view.readerIndexPath?(ThreadItem.earlierID) == nil)
+    #expect(abs(try place("u4").minY - before.minY) <= 0.5)
+  }
+
+  /// A view of a huge cut turn can be a single short row: nothing to scroll, so the thread asks by itself until its
+  /// rows fill the room, and past that (`AppModel.fillEarlier` stops it) the reader's pull at the top asks, once a pull
+  @Test func aThreadTooShortToScrollAsksByItselfAndOnAPull() async throws {
+    let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(120))
+    let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
+    let view = TranscriptCollectionView(frame: CGRect(x: 0, y: 0, width: 402, height: 874),
+                                        collectionViewLayout: UICollectionViewCompositionalLayout(section: NSCollectionLayoutSection(group: group)))
+    view.contentInsetAdjustmentBehavior = .never
+    view.contentInset = UIEdgeInsets(top: 116, left: 0, bottom: 222, right: 0)
+    view.motion = false
+    let controller = UIViewController()
+    controller.view.addSubview(view)
+    let window = UIWindow(frame: view.frame)
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    var asks = 0, fills = 0
+    view.loadEarlier = { asks += 1 }
+    view.fillEarlier = { fills += 1 }
+    let coordinator = TranscriptCollection.Coordinator(control: TranscriptControl())
+    coordinator.connect(view)
+    var environment = EnvironmentValues()
+    environment.hostedTranscript = true
+    environment.motionEnabled = false
+    func agent(_ index: Int, blocks: Int) -> ThreadItem {
+      let blocks = (0..<blocks).map { AgentBlock.text(TextBlock(markdown: "\(index).\($0): " + String(repeating: "measured reply text ", count: 30))) }
+      return ThreadItem(id: "a\(index)", kind: .agent(AgentTurn(blocks: blocks, stop: .end_turn), index: index, scope: "s:\(index)",
+                                                      running: false, last: false, settings: nil, retry: false, subagents: []), exchange: 0)
+    }
+    let spinner = ThreadItem(id: ThreadItem.earlierID, kind: .earlier(loading: false), exchange: 0)
+    coordinator.update(items: [spinner, agent(3, blocks: 1)], earlier: ViewEarlier(turns: 3, blocks: 9), environment: environment, in: view)
+    try await Task.sleep(for: .milliseconds(200))
+    view.layoutIfNeeded()
+    #expect(view.contentSize.height < view.room && fills > 0 && asks == 0)
+
+    // The spinner shows only while a part is on its way; the row is the same row at the same height either way
+    let idle = try #require(view.collectionViewLayout.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))).frame
+    let loading = ThreadItem(id: ThreadItem.earlierID, kind: .earlier(loading: true), exchange: 0)
+    coordinator.update(items: [loading, agent(3, blocks: 1)], earlier: ViewEarlier(turns: 3, blocks: 9), environment: environment, in: view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(100))
+    view.layoutIfNeeded()
+    #expect(try #require(view.collectionViewLayout.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))).frame == idle)
+    #expect(idle.height > 20)
+
+    // A part that changes no row leaves the thread as short: it asks again
+    var before = fills
+    coordinator.update(items: [spinner, agent(3, blocks: 1)], earlier: ViewEarlier(turns: 3, blocks: 8), environment: environment, in: view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(fills > before)
+
+    // The reader pulls down at the top (the jump stands in for the finger): one ask a pull
+    _ = coordinator.scrollViewShouldScrollToTop(view)
+    view.contentOffset.y = -116 - 30
+    view.contentOffset.y = -116 - 60
+    #expect(asks == 1)
+    coordinator.scrollViewWillBeginDragging(view)
+    view.contentOffset.y = -116 - 80
+    // Not the reader's step: the finger is not down in a test
+    #expect(asks == 1)
+    _ = coordinator.scrollViewShouldScrollToTop(view)
+    view.contentOffset.y = -116 - 40
+    coordinator.scrollViewDidScrollToTop(view)
+    #expect(asks == 2)
+
+    // The part that makes the rows fill the room is the last the thread asks for: the reader's scrolling takes over
+    before = fills
+    coordinator.update(items: [spinner, agent(3, blocks: 12)], earlier: ViewEarlier(turns: 3, blocks: 0), environment: environment, in: view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(200))
+    view.layoutIfNeeded()
+    #expect(view.contentSize.height > view.room)
+    coordinator.update(items: [spinner, agent(3, blocks: 12)], earlier: ViewEarlier(turns: 2, blocks: 4), environment: environment, in: view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(fills == before)
+  }
+
+  /// A jump to the top rests on the spinner itself; the part that makes the view whole takes that row away and puts
+  /// rows taller than the screen in its place
+  @Test func theLastPartLandsAboveAReaderRestingOnTheSpinner() async throws {
+    let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(120))
+    let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
+    let view = TranscriptCollectionView(frame: CGRect(x: 0, y: 0, width: 402, height: 874),
+                                        collectionViewLayout: UICollectionViewCompositionalLayout(section: NSCollectionLayoutSection(group: group)))
+    view.contentInsetAdjustmentBehavior = .never
+    view.contentInset = UIEdgeInsets(top: 116, left: 0, bottom: 222, right: 0)
+    view.motion = false
+    let controller = UIViewController()
+    controller.view.addSubview(view)
+    let window = UIWindow(frame: view.frame)
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let coordinator = TranscriptCollection.Coordinator(control: TranscriptControl())
+    coordinator.connect(view)
+    var environment = EnvironmentValues()
+    environment.hostedTranscript = true
+    environment.motionEnabled = false
+    func agent(_ index: Int) -> ThreadItem {
+      let blocks = (0..<12).map { AgentBlock.text(TextBlock(markdown: "\(index).\($0): " + String(repeating: "measured reply text ", count: 30))) }
+      return ThreadItem(id: "a\(index)", kind: .agent(AgentTurn(blocks: blocks, stop: .end_turn), index: index, scope: "s:\(index)",
+                                                      running: false, last: false, settings: nil, retry: false, subagents: []), exchange: 0)
+    }
+    func prompt(_ index: Int) -> ThreadItem {
+      ThreadItem(id: "u\(index)", kind: .user(UserTurn(text: String(repeating: "A measured prompt. ", count: 300)), index: index,
+                                              editable: false, goal: false), exchange: index)
+    }
+    let spinner = ThreadItem(id: ThreadItem.earlierID, kind: .earlier(loading: false), exchange: 0)
+    let tail = [prompt(2), agent(3), prompt(4), agent(5)]
+    coordinator.update(items: [spinner] + tail, earlier: ViewEarlier(turns: 2, blocks: 0), environment: environment, in: view)
+    try await Task.sleep(for: .milliseconds(200))
+    view.layoutIfNeeded()
+    view.maintainsBottomAnchor = false
+    view.contentOffset.y = -116
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(100))
+    view.layoutIfNeeded()
+    func place(_ id: String) throws -> CGRect {
+      let indexPath = try #require(view.readerIndexPath?(id))
+      let frame = try #require(view.collectionViewLayout.layoutAttributesForItem(at: indexPath)).frame
+      return frame.offsetBy(dx: 0, dy: -view.contentOffset.y)
+    }
+    let before = try place("u2")
+    #expect(before.minY > 116 && before.minY < 300 && before.height > 874)
+
+    coordinator.update(items: [prompt(0), agent(1)] + tail, earlier: nil, environment: environment, in: view)
+    view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(200))
+    view.layoutIfNeeded()
+    #expect(abs(try place("u2").maxY - before.maxY) <= 0.5)
+    #expect(try place("a1").height > 874)
+  }
+
   private func selectionViews(in view: UIView) -> [SelectionTextView] {
     if let text = view as? SelectionTextView { return [text] }
     return view.subviews.flatMap { selectionViews(in: $0) }

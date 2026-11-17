@@ -101,21 +101,32 @@ private fun groupKind(block: AgentBlock): GroupKind? {
   return if (block.kind == ToolKind.edit) GroupKind.edit else null
 }
 
-fun blockItemId(block: AgentBlock, at: Int): String = when {
+/** The block's own identity; null where only its place in the list names it */
+fun blockOwnId(block: AgentBlock): String? = when {
   block is ToolCallBlock -> block.id
   block is ThoughtBlock && block.startedAt != null -> "thought:${block.startedAt!!.toLong()}"
-  else -> block.blockId ?: "at:$at"
+  else -> block.blockId
 }
 
-/** groupProcess: consecutive reads (with files) or edits share one head */
-fun groupProcess(blocks: List<AgentBlock>): List<ProcessItem> {
+fun blockItemId(block: AgentBlock, at: Int): String = blockOwnId(block) ?: "at:$at"
+
+/**
+ * A run's name: its first block's id, which holds while a turn only grows at its end. A turn a windowed view was cut
+ * inside also grows at its front as the earlier part loads: the run holding [head], the block the process opened on
+ * when it was first shown, keeps that block's name, so a fold the reader opened in it stays theirs
+ */
+fun runId(blocks: List<ToolCallBlock>, head: String?): String =
+  if (head != null && blocks.any { it.id == head }) head else blocks.first().id
+
+/** groupProcess: consecutive reads (with files) or edits share one head, named by [runId] */
+fun groupProcess(blocks: List<AgentBlock>, head: String? = null): List<ProcessItem> {
   val out = ArrayList<ProcessItem>()
   var run = ArrayList<ToolCallBlock>()
   var runKind: GroupKind? = null
   var runAt = 0
   fun flush() {
     if (run.size == 1) out += ProcessItem.Block(blockItemId(run[0], runAt), run[0])
-    else if (run.size > 1) out += ProcessItem.Group(run[0].id, runKind!!, run)
+    else if (run.size > 1) out += ProcessItem.Group(runId(run, head), runKind!!, run)
     run = ArrayList()
   }
   blocks.forEachIndexed { at, block ->

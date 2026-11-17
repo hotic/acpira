@@ -99,6 +99,7 @@ import cc.hotic.acpira.logic.filePath
 import cc.hotic.acpira.logic.groupNames
 import cc.hotic.acpira.logic.lastComponent
 import cc.hotic.acpira.logic.namesLabel
+import cc.hotic.acpira.logic.runId
 import cc.hotic.acpira.logic.toolFiles
 import cc.hotic.acpira.logic.toolIcon
 import cc.hotic.acpira.logic.toolVerb
@@ -731,7 +732,7 @@ fun ToolGroupView(kind: GroupKind, blocks: List<ToolCallBlock>) {
   val names = groupNames(blocks)
   val stat = if (kind == GroupKind.edit) diffStatOf(blocks) else null
   val scope = LocalEntranceScope.current
-  val fold = rememberFold("${scope.scope}:group:${kind.name}:${blocks.first().id}", false)
+  val fold = rememberFold("${scope.scope}:group:${kind.name}:${runId(blocks, LocalProcessHead.current)}", false)
   Disclosure(
     fold.open, fold::toggle,
     icon = if (kind == GroupKind.read) "fileText" else "pencil", indent = false, rail = RailMode.rows, bodyTop = Metrics.s0,
@@ -786,7 +787,7 @@ private fun EditEntry(blocks: List<ToolCallBlock>) {
     return
   }
   val scope = LocalEntranceScope.current
-  val fold = rememberFold("${scope.scope}:edit:${blocks.first().id}", false)
+  val fold = rememberFold("${scope.scope}:edit:${runId(blocks, LocalProcessHead.current)}", false)
   // No rail root of its own, so the group's rail runs on through its icon. The diff is a code card in the label column
   // like every other (entries stack without the process rows' gap, so it takes the whole gap)
   Disclosure(

@@ -131,8 +131,8 @@ fun SessionMenu(
         AppMenuBack(t("session.export"), onClick = { level = null })
         AppMenuGap()
         AppMenuItem(t("session.export.markdown"), onClick = { pick { lists.export(id, ExportFormat.markdown) } }, icon = { MenuGlyph("fileText") }, modifier = Modifier.testTag("menu.export.markdown"))
-        // Built from the view the phone holds, which a list row's session may not have
-        if (lists.holdsView(id)) {
+        // Built from the view the phone holds, which a list row's session may not have, or only from its tail on
+        if (lists.holdsWhole(id)) {
           AppMenuItem(t("session.export.json"), onClick = { pick { lists.export(id, ExportFormat.json) } }, icon = { MenuGlyph("braces") }, modifier = Modifier.testTag("menu.export.json"))
         }
         // Only what was said, prompts and replies without tools or thinking
