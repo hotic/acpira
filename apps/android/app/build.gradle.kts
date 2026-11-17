@@ -88,6 +88,7 @@ dependencies {
   implementation(libs.camera.lifecycle)
   implementation(libs.camera.view)
   implementation(libs.zxing.core)
+  implementation(libs.zxing.cpp)
   implementation(libs.javascriptengine)
   implementation(libs.termlib)
   testImplementation(libs.junit)
