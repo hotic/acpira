@@ -26,13 +26,10 @@ import cc.hotic.acpira.store.AppModel
 fun ToastActionButton(model: AppModel, toast: String?) {
   val action = model.lists.toastAction?.takeIf { it.first == toast }?.second ?: return
   Row(verticalAlignment = Alignment.CenterVertically) {
-    Box(Modifier.width(Metrics.hairline).height(Metrics.iconCtl).background(Palette.btn1Fg.copy(alpha = RULE_ALPHA)))
+    Box(Modifier.width(Metrics.hairline).height(Metrics.iconCtl).background(Palette.lineStrong))
     Text(
-      action.label, color = Palette.btn1Fg, fontSize = Type.text3, fontWeight = FontWeight.SemiBold,
+      action.label, color = Palette.fgStrong, fontSize = Type.text3, fontWeight = FontWeight.SemiBold,
       modifier = Modifier.clickable { model.lists.runToastAction() }.padding(horizontal = Metrics.pad, vertical = Metrics.s2 + Metrics.s1).testTag("toast.action"),
     )
   }
 }
-
-/** The hairline before the button, in the toast's ink */
-private const val RULE_ALPHA = 0.25f
