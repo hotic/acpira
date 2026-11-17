@@ -297,7 +297,15 @@ impl Assembler {
             self.reasoning(s("thinking"), emit);
           }
           "signature_delta" => append(block, "signature", s("signature")),
-          "input_json_delta" => self.inputs.entry(index).or_default().push_str(s("partial_json")),
+          "input_json_delta" => {
+            let piece = s("partial_json");
+            if !piece.is_empty()
+              && let Some(id) = block.get("id").and_then(Value::as_str)
+            {
+              emit(Event::ToolCallArgs { id: id.to_owned(), piece: piece.to_owned() });
+            }
+            self.inputs.entry(index).or_default().push_str(piece);
+          }
           _ => {}
         }
       }

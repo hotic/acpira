@@ -27,6 +27,7 @@ use crate::skills;
 use crate::tools;
 
 mod approval;
+mod arg_path;
 mod calls;
 mod request;
 mod riders;
@@ -458,6 +459,8 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       let idle = stream_idle();
       // The call's first event: the prefill is over and output streams from here
       let mut first: Option<std::time::Instant> = None;
+      // The edits whose file is still to be read out of their streaming arguments, by model call id
+      let mut naming: HashMap<String, arg_path::PathScan> = HashMap::new();
       loop {
         let ev = match tokio::time::timeout(idle, rx.recv()).await {
           Ok(Some(ev)) => ev,
@@ -491,7 +494,21 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
               call["_meta"] = meta;
             }
             server.update(&session.id, call);
+            if kind_of(&name, &names) == "edit" {
+              naming.insert(id.clone(), arg_path::PathScan::default());
+            }
             ids.insert(id, acp);
+          }
+          // A file takes the model minutes to write, and the call cannot run before its last byte: from the moment
+          // its arguments name the file, the row shows the edit under way rather than a call still to start
+          Ok(Event::ToolCallArgs { id, piece }) => {
+            if let Some(path) = naming.get_mut(&id).and_then(|scan| scan.feed(&piece)) {
+              naming.remove(&id);
+              if let Some(acp) = ids.get(&id) {
+                let at = tools::Location { path: tools::resolve(&path, &session.cwd), line: None };
+                server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "status": "in_progress", "locations": [at.json()] }));
+              }
+            }
           }
           // Already counted: receiving it restarted the idle timeout
           Ok(Event::Alive) => {}

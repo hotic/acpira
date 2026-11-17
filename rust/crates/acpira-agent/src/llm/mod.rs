@@ -158,6 +158,8 @@ pub enum Event {
   Reasoning(String),
   /// A tool call's name is known (arguments still streaming)
   ToolCallStart { id: String, name: String },
+  /// A piece of a started tool call's arguments, in order: the turn reads the file a long write names out of them
+  ToolCallArgs { id: String, piece: String },
   Done { reply: Reply, stop: StopReason, usage: Option<Usage> },
   /// The stream is still delivering, though nothing above came of it yet (tool call arguments, hidden reasoning,
   /// stream bookkeeping): it only feeds the turn's idle watchdog
