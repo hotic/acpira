@@ -33,7 +33,7 @@ pub fn group_of(tool: &str) -> Option<&'static str> {
 /// The project tools a Claude Code session in a folder on an SSH host gets under local run, named after the native tools
 /// they stand in for (`mcp__acpira__Read` …): they run on the host, while Claude's own are switched off
 /// (`acpira-host/src/acp/vendors/claude_remote.rs`). Offered only to such a session, so not in `ALL`
-pub const REMOTE: &[&str] = &["Read", "Write", "Edit", "Bash", "Grep", "Glob"];
+pub const REMOTE: &[&str] = &["Read", "Write", "Edit", "MultiEdit", "Bash", "BashOutput", "KillShell", "Grep", "Glob", "LS"];
 
 /// Whether `tool` is one the engine serves itself
 pub fn is_engine_tool(tool: &str) -> bool {

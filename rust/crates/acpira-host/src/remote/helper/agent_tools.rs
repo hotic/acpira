@@ -42,7 +42,8 @@ pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireErr
     "prepare" => {
       let cwd = path_arg(a, "cwd")?;
       let name = a.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
-      let args = a.get("args").cloned().unwrap_or(Value::Null);
+      // Mapped like the prepared action a run carries: an edit reads its file here, by the path the call names
+      let args = mapped(a.get("args").cloned().unwrap_or(Value::Null));
       let images = a.get("images").and_then(Value::as_bool).unwrap_or(false);
       blocking(move || {
         Ok(match tools::prepare(&name, &args, &cwd, images) {

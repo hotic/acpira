@@ -180,6 +180,41 @@ async fn the_project_tools_run_on_the_host_and_read_as_the_native_ones() {
   expect_match(&row, json!({ "kind": "read", "status": "completed" }));
 }
 
+/// The tools beyond the first six: several edits in one call, a folder's tree, and a command that keeps running on the
+/// host, read and stopped with tools named in its own start notice
+#[tokio::test(flavor = "multi_thread")]
+async fn several_edits_a_listing_and_a_background_command_run_on_the_host() {
+  let fake = crate::fake_or_skip!();
+  let r = Remote::new(&fake).await;
+  std::fs::write(r.real.join("work/a.txt"), "one\ntwo\nthree\n").unwrap();
+  let s = r.session().await;
+  let edits = r#"{"file_path":"a.txt","edits":[{"old_string":"one","new_string":"1"},{"old_string":"three","new_string":"3"}]}"#;
+  let (cards, reply) = turn(&s, &format!("claude-remote-call:MultiEdit {edits}"), "allow_once").await;
+  assert_eq!(cards.len(), 1, "the edit asks: {reply}");
+  let title = cards[0]["title"].as_str().unwrap_or_default();
+  assert!(title.contains("a.txt") && !title.contains("mcp__"), "{title}");
+  assert_eq!(std::fs::read_to_string(r.real.join("work/a.txt")).unwrap(), "1\ntwo\n3\n", "{reply}");
+  let vw = view(&s);
+  let row = agent_blocks(&vw).into_iter().rfind(|b| b["type"] == "tool_call").unwrap();
+  expect_match(&row, json!({ "kind": "edit", "status": "completed", "diffStat": { "add": 2, "del": 2 } }));
+
+  let (cards, reply) = turn(&s, r#"claude-remote-call:LS {"path":"."}"#, "allow_once").await;
+  assert!(cards.is_empty(), "a listing asks nothing");
+  assert!(result_text(&reply).contains("a.txt"), "{reply}");
+
+  let (cards, reply) = turn(&s, r#"claude-remote-call:Bash {"command":"echo up; exec sleep 30","run_in_background":true}"#, "allow_once").await;
+  assert_eq!(cards.len(), 1, "the command asks");
+  let text = result_text(&reply);
+  assert!(text.starts_with("Started background job ") && text.contains("mcp__acpira__BashOutput") && !text.contains("with job ("), "{reply}");
+  let id = text.trim_start_matches("Started background job ").split('.').next().unwrap().to_owned();
+  let (cards, reply) = turn(&s, &format!(r#"claude-remote-call:BashOutput {{"bash_id":"{id}"}}"#), "allow_once").await;
+  assert!(cards.is_empty(), "reading the job asks nothing");
+  assert!(result_text(&reply).contains("still running"), "{reply}");
+  let (cards, reply) = turn(&s, &format!(r#"claude-remote-call:KillShell {{"shell_id":"{id}"}}"#), "allow_once").await;
+  assert!(cards.is_empty(), "stopping the job asks nothing");
+  assert!(result_text(&reply).contains("was stopped"), "{reply}");
+}
+
 /// A rejected write never reaches the host; Claude's own files on this machine stay here
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rejected_write_stays_off_the_host_and_claudes_own_files_stay_here() {
