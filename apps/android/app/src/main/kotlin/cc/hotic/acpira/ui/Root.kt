@@ -106,14 +106,16 @@ private fun Stack(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?)
       exit = fadeOut(tween(fade)) + slideOutVertically(tween(fade)) { -it / 2 },
       modifier = Modifier.align(Alignment.TopCenter).safeDrawingPadding().padding(top = Metrics.s2),
     ) {
+      // Follows the theme like the iOS glass capsule, solid as the menus (light on a light page, never inverted)
       Surface(
-        color = Palette.btn1Bg,
+        color = Palette.menuBg,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(Metrics.rCardRound),
         shadowElevation = Metrics.toastShadow,
+        border = androidx.compose.foundation.BorderStroke(Metrics.hairline, Palette.menuLine),
       ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            toast.orEmpty(), color = Palette.btn1Fg, fontSize = Type.text3,
+            toast.orEmpty(), color = Palette.fgStrong, fontSize = Type.text3,
             modifier = Modifier.padding(horizontal = Metrics.pad, vertical = Metrics.s2 + Metrics.s1),
           )
           // Undo after a delete, an archive or a project taken off the list (store/SessionLists.kt)
