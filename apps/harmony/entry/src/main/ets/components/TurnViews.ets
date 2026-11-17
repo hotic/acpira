@@ -155,6 +155,17 @@ export struct AgentMessage {
     return this.blocks().find((b: Block) => b.type === 'permission' && b.planId === plan.id);
   }
 
+  /** An older settled reply in a chat opens and closes its action row on a tap; the newest one always shows it */
+  revealable(): boolean {
+    return this.actions && this.index !== this.thread.newest && showsTurnActions(this.turnX(), this.running);
+  }
+
+  /** The action row shows at rest on the newest reply, outside a chat, under the touch guide, or once tapped open */
+  actionsShown(): boolean {
+    return !this.actions || this.index === this.thread.newest || this.thread.touchGuide ||
+      this.thread.revealed === this.index;
+  }
+
   build() {
     Column({ space: Metrics.gap }) {
       ForEach(this.sections, (section: PlanSection, i: number) => {
@@ -186,13 +197,19 @@ export struct AgentMessage {
       if (showsTurnActions(this.turnX(), this.running)) {
         TurnActions({
           turn: this.turnX(), retry: this.thread.retry === this.index, actions: this.actions, title: this.thread.title,
-          agent: this.thread.agent, controls: this.thread.controls, onRetry: () => this.onRetry(),
-          onFork: () => this.onFork(this.index)
+          agent: this.thread.agent, controls: this.thread.controls, shown: this.actionsShown(),
+          onRetry: () => this.onRetry(), onFork: () => this.onFork(this.index)
         })
       }
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
+    // Rows, links and buttons inside keep their own taps; a tap anywhere else on an older reply flips its action row
+    .onClick(() => {
+      if (this.revealable()) {
+        this.thread.toggleReveal(this.index);
+      }
+    })
   }
 }
 

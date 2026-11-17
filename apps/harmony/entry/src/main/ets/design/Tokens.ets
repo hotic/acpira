@@ -487,4 +487,6 @@ export class WebMetrics {
   static readonly allLines: number = Number.MAX_SAFE_INTEGER;
   /** How long a copy button shows its tick (ms) */
   static readonly copiedMs: number = 1500;
+  /** An older reply's action row fading in or out on a tap (apps/ios Motion.dur) */
+  static readonly revealMs: number = 150;
 }

@@ -380,6 +380,7 @@ struct Thread: View {
         values.scrollGesture = control.gesture
         values.threadFollowing = control.following
         values.foldMemory = control.folds
+        values.turnReveal = control.reveal
       }
       // Keep drawing behind the bars and docks; their clearance is a content inset, not a smaller collection frame.
       // Top and bottom only: an open sidebar is the detail column's leading safe area, and a collection reaching

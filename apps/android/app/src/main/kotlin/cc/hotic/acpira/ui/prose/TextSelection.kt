@@ -101,9 +101,14 @@ fun BlockSelection(block: MdBlock, onQuote: ((String) -> Unit)?, content: @Compo
   val current by rememberUpdatedState(content)
   val body = remember { movableContentOf { current() } }
   val bounds = remember { arrayOfNulls<Rect>(1) }
+  // The long-press detector takes the block's taps too: an older reply's tap (its action row) is passed on from here
+  val replyTap by rememberUpdatedState(cc.hotic.acpira.ui.LocalReplyTap.current)
   Box(
     Modifier.onGloballyPositioned { bounds[0] = it.boundsInRoot() }.then(if (selecting) Modifier else Modifier.pointerInput(Unit) {
-      detectTapGestures(onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true })
+      detectTapGestures(
+        onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true },
+        onTap = { replyTap?.invoke() },
+      )
     }),
   ) {
     if (selecting) SelectableBlock(block, onQuote, state, body) else body()

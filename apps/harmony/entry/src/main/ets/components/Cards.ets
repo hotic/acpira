@@ -568,6 +568,11 @@ export struct TurnActions {
   @Param title: string = '';
   @Param agent: string = '';
   @Param controls: Object | undefined = undefined;
+  /**
+   * Only the newest reply shows the row at rest; an older one while a tap has it open. Hidden, it keeps its height (a
+   * tap showing it moves nothing), takes no touches (they reach the turn, which opens it) and reads as nothing
+   */
+  @Param shown: boolean = true;
   @Event onRetry: () => void = () => {};
   @Event onFork: () => void = () => {};
   @Local copied: boolean = false;
@@ -714,6 +719,10 @@ export struct TurnActions {
     // Hugs the reply: gives a gap back to the message's spacing
     .margin({ top: -Metrics.gap })
     .width('100%')
+    .opacity(this.shown ? 1 : 0)
+    .animation({ duration: WebMetrics.revealMs, curve: Curve.EaseOut })
+    .hitTestBehavior(this.shown ? HitTestMode.Default : HitTestMode.None)
+    .accessibilityLevel(this.shown ? 'auto' : 'no-hide-descendants')
     .bindContentCover(this.shot !== undefined, this.sharePreview(), {
       modalTransition: ModalTransition.ALPHA,
       backgroundColor: Color.Black,

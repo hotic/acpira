@@ -15,6 +15,7 @@ struct TextSelectionSurface: UIViewRepresentable {
   @Environment(\.quoteProse) private var quote
   @Environment(\.holdScroll) private var holdScroll
   @Environment(\.openURL) private var openURL
+  @Environment(\.replyTap) private var replyTap
 
   func makeUIView(context: Context) -> SelectionTextView {
     let view = SelectionTextView()
@@ -37,6 +38,7 @@ struct TextSelectionSurface: UIViewRepresentable {
   func updateUIView(_ view: SelectionTextView, context: Context) {
     context.coordinator.surface = self
     view.selectionScope = selection
+    view.replyTap = replyTap
     if selection?.target == nil { selection?.target = view }
     view.actions = actions
     if let quote {
@@ -139,6 +141,35 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
   weak var selectionScope: TextSelectionScope?
   lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
   private var previewOffset = 0
+  /// What a plain single tap on the text does (an older reply's action row); nil leaves taps to UIKit alone
+  var replyTap: ReplyTap?
+  /// The touch began over a selected range: that tap only clears it
+  private var tapClearsSelection = false
+  private lazy var singleTap: UITapGestureRecognizer = {
+    let tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
+    tap.cancelsTouchesInView = false
+    return tap
+  }()
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    guard window != nil else { return }
+    if singleTap.view == nil { addGestureRecognizer(singleTap) }
+    // Wait out UIKit's double tap (word selection), so selecting a word never also flips the row
+    for case let tap as UITapGestureRecognizer in gestureRecognizers ?? [] where tap !== singleTap && tap.numberOfTapsRequired >= 2 {
+      singleTap.require(toFail: tap)
+    }
+  }
+
+  @objc private func tapped(_ tap: UITapGestureRecognizer) {
+    guard let replyTap, !tapClearsSelection else { return }
+    // A link keeps its own tap
+    if let position = closestPosition(to: tap.location(in: self)) {
+      let at = offset(from: beginningOfDocument, to: position)
+      if at < attributedText.length, attributedText.attribute(.link, at: at, effectiveRange: nil) != nil { return }
+    }
+    replyTap()
+  }
 
   /// Start a long paragraph's preview near the touched line, not at an off-screen beginning.
   var previewText: String {
@@ -154,7 +185,10 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
          let line = tokenizer.rangeEnclosingPosition(position, with: .line, inDirection: UITextDirection(rawValue: UITextStorageDirection.forward.rawValue)) {
         previewOffset = offset(from: beginningOfDocument, to: line.start)
       }
-      if event?.type == .touches { selectionScope?.previewText = previewText }
+      if event?.type == .touches {
+        selectionScope?.previewText = previewText
+        tapClearsSelection = selectedRange.length > 0
+      }
     }
     return hit
   }

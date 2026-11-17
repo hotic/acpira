@@ -40,6 +40,8 @@ import WebKit
   let gesture = ScrollGesture()
   /// Folds opened or closed by hand, read back when a reused cell builds a row again
   let folds = FoldMemory()
+  /// The older reply whose action row a tap has opened
+  let reveal = TurnReveal()
   /// A turn is running: a fold tapped while the thread follows it keeps following
   var running = false
   /// Keep the closure's identity across streamed pushes; a new one invalidates every hosted fold's environment.
