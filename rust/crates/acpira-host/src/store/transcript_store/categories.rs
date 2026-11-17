@@ -1,6 +1,12 @@
 //! Edits of the session list's layout in `categories.json`: categories, project order and collapse, and sections
 
+use anyhow::Result;
+use tokio::fs;
+
 use acpira_shared::transcript::{CategoryOp, ProjectMeta, SessionCategories, SessionCategory, SessionSection};
+
+use super::TranscriptStore;
+use crate::store::file_lock::{with_file_lock, write_atomic};
 
 /// One category edit on the list. Edits naming a category that is gone (deleted in another window) do nothing; a blank
 /// name keeps the old one. Reordering only moves a category among its own project's categories
@@ -205,6 +211,29 @@ fn drop_project(list: &mut SessionCategories, cwd: &str) {
 fn rename_categories(list: &mut SessionCategories, from: &str, to: &str) {
   for c in list.categories.iter_mut().filter(|c| c.cwd == from) {
     c.cwd = to.to_owned();
+  }
+}
+
+impl TranscriptStore {
+  pub async fn load_categories(&self) -> SessionCategories {
+    match fs::read(self.dir.join("categories.json")).await {
+      Ok(raw) => serde_json::from_slice(&raw).unwrap_or_default(),
+      Err(_) => SessionCategories::default(),
+    }
+  }
+
+  /// categories.json is shared by every host: the op is applied under its lock to what is on disk, so two windows'
+  /// edits compose instead of the later write replacing the earlier one. Returns the list as written
+  pub async fn update_categories(&self, op: &CategoryOp) -> Result<SessionCategories> {
+    self.ensure().await?;
+    let file = self.dir.join("categories.json");
+    with_file_lock(&file, || async {
+      let mut disk = self.load_categories().await;
+      apply_category_op(&mut disk, op);
+      write_atomic(&file, serde_json::to_string_pretty(&disk)?.as_bytes(), None).await?;
+      Ok(disk)
+    })
+    .await
   }
 }
 
