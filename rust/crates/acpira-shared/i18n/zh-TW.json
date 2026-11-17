@@ -128,6 +128,8 @@
   "goal.pause": "暫停目標",
   "goal.resume": "繼續目標",
   "goal.clear": "清除目標",
+  "goal.setFromPrompt": "設為目標",
+  "goal.setFromPromptHint": "把這則訊息設為目標，一直做到完成",
   "goal.rounds": "第 {n} 輪",
   "goal.elapsed.hm": "{h} 小時 {m} 分鐘",
   "session.noneAgent": "{name} 還沒有工作階段",

@@ -136,6 +136,8 @@ export const zhCN = {
   'goal.pause': '暂停目标',
   'goal.resume': '继续目标',
   'goal.clear': '清除目标',
+  'goal.setFromPrompt': '设为目标',
+  'goal.setFromPromptHint': '把这条消息设为目标，一直做到完成',
   'goal.rounds': '第 {n} 轮',
   'goal.tokens': '{used} tokens',
   'goal.tokensOf': '{used} / {budget} tokens',
