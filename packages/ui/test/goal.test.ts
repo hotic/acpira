@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Turn } from '@acpira/shared/transcript';
 import { setLocale } from '../i18n';
-import { goalDuration, goalSpend, lastTypedPrompt } from '../chat/goalText';
+import { goalDuration, goalSpend } from '../chat/goalText';
 import { hasTurnContent } from '../chat/turnOutcome';
 
 afterEach(() => setLocale('en'));
@@ -23,18 +22,7 @@ describe('goal texts', () => {
   });
 });
 
-describe('"Set as goal" prompt pick', () => {
-  const user = (text: string, auto?: boolean): Turn => ({ role: 'user', text, ...(auto ? { auto } : {}) });
-  const agent: Turn = { role: 'agent', blocks: [{ type: 'text', markdown: 'ok' }] };
-  it('takes the newest typed prompt and skips automatic turns', () => {
-    expect(lastTypedPrompt([user('fix the build'), agent])).toBe(0);
-    expect(lastTypedPrompt([user('a'), agent, user('b'), agent, user('continue', true), agent])).toBe(2);
-  });
-  it('offers nothing under a slash command, an empty prompt or an empty thread', () => {
-    expect(lastTypedPrompt([user('fix'), agent, user('/goal fix'), agent])).toBeUndefined();
-    expect(lastTypedPrompt([user('  '), agent])).toBeUndefined();
-    expect(lastTypedPrompt([])).toBeUndefined();
-  });
+describe('goal milestones', () => {
   it('a turn holding only goal milestones has no content to copy or fork', () => {
     expect(hasTurnContent({ role: 'agent', blocks: [{ type: 'goal', event: 'paused' }] })).toBe(false);
   });

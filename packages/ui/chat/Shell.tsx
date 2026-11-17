@@ -44,8 +44,6 @@ import { PlanDocumentContext } from './PlanDocument';
 import { pendingPlanReview, reviseOption } from './planReview';
 import { planExecutionId } from '@acpira/shared/planExecution';
 import { Queue } from './Queue';
-import { PromptFooter } from './Goal';
-import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
 import { promptHistory } from './promptHistory';
 import { compactingNow } from './usageBreakdown';
@@ -88,6 +86,7 @@ import { SubagentGraph } from './subagents/SubagentGraph';
 import { SidekickModelsContext, isSidekick, useSidekickModels } from './subagents/SidekickRelay';
 import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
 import { ComposerAbove } from '../plugins/ComposerAbove';
+import { PromptActions } from '../plugins/MessageActions';
 import { backdropsShown, useSkin } from '../plugins/skin';
 import { useSessionOutline } from '../plugins/outline';
 import { useReportLink } from './reportLink';
@@ -1258,15 +1257,6 @@ export function Shell(p: ShellProps) {
   }, [p.activeSessionId, openInEditor, on.openFile, copied, previewImage]);
   const goalAction = useMemo(() => p.activeSessionId && on.goal
     ? (action: GoalAction) => on.goal!(p.activeSessionId!, action) : undefined, [p.activeSessionId, on.goal]);
-  // "Set as goal" under the last prompt: only where the agent takes `set` and no goal is running yet
-  const setGoal = useMemo(() => p.activeSessionId && on.goal && !p.goal && p.goalActions?.includes('set')
-    ? (objective: string) => on.goal!(p.activeSessionId!, 'set', objective) : undefined, [p.activeSessionId, on.goal, p.goal, p.goalActions]);
-  // The capability arrives with the agent process, so a stored session reopening shows no button until the CLI is up.
-  // Remember per agent whether its last ready session offered `set`, and hold the button's room while one starts
-  useEffect(() => {
-    if (p.status === 'ready') goalSetByAgent.set(p.agent.id, !!p.goalActions?.includes('set'));
-  }, [p.status, p.agent.id, p.goalActions]);
-  const goalRoom = !setGoal && p.status === 'starting' && !!on.goal && !p.goal && goalSetByAgent.get(p.agent.id) === true;
   const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask
     ? (taskId: string) => on.stopAsyncTask!(p.activeSessionId!, taskId) : undefined, [p.activeSessionId, on.stopAsyncTask]);
   const stopCommand = useMemo(() => p.activeSessionId && p.canStopCommands && on.stopCommand
@@ -1497,7 +1487,7 @@ export function Shell(p: ShellProps) {
                       onClose={() => setChatFind(undefined)}
                     />
                   )}
-                  <QuoteToolbar root={threadContent} onShare={shareSelection} />
+                  <QuoteToolbar root={threadContent} session={p.activeSessionId} onShare={shareSelection} />
                   <PlanDocumentContext.Provider value={planDoc}>
                     <HistoryContext.Provider value={history}>
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
@@ -1506,7 +1496,7 @@ export function Shell(p: ShellProps) {
                         <TurnActionsContext.Provider value={turnActions}>
                           <SidekickModelsContext.Provider value={sidekickModels}>
                           <Thread key={p.activeSessionId} session={p.activeSessionId} fontSizes={p.look && `${p.look.uiFontSize}/${p.look.codeFontSize}`} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} catchingUp={p.catchingUp} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
-                            onSetGoal={setGoal} goalRoom={goalRoom} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
+                            subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             forkedFrom={p.forkedFrom} agents={p.agents} agentId={p.agent.id}
                             onPermission={onPermission} searchBridge={searchBridge} />
                           </SidekickModelsContext.Provider>
@@ -1728,9 +1718,7 @@ interface ThreadProps {
   onPermission: (blockId: string, optionId: string) => void;
   onFailureAction?: (action: FailureAction) => void;
   // Offers "Set as goal" under the last typed prompt (absent: no goal can be set now)
-  onSetGoal?: (objective: string) => void;
   // The button is expected once the starting agent reports its goal capability: keep its room meanwhile
-  goalRoom?: boolean;
   searchBridge?: RefObject<ThreadSearchBridge | undefined>;
 }
 
@@ -1814,10 +1802,8 @@ function useExchangeWindow(
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-// Whether each agent's last ready session offered "Set as goal" (see goalRoom in Shell)
-const goalSetByAgent = new Map<AgentId, boolean>();
 
-const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal, goalRoom, searchBridge }: ThreadProps) {
+const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, replayKey, catchingUp, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, searchBridge }: ThreadProps) {
   const locale = useLocale();
   const appearance = useAppearance();
   const ref = useRef<HTMLDivElement>(null);
@@ -1879,7 +1865,6 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
   // The context report's hover or pick lights its calls' rows here and dims the rest (chat/reportLink.ts)
   useReportLink(ref, body, { session, enabled: appearance.reportLink !== 'off', turns, starts, showFrom: window.showFrom, release: () => follow.release() });
   // The prompt "Set as goal" hangs under: the last one the user typed, unless it was a slash command
-  const goalPrompt = onSetGoal || goalRoom ? lastTypedPrompt(turns) : undefined;
   // The fork boundary follows the exchange that holds the last copied turn, as a row of its own: inside that exchange it
   // would stand after the reply's action row, which the exchange spacing keys off
   const forkAfter = forkedFrom ? exchangeSlots.filter(e => e.key <= forkedFrom.turnIndex).length - 1 : -1;
@@ -1910,15 +1895,11 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
             const switchedAway = next?.role === 'user' && isContinue(next);
             // The reply woken by summoned agents' reports hugs the one-line report row above it, like a continuation
             const switchedIn = previous?.role === 'user' && (isContinue(previous) || previous.autoReason === 'subagents');
-            // A user turn carries no time of its own; the reply it started began the moment it went out (absent on old transcripts)
-            const sentAt = turn.role === 'user' && next?.role === 'agent' ? next.startedAt : undefined;
-            // The strip under a prompt: its send time and, on the last typed one, Set as goal (both shown on hover)
-            const goalSlot = ti === goalPrompt && turn.role === 'user';
-            const goal = goalSlot && onSetGoal ? () => onSetGoal(turn.text.trim()) : undefined;
-            if (turn.role === 'user' && !turn.auto && (sentAt !== undefined || goalSlot)) {
+            if (turn.role === 'user' && !turn.auto) {
+              // Plugin buttons under a typed prompt (the prompt.actions slot); nothing renders without one
               messages.push(
                 <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />,
-                <PromptFooter key={`footer${ti}`} sentAt={sentAt} onSetGoal={goal} goalRoom={goalSlot} />,
+                <PromptActions key={`actions${ti}`} session={session} turn={ti} text={turn.text} />,
               );
               continue;
             }

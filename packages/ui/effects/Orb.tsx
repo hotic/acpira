@@ -12,7 +12,8 @@ export function Orb({ kind, paused }: { kind: OrbKind; paused?: boolean }) {
     return canvas ? mountOrb(canvas, kind, !!paused) : undefined;
   }, [kind, paused]);
   return (
-    <span className="flex size-lead items-center justify-center">
+    // `data-part="orb"` is a plugin style hook (STYLE_HOOKS); hidden, the canvas leaves the view and the engine stops drawing it
+    <span data-part="orb" className="flex size-lead items-center justify-center">
       <canvas ref={ref} aria-hidden className="block size-lead" />
     </span>
   );

@@ -430,7 +430,7 @@ impl PluginHost {
           height: u.height,
           method: u.method.clone(),
         };
-        // A message action is a button: no document
+        // A message or selection action is a button: no document
         if u.method.is_some() {
           out.push(piece(String::new()));
           continue;

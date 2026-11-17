@@ -1,7 +1,6 @@
-import type { Turn } from '@acpira/shared/transcript';
 import { getLocale, t } from '../i18n';
 
-// Goal head / milestone texts and the "Set as goal" prompt pick. DOM-free so the host tsconfig can type-check its test.
+// Goal head / milestone texts. DOM-free so the host tsconfig can type-check its test.
 
 /** Elapsed goal time: "45s", "6m 12s", "2h 05m" */
 export function goalDuration(seconds: number): string {
@@ -23,20 +22,4 @@ export function goalSpend(goal: { tokensUsed?: number; tokenBudget?: number }): 
   return goal.tokenBudget
     ? t('goal.tokensOf', { used: compactTokens(goal.tokensUsed), budget: compactTokens(goal.tokenBudget) })
     : t('goal.tokens', { used: compactTokens(goal.tokensUsed) });
-}
-
-/**
- * The turn "Set as goal" hangs under: the newest prompt the user typed (automatic turns are skipped), unless that one
- * is a slash command or carries no text
- */
-export function lastTypedPrompt(turns: Turn[]): number | undefined {
-  let i = turns.length - 1;
-  while (i >= 0) {
-    const turn = turns[i]!;
-    if (turn.role === 'user' && !turn.auto) break;
-    i--;
-  }
-  const turn = turns[i];
-  if (turn?.role !== 'user' || !turn.text.trim() || turn.text.trimStart().startsWith('/')) return undefined;
-  return i;
 }
