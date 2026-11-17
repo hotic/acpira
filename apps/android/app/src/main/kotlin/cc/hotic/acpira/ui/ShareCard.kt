@@ -180,7 +180,8 @@ fun ShareCard(meta: ShareMeta, content: ShareContent, modifier: Modifier = Modif
       }
     }
     Row(
-      Modifier.fillMaxWidth().padding(top = Metrics.pad, bottom = Metrics.gap),
+      // In by the sheet's corner radius (--spacing-share-mark-x): the ends land where its straight edges begin
+      Modifier.fillMaxWidth().padding(start = Metrics.rMd, end = Metrics.rMd, top = Metrics.pad, bottom = Metrics.gap),
       horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
       verticalAlignment = Alignment.CenterVertically,
     ) {

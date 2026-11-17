@@ -144,7 +144,8 @@ struct ShareCard: View {
     .textStyle(WebType.text4, weight: .medium)
     .foregroundStyle(Palette.fg2)
     .opacity(ShareTokens.watermark)
-    // Flush with the sheet's edges: the mark starts on its left line, the model ends on its right one
+    // In by the sheet's corner radius (--spacing-share-mark-x): the ends land where its straight edges begin
+    .padding(.horizontal, Metrics.rMd)
     .padding(.top, Metrics.pad)
     .padding(.bottom, Metrics.gap)
   }
