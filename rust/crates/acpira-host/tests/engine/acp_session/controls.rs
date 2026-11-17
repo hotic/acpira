@@ -405,9 +405,10 @@ async fn claude_permission_levels_split_off_its_modes() {
   assert_eq!(wire_modes(&log).last().map(String::as_str), Some("bypassPermissions"));
 }
 
-// Antigravity has no full-access mode over ACP: full access keeps the CLI in `auto` and the host approves the rest
+// Antigravity has no full-access mode over ACP: full access keeps the CLI in `accept-edits` and the host approves the rest
+// (`auto` never asks and runs commands in agy's own sandbox, where a repository's `.git` is read-only)
 #[tokio::test(flavor = "multi_thread")]
-async fn antigravity_full_access_is_host_approval_on_auto() {
+async fn antigravity_full_access_is_host_approval_on_accept_edits() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
   let log = dir.path().join("modes.log");
@@ -419,10 +420,10 @@ async fn antigravity_full_access_is_host_approval_on_auto() {
   wait_block(&s, "permission").await;
   s.set_config("approval".into(), "full".into()).await.unwrap();
   p.await.unwrap();
-  assert_eq!(wire_modes(&log), ["auto"]);
+  assert_eq!(wire_modes(&log), ["accept-edits"]);
   assert!(!agent_blocks(&view(&s)).iter().any(|b| b["type"] == "permission"));
-  // The CLI echoing `auto` leaves full access in place; plan takes the host's approval away until the way back
-  prompt(&s, "mode:auto").await;
+  // The CLI echoing `accept-edits` leaves full access in place; plan takes the host's approval away until the way back
+  prompt(&s, "mode:accept-edits").await;
   let (_, shown, level) = mode_view(&s);
   assert_eq!((shown, level), (json!("default"), json!("full")));
   s.set_mode("plan".into()).await.unwrap();
@@ -430,5 +431,5 @@ async fn antigravity_full_access_is_host_approval_on_auto() {
   wait_block(&s, "permission").await;
   s.set_mode("default".into()).await.unwrap();
   p.await.unwrap();
-  assert_eq!(wire_modes(&log), ["auto", "plan", "auto"]);
+  assert_eq!(wire_modes(&log), ["accept-edits", "plan", "accept-edits"]);
 }
