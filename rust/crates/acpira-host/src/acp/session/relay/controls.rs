@@ -218,7 +218,18 @@ pub(super) async fn relay_controls(proc: &AgentProcess, sid: &str, opened: &mut 
           notes.push(format!("model {m:?} was refused ({e}); the CLI's default model runs"));
         }
       }
-      None => notes.push(format!("{} offers no model matching {m:?}; its default model runs", persona.agent)),
+      // The list is the one the session last answered with: a model added to the CLI since (a provider edited while
+      // the thread lives) is not on it yet, so the stored value is tried as it is before giving up on it
+      None => {
+        let select = find_option(opened.get("configOptions"), &MODEL_KEYS).and_then(|o| o.get("id").and_then(Value::as_str)).map(str::to_owned);
+        let set = match select {
+          Some(id) => set_config(proc, sid, opened, &id, m).await.is_ok(),
+          None => false,
+        };
+        if !set {
+          notes.push(format!("{} offers no model matching {m:?}; the model it was on runs", persona.agent));
+        }
+      }
     }
   }
   if let Some(e) = &persona.effort {
