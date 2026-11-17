@@ -280,7 +280,12 @@ pub(super) async fn run_tools(
       rejected |= dismissed;
       continue;
     }
-    match rules.decide(session, &action) {
+    let decision = rules.decide(session, &action);
+    // A row the stream already showed as an edit under way (`turn.rs`) waits again while the user decides
+    if decision == Decision::Ask && matches!(&action, Action::Write { .. }) {
+      server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "pending" }));
+    }
+    match decision {
       Decision::Allow => {}
       Decision::Deny => {
         let (key, target) = rules.denied(session, &action);

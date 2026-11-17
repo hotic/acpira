@@ -77,7 +77,10 @@ async fn a_to_do_list_riding_on_an_edit_shows_as_a_todo_row_of_its_own() {
   // bar takes it, and the edit moves to call-2 below it
   let todo = row(&h, "call-1");
   assert_eq!((todo[0]["sessionUpdate"].as_str(), todo[0]["kind"].as_str()), (Some("tool_call"), Some("edit")));
-  assert_eq!((todo[1]["sessionUpdate"].as_str(), todo[1]["title"].as_str(), todo[1]["kind"].as_str()), (Some("tool_call_update"), Some("todo"), Some("other")));
+  // While the arguments streamed the row already named the file as an edit under way; the list's row drops that
+  assert_eq!((todo[1]["status"].as_str(), todo[1]["locations"][0]["path"].as_str()), (Some("in_progress"), h.cwd().join("a.txt").to_str()));
+  assert_eq!((todo[2]["sessionUpdate"].as_str(), todo[2]["title"].as_str(), todo[2]["kind"].as_str()), (Some("tool_call_update"), Some("todo"), Some("other")));
+  assert_eq!((todo[2]["status"].as_str(), &todo[2]["locations"]), (Some("pending"), &json!([])));
   let done = todo.last().unwrap();
   assert_eq!(done["status"], "completed");
   assert_eq!(done["rawOutput"]["todos"][1], json!({ "content": "run the tests", "status": "in_progress" }));

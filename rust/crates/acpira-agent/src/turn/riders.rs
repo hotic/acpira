@@ -78,7 +78,7 @@ pub(super) fn ride_todo(server: &Arc<Server>, session: &Arc<Session>, rules: &Ru
   let acp = match row {
     // The streamed row was the call's: every field it showed is set again
     Some(row) => {
-      server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": row, "title": tools::TODO, "kind": "other", "status": "pending", "rawInput": raw }));
+      server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": row, "title": tools::TODO, "kind": "other", "status": "pending", "rawInput": raw, "locations": [] }));
       row
     }
     None => {

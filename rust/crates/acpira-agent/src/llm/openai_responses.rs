@@ -187,12 +187,19 @@ impl Assembler {
           if !call.name.is_empty() {
             call.announced = true;
             emit(Event::ToolCallStart { id: call.call_id.clone(), name: call.name.clone() });
+            if !call.arguments.is_empty() {
+              emit(Event::ToolCallArgs { id: call.call_id.clone(), piece: call.arguments.clone() });
+            }
           }
         }
       }
       "response.function_call_arguments.delta" => {
         if let Some(d) = v["delta"].as_str() {
-          self.calls.entry(index).or_default().arguments.push_str(d);
+          let call = self.calls.entry(index).or_default();
+          call.arguments.push_str(d);
+          if call.announced && !d.is_empty() {
+            emit(Event::ToolCallArgs { id: call.call_id.clone(), piece: d.to_owned() });
+          }
         }
       }
       "response.function_call_arguments.done" => {

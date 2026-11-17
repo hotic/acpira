@@ -292,9 +292,13 @@ impl Assembler {
         p.name.push_str(name);
       }
     }
+    let mut piece = "";
     if let Some(args) = tc.pointer("/function/arguments") {
       match args {
-        Value::String(s) => p.arguments.push_str(s),
+        Value::String(s) => {
+          p.arguments.push_str(s);
+          piece = s;
+        }
         // A server that sends parsed arguments sends them whole
         other if !other.is_null() => p.arguments = other.to_string(),
         _ => {}
@@ -306,6 +310,11 @@ impl Assembler {
       }
       p.announced = true;
       emit(Event::ToolCallStart { id: p.id.clone(), name: p.name.clone() });
+      // Whatever arrived before the name goes with this piece
+      piece = &p.arguments;
+    }
+    if p.announced && !piece.is_empty() {
+      emit(Event::ToolCallArgs { id: p.id.clone(), piece: piece.to_owned() });
     }
   }
 
