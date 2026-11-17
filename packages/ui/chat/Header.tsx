@@ -172,8 +172,9 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
           {projectPick ?? <span key={cwd} className="swap-in shrink-0 text-2 text-fg-3" title={cwd}>{placeName ?? projectName(cwd)}</span>}
         </span>
         : <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-strong">{title}</span>}
-      {/* The icon is 6px smaller than the button box; the negative margin makes the right edge of the last icon bite into the page-margin line */}
-      <div className="-mr-1.5 flex shrink-0 items-center gap-0.5">
+      {/* The icon is 6px smaller than the button box; the negative margin makes the right edge of the last icon bite into the page-margin line.
+          Desktop: the last button's box ends on the cards' trailing edge instead, as the tool panel's toggle does on the panel's (desktop.css --sheet-trail) */}
+      <div className={cn('flex shrink-0 items-center gap-0.5', !desktop && '-mr-1.5')}>
         {/* Plugin status pieces (plugins/Pieces.tsx) lead the header's actions */}
         <SlotPieces slot="statusbar" className="mr-gap-half flex items-center gap-1" />
         {/* New sessions start after choosing an agent from the plus menu. */}

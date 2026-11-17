@@ -20,9 +20,14 @@
   --sidebar-duration: 320ms;
   --sidebar-fade-duration: 260ms;
   --sidebar-ease: var(--start-ease);
-  /* Keep the title close to the sheet's leading edge; trailing actions retain the dock's margin. */
-  --sheet-lead: calc(var(--sheet-inset) - 2px);
-  --sheet-trail: var(--start-x);
+  /* Where the last icon button on the title line ends, from its pane's side: its hover fill (inset in the box, ui/Button
+     IconButton) ends on the content's trailing line (the cards', the Files tab's filter) */
+  --line-end: calc(var(--start-x) - var(--icon-fill-inset));
+  /* The sheet header's ends (Header reads them) are the conversation's own lines, as the tool panel's tabs and its
+     toggle stand on the panel's: the title starts on the cards' leading edge, an optical step in (bare text over a
+     rounded box), and the last button ends on their trailing edge */
+  --sheet-lead: calc(var(--start-x) + 2px);
+  --sheet-trail: var(--line-end);
   /* The pinned title row's width (chat/DesktopFrame.tsx TitleRow): the lights' room, back, forward and the column's
      toggle 2 px apart, then a breath */
   /* The gear at the column's foot (chat/DesktopFrame.tsx AppMenu): a size up from the rows' icons */
@@ -58,22 +63,20 @@
 .acp-shell[data-desktop][data-caption]:has(> [data-title-row] > [data-app-menus]) { --title-menu-w: calc(var(--ctl) + 2px); }
 .acp-shell[data-desktop][data-caption][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + var(--ctl) + var(--title-menu-w) + var(--gap)); }
 /* A sheet header that ends at the window's edge leaves the caption its room; beside a shown tool panel it does not */
-.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
-.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--start-x); }
+.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--line-end) + var(--caps-w)); }
+.acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--line-end); }
 /* A page-drawn caption: the stage's rule under its tabs gives way to its card's edge (the card under the title bar, below) */
 .acp-shell[data-desktop][data-caption] [data-stage-body] { --stage-rule: transparent; }
 /* No column beside the sheet: keep the title one small inset beyond the actual title-row controls. */
 .acp-shell[data-desktop]:not([data-column]) [data-sheet-header] { --sheet-lead: calc(var(--title-w) - var(--gap)); }
-/* Optically align the title with the conversation outline, while keeping clear of the controls. */
-.acp-shell[data-desktop].acp-wide:not([data-column]):not([data-layout="files"]) [data-sheet-header] {
-  --sheet-lead: max(calc(var(--title-w) - var(--gap)), calc((100% - var(--chat-w) - 2 * var(--page)) / 2 + var(--start-x) + 2px));
-}
+/* The title stays on the sheet's leading line however wide the sheet is: it never follows a centred conversation
+   inward, which leaves it floating mid-sheet */
 /* The files layout (acpira.desktopLayout = files, panel/FilesLayout.tsx): the chat lies on the canvas between the stage and
    the session column. Its header starts at the dock's margin whatever folds, and leaves the pinned toggle room once the
    session column folds. Its palette counts from the canvas (palette.css), so cards and the composer keep their contrast
    and what paints the page's colour (sticky prompts, fades) paints the canvas */
-.acp-shell[data-desktop][data-layout="files"] [data-sheet-header] { --sheet-lead: var(--start-x); }
-.acp-shell[data-desktop][data-layout="files"]:not([data-column]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w)); }
+.acp-shell[data-desktop][data-layout="files"] [data-sheet-header] { --sheet-lead: calc(var(--start-x) + 2px); }
+.acp-shell[data-desktop][data-layout="files"]:not([data-column]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--line-end) + var(--ctl) + var(--gap) + var(--caps-w)); }
 .acp-shell[data-desktop][data-layout="files"] > :is([data-sheet], [data-subagent-panel="docked"]) { --bg-0: var(--canvas); }
 /* The docked subagent pane (chat/Shell.tsx, data-subagent-panel="docked"): its header line starts and ends at the dock's
    margin. When the pane ends the window's line (the tool panel closed, or the files layout's session column folded), the
@@ -208,9 +211,12 @@
      nothing to their width and fade on the column's curve, and close the same way as it comes back */
   [data-column-act] {
     display: grid; grid-template-columns: 0fr; opacity: 0;
-    transition: grid-template-columns 320ms var(--start-ease), opacity 220ms var(--start-ease);
+    /* Folded, it takes back the actions row's gap (Header's gap-0.5), so the buttons around it stay 2 px apart and the
+       last one still ends on the header's trailing line */
+    margin-inline-start: -2px;
+    transition: grid-template-columns 320ms var(--start-ease), margin 320ms var(--start-ease), opacity 220ms var(--start-ease);
   }
-  [data-column-act][data-shown] { grid-template-columns: 1fr; opacity: 1; }
+  [data-column-act][data-shown] { grid-template-columns: 1fr; margin-inline-start: 0; opacity: 1; }
   /* The clip box between them: a fixed-width button as the grid item would hold the track open */
   [data-column-act] > span { min-width: 0; overflow: hidden; }
   /* A page switch (chat and settings replace each other in App): the canvas, the sheet and the pinned title row are the same

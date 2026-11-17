@@ -14,6 +14,7 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { CARET_TURN, IconButton } from '../ui/Button';
 import { OptionContent, PanelHeader } from '../ui/Panel';
 import { useScrollFade } from '../ui/useScrollFade';
+import { useTapActivate } from '../ui/useTapActivate';
 import { Popover } from '../ui/Popover';
 import { Row } from '../ui/Row';
 import { imeKey } from '../ui/ime';
@@ -1313,6 +1314,8 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const self = useRef<HTMLDivElement>(null);
+  // A finger tap toggles too, though the actions it reveals make WebKit withhold the click
+  const tap = useTapActivate(() => onToggle?.(), !editing && !!onToggle);
   // Desktop: the "…" menu floats to the right of the column, over the chat, so a narrow column never squeezes it
   const desktop = useDesktop();
   useEffect(() => {
@@ -1343,7 +1346,7 @@ function GroupHeader({ project, sub, name, title, folder, badge, count, open, st
       draggable={!!onDragStart}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      onClick={() => { if (!editing) onToggle?.(); }}
+      {...tap}
       onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onToggle?.(); } }}
       className={cn(
         'group flex min-h-row items-center gap-gap rounded-md px-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover data-[menu-open]:bg-hover',
@@ -1627,6 +1630,8 @@ const Item = memo(function Item({ session, agentName, terms, snippet, active, ti
   const s = pending ? { ...session, title: pending.title } : session;
   const [menuOpen, setMenuOpen] = useState(false);
   const select = () => actions.current.select(s);
+  // A finger tap selects too, though the pin it reveals makes WebKit withhold the click
+  const tap = useTapActivate(select, !editing);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(); }
@@ -1662,7 +1667,7 @@ const Item = memo(function Item({ session, agentName, terms, snippet, active, ti
       draggable={!!drag}
       onDragStart={drag ? e => actions.current.dragStart(s, e) : undefined}
       onDragEnd={() => actions.current.dragEnd()}
-      onClick={() => { if (!editing) select(); }}
+      {...tap}
       onKeyDown={onKey}
       className={cn(
         // The row whose context menu is open keeps the hover fill: the popup under the pointer ends the row's :hover

@@ -2,7 +2,7 @@
    Color roles prefer the host's --vscode-* values; with no host (LAB) they fall back to Dark / Light Modern values. */
 
 :root, .acp-shell {
-  --quota-track: 7px;
+  --quota-track: 3px;
   /* A refreshed quota slides the fill and blends its color instead of jumping */
   --quota-fill-duration: 600ms;
   /* The About page's download bar, in the card head's action slot: about as wide as the check action it stands in for */
@@ -382,7 +382,8 @@
 }
 [data-density="airy"] {
   --row: 32px; --row-dense: 28px; --chat-row: 30px; --process-row: 24px; --process-prose-gap: 12px; --ctl: 32px; --ctl-sm: 26px;
-  --pad: 16px; --pad-y: 22px; --page: 24px; --gap: 12px; --msg-gap: 24px; --hdr: 60px; --text-1-lh: calc(var(--ui-font-size) + 9px);
+  --pad: 16px; --pad-y: 22px; --page: 24px; --gap: 12px; --msg-gap: 24px; --hdr: 60px;
+  /* Text keeps the default density's line height: airy opens the space between things, not between the lines of one */
 }
 [data-radius="8"]  { --r-sm: 5px; --r-md: 6px; --r-lg: 8px; }
 [data-radius="16"] { --r-sm: 6px; --r-md: 10px; --r-lg: 16px; }
@@ -550,6 +551,8 @@
   --radius-sm: var(--r-sm);
   --radius-md: var(--r-md);
   --radius-lg: var(--r-lg);
+  /* The corner of an icon button's hover fill (ui/Button IconButton clips it --icon-fill-inset inside an --r-md box) */
+  --radius-ctl-fill: calc(var(--r-md) - var(--icon-fill-inset));
   --radius-full: 9999px;
 
   --spacing-switch-track-h: 16px;
@@ -576,10 +579,23 @@
      end of px-2 rows (a menu bar's, ui/Panel.tsx; the desktop column foot's gear) */
   --spacing-ctl-bleed: calc((var(--ctl) - var(--icon-ctl)) / 2);
   --spacing-ctl-sm-bleed: calc((var(--ctl-sm) - var(--icon)) / 2);
+  /* The height of an icon button's hover fill (its box less --icon-fill-inset on every side): a filled chip standing on a
+     line of icon buttons (the tool panel's tabs) is as tall, with the fill's corner (rounded-ctl-fill) */
+  --spacing-ctl-fill: calc(var(--ctl) - 2 * var(--icon-fill-inset));
+  /* The side padding of such a chip at an end that holds a glyph (a tab's icon, its close button): the glyph is as far
+     from the side as from the top and bottom, so a hover box around it sits evenly in the chip's corner */
+  --spacing-tab-cap: calc((var(--ctl) - 2 * var(--icon-fill-inset) - var(--icon)) / 2);
   --spacing-bar-bleed: calc((var(--ctl) - var(--icon)) / 2 - 8px);
   /* Bottom padding under a --ctl row whose corner controls are --ctl-sm (the composer bar): with the row's px-2 it leaves
      those controls the same 8px from the card's side and bottom edge at every density */
   --spacing-corner-b: calc(8px - (var(--ctl) - var(--ctl-sm)) / 2);
+  /* A popup's ruled search line (ui/Command.tsx), its rule included, pulled up over the popup's p-1: the glyphs at its ends
+     (the glass, the model panel's +) stand as far from the popup's top edge and from the rule as from its sides (p-1, the
+     line's px-2, half an icon), so the + box keeps one gap on three sides */
+  --spacing-search-line: calc(2 * (12px + var(--icon) / 2) + 1px);
+  /* A model row's trailing box (the arrow into its parameters): as far from the row's top and bottom as from its end (the
+     row's px-2 less the box's -mx-1), while the glyph stays in the check column */
+  --spacing-row-trail: calc(var(--row) - 8px);
   /* The check glyph inside a review row's tick box (settings/StoragePage.tsx), inset from the icon-sized box */
   --spacing-tick: calc(var(--icon) - 4px);
   --spacing-pad: var(--pad);
@@ -618,6 +634,9 @@
   --spacing-diff-gutter: calc(var(--diff-number-width) + var(--diff-sign-width));
   --spacing-diff-hunk: calc(var(--gap) * 1.25);
   --spacing-msg: var(--msg-gap);
+  /* Under a reply's action row (TurnActions) before the next prompt card: with the row's own padding the icons stand as
+     far from the card below as from the reply text above */
+  --spacing-turn-actions-below: 4px;
   /* Pulls a continuation up so it sits one row gap under the turn it continues */
   --spacing-msg-join: calc(var(--msg-gap) - var(--gap));
   --spacing-hdr: var(--hdr);

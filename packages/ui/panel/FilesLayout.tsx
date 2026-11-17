@@ -172,7 +172,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
         </div>
       </div>
       {/* Pinned at the window's top-right corner, where the tool panel's toggle sits in the conversation layout */}
-      <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[var(--title-top)] pr-[calc(var(--sheet-inset)+var(--start-x)+var(--caps-w,0px))]">
+      <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[var(--title-top)] pr-[calc(var(--sheet-inset)+var(--line-end)+var(--caps-w,0px))]">
         <IconButton className="pointer-events-auto" title={`${sessionsLabel} ${TOGGLE_KEY}`} aria-label={t('desktop.sessionList')} aria-pressed={p.sessionsShown} onClick={p.onToggleSessions}>
           <PanelRight strokeWidth={1.5} />
         </IconButton>
