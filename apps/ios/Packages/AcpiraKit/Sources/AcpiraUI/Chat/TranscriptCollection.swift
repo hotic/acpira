@@ -81,6 +81,12 @@ struct TranscriptCollection: UIViewRepresentable {
   let control: TranscriptControl
   var running: Bool
   var motion: Bool
+  /// What the view leaves out ahead of its first row (`SessionView.earlier`), and the asks for it, of which one is under
+  /// way at a time: the rows start with a spinner, the reader's scrolling near it asks (`AppModel.loadEarlier`), and a
+  /// thread too short to scroll asks by itself (`AppModel.fillEarlier`)
+  var earlier: ViewEarlier?
+  var loadEarlier: (() -> Void)?
+  var fillEarlier: (() -> Void)?
   /// The thread's own environment values on top of the representable's (`applyThread`, the scroll hooks)
   var decorate: (inout EnvironmentValues) -> Void
 
@@ -115,8 +121,10 @@ struct TranscriptCollection: UIViewRepresentable {
     values.hostedTranscript = true
     control.view = view
     control.running = running
+    view.loadEarlier = earlier == nil ? nil : loadEarlier
+    view.fillEarlier = earlier == nil ? nil : fillEarlier
     view.motion = motion
-    context.coordinator.update(items: items, environment: values, in: view)
+    context.coordinator.update(items: items, earlier: earlier, environment: values, in: view)
   }
 
   static func dismantleUIView(_ view: TranscriptCollectionView, coordinator: Coordinator) {
@@ -140,6 +148,7 @@ struct TranscriptCollection: UIViewRepresentable {
     private var ids: [String] = []
     private var lastPromptID: String?
     private var queuedCount = 0
+    private var earlier: ViewEarlier?
     /// The environment the rows read. Hosted cells do not inherit the SwiftUI environment across the representable,
     /// so it is copied in whole and handed to every cell a pass configures
     private var environment = EnvironmentValues()
@@ -182,11 +191,16 @@ struct TranscriptCollection: UIViewRepresentable {
 
     /// A pass lays out new and removed rows and reconfigures the rows whose data changed, plus the visible ones (the
     /// environment they read may have changed): a hosted row only redraws when its cell is configured again
-    func update(items rows: [ThreadItem], environment values: EnvironmentValues, in view: TranscriptCollectionView) {
+    func update(items rows: [ThreadItem], earlier window: ViewEarlier? = nil, environment values: EnvironmentValues,
+                in view: TranscriptCollectionView) {
       guard let dataSource else { return }
       environment = values
       let next = rows.map(\.id)
       let old = Set(ids)
+      // The view starts elsewhere than it did: an earlier part landed ahead of the rows (or the engine opened the
+      // session at its tail again)
+      let moved = !ids.isEmpty && window != earlier
+      earlier = window
       var refresh = Set(view.indexPathsForVisibleItems.compactMap { dataSource.itemIdentifier(for: $0) })
       for row in rows {
         if items[row.id] != row { refresh.insert(row.id) }
@@ -211,14 +225,19 @@ struct TranscriptCollection: UIViewRepresentable {
       }
       // Only rows that stay can be reconfigured; new ones are configured as they are dequeued
       refresh = refresh.intersection(old).intersection(next)
+      // A part can land without a row changing (blocks inside a closed fold): the pass that follows still finds out
+      // whether the thread fills its room (`TranscriptCollectionView.short`)
+      if moved { view.setNeedsLayout() }
       guard structure || !refresh.isEmpty else { return }
       var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
       snapshot.appendSections([0])
       snapshot.appendItems(next)
       if !refresh.isEmpty { snapshot.reconfigureItems(Array(refresh)) }
       // Rows the reader can see stay put through rows arriving, leaving or growing; reaching new output is the
-      // follow's job
-      let visible = initial || sentNow ? nil : view.firstVisibleItem()
+      // follow's job. An earlier part goes in above what the reader sees: new rows, and earlier blocks at the head of
+      // the turn the view was cut in, which grows upwards. So that pass holds a row by its end, mid-gesture too (the
+      // reader is usually scrolling up when it lands), and never by the spinner the part goes in under
+      let visible = initial || sentNow ? nil : view.firstVisibleItem(skipping: moved ? ThreadItem.earlierID : nil)
       dataSource.apply(snapshot, animatingDifferences: false) { [weak view] in
         DispatchQueue.main.async {
           guard let view, view.maintainsBottomAnchor, !view.isTracking, !view.isDragging, !view.isDecelerating else { return }
@@ -226,7 +245,7 @@ struct TranscriptCollection: UIViewRepresentable {
           view.followBottom(animated: !initial)
         }
       }
-      if let visible { view.keepOnScreen(visible) }
+      if let visible { moved ? view.keepEnd(visible) : view.keepOnScreen(visible) }
     }
 
     @objc private func endTyping() {
@@ -251,12 +270,21 @@ struct TranscriptCollection: UIViewRepresentable {
       guard let view = scrollView as? TranscriptCollectionView else { return }
       view.releaseReaderAnchor()
       view.maintainsBottomAnchor = false
+      view.readerJump = false
+      view.pulled = false
     }
 
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
       (scrollView as? TranscriptCollectionView)?.releaseReaderAnchor()
       (scrollView as? TranscriptCollectionView)?.maintainsBottomAnchor = false
+      (scrollView as? TranscriptCollectionView)?.readerJump = true
       return true
+    }
+
+    func scrollViewDidScrollToTop(_ scrollView: UIScrollView) { (scrollView as? TranscriptCollectionView)?.readerJump = false }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+      (scrollView as? TranscriptCollectionView)?.readerJump = false
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -269,6 +297,7 @@ struct TranscriptCollection: UIViewRepresentable {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
       guard let view = scrollView as? TranscriptCollectionView else { return }
       control.far.set(view.distanceToEnd > view.room / 2)
+      view.readerScrolled()
     }
 
     /// The gesture is over: a thread let go near its end follows it again
@@ -372,6 +401,18 @@ final class TranscriptCollectionView: UICollectionView {
   /// The last `safeFrame` change came in an animated transaction: a dock that only moved the bottom inset glides
   /// (`updateUIView`); taken by the next layout
   var dockGlides = false
+  /// Ask for the part of the session ahead of the view, the reader's (`readerScrolled`) and the thread's own (`short`);
+  /// one is under way at a time (`AppModel.loadEarlier`, `fillEarlier`). Nil when the view holds the session from its
+  /// first turn; set, the first row is the spinner
+  var loadEarlier: (() -> Void)?
+  var fillEarlier: (() -> Void)?
+  /// A jump the reader asked for is running (the status bar, a VoiceOver scroll): its scroll steps are the reader's, as
+  /// a finger's and a fling's are (`readerScrolled`)
+  var readerJump = false
+  /// The pull under way has asked already (`readerScrolled`)
+  var pulled = false
+  /// A look at whether the thread fills its room is on its way (`fillWhenSettled`)
+  private var fillChecked = false
 
   /// A row's height before it is first measured; rows still at it are no reading position (`firstVisibleItem`)
   static let estimatedRowHeight: CGFloat = 120
@@ -393,6 +434,9 @@ final class TranscriptCollectionView: UICollectionView {
   private var needsInitialBottomPosition = true
   private var bottomGlide: CADisplayLink?
   private var glideVelocity: CGFloat = 0
+  /// The row whose end stays where it is through the layout pass in which an earlier part of the session takes its
+  /// room above it (`keepEnd`)
+  private var heldEnd: VisibleItem?
 
   /// The room between the insets
   var room: CGFloat { bounds.height - adjustedContentInset.top - adjustedContentInset.bottom }
@@ -481,6 +525,7 @@ final class TranscriptCollectionView: UICollectionView {
   override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
     releaseReaderAnchor()
     maintainsBottomAnchor = false
+    readerJump = true
     return super.accessibilityScroll(direction)
   }
 
@@ -490,6 +535,7 @@ final class TranscriptCollectionView: UICollectionView {
   }
 
   override func layoutSubviews() {
+    defer { if fillEarlier != nil, !fillChecked, short { fillWhenSettled() } }
     let previousOffset = contentOffset.y
     let beforeLayout = viewportGeometry
     // Self-sizing can land before or during super's layout. Keep the following reader's gap when a process closes,
@@ -530,6 +576,8 @@ final class TranscriptCollectionView: UICollectionView {
       isRestoringBottomAnchor = true
       contentOffset.y = min(afterLayout.bottomOffset, max(-afterLayout.topInset, offset))
       isRestoringBottomAnchor = false
+    } else if let heldEnd {
+      restoreEnd(heldEnd)
     } else if let visibleAnchor { keepOnScreen(visibleAnchor) }
 
     let geometry = viewportGeometry
@@ -590,19 +638,96 @@ final class TranscriptCollectionView: UICollectionView {
     let itemID: String?
     let indexPath: IndexPath
     let minYInViewport: CGFloat
+    let maxYInViewport: CGFloat
+  }
+
+  /// The rows are taller than the room: there is somewhere to scroll
+  private var scrolls: Bool { contentSize.height > room }
+
+  /// Every row is on screen and measured, and together they leave the room unfilled. Rows not yet measured stand at
+  /// the estimate, which makes a few very tall ones read short for a pass
+  private var short: Bool {
+    guard window != nil, !needsInitialBottomPosition, contentSize.height > 0, !scrolls, numberOfSections > 0 else { return false }
+    let cells = visibleCells
+    return cells.count == numberOfItems(inSection: 0)
+      && cells.allSatisfy { abs($0.frame.height - Self.estimatedRowHeight) > 0.5 }
+  }
+
+  /// A thread that leaves its room unfilled has nothing to scroll up with, so it asks for the part ahead by itself.
+  /// Decided once the passes of this turn are through: a row that just took in a part still has its old height in the
+  /// pass after it, and the thread would ask for one part more than fills the room
+  private func fillWhenSettled() {
+    fillChecked = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      fillChecked = false
+      layoutIfNeeded()
+      if short { fillEarlier?() }
+    }
+  }
+
+  /// A scroll step. Only the reader's own (a finger, a fling, a jump) with the top of the view within a screen asks
+  /// for the part ahead; a part that lands, or any layout change, never asks for the next one. A part can add no
+  /// height at all (the steps of a finished turn sit in a closed fold), so a thread that asked whenever the spinner
+  /// was in view would pull a huge turn part after part under a reader resting at the top. A fling still moving keeps
+  /// stepping, so scrolling up keeps loading. A thread too short to scroll has only the pull at its top: one ask a pull
+  func readerScrolled() {
+    guard let loadEarlier, window != nil, !isRestoringBottomAnchor, !isPerformingLayout, !needsInitialBottomPosition,
+          isTracking || isDragging || isDecelerating || readerJump else { return }
+    let above = contentOffset.y + adjustedContentInset.top
+    if scrolls {
+      if above < room { loadEarlier() }
+    } else if above < -0.5, !pulled {
+      pulled = true
+      loadEarlier()
+    }
   }
 
   /// The first visible row the reader has seen measured, from the cells' last frames (asking the layout here would
   /// apply pending size changes before they can be measured against). A row still at its estimated height is skipped:
   /// scrolling up it grows as it is first measured, and the rows below it are what the reader is looking at
-  func firstVisibleItem() -> VisibleItem? {
+  func firstVisibleItem(skipping skipped: String? = nil) -> VisibleItem? {
     var first: (IndexPath, CGRect)?
     for cell in visibleCells where cell.frame.intersects(bounds) && abs(cell.frame.height - Self.estimatedRowHeight) > 0.5 {
       guard let indexPath = indexPath(for: cell) else { continue }
+      if skipped != nil, readerItemID?(indexPath) == skipped { continue }
       if first.map({ indexPath < $0.0 }) ?? true { first = (indexPath, cell.frame) }
     }
     guard let (indexPath, frame) = first else { return nil }
-    return VisibleItem(itemID: readerItemID?(indexPath), indexPath: indexPath, minYInViewport: frame.minY - contentOffset.y)
+    return VisibleItem(itemID: readerItemID?(indexPath), indexPath: indexPath, minYInViewport: frame.minY - contentOffset.y,
+                       maxYInViewport: frame.maxY - contentOffset.y)
+  }
+
+  /// An earlier part of the session went in above `item`: its end stays where the reader saw it. Unlike `keepOnScreen`
+  /// this also runs under the reader's finger or fling: the rows went in above the viewport, and left alone the thread
+  /// would jump down by their height in the middle of the gesture, which carries on from the corrected offset. The row
+  /// the view was cut in is measured with its earlier blocks only by a layout pass, where it would grow downwards from
+  /// its top: the pass is made here, with the end still held (`layoutSubviews`), so no scroll step comes in between and
+  /// the place held is still the reader's
+  func keepEnd(_ item: VisibleItem) {
+    restoreEnd(item)
+    // The end is where the thread follows already; holding a row there would fight the follow
+    guard !maintainsBottomAnchor else { return }
+    // A jump to the top still running (the status bar) is aimed at the top edge, wherever the rows went, and its next
+    // step would carry the reader on to the new top: it ends here. A finger or a fling is left alone
+    if !isTracking, !isDragging, !isDecelerating {
+      setContentOffset(contentOffset, animated: false)
+      readerJump = false
+    }
+    heldEnd = item
+    layoutIfNeeded()
+    heldEnd = nil
+  }
+
+  private func restoreEnd(_ item: VisibleItem) {
+    guard let indexPath = item.itemID.map({ readerIndexPath?($0) }) ?? item.indexPath,
+          let attributes = collectionViewLayout.layoutAttributesForItem(at: indexPath) else { return }
+    let geometry = viewportGeometry
+    let target = min(max(attributes.frame.maxY - item.maxYInViewport, -geometry.topInset), geometry.bottomOffset)
+    guard abs(contentOffset.y - target) > 0.5 else { return }
+    isRestoringBottomAnchor = true
+    contentOffset.y = target
+    isRestoringBottomAnchor = false
   }
 
   /// When a row that starts above the viewport resizes, UIKit shifts the offset by the whole change; for a streaming

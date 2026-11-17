@@ -62,11 +62,7 @@ The React UI in `packages/ui` and the render budget every stream chunk depends o
 
 ## Session patches and view cache
 
-- `sessionPatch` (`shared/sessionPatch.ts`, `acpira-shared/src/session_patch.rs`) goes to a page that posted `ready` with `patches: true` once it holds a view. `BridgeCore::deliver` diffs against what that page was sent last.
-- The page applies a patch only on the exact `base` rev it holds, otherwise posts `resync` once and gets the whole view.
-- Revs compare only within one epoch (session instance or follow subscription), and the page takes every whole view without comparing revs (`sessionViews.ts` `adopt`): comparing across epochs froze a page after another engine took the session over (`test/sidecarEngine.test.ts`).
-- The VS Code shell keeps one `postMessage` in flight per webview (`apps/vscode/src/outbox.ts`): a whole view replaces queued pushes of its session, patches fold together, a refused post makes the shell `resync`. The slow-post log line (`webview post of … took …`) is the first thing to check when a remote window lags.
-- Host and page keep the last view of recently shown sessions (`SentViews`, `SessionViews`), so a switch back is a patch; `init` clears both. Diff file texts never reach the page (`DiffSource.omitted`).
+See `view-sync.md`.
 
 ## Other surfaces
 

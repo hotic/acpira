@@ -185,6 +185,8 @@ val LocalRowEnter = compositionLocalOf { false }
 val LocalRowEnterDelay = compositionLocalOf { 0 }
 /** EntranceScopeContext: whether the turn is live, and its name (agents may repeat tool ids across turns) */
 val LocalEntranceScope = compositionLocalOf { EntranceScope(live = false, scope = "") }
+/** The block a turn's process opened on when it was first shown (`runId`): runs holding it keep its name */
+val LocalProcessHead = compositionLocalOf<String?> { null }
 /** The rail root the rows under it report their lead icons to; null stops them (a body rail's inner rows) */
 internal val LocalRailRoot = compositionLocalOf<RailRoot?> { null }
 

@@ -795,6 +795,13 @@ data class RemoteAuth(val agent: AgentInfo, val accounts: List<AccountInfo> = em
 @Serializable
 data class ForkOrigin(val sessionId: String, val turnIndex: Int = 0, val agent: AgentId? = null)
 
+/**
+ * What a windowed view leaves out ahead of its first turn (transcript.ts ViewEarlier): `turns` whole turns, and the first
+ * `blocks` blocks of the first turn it does hold (an agent turn)
+ */
+@Serializable
+data class ViewEarlier(val turns: Int = 0, val blocks: Int = 0)
+
 @Serializable
 data class SessionView(
   val id: String,
@@ -807,6 +814,11 @@ data class SessionView(
   val canTakeOver: Boolean? = null,
   val authMethods: List<AuthMethodInfo>? = null,
   val turns: List<Turn> = emptyList(),
+  /**
+   * Only in a view sent to a page that said `window` in ready (sessionWindow.ts): what it leaves out ahead of `turns[0]`,
+   * asked for with `loadEarlier`. Absent: the whole session
+   */
+  val earlier: ViewEarlier? = null,
   val running: Boolean = false,
   val rev: Int? = null,
   val controls: SessionControls = SessionControls(),
@@ -827,4 +839,17 @@ data class SessionView(
   val modelShapes: ModelShapes? = null,
   /** The goal controls the running agent advertises; absent without goal support (or no process yet) */
   val goalActions: List<GoalAction>? = null,
-)
+) {
+  /**
+   * The session's turns ahead of `turns[0]`. Turn indices in protocol messages (editTurn, forkSession,
+   * SubagentSummary.turnIndex) count from the session's first turn: an index into `turns` plus this
+   * (sessionWindow.ts sessionTurnIndex)
+   */
+  val turnsBefore: Int get() = earlier?.turns ?: 0
+
+  /** The session's turn count, the left-out turns included (editTurn's `turnCount`) */
+  val turnCount: Int get() = turnsBefore + turns.size
+
+  /** Part of the session is left out ahead of this view */
+  val windowed: Boolean get() = earlier.let { it != null && (it.turns > 0 || it.blocks > 0) }
+}

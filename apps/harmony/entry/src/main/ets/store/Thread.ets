@@ -1,4 +1,4 @@
-import { SessionView, SlashCommand, Turn } from '../wire/Wire';
+import { earlierTurns, SessionView, SlashCommand, Turn } from '../wire/Wire';
 import { asView, SubagentSummary } from '../wire/Blocks';
 import { isContextLengthError, shortStop } from '../logic/Composing';
 
@@ -11,7 +11,10 @@ import { isContextLengthError, shortStop } from '../logic/Composing';
 const turnIds: WeakMap<Turn, number> = new WeakMap<Turn, number>();
 let lastTurnId: number = 0;
 
-/** The thread's ForEach key for `turn` at `i`: stable while the patch keeps the same object at the same place */
+/**
+ * The thread's ForEach key for `turn` at `i`: stable while the patch keeps the same object at the same place. `i` counts
+ * from the session's first turn, not the view's: earlier turns loaded in front of a windowed view move no key
+ */
 export function turnKey(turn: Turn, i: number): string {
   let id = turnIds.get(turn);
   if (id === undefined) {
@@ -40,7 +43,7 @@ export class ThreadContext {
   @Trace title: string = '';
   /** The agent's advertised command names: the prompt bubbles tint them */
   @Trace commands: string[] = NO_COMMANDS;
-  /** The running turn's index, -1 while idle */
+  /** The running turn's index, -1 while idle; like `retry`, counted from the session's first turn, as the rows' own */
   @Trace live: number = -1;
   /** The failed turn Retry answers (TurnEdit.swift retryableTurn), -1 for none */
   @Trace retry: number = -1;
@@ -71,17 +74,18 @@ export class ThreadContext {
     }
     this.agent = view?.agent ?? '';
     this.title = view?.title ?? '';
-    this.live = view !== undefined && view.running ? view.turns.length - 1 : -1;
-    this.retry = view !== undefined ? retryableTurn(view) : -1;
+    const last = view !== undefined ? earlierTurns(view) + view.turns.length - 1 : -1;
+    this.live = view !== undefined && view.running ? last : -1;
+    this.retry = view !== undefined && retryable(view) ? last : -1;
   }
 }
 
-/** The failed turn Retry answers: an error that is not a context overflow, and that declares retry if it names remedies */
-function retryableTurn(view: SessionView): number {
+/** Retry answers the last turn: an error that is not a context overflow, and that declares retry if it names remedies */
+function retryable(view: SessionView): boolean {
   const turn = shortStop(view);
   if (turn === undefined || turn.stop !== 'error' || isContextLengthError(turn.error)) {
-    return -1;
+    return false;
   }
   const actions = turn.error?.actions;
-  return actions === undefined || actions.includes('retry') ? view.turns.length - 1 : -1;
+  return actions === undefined || actions.includes('retry');
 }

@@ -141,7 +141,8 @@ val LocalCanStopCommands = androidx.compose.runtime.compositionLocalOf { false }
 fun Dock(model: AppModel, id: String, session: SessionView, editing: cc.hotic.acpira.model.UserTurn?, composer: @Composable () -> Unit) {
   val question = remember(session.turns.lastOrNull()) { openQuestion(session) }
   val alertTurn = remember(session.turns.lastOrNull(), session.running, session.status) { shortStop(session) }
-  // The ✕ keeps the transcript row and drops the card, for this many turns
+  // The ✕ keeps the transcript row and drops the card, for this many turns (the session's count: loading the earlier
+  // part of a windowed view must not bring the card back)
   var dismissed by rememberSaveable(id) { mutableStateOf<Int?>(null) }
   val notice = noticeState(session, model.agents.firstOrNull { it.id == session.agent })
   // The composer's own top inset is the gap between the last card and its bar
@@ -152,10 +153,10 @@ fun Dock(model: AppModel, id: String, session: SessionView, editing: cc.hotic.ac
           QuestionCard(question) { answers, skipped -> model.answer(id, question.id, answers, skipped) }
         }
       }
-      if (alertTurn != null && dismissed != session.turns.size) {
+      if (alertTurn != null && dismissed != session.turnCount) {
         AlertCard(
           alertTurn,
-          onDismiss = { dismissed = session.turns.size },
+          onDismiss = { dismissed = session.turnCount },
           onRetry = { model.retryTurn(id) },
           onContinue = { model.carryOn(id) },
           onCompact = if (session.commands.any { it.name == "compact" }) ({ model.compact(id) }) else null,

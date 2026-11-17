@@ -142,6 +142,10 @@ struct ContractTests {
     try checkStruct(try need(hits.first), try need(TS.interface(proto, "SessionHit")))
     guard case .sessionPatch(let patch) = try decode(ContractSamples.pushes[6]) as HostMsg else { Issue.record("not sessionPatch"); return }
     try checkStruct(patch, try need(TS.interface(Self.source("sessionPatch.ts"), "SessionPatch")))
+    guard case .sessionEarlier(let chunk)? = try ContractSamples.pushes.last.map({ try decode($0) as HostMsg }) else {
+      Issue.record("not sessionEarlier"); return
+    }
+    try checkStruct(chunk, try need(TS.interface(Self.source("sessionWindow.ts"), "SessionEarlier")))
   }
 
   /// The transcript structs the messages carry: SessionView whole, AgentInfo but its own-mark fields, SessionSummary
@@ -201,6 +205,7 @@ struct ContractTests {
     try checkStruct(try need(view.usage), try need(TS.interface(transcript, "Usage")))
     try checkStruct(try need(view.goal), try need(TS.interface(transcript, "SessionGoal")))
     try checkStruct(try need(view.forkedFrom), try need(TS.interface(transcript, "ForkOrigin")))
+    try checkStruct(try need(view.earlier), try need(TS.interface(transcript, "ViewEarlier")))
 
     let summary = try need(view.subagents?.first), summaryFields = try need(TS.interface(subagents, "SubagentSummary"))
     try checkStruct(summary, summaryFields)
@@ -551,7 +556,8 @@ enum ContractSamples {
   ]
 
   static let actions: [WebviewMsg] = [
-    .ready(patches: true, listPatches: true),
+    .ready(patches: true, listPatches: true, window: true),
+    .loadEarlier(sessionId: "s1"),
     .resync,
     .resyncSessions,
     .send(sessionId: "s1", text: "hi", attachments: [drafts[0]], steer: true, clientId: "c1"),
@@ -661,7 +667,7 @@ enum ContractSamples {
     #"{"type":"goal","event":"set","objective":"ship it","iterations":2,"tokensUsed":1200,"timeUsedSeconds":0}"#,
   ]
 
-  static let richView = #"{"id":"s1","agent":"claude","accountId":"acc-1","title":"t","cwd":"/w","status":"auth_required","error":"sign in","canTakeOver":true,"authMethods":[{"id":"chatgpt","name":"ChatGPT","description":"browser login","terminal":{"args":["login"],"env":{"NO_COLOR":"1"}}}],"turns":[\#(userTurn),\#(agentTurn)],"running":true,"rev":2,"controls":{"modes":[],"options":[]},"modelShapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]},"usage":{"used":1000,"size":200000,"cost":0.5,"compactedFrom":150000},"commands":[],"queued":[{"id":"q1","text":"next","attachments":[],"sending":true}],"canSteer":true,"goal":{"objective":"ship it","status":"active","iterations":2,"tokenBudget":100000,"tokensUsed":1200,"timeUsedSeconds":40,"updatedAt":1761593614971},"goalActions":["set","pause","resume","clear"],"subagents":[\#(subagent)],"forkedFrom":{"sessionId":"s0","turnIndex":3,"agent":"codex"},"createdAt":"2026-10-27T19:33:34.971Z","updatedAt":"2026-10-27T19:33:34.971Z"}"#
+  static let richView = #"{"id":"s1","agent":"claude","accountId":"acc-1","title":"t","cwd":"/w","status":"auth_required","error":"sign in","canTakeOver":true,"authMethods":[{"id":"chatgpt","name":"ChatGPT","description":"browser login","terminal":{"args":["login"],"env":{"NO_COLOR":"1"}}}],"turns":[\#(userTurn),\#(agentTurn)],"earlier":{"turns":4,"blocks":2},"running":true,"rev":2,"controls":{"modes":[],"options":[]},"modelShapes":{"opus":[{"id":"effort","name":"Effort","options":[{"id":"high","name":"High"}],"value":"high"}]},"usage":{"used":1000,"size":200000,"cost":0.5,"compactedFrom":150000},"commands":[],"queued":[{"id":"q1","text":"next","attachments":[],"sending":true}],"canSteer":true,"goal":{"objective":"ship it","status":"active","iterations":2,"tokenBudget":100000,"tokensUsed":1200,"timeUsedSeconds":40,"updatedAt":1761593614971},"goalActions":["set","pause","resume","clear"],"subagents":[\#(subagent)],"forkedFrom":{"sessionId":"s0","turnIndex":3,"agent":"codex"},"createdAt":"2026-10-27T19:33:34.971Z","updatedAt":"2026-10-27T19:33:34.971Z"}"#
   static let userTurn = #"{"role":"user","id":"u1","text":"go","command":"goal","attachments":[{"kind":"text","blob":"b.txt","name":"notes.txt","context":{"sourceId":"browser","sourceName":"Browser"}},{"kind":"selection","blob":"s.txt","uri":"file:///w/a.ts","name":"a.ts","startLine":1,"endLine":3}],"settings":{"modeId":"agent","config":{"model":"opus"}},"edited":true,"planId":"p1","auto":true,"autoReason":"goal","goalContinue":true}"#
   static let agentTurn = #"{"role":"agent","observation":"unknown","blocks":[\#(blocks[11])],"usage":{"input":10,"output":20,"cachedRead":5,"cachedWrite":1,"reasoning":3,"total":39,"modelCalls":2,"decodeMs":800,"model":"opus","requestId":"r1","context":{"used":1000,"size":200000}},"startedAt":1000,"respondedAt":1100,"endedAt":2000,"idleMs":300,"activity":{"kind":"read","label":"Reading"},"stop":"error","error":{"message":"boom","code":-32603,"kind":"overloaded","retryable":true,"failureId":"f1","actions":["retry"]},"command":{"name":"goal","mode":"agent","options":[{"name":"Model","value":"opus"}]},"retry":{"attempt":1,"max":3,"detail":"retrying"}}"#
   static let subagent = #"{"id":"n1","parentId":"n0","turnIndex":1,"visibility":"session","title":"Scout","task":"find it","role":"scout","state":"running","stateSource":"agent","controls":{"cancel":true},"cancelRequested":false,"background":true,"announcedAt":1000,"endedAt":2000,"model":"opus","usage":{"used":10,"size":100},"peer":{"sessionId":"ps1","agentId":"a1","toolCallId":"call-1","sidechainId":"sc1"},"activity":"Reading","toolCount":3,"result":"done","hasProcess":true,"permissions":[\#(blocks[4])],"question":\#(blocks[7]),"harness":{"agent":"codex","persona":"scout","mode":"consult","thread":"n1","round":1,"sessionId":"cs1","effort":"high","group":"g1"}}"#
@@ -702,5 +708,6 @@ enum ContractSamples {
     #"{"type":"providers","view":{"providers":[{"id":"gw","name":"Gateway","preset":"custom","format":"openai-chat","baseUrl":"https://gw.example/v1","fullUrl":false,"enabled":true,"hasKey":true,"models":[],"headers":{"X-Team":"a"}}],"families":["generic"]},"error":"locked"}"#,
     #"{"type":"providerProbed","id":"p1","outcome":{"kind":"failed","error":"401"}}"#,
     #"{"type":"sessionUnavailable","id":"s1","reason":"record unreadable"}"#,
+    #"{"type":"sessionEarlier","chunk":{"id":"s1","from":{"turns":4,"blocks":2},"turns":[{"role":"user","id":"u4","text":"go"}],"blocks":[{"type":"text","markdown":"x"}],"earlier":{"turns":3,"blocks":0}}}"#,
   ]
 }

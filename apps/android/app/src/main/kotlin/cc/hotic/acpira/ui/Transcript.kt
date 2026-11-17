@@ -104,6 +104,7 @@ import cc.hotic.acpira.logic.LiveActivity
 import cc.hotic.acpira.logic.ProcessItem
 import cc.hotic.acpira.logic.clockStart
 import cc.hotic.acpira.logic.elapsedLabel
+import cc.hotic.acpira.logic.blockOwnId
 import cc.hotic.acpira.logic.groupProcess
 import cc.hotic.acpira.logic.PlanSection
 import cc.hotic.acpira.logic.splitPlanSections
@@ -285,6 +286,8 @@ fun AgentMessage(
   subagents: List<cc.hotic.acpira.model.SubagentSummary> = emptyList(),
   /** The session's newest turn: only there, once settled, do failure notices offer their remedies */
   last: Boolean = false,
+  /** The turn's first blocks a windowed view still leaves out (`SessionView.earlier`), on the view's first turn */
+  cut: Int = 0,
 ) {
   // A Revise end reads as settled, and error notices the closing row absorbs leave the blocks (TurnOutcome.swift)
   val absorbed = remember(turn) { absorbedNotices(turn) }
@@ -292,8 +295,9 @@ fun AgentMessage(
   // A call whose observation was lost reads as settled before anything groups or draws it
   val split = remember(shown) { splitCodexBlocks(shown.blocks.map(::observedBlock)) }
   // Content already there when the turn comes into view stays still: only what arrives afterwards enters. A new turn
-  // is first composed with at most its first block, which keeps its entrance
-  remember(key) { if (shown.blocks.size > 1) seedEntrances(shown, split.process, key) }
+  // is first composed with at most its first block, which keeps its entrance. Earlier blocks loaded ahead of the ones
+  // held ([cut] going down) were there all along too
+  remember(key, cut) { if (shown.blocks.size > 1) seedEntrances(shown, split.process, key) }
   // Subagent rows sit where they were delegated: a placed delegation row stays in the turn's process, and its node with
   // that node's same-turn descendants renders at that point. The others follow the turn's process (AgentMessage.swift)
   val placed = remember(shown, subagents) { cc.hotic.acpira.logic.delegatedIds(shown.blocks, subagents) }
@@ -692,13 +696,22 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
   if (retired && blocks.isEmpty()) return
   var manual by rememberSaveable(key) { mutableStateOf<Boolean?>(null) }
   val open = retired || (manual ?: running)
-  val items = remember(blocks) { groupProcess(blocks) }
-  val parts = remember(items) { processParts(items) }
+  // The block the process opened on when it was first shown. While the earlier part of a windowed turn loads ahead of
+  // it, the run and the part holding it keep its name (`runId`), so what the reader opened stays open and in place. It is
+  // named again once that block is gone (the view opened anew on the session's tail)
+  val opened = rememberSaveable(key) { arrayOf("") }
+  val head = remember(blocks) {
+    val first = blocks.firstOrNull()?.let(::blockOwnId).orEmpty()
+    if (first != opened[0] && blocks.none { blockOwnId(it) == opened[0] }) opened[0] = first
+    opened[0].ifEmpty { null }
+  }
+  val items = remember(blocks, head) { groupProcess(blocks, head) }
+  val parts = remember(items, head) { processParts(items, head) }
   // Only items fold; a process of nothing but steered prompts or delegations has no chevron
   val foldable = parts.any { it is FoldPart.Items }
   Column(Modifier.fillMaxWidth()) {
     if (!retired) EntranceOnce("fold-head") { FoldHead(turn, running, open, foldable, now) { manual = !open } }
-    CompositionLocalProvider(LocalImageInFold provides false) {
+    CompositionLocalProvider(LocalImageInFold provides false, LocalProcessHead provides head) {
     parts.forEachIndexed { i, part ->
       androidx.compose.runtime.key(part.id) {
         when (part) {
@@ -765,7 +778,7 @@ private const val HALF_SECOND_MS = 500
 /**
  * The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt and
  * subagent rows. Runs of items fold. A part is keyed by its first item, so content arriving later leaves the earlier
- * parts in place
+ * parts in place; the part holding `head` keeps that name when items land ahead of it (`runId`)
  */
 private sealed interface FoldPart {
   val id: String
@@ -776,7 +789,7 @@ private sealed interface FoldPart {
   data class Subagents(override val id: String, val ids: List<String>) : FoldPart
 }
 
-private fun processParts(items: List<ProcessItem>): List<FoldPart> {
+private fun processParts(items: List<ProcessItem>, head: String? = null): List<FoldPart> {
   val out = ArrayList<FoldPart>()
   var rows = ArrayList<ProcessItem>()
   var children = ArrayList<String>()
@@ -786,6 +799,8 @@ private fun processParts(items: List<ProcessItem>): List<FoldPart> {
     if (children.isNotEmpty()) { out += FoldPart.Subagents(runId, children); children = ArrayList() }
   }
   for (item in items) {
+    // The open part takes the head's name once it holds it (a steer or a media result is a part of its own)
+    if (item.id == head && (rows.isNotEmpty() || children.isNotEmpty())) runId = item.id
     val block = (item as? ProcessItem.Block)?.block
     val steer = block as? SteerBlock
     val child = (block as? ToolCallBlock)?.subagentId

@@ -11,6 +11,7 @@ use acpira_shared::appearance::Appearance;
 use acpira_shared::protocol::{ExportFormat, FileHit, HostMsg, InitState, ProjectBase, WebviewHost, WebviewMsg, is_safe_external_url};
 use acpira_shared::remote::normalize_remote_path;
 use acpira_shared::session_patch::{Delivery, SentViews};
+use acpira_shared::session_window::VIEW_WINDOW_BYTES;
 use acpira_shared::settings::is_setting_key;
 use acpira_shared::sidecar::{InitialView, PlanTarget, ToastOpen};
 
@@ -127,6 +128,8 @@ pub struct BridgeCore {
   refused: parking_lot::Mutex<Vec<HostMsg>>,
   /// The page applies `sessionPatch` messages (it said so in `ready`)
   patches: std::sync::atomic::AtomicBool,
+  /// The page takes session views that start at their tail and asks for the rest (`ready` with `window`; a paired phone)
+  window: std::sync::atomic::AtomicBool,
   /// The session views this page holds as far as patches go: the one on screen and the last one sent of each recent
   /// session, what the next patch of that session is computed against (`SentViews`)
   sent: parking_lot::Mutex<SentViews>,
@@ -212,6 +215,7 @@ impl BridgeCore {
       view_shown: Default::default(),
       refused: Default::default(),
       patches: Default::default(),
+      window: Default::default(),
       list_patches: Default::default(),
       listed: Default::default(),
       order: Default::default(),
@@ -270,8 +274,10 @@ impl BridgeCore {
     let (manager, platform) = (&self.manager, &self.platform);
     match m {
       W::ViewFocus => {}
-      W::Ready { patches, list_patches } => {
+      W::Ready { patches, list_patches, window } => {
         self.patches.store(patches, std::sync::atomic::Ordering::Release);
+        // A window moves with the patches that follow it: without them every push would open it again
+        self.window.store(window && patches, std::sync::atomic::Ordering::Release);
         self.list_patches.store(list_patches, std::sync::atomic::Ordering::Release);
         // A view (re)opening is a cheap moment to re-check executables and pick up sessions another window created
         let m2 = manager.clone();
@@ -310,10 +316,23 @@ impl BridgeCore {
         // a second copy of a long transcript just before init
         let mut sent = self.sent.lock();
         self.ready.store(true, std::sync::atomic::Ordering::Release);
-        let (active, active_parts) = match manager.session_msg(self.viewer.active_id().as_deref()) {
+        let (whole, active_parts) = match manager.session_msg(self.viewer.active_id().as_deref()) {
           Some(HostMsg::Session { session, parts, .. }) => (Some(session), parts),
           _ => (None, None),
         };
+        // Put together only when the page gets it whole: a window is cut from the parts
+        let mut active = None;
+        // The page takes init's view as a whole and starts its cache over, keeping that view as the one on screen: it
+        // becomes the base the next push of that session patches against, instead of a second copy of the transcript
+        sent.clear();
+        if let Some(parts) = active_parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire)) {
+          if !self.window.load(std::sync::atomic::Ordering::Acquire) {
+            sent.deliver(Some(parts));
+          } else if let Delivery::Window(view) = sent.deliver_window(parts, VIEW_WINDOW_BYTES) {
+            active = Some(view);
+          }
+        }
+        let active = active.or_else(|| whole.map(|w| w.raw().clone()));
         let state = InitState {
           host: self.host,
           appearance: (self.appearance)(),
@@ -333,12 +352,6 @@ impl BridgeCore {
           blob_base: self.blob_base.clone(),
           chats: Some(manager.chat_root().to_string_lossy().into_owned()),
         };
-        // The page takes init's view as a whole and starts its cache over, keeping that view as the one on screen: it
-        // becomes the base the next push of that session patches against, instead of a second copy of the transcript
-        sent.clear();
-        if let Some(parts) = active_parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire)) {
-          sent.deliver(Some(parts));
-        }
         // Init's list is the base of the next list patch, so the corrective list below goes as a patch (none if equal)
         *self.listed.lock() = list_patches.then(|| (0, state.sessions.clone()));
         self.emit(HostMsg::Init { state: Box::new(state) });
@@ -387,6 +400,21 @@ impl BridgeCore {
         }
         if let Some(m) = manager.session_msg(self.viewer.active_id().as_deref()) {
           self.deliver(m);
+        }
+      }
+      // The part right ahead of what the page holds, from the view it was sent last (what its copy is made of). A page
+      // the engine has no such view for gets the session again, opened at its tail
+      W::LoadEarlier { session_id } => {
+        let mut sent = self.sent.lock();
+        match sent.earlier(&session_id, VIEW_WINDOW_BYTES) {
+          Some(chunk) => self.emit(HostMsg::SessionEarlier { chunk }),
+          None if !sent.holds(&session_id) => {
+            drop(sent);
+            if let Some(m) = manager.session_msg(Some(&session_id)).filter(|_| self.viewer.active_id().as_deref() == Some(&session_id)) {
+              self.deliver(m);
+            }
+          }
+          None => {}
         }
       }
       W::ResyncSessions => {
@@ -1082,13 +1110,18 @@ impl BridgeCore {
       HostMsg::Sessions { sessions } => return self.deliver_list(sessions),
       m => m,
     };
-    let HostMsg::Session { parts, .. } = &m else { return self.emit(m) };
+    let HostMsg::Session { parts, running, .. } = &m else { return self.emit(m) };
     let mut sent = self.sent.lock();
     let next = parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire));
-    match sent.deliver(next) {
+    let delivery = match next {
+      Some(next) if self.window.load(std::sync::atomic::Ordering::Acquire) => sent.deliver_window(next, VIEW_WINDOW_BYTES),
+      next => sent.deliver(next),
+    };
+    match delivery {
       // Older than what the page shows: it carries nothing the page does not have and must not become a patch base
       Delivery::Stale => {}
       Delivery::Patch(patch) => self.emit(HostMsg::SessionPatch { patch }),
+      Delivery::Window(session) => self.emit(HostMsg::Session { session: session.into(), running: *running, parts: None }),
       Delivery::Whole => self.emit(m),
     }
   }

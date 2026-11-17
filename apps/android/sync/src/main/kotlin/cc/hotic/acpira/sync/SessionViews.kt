@@ -2,14 +2,20 @@ package cc.hotic.acpira.sync
 
 import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.HostMsg
+import cc.hotic.acpira.model.SessionEarlier
 import cc.hotic.acpira.model.SessionPatch
 import cc.hotic.acpira.model.SessionView
+import cc.hotic.acpira.model.ViewEarlier
 
 // Session patches (packages/shared/sessionPatch.ts) and the views the page keeps (packages/ui/sessionViews.ts). The
 // engine sends a page only the changed tail of a session view (rust/crates/acpira-shared/src/session_patch.rs); the page
 // keeps the view the patch was computed against and splices. Views are immutable values here, so the webview's
 // reference reuse (packages/shared/reuse.ts) has no counterpart: Compose skips turns that compare equal. Same rules as
 // apps/ios AcpiraSync/SessionPatches.swift and SessionViews.swift.
+//
+// The page says `window` in ready (packages/shared/sessionWindow.ts), so a view starts at the session's tail and the
+// part ahead of it comes in chunks the page asks for. Patches need nothing for that: the engine counts their indices
+// inside the window the page holds.
 
 /**
  * The view a patch leads to, or null when [current] is not the view it was computed against (another session, another
@@ -26,6 +32,24 @@ fun applySessionPatch(current: SessionView?, p: SessionPatch): SessionView? {
     tail[0] = head.copy(blocks = base.blocks.subList(0, keepBlocks) + p.blocks.orEmpty())
   }
   return p.view.copy(turns = current.turns.subList(0, p.keep) + tail)
+}
+
+/**
+ * sessionWindow.ts applySessionEarlier: the view with the chunk in front, or null when the chunk was cut for another
+ * window (a whole view landed since the page asked): the page drops it and asks again if it still wants more. The rev
+ * stays, nothing in the session changed
+ */
+fun applySessionEarlier(current: SessionView?, c: SessionEarlier): SessionView? {
+  if (current == null || current.id != c.id) return null
+  if ((current.earlier ?: ViewEarlier()) != c.from) return null
+  var held = current.turns
+  val blocks = c.blocks
+  if (!blocks.isNullOrEmpty()) {
+    // The blocks belong to the turn the window was cut inside, which only an agent turn can be
+    val first = held.firstOrNull() as? AgentTurn ?: return null
+    held = listOf(first.copy(blocks = blocks + first.blocks)) + held.subList(1, held.size)
+  }
+  return current.copy(turns = c.turns + held, earlier = c.earlier)
 }
 
 /**
@@ -113,6 +137,20 @@ class SessionViews {
     return SessionPush.Unknown
   }
 
+  /**
+   * A chunk of the part ahead of a view (`sessionEarlier`), put in front of it wherever the page holds it: on screen, or
+   * kept from a session shown before. One that does not fit the held window is dropped. It is no new showing of the
+   * session, so the cache order stays
+   */
+  fun earlier(c: SessionEarlier): SessionPush {
+    val onScreen = current?.takeIf { it.id == c.id }
+    val next = applySessionEarlier(onScreen ?: views[c.id], c) ?: return SessionPush.Stale
+    if (c.id in views) views[c.id] = next
+    if (onScreen == null) return SessionPush.Stale
+    current = next
+    return SessionPush.Show(next)
+  }
+
   /** Ids kept, least recently shown first */
   val kept: List<String> get() = order.toList()
 
@@ -132,8 +170,8 @@ class SessionViews {
 }
 
 /**
- * The page's handling of session pushes (packages/ui/App.tsx `init`, `session`, `noSession`, `sessionPatch`): the view
- * to show, and a `resync` asked once for a patch that does not fit, until a whole view lands
+ * The page's handling of session pushes (packages/ui/App.tsx `init`, `session`, `noSession`, `sessionPatch`, and
+ * `sessionEarlier`): the view to show, and a `resync` asked once for a patch that does not fit, until a whole view lands
  */
 class SessionFeed {
   sealed interface Outcome {
@@ -161,6 +199,10 @@ class SessionFeed {
         resyncAsked = true
         Outcome.Resync
       }
+    }
+    is HostMsg.Earlier -> when (val push = views.earlier(message.chunk)) {
+      is SessionPush.Show -> Outcome.Show(push.view)
+      else -> Outcome.Unchanged
     }
     else -> Outcome.Unchanged
   }

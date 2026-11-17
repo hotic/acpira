@@ -71,7 +71,9 @@ enum EntranceLedger {
     guard let index = session.turns.lastIndex(where: { if case .agent = $0 { true } else { false } }),
           case .agent(let agent) = session.turns[index] else { return }
     let nodes = nodesByTurn(session.subagents ?? [])
-    seed(turn: agent, scope: "\(session.id):\(index)", subagents: nodes[index] ?? [])
+    // The scope the turn's row carries and the turn its children name count from the session's first turn (`threadItems`)
+    let at = index + session.turnBase
+    seed(turn: agent, scope: "\(session.id):\(at)", subagents: nodes[at] ?? [])
   }
 
   static func seed(turn: AgentTurn, scope: String, subagents: [SubagentSummary]) {

@@ -85,6 +85,151 @@ struct SessionPatchTests {
   }
 }
 
+/// packages/shared/sessionWindow.ts (test/sessionWindow.test.ts): a view that starts at the session's tail, and the parts
+/// ahead of it the page asks for
+struct SessionWindowTests {
+  private func windowed(_ turns: [Turn], _ earlier: ViewEarlier?) throws -> SessionView {
+    var v = try view("s", 3, [])
+    v.turns = turns
+    v.earlier = earlier
+    return v
+  }
+
+  private func text(_ markdown: String) throws -> AgentBlock {
+    try JSONDecoder().decode(AgentBlock.self, from: Data(#"{"type":"text","markdown":"\#(markdown)"}"#.utf8))
+  }
+
+  private func user(_ id: String) throws -> Turn { try view("s", 0, [id]).turns[0] }
+
+  /// test/fixtures/engine-window.json (rust/crates/acpira-host/tests/engine/golden.rs): what the engine sends a page
+  /// that takes windows. From `first`, every whole view, patch and chunk in order must leave exactly the recorded view,
+  /// through the functions and through the feed the app model runs
+  @Test func engineWindowStepsReachEveryView() throws {
+    struct Step: Decodable { var session: SessionView?; var patch: SessionPatch?; var chunk: SessionEarlier?; var view: SessionView }
+    struct Fixture: Decodable { var first: SessionView; var steps: [Step] }
+    let data = try Data(contentsOf: ContractTests.root.appending(path: "test/fixtures/engine-window.json"))
+    let fixture = try JSONDecoder().decode(Fixture.self, from: data)
+    #expect(fixture.first.earlier != nil)
+    var held: SessionView? = fixture.first
+    var feed = SessionFeed()
+    _ = feed.receive(.session(session: fixture.first))
+    var kinds = Set<String>()
+    for (i, step) in fixture.steps.enumerated() {
+      if let session = step.session {
+        kinds.insert("session")
+        held = session
+        #expect(feed.receive(.session(session: session)) == .show(step.view), "step \(i)")
+      } else if let patch = step.patch {
+        kinds.insert("patch")
+        held = applySessionPatch(held, patch)
+        #expect(feed.receive(.sessionPatch(patch: patch)) == .show(step.view), "step \(i)")
+      } else if let chunk = step.chunk {
+        kinds.insert(chunk.blocks?.isEmpty == false ? "blocks" : "turns")
+        held = applySessionEarlier(held, chunk)
+        #expect(feed.receive(.sessionEarlier(chunk: chunk)) == .earlier(step.view), "step \(i)")
+      }
+      #expect(held == step.view, "step \(i)")
+      #expect(feed.views.current == step.view, "step \(i)")
+    }
+    #expect(kinds == ["session", "patch", "blocks", "turns"])
+    #expect(held?.earlier == nil)
+  }
+
+  @Test func aChunkGoesInFrontOfTheTurnsAndItsBlocksInFrontOfTheCutTurn() throws {
+    let current = try windowed([try agent(["c", "d"]), try user("u3")], ViewEarlier(turns: 2, blocks: 2))
+    let chunk = SessionEarlier(id: "s", from: ViewEarlier(turns: 2, blocks: 2), turns: [try user("u2")],
+                               blocks: [try text("a"), try text("b")], earlier: ViewEarlier(turns: 1, blocks: 0))
+    let next = try #require(applySessionEarlier(current, chunk))
+    #expect(next.turns == [try user("u2"), try agent(["a", "b", "c", "d"]), try user("u3")])
+    #expect(next.earlier == ViewEarlier(turns: 1, blocks: 0))
+    #expect(next.rev == 3)
+    // A turn keeps its place in the session while the view grows ahead of it
+    #expect(current.turnBase + 1 == next.turnBase + 2 && current.turnCount == 4 && next.turnCount == 4)
+    // The last chunk leaves a whole view
+    let whole = try #require(applySessionEarlier(next, SessionEarlier(id: "s", from: ViewEarlier(turns: 1, blocks: 0), turns: [try user("u1")])))
+    #expect(whole.earlier == nil && whole.turns.count == 4 && whole.turnBase == 0)
+  }
+
+  @Test func aChunkCutForAnotherWindowDoesNotApply() throws {
+    let current = try windowed([try agent(["c"]), try user("u3")], ViewEarlier(turns: 2, blocks: 1))
+    let chunk = SessionEarlier(id: "s", from: ViewEarlier(turns: 2, blocks: 1), turns: [], blocks: [try text("a")])
+    #expect(applySessionEarlier(nil, chunk) == nil)
+    var other = current
+    other.id = "t"
+    #expect(applySessionEarlier(other, chunk) == nil)
+    var moved = chunk
+    moved.from = ViewEarlier(turns: 2, blocks: 0)
+    #expect(applySessionEarlier(current, moved) == nil)
+    // A whole view takes nothing more
+    #expect(applySessionEarlier(try windowed([try user("u")], nil), chunk) == nil)
+    // Blocks for a first turn that has none
+    #expect(applySessionEarlier(try windowed([try user("u")], ViewEarlier(turns: 2, blocks: 1)), chunk) == nil)
+    #expect(applySessionEarlier(try windowed([], ViewEarlier(turns: 2, blocks: 1)), chunk) == nil)
+    #expect(applySessionEarlier(current, chunk) != nil)
+  }
+
+  /// The engine counts a patch inside the window it has on record for the page. A chunk lost on the way leaves the
+  /// page's window behind that record: the patch must ask for the whole view, not splice into other turns
+  @Test func aPatchCountedInAnotherWindowDoesNotApply() throws {
+    let current = try windowed([try agent(["c"]), try user("u3")], ViewEarlier(turns: 2, blocks: 1))
+    var head = try view("s", 4, [])
+    head.earlier = ViewEarlier(turns: 2, blocks: 1)
+    var p = SessionPatch(id: "s", base: 3, view: head, keep: 2, turns: [try user("u4")])
+    let next = try #require(applySessionPatch(current, p))
+    #expect(next.turns.count == 3 && next.earlier == ViewEarlier(turns: 2, blocks: 1))
+    p.view.earlier = ViewEarlier(turns: 1, blocks: 0)
+    #expect(applySessionPatch(current, p) == nil)
+    p.view.earlier = nil
+    #expect(applySessionPatch(current, p) == nil)
+  }
+
+  @Test func aChunkReachesTheViewWhereverThePageHoldsIt() throws {
+    let at = ViewEarlier(turns: 1, blocks: 0)
+    let chunk = SessionEarlier(id: "s", from: at, turns: [try user("u1")])
+    var v = SessionViews()
+    _ = v.whole(try windowed([try user("u2")], at))
+    // On screen
+    guard case .took(let shown) = v.earlier(chunk) else { Issue.record("not taken"); return }
+    #expect(prompts(shown) == ["u1", "u2"] && shown.earlier == nil)
+    #expect(v.current == shown)
+    // The same chunk again was cut for a window the view has left
+    #expect(v.earlier(chunk) == .unknown)
+
+    // Kept: the reader switched away after the thread asked. The copy takes the chunk where it stands, and the
+    // session on screen and the order of the kept ones stay
+    var w = SessionViews()
+    _ = w.whole(try windowed([try user("u2")], at))
+    _ = w.whole(try view("b", 1, ["b1"]))
+    guard case .took(let kept) = w.earlier(chunk) else { Issue.record("not taken"); return }
+    #expect(prompts(kept) == ["u1", "u2"])
+    #expect(w.current?.id == "b" && w.kept == ["s", "b"])
+    #expect(w.select("s") == kept)
+    // A chunk that does not fit a kept copy drops it: the patch that would follow asks for the whole view
+    _ = w.select("b")
+    #expect(w.earlier(chunk) == .stale)
+    #expect(w.kept == ["b"])
+    // A session the page holds no view of
+    #expect(w.earlier(SessionEarlier(id: "x", from: at, turns: [])) == .stale)
+  }
+
+  /// A chunk that does not fit the view on screen means the engine's record of the page's window and the page's own
+  /// came apart: the whole view is asked for, once
+  @Test func aChunkThatDoesNotFitTheViewOnScreenAsksForTheWholeView() throws {
+    let at = ViewEarlier(turns: 1, blocks: 0)
+    var feed = SessionFeed()
+    _ = feed.receive(.session(session: try windowed([try user("u2")], at)))
+    let stray = SessionEarlier(id: "s", from: ViewEarlier(turns: 3, blocks: 0), turns: [try user("u1")])
+    #expect(feed.receive(.sessionEarlier(chunk: stray)) == .resync)
+    #expect(feed.receive(.sessionEarlier(chunk: stray)) == .unchanged)
+    let whole = try windowed([try user("u2")], at)
+    #expect(feed.receive(.session(session: whole)) == .show(whole))
+    var taken = whole
+    taken.turns.insert(try user("u1"), at: 0)
+    taken.earlier = nil
+    #expect(feed.receive(.sessionEarlier(chunk: SessionEarlier(id: "s", from: at, turns: [try user("u1")]))) == .earlier(taken))
+  }
+}
+
 /// packages/ui/test/sessionViews.test.ts, the cases that do not hinge on object identity
 struct SessionViewsTests {
   @Test func switchingBackToAKeptSessionAppliesThePatchAgainstItsKeptView() throws {

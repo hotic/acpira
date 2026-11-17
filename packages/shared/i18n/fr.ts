@@ -1980,6 +1980,7 @@ export const fr = {
   'devices.buttonOnline': 'Appareils ({n} en ligne)',
   'devices.online': '{n} en ligne',
   'devices.noneOnline': 'Aucun appareil en ligne',
+  'devices.sessionTooLong': "Cette session est trop longue pour cette version de l'app. Mettez à jour Acpira sur cet appareil pour l'ouvrir.",
   'devices.encrypted': 'Chiffré de bout en bout',
   'devices.add': 'Ajouter un appareil',
   'devices.code': 'Code d’association',

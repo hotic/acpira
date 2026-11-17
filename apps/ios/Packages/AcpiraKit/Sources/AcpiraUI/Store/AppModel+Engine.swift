@@ -34,7 +34,7 @@ extension AppModel {
   /// Says ready (queued until the view is attached) and applies every event until the wire ends
   func connect() {
     guard let link else { return }
-    link.client.post(.ready(patches: true, listPatches: true))
+    link.client.post(.ready(patches: true, listPatches: true, window: true))
     Task { [weak self] in
       await link.client.start()
       for await event in link.client.events {
@@ -82,6 +82,9 @@ extension AppModel {
     guard let link else { return }
     switch message {
     case .initState(let state):
+      // The engine starts its record of what the page holds over: no ask from before is answered
+      for id in Array(loadingEarlier.keys) { earlierAnswered(id) }
+      earlierFills.removeAll()
       if let base = state.blobBase { link.blobBase = base }
       chatRoot = state.chats
       agents = state.agents
@@ -147,7 +150,16 @@ extension AppModel {
       receiveProviders(view, error: error)
     case let .providerProbed(id, outcome):
       probing.removeValue(forKey: id)?.resume(returning: outcome)
-    case .session, .sessionPatch, .noSession:
+    case .session(let view):
+      // Also the engine's answer to `loadEarlier` when it no longer knows what the page holds
+      earlierAnswered(view.id)
+      // A view sent afresh may fill a short thread again
+      earlierFills[view.id] = nil
+      present(message)
+    case .sessionEarlier(let chunk):
+      earlierAnswered(chunk.id)
+      present(message)
+    case .sessionPatch, .noSession:
       present(message)
     case let .sessionUnavailable(id, reason):
       if views[id] == nil { unavailable[id] = reason }
@@ -230,11 +242,54 @@ extension AppModel {
         link.awaiting = nil
         awaiting.then(view.id)
       }
+    case .earlier(let view):
+      // The part ahead of what a thread shows. Nothing in the session changed, so this is no live output, no turn's
+      // end and no list feedback; its rows count as there all along (a running turn plays entrances for new ones)
+      EntranceLedger.seed(view)
+      if views[view.id] != nil { views[view.id] = view }
     case .show(nil), .unchanged:
       break
     case .resync:
       link.client.post(.resync)
     }
+  }
+
+  /// How long an ask for a session's earlier part counts as under way. The engine gives no answer when it holds no
+  /// view of the session for this page and the view shows another one, and an answer can be left out on the way (the
+  /// gateway's send queue): the thread then asks again on the reader's next scroll near its top
+  static let earlierWait: Duration = .seconds(15)
+
+  /// The reader scrolls near the top of a view that starts at its tail (`SessionView.earlier`): asks for the part right
+  /// ahead of it, one ask at a time, and says whether this one went out. The answer is a `sessionEarlier`, or the whole
+  /// `session` again
+  @discardableResult func loadEarlier(_ id: String) -> Bool {
+    // Only for a view this wire's engine sent: it cuts the chunk from its record of what the page holds, and has none
+    // of a view carried over from the wire before
+    guard let link, !ended, loadingEarlier[id] == nil, views[id]?.earlier != nil, shown(id) else { return false }
+    link.client.post(.loadEarlier(sessionId: id))
+    loadingEarlier[id] = Task { [weak self] in
+      try? await Task.sleep(for: Self.earlierWait)
+      guard !Task.isCancelled else { return }
+      self?.loadingEarlier[id] = nil
+    }
+    return true
+  }
+
+  /// The parts a thread asks for by itself, in a row, since its view was shown or sent afresh
+  static let earlierFillLimit = 4
+
+  /// The thread is too short to scroll, so the reader has no way to scroll up to the part ahead: the thread asks by
+  /// itself (`TranscriptCollectionView.short`), a few parts at most. A part can add no height at all (the steps of a
+  /// finished turn sit in a closed fold), and a thread that kept asking would pull a huge turn whole, minutes on a
+  /// relayed link; past the allowance it takes the reader's pull at the top (`loadEarlier`)
+  func fillEarlier(_ id: String) {
+    let left = earlierFills[id] ?? Self.earlierFillLimit
+    guard left > 0, loadEarlier(id) else { return }
+    earlierFills[id] = left - 1
+  }
+
+  private func earlierAnswered(_ id: String) {
+    loadingEarlier.removeValue(forKey: id)?.cancel()
   }
 
   /// A new wire to the computer the screens follow (coming back from the background, a retry): they stay where they
@@ -346,6 +401,7 @@ extension AppModel {
 
   /// A chat came on screen: its kept view at once, and the engine switches the view to it
   func open(_ id: String) {
+    earlierFills[id] = nil
     if runs[id] == nil, let current = views[id] {
       liveSessions.remove(id)
       EntranceLedger.seed(current)
@@ -419,7 +475,8 @@ extension AppModel {
     }
   }
 
-  /// The engine forks and shows the fork on this view; its chat opens over the source
+  /// The engine forks and shows the fork on this view; its chat opens over the source. `turn` counts from the session's
+  /// first turn
   func engineFork(_ id: String, through turn: Int) {
     guard let link else { return }
     link.awaiting = (from: id, then: { [weak self] fork in

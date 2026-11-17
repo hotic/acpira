@@ -19,6 +19,8 @@ export interface WebviewMsg {
   type: string;
   patches?: boolean;
   listPatches?: boolean;
+  /** `ready`: session views start at their tail (SessionView.earlier) and `loadEarlier` asks for the part ahead */
+  window?: boolean;
   id?: string;
   sessionId?: string;
   text?: string;

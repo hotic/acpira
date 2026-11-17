@@ -80,6 +80,15 @@ export interface Turn {
   error?: TurnError;
 }
 
+/**
+ * transcript.ts ViewEarlier: what a windowed view leaves out ahead of `turns[0]`: `turns` whole turns, and the first
+ * `blocks` blocks of `turns[0]` itself (an agent turn cut inside its blocks)
+ */
+export interface ViewEarlier {
+  turns: number;
+  blocks: number;
+}
+
 export interface SessionView {
   id: string;
   agent: string;
@@ -89,6 +98,12 @@ export interface SessionView {
   turns: Turn[];
   running: boolean;
   rev?: number;
+  /**
+   * Set while the view starts at the session's tail (the app says `window` in ready); absent once it is whole. Turn
+   * indices on the wire (editTurn, forkSession, a subagent's turnIndex) count from the session's first turn: an index
+   * into `turns` plus `earlier.turns` (`earlierTurns`)
+   */
+  earlier?: ViewEarlier;
   // composer: what the composer's pickers, ring and dock read
   controls?: SessionControls;
   usage?: Usage;
@@ -149,6 +164,24 @@ export interface SessionPatchMsg {
   patch: SessionPatch;
 }
 
+/**
+ * sessionWindow.ts SessionEarlier, the one answer to `loadEarlier`: `blocks` go ahead of the blocks of the held
+ * `turns[0]`, then `turns` ahead of the held turns; `earlier` is what is still left out, absent once the view is whole.
+ * `from` is the window it was cut for
+ */
+export interface SessionEarlier {
+  id: string;
+  from: ViewEarlier;
+  turns: Turn[];
+  blocks?: AgentBlock[];
+  earlier?: ViewEarlier;
+}
+
+export interface SessionEarlierMsg {
+  type: string;
+  chunk: SessionEarlier;
+}
+
 export interface SessionsPatchMsg {
   type: string;
   patch: SessionsPatch;
@@ -185,6 +218,52 @@ export function applySessionPatch(current: SessionView | undefined, p: SessionPa
   }
   const view: SessionView = p.view;
   view.turns = current.turns.slice(0, p.keep).concat(tail);
+  return view;
+}
+
+/** Turns the view leaves out ahead of its first: what a row's index adds to count from the session's first turn */
+export function earlierTurns(view: SessionView | undefined): number {
+  return view?.earlier?.turns ?? 0;
+}
+
+/** A parsed wire object's own copy, one level deep, with every field the wire sent (ArkTS has no object spread) */
+function copyOf(source: Object): Record<string, Object> {
+  const from = source as Record<string, Object>;
+  const out: Record<string, Object> = {};
+  Object.keys(from).forEach((key: string) => {
+    out[key] = from[key];
+  });
+  return out;
+}
+
+/**
+ * The view with the chunk in front (sessionWindow.ts applySessionEarlier), or undefined when the chunk was cut for
+ * another window (a whole view landed since it was asked for): then it is dropped. The rev stays. The held turns keep
+ * their objects, so their rows stay (store/Thread.ets turnKey); only a cut first turn that gains its leading blocks is
+ * a new object, and its row alone is built again
+ */
+export function applySessionEarlier(current: SessionView | undefined, c: SessionEarlier): SessionView | undefined {
+  if (current === undefined || current.id !== c.id) {
+    return undefined;
+  }
+  if ((current.earlier?.turns ?? 0) !== c.from.turns || (current.earlier?.blocks ?? 0) !== c.from.blocks) {
+    return undefined;
+  }
+  let held: Turn[] = current.turns;
+  const lead: AgentBlock[] = c.blocks ?? [];
+  if (lead.length > 0) {
+    const first: Turn | undefined = held[0];
+    if (first === undefined || first.role !== 'agent') {
+      return undefined;
+    }
+    const grown = copyOf(first) as Object as Turn;
+    grown.blocks = lead.concat(first.blocks ?? []);
+    const front: Turn[] = [grown];
+    held = front.concat(held.slice(1));
+  }
+  const view = copyOf(current) as Object as SessionView;
+  view.earlier = c.earlier;
+  view.turns = c.turns.concat(held);
   return view;
 }
 
@@ -487,7 +566,8 @@ export function viewWithTurns(view: SessionView, turns: Turn[]): SessionView {
   const out: SessionView = {
     id: view.id, agent: view.agent, title: view.title, cwd: view.cwd, status: view.status, running: view.running,
     rev: view.rev, turns: turns, controls: view.controls, usage: view.usage, commands: view.commands, queued: view.queued,
-    canSteer: view.canSteer, goal: view.goal, goalActions: view.goalActions, subagents: view.subagents
+    canSteer: view.canSteer, goal: view.goal, goalActions: view.goalActions, subagents: view.subagents,
+    earlier: view.earlier
   };
   return out;
 }

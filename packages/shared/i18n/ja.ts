@@ -1982,6 +1982,7 @@ export const ja = {
   'devices.buttonOnline': 'デバイス（{n} 台オンライン）',
   'devices.online': '{n} 台がオンライン',
   'devices.noneOnline': 'オンラインのデバイスはありません',
+  'devices.sessionTooLong': 'このセッションは長すぎて、このバージョンのアプリでは開けません。このデバイスの Acpira を更新してください。',
   'devices.encrypted': 'エンドツーエンド暗号化',
   'devices.add': 'デバイスを追加',
   'devices.code': 'ペアリングコード',

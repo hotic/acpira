@@ -95,6 +95,13 @@ final class AppModel {
   var unavailable: [String: String] = [:]
   /// Prompts sent to the engine that their session does not show yet, by session (Outgoing.swift)
   var outgoing: [String: [Outgoing]] = [:]
+  /// Sessions whose earlier part the thread asked the engine for and has no answer to yet (`loadEarlier`), each with
+  /// the wait that gives up on it: one ask under way per session. Observed: the thread's first row shows its spinner
+  /// only while one is
+  var loadingEarlier: [String: Task<Void, Never>] = [:]
+  /// How many earlier parts a thread too short to scroll may still ask for by itself, by session (`fillEarlier`); none
+  /// noted is the whole allowance
+  @ObservationIgnored var earlierFills: [String: Int] = [:]
   var path: [Route] = []
   var toast: Toast?
   /// Folders added by hand, ahead of the ones sessions use
@@ -1084,11 +1091,14 @@ final class AppModel {
     views[id] = kept.view
   }
 
-  /// Fork from a turn: a new session holding the transcript up to and including that turn, opened over this one
-  func fork(_ id: String, through turn: Int) {
-    guard let source = views[id], source.turns.indices.contains(turn) else { return }
+  /// Fork from a turn: a new session holding the transcript up to and including that turn, opened over this one.
+  /// `index` is the turn's place in the session, as the thread's rows carry it (`threadItems`) and forkSession counts it
+  func fork(_ id: String, through index: Int) {
+    guard let source = views[id] else { return }
+    let turn = index - source.turnBase
+    guard source.turns.indices.contains(turn) else { return }
     if link != nil {
-      engineFork(id, through: turn)
+      engineFork(id, through: index)
       return
     }
     serial += 1
@@ -1111,7 +1121,7 @@ final class AppModel {
 
   /// Writes the export to a temporary file and hands it to the share sheet. The Markdown and the plain text are
   /// `sessionMarkdown`'s (with an engine, the desktop's own exports, so a list row's session the phone never opened
-  /// exports too); the JSON is the view the phone holds
+  /// exports too); the JSON is the view the phone holds, offered only while that is the whole session (`holdsWholeView`)
   func export(_ id: String, format: ExportFormat) {
     Task {
       let title = views[id]?.title ?? summaries.first { $0.id == id }?.title ?? ""
@@ -1136,6 +1146,12 @@ final class AppModel {
   /// it: a list row's menu asks, and observing `views` there would redraw every row on each streamed chunk
   func holdsView(_ id: String) -> Bool {
     _views[id] != nil
+  }
+
+  /// The phone holds the session's view from its first turn: a JSON export is that view, and one that starts at the
+  /// session's tail (`SessionView.earlier`) would pass for the session. Unobserved, as `holdsView`
+  func holdsWholeView(_ id: String) -> Bool {
+    _views[id].map { $0.earlier == nil } ?? false
   }
 }
 

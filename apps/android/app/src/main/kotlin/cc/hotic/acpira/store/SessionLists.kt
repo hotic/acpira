@@ -187,7 +187,8 @@ class SessionLists(private val model: AppModel, private val context: Context, pr
     pending[view.id] = PendingSummary(
       originalTitle = original,
       title = if (view.turns.isEmpty() && view.queued.isNullOrEmpty() && untitled && text.isNotEmpty()) titleFrom(text) else null,
-      turns = view.turns.size,
+      // The session's count, not the view's: a chunk of the earlier part must not read as a new turn
+      turns = view.turnCount,
       updatedAt = maxOf(remote?.updatedAt.orEmpty(), view.updatedAt),
     )
     val stamp = model.now().toString()
@@ -221,7 +222,7 @@ class SessionLists(private val model: AppModel, private val context: Context, pr
   fun settle(view: SessionView) {
     val p = pending[view.id]?.takeIf { it.working } ?: return
     val failed = view.status != SessionStatus.starting && view.status != SessionStatus.ready
-    val finished = view.turns.lastOrNull() is AgentTurn && view.turns.size > p.turns && !view.running &&
+    val finished = view.turns.lastOrNull() is AgentTurn && view.turnCount > p.turns && !view.running &&
       view.queued.isNullOrEmpty() && model.outgoing[view.id].isNullOrEmpty()
     if (!failed && !finished) return
     if (p.title == null) pending.remove(view.id) else pending[view.id] = p.copy(working = false)
@@ -497,8 +498,11 @@ class SessionLists(private val model: AppModel, private val context: Context, pr
     }
   }
 
-  /** The phone holds the session's view (a JSON export needs it) */
-  fun holdsView(id: String): Boolean = model.views.containsKey(id)
+  /**
+   * The phone holds the session's view, all of it (a JSON export is that view): a windowed one is only the session's
+   * tail, and its export would pass for the whole
+   */
+  fun holdsWhole(id: String): Boolean = model.views[id]?.let { it.earlier == null } == true
 
   /**
    * Writes the export to a file of the app's cache and hands it to the system's share sheet. The Markdown and the plain

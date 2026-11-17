@@ -99,8 +99,9 @@ private fun seatSidekickEffort(controls: SessionControls, sidekick: String, shap
 }
 
 /**
- * A sent prompt being rewritten in the composer. [turnCount] is the transcript's length when the edit began, so the
- * engine refuses the edit as stale once the conversation moved on; [keptText] / [keptStaged] are what the composer held
+ * A sent prompt being rewritten in the composer. [turnIndex] is the prompt's place in the session and [turnCount] the
+ * session's length when the edit began, both as the engine counts them (the turns a windowed view leaves out included,
+ * `SessionView.turnsBefore`), so the engine refuses the edit as stale once the conversation moved on; [keptText] / [keptStaged] are what the composer held
  * before, back once the edit is sent or dropped. [originals] are the prompt's own attachments as the composer holds
  * them: staged entries the edit made for them, by their index in the prompt. [K] is the composer's staged item
  */

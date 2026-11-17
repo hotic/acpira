@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use acpira_shared::protocol::{HostMsg, RawJson};
-use acpira_shared::session_patch::{ViewParts, ViewPartsData, encode_turns, raw};
+use acpira_shared::protocol::{HostMsg, RawJson, ViewJson};
+use acpira_shared::session_patch::{ViewParts, ViewPartsData, raw};
 use acpira_shared::subagents::SubagentSummary;
 use acpira_shared::model_shapes::{ModelMemory, ModelShapes, session_model};
 use acpira_shared::transcript::*;
@@ -145,8 +145,8 @@ impl AcpSession {
 
   /// The whole view, serialized once for every viewer showing this session
   pub fn view_json(&self) -> (RawJson, bool) {
-    let (raw, running, _) = self.view_encoded();
-    (raw, running)
+    let (view, running, _) = self.view_encoded();
+    (view.raw().clone(), running)
   }
 
   /// The push every viewer of one change shares: the whole view, plus its turn-by-turn encoding that a patching viewer is
@@ -156,7 +156,7 @@ impl AcpSession {
     HostMsg::Session { session, running, parts: Some(parts) }
   }
 
-  fn view_encoded(&self) -> (RawJson, bool, ViewParts) {
+  fn view_encoded(&self) -> (ViewJson, bool, ViewParts) {
     let (shapes, memory) = (self.deps.policy.model_shapes(&self.agent), self.deps.policy.model_memory(&self.agent));
     let mut c = self.core.lock();
     if let Some((rev, status, running, (ref cached_shapes, ref cached_memory), ref full, ref parts)) = c.cached_view
@@ -168,16 +168,17 @@ impl AcpSession {
     {
       return (full.clone(), running, parts.clone());
     }
-    // Each visible turn is encoded on its own, the last one also block by block when it is an agent turn; the whole view
-    // is spliced from the same fragments, so the transcript is still serialized once per change. Diff sources go without
-    // their file texts (`encode_for_view`): the page asks for them when it needs them
+    // Each visible turn is encoded on its own, the last one also block by block when it is an agent turn, and only where
+    // it changed since the last view (`Reuse`): a streamed chunk costs its own blocks, not the transcript. The whole view
+    // is spliced from the same fragments when a viewer needs it (`ViewJson`). Diff sources go without their file texts
+    // (`encode_for_view`): the page asks for them when it needs them
     let (turns, last) = encode_for_view(|| {
       let core = &mut *c;
       match core.pending_prompt.as_mut() {
-        Some(p) => encode_turns(&core.state.turns.iter().collect::<Vec<_>>(), Some(p)),
+        Some(p) => core.encoded.encode(&core.state.turns.iter().collect::<Vec<_>>(), Some(p)),
         None => match core.state.turns.split_last_mut() {
-          Some((last, before)) => encode_turns(&before.iter().collect::<Vec<_>>(), Some(last)),
-          None => (vec![], None),
+          Some((last, before)) => core.encoded.encode(&before.iter().collect::<Vec<_>>(), Some(last)),
+          None => core.encoded.encode(&[], None),
         },
       }
     });
@@ -236,8 +237,9 @@ impl AcpSession {
       updated_at: &c.updated_at,
     };
     let encoded_head = raw(&head);
-    let full = RawJson::new(&ViewRef { turns: &turns, ..head });
     let parts = ViewParts(Arc::new(ViewPartsData { id: self.id.clone(), epoch: self.epoch, rev: c.rev, head: encoded_head, turns, last }));
+    c.encoded.keep(&parts);
+    let full = ViewJson::of(parts.clone());
     let running = c.phase.running;
     c.cached_view = Some((c.rev, c.status, running, (shapes, memory), full.clone(), parts.clone()));
     (full, running, parts)

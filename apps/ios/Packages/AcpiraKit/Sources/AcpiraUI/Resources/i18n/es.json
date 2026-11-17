@@ -1963,6 +1963,7 @@
   "devices.buttonOnline": "Dispositivos ({n} en línea)",
   "devices.online": "{n} en línea",
   "devices.noneOnline": "Ningún dispositivo en línea",
+  "devices.sessionTooLong": "Esta sesión es demasiado larga para esta versión de la app. Actualiza Acpira en este dispositivo para abrirla.",
   "devices.encrypted": "Cifrado de extremo a extremo",
   "devices.add": "Añadir dispositivo",
   "devices.code": "Código de vinculación",

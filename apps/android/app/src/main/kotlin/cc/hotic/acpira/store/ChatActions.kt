@@ -383,13 +383,14 @@ fun AppModel.removeAccount(account: String) {
 // Prompt edits
 
 /**
- * Takes the sent prompt at [index] into the chat's composer: its text and attachments, and the selections it went out
- * with as the composer's local snapshot. What the composer held waits until the edit is sent or dropped
+ * Takes the sent prompt at [index] (its place in the session, `SessionView.turnsBefore` included) into the chat's
+ * composer: its text and attachments, and the selections it went out with as the composer's local snapshot. What the
+ * composer held waits until the edit is sent or dropped
  */
 fun AppModel.beginEdit(id: String, index: Int) {
   val view = views[id] ?: return
   if (!canEditPrompts(view)) return
-  val prompt = view.turns.getOrNull(index) as? UserTurn ?: return
+  val prompt = view.turns.getOrNull(index - view.turnsBefore) as? UserTurn ?: return
   if (prompt.auto == true) return
   val draft = chat.draft(id)
   // Taking in another prompt keeps the draft from before the first
@@ -398,7 +399,7 @@ fun AppModel.beginEdit(id: String, index: Int) {
   // file that opens); each keeps its index for the retained list (AppModel+Turns.swift `beginEdit`)
   val originals = prompt.attachments.orEmpty().mapIndexed { i, a -> Staged(standIn(a), attachmentName(a), source = a) to i }
   draft.edit = TurnEdit(
-    turnIndex = index, turnCount = view.turns.size, original = prompt,
+    turnIndex = index, turnCount = view.turnCount, original = prompt,
     controls = openTurnControls(view.controls, prompt.settings, view.modelShapes),
     keptText = kept.first, keptStaged = kept.second, originals = originals,
   )
@@ -421,9 +422,9 @@ private fun standIn(a: Attachment): Draft = when (a) {
 
 /** `popup=edit`: the newest prompt the user typed, taken in for editing (screenshots) */
 fun AppModel.beginEditLast(id: String) {
-  val turns = views[id]?.turns ?: return
-  val at = turns.indexOfLast { it is UserTurn && it.auto != true }
-  if (at >= 0) beginEdit(id, at)
+  val view = views[id] ?: return
+  val at = view.turns.indexOfLast { it is UserTurn && it.auto != true }
+  if (at >= 0) beginEdit(id, view.turnsBefore + at)
 }
 
 /** The edit dropped: the composer gets back what it held */
@@ -455,9 +456,10 @@ fun AppModel.sendEdit(id: String) {
     return
   }
   val view = views[id] ?: return
-  if (edit.turnIndex > view.turns.size) return
+  val at = edit.turnIndex - view.turnsBefore
+  if (at < 0 || at > view.turns.size) return
   // The engine applies the edit's selections to the live session before the prompt goes out
-  views[id] = view.copy(turns = view.turns.take(edit.turnIndex), controls = edit.controls)
+  views[id] = view.copy(turns = view.turns.take(at), controls = edit.controls)
   // The kept originals go again too: their stand-ins name the same blobs, which the demo's bubble reads
   send(id, text, staged.map { it.draft })
   restoreKept(id, edit)

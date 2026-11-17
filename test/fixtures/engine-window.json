@@ -1,0 +1,1476 @@
+{
+ "first": {
+  "earlier": {
+   "turns": 4,
+   "blocks": 0
+  },
+  "id": "s",
+  "agent": "claude",
+  "title": "Patch golden",
+  "cwd": "/w",
+  "status": "ready",
+  "running": true,
+  "rev": 0,
+  "controls": {
+   "modes": [],
+   "options": []
+  },
+  "commands": [],
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:00.000Z",
+  "turns": [
+   {
+    "role": "user",
+    "id": "u3",
+    "text": "u3"
+   },
+   {
+    "role": "agent",
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "c.0"
+     },
+     {
+      "type": "text",
+      "markdown": "d"
+     }
+    ]
+   }
+  ]
+ },
+ "steps": [
+  {
+   "patch": {
+    "id": "s",
+    "base": 0,
+    "view": {
+     "earlier": {
+      "turns": 4,
+      "blocks": 0
+     },
+     "id": "s",
+     "agent": "claude",
+     "title": "Patch golden",
+     "cwd": "/w",
+     "status": "ready",
+     "running": true,
+     "rev": 1,
+     "controls": {
+      "modes": [],
+      "options": []
+     },
+     "commands": [],
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "turns": []
+    },
+    "keep": 1,
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": []
+     }
+    ],
+    "keepBlocks": 1,
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "de"
+     }
+    ]
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": true,
+    "rev": 1,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "de"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 4,
+     "blocks": 0
+    }
+   }
+  },
+  {
+   "chunk": {
+    "id": "s",
+    "from": {
+     "turns": 4,
+     "blocks": 0
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 7
+    }
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": true,
+    "rev": 1,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "de"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 7
+    }
+   }
+  },
+  {
+   "patch": {
+    "id": "s",
+    "base": 1,
+    "view": {
+     "earlier": {
+      "turns": 3,
+      "blocks": 7
+     },
+     "id": "s",
+     "agent": "claude",
+     "title": "Patch golden",
+     "cwd": "/w",
+     "status": "ready",
+     "running": true,
+     "rev": 2,
+     "controls": {
+      "modes": [],
+      "options": []
+     },
+     "commands": [],
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "turns": []
+    },
+    "keep": 2,
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": []
+     }
+    ],
+    "keepBlocks": 1,
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "def"
+     }
+    ]
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": true,
+    "rev": 2,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "def"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 7
+    }
+   }
+  },
+  {
+   "chunk": {
+    "id": "s",
+    "from": {
+     "turns": 3,
+     "blocks": 7
+    },
+    "turns": [],
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "b.2 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.3 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.4 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.5 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.6 ------------------------------------------------"
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 2
+    }
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": true,
+    "rev": 2,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.5 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.6 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "def"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 2
+    }
+   }
+  },
+  {
+   "session": {
+    "earlier": {
+     "turns": 4,
+     "blocks": 0
+    },
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": true,
+    "rev": 3,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "def"
+       }
+      ]
+     }
+    ]
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": true,
+    "rev": 3,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "def"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 4,
+     "blocks": 0
+    }
+   }
+  },
+  {
+   "chunk": {
+    "id": "s",
+    "from": {
+     "turns": 4,
+     "blocks": 0
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 7
+    }
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": true,
+    "rev": 3,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "def"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 7
+    }
+   }
+  },
+  {
+   "patch": {
+    "id": "s",
+    "base": 3,
+    "view": {
+     "earlier": {
+      "turns": 3,
+      "blocks": 7
+     },
+     "id": "s",
+     "agent": "claude",
+     "title": "Patch golden",
+     "cwd": "/w",
+     "status": "ready",
+     "running": false,
+     "rev": 4,
+     "controls": {
+      "modes": [],
+      "options": []
+     },
+     "commands": [],
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "turns": []
+    },
+    "keep": 2,
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": []
+     }
+    ],
+    "keepBlocks": 1,
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "defg"
+     }
+    ]
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": false,
+    "rev": 4,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "defg"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 7
+    }
+   }
+  },
+  {
+   "chunk": {
+    "id": "s",
+    "from": {
+     "turns": 3,
+     "blocks": 7
+    },
+    "turns": [],
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "b.2 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.3 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.4 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.5 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.6 ------------------------------------------------"
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 2
+    }
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": false,
+    "rev": 4,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.5 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.6 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "defg"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 3,
+     "blocks": 2
+    }
+   }
+  },
+  {
+   "chunk": {
+    "id": "s",
+    "from": {
+     "turns": 3,
+     "blocks": 2
+    },
+    "turns": [
+     {
+      "role": "user",
+      "id": "u2",
+      "text": "u2"
+     }
+    ],
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "b.0 ------------------------------------------------"
+     },
+     {
+      "type": "text",
+      "markdown": "b.1 ------------------------------------------------"
+     }
+    ],
+    "earlier": {
+     "turns": 2,
+     "blocks": 0
+    }
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": false,
+    "rev": 4,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "user",
+      "id": "u2",
+      "text": "u2"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.0 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.1 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.5 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.6 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "defg"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 2,
+     "blocks": 0
+    }
+   }
+  },
+  {
+   "chunk": {
+    "id": "s",
+    "from": {
+     "turns": 2,
+     "blocks": 0
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "a2.1 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.5 ------------------------------------------------"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 1,
+     "blocks": 1
+    }
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": false,
+    "rev": 4,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "a2.1 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.5 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u2",
+      "text": "u2"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.0 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.1 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.5 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.6 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "defg"
+       }
+      ]
+     }
+    ],
+    "earlier": {
+     "turns": 1,
+     "blocks": 1
+    }
+   }
+  },
+  {
+   "chunk": {
+    "id": "s",
+    "from": {
+     "turns": 1,
+     "blocks": 1
+    },
+    "turns": [
+     {
+      "role": "user",
+      "id": "u1",
+      "text": "u1"
+     }
+    ],
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "a2.0 ------------------------------------------------"
+     }
+    ]
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": false,
+    "rev": 4,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "user",
+      "id": "u1",
+      "text": "u1"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "a2.0 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.1 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.5 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u2",
+      "text": "u2"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.0 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.1 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.5 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.6 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "defg"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "patch": {
+    "id": "s",
+    "base": 4,
+    "view": {
+     "id": "s",
+     "agent": "claude",
+     "title": "Patch golden",
+     "cwd": "/w",
+     "status": "ready",
+     "running": true,
+     "rev": 5,
+     "controls": {
+      "modes": [],
+      "options": []
+     },
+     "commands": [],
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "turns": []
+    },
+    "keep": 6,
+    "turns": [
+     {
+      "role": "user",
+      "id": "u4",
+      "text": "u4"
+     }
+    ]
+   },
+   "view": {
+    "id": "s",
+    "agent": "claude",
+    "title": "Patch golden",
+    "cwd": "/w",
+    "status": "ready",
+    "running": true,
+    "rev": 5,
+    "controls": {
+     "modes": [],
+     "options": []
+    },
+    "commands": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [
+     {
+      "role": "user",
+      "id": "u1",
+      "text": "u1"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "a2.0 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.1 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "a2.5 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u2",
+      "text": "u2"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "b.0 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.1 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.2 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.3 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.4 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.5 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.6 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.7 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.8 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.9 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.10 ------------------------------------------------"
+       },
+       {
+        "type": "text",
+        "markdown": "b.11 ------------------------------------------------"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u3",
+      "text": "u3"
+     },
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "text",
+        "markdown": "c.0"
+       },
+       {
+        "type": "text",
+        "markdown": "defg"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "id": "u4",
+      "text": "u4"
+     }
+    ]
+   }
+  }
+ ]
+}

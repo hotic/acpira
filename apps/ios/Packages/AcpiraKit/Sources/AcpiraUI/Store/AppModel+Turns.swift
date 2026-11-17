@@ -11,14 +11,17 @@ extension AppModel {
   // MARK: - Prompt edits
 
   /// Takes the sent prompt at `index` into the chat's composer: its text and attachments, and the selections it went
-  /// out with as the composer's local snapshot. What the composer held waits until the edit is sent or dropped
+  /// out with as the composer's local snapshot. What the composer held waits until the edit is sent or dropped.
+  /// `index` is the prompt's place in the session, as the thread's rows carry it (`threadItems`); editTurn's turnIndex
+  /// and turnCount count the same way, whatever part of the session the view holds
   func beginEdit(_ id: String, turn index: Int) {
-    guard let view = views[id], canEditPrompts(view), view.turns.indices.contains(index),
-          case .user(let prompt) = view.turns[index], prompt.auto != true else { return }
+    guard let view = views[id], canEditPrompts(view) else { return }
+    let at = index - view.turnBase
+    guard view.turns.indices.contains(at), case .user(let prompt) = view.turns[at], prompt.auto != true else { return }
     let draft = draft(for: id)
     // Taking in another prompt keeps the draft from before the first
     let kept = draft.edit.map { ($0.keptText, $0.keptStaged) } ?? (draft.text, draft.staged)
-    draft.edit = TurnEdit(turnIndex: index, turnCount: view.turns.count, original: prompt,
+    draft.edit = TurnEdit(turnIndex: index, turnCount: view.turnCount, original: prompt,
                           controls: openTurnControls(view.controls, prompt.settings, shapes: view.modelShapes),
                           keptText: kept.0, keptStaged: kept.1)
     draft.text = prompt.text
@@ -27,9 +30,9 @@ extension AppModel {
 
   /// `-popup edit`: the newest prompt the user typed, taken in for editing (screenshots)
   func beginEditLast(_ id: String) {
-    guard let turns = views[id]?.turns,
-          let at = turns.lastIndex(where: { if case .user(let u) = $0 { u.auto != true } else { false } }) else { return }
-    beginEdit(id, turn: at)
+    guard let view = views[id],
+          let at = view.turns.lastIndex(where: { if case .user(let u) = $0 { u.auto != true } else { false } }) else { return }
+    beginEdit(id, turn: at + view.turnBase)
   }
 
   /// The edit dropped: the composer gets back what it held
@@ -58,8 +61,8 @@ extension AppModel {
       post(.editTurn(requestId: request, edit: editTurnRequest(sessionId: id, edit: edit, text: text, staged: attachments)))
       return
     }
-    guard var view = views[id], edit.turnIndex <= view.turns.count else { return }
-    view.turns = Array(view.turns.prefix(edit.turnIndex))
+    guard var view = views[id], edit.turnIndex <= view.turnCount else { return }
+    view.turns = Array(view.turns.prefix(max(0, edit.turnIndex - view.turnBase)))
     // The engine applies the edit's selections to the live session before the prompt goes out
     view.controls = edit.controls
     views[id] = view

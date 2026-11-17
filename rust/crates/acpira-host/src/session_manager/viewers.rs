@@ -130,12 +130,12 @@ impl SessionManager {
   pub fn view_of(&self, id: Option<&str>) -> Option<(RawJson, bool)> {
     let id = id?;
     if let Some(HostMsg::Session { session, running, .. }) = self.host_msg(id) {
-      return Some((session, running));
+      return Some((session.raw().clone(), running));
     }
     if self.live(id).is_none()
       && let Some(HostMsg::Session { session, running, .. }) = self.remote_msg(id)
     {
-      return Some((session, running));
+      return Some((session.raw().clone(), running));
     }
     self.live(id).or_else(|| self.mirror_of(id)).map(|s| s.view_json())
   }

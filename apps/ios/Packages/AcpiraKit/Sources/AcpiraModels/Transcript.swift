@@ -1049,6 +1049,17 @@ public struct RemoteAuth: Codable, Hashable, Sendable {
   public var action: AccountAction?
 }
 
+/// What a windowed view leaves out ahead of its first turn (transcript.ts ViewEarlier): `turns` whole turns, and the
+/// first `blocks` blocks of the first turn it does hold (an agent turn)
+public struct ViewEarlier: Codable, Hashable, Sendable {
+  public var turns: Int
+  public var blocks: Int
+
+  public init(turns: Int, blocks: Int) {
+    self.turns = turns; self.blocks = blocks
+  }
+}
+
 public struct SessionView: Codable, Hashable, Sendable, Identifiable {
   public var id: String
   public var remoteAuth: RemoteAuth?
@@ -1064,6 +1075,10 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
   /// The ways to sign in while `status` is auth_required
   public var authMethods: [AuthMethodInfo]?
   public var turns: [Turn]
+  /// Only in a view sent to a page that said `window` in ready (the app does): what it leaves out ahead of `turns[0]`,
+  /// loaded with `loadEarlier`. Absent: the whole view. A turn larger than a window is cut inside its blocks, so
+  /// `turns[0]` can be an agent turn without its first blocks and without its prompt
+  public var earlier: ViewEarlier?
   public var running: Bool
   public var rev: Int?
   public var controls: SessionControls
@@ -1098,6 +1113,7 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
     canTakeOver = try c.decodeIfPresent(Bool.self, forKey: .canTakeOver)
     authMethods = try c.decodeIfPresent([AuthMethodInfo].self, forKey: .authMethods)
     turns = try c.decodeIfPresent([Turn].self, forKey: .turns) ?? []
+    earlier = try c.decodeIfPresent(ViewEarlier.self, forKey: .earlier)
     running = try c.decodeIfPresent(Bool.self, forKey: .running) ?? false
     rev = try c.decodeIfPresent(Int.self, forKey: .rev)
     controls = try c.decodeIfPresent(SessionControls.self, forKey: .controls) ?? SessionControls()
@@ -1114,6 +1130,17 @@ public struct SessionView: Codable, Hashable, Sendable, Identifiable {
     createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
     updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
   }
+}
+
+extension SessionView {
+  /// The turns a windowed view leaves out ahead of `turns[0]`, 0 for a whole view. Every turn index of the protocol but
+  /// a patch's counts from the session's first turn (editTurn, forkSession, SubagentSummary.turnIndex): an index into
+  /// `turns` plus this (sessionWindow.ts `sessionTurnIndex`)
+  public var turnBase: Int { earlier?.turns ?? 0 }
+
+  /// The session's turn count: the turns held and the ones left out ahead of them. Unlike `turns.count` it does not
+  /// move when an earlier part lands
+  public var turnCount: Int { turnBase + turns.count }
 }
 
 // MARK: - Timestamps

@@ -39,6 +39,14 @@ export class Metrics {
   /** Lucide's stroke on its 24 unit box */
   static readonly stroke: number = 2;
   static readonly iconBox: number = 24;
+  /**
+   * A chat whose view starts at the session's tail asks for the part ahead once the reader scrolls this near the
+   * thread's top (about two phone screens). A window too short to scroll is filled without being asked, by this many
+   * parts at most, each looked for this long after the last landed, once its rows are laid out
+   */
+  static readonly earlierAhead: number = 1600;
+  static readonly earlierFill: number = 4;
+  static readonly earlierSettleMs: number = 200;
 }
 
 export class Type {

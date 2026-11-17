@@ -2010,6 +2010,7 @@ export const zhTW = {
   'devices.buttonOnline': '裝置（{n} 台在線）',
   'devices.online': '{n} 台裝置在線',
   'devices.noneOnline': '沒有裝置在線',
+  'devices.sessionTooLong': '這個工作階段太長，目前版本的 App 無法開啟。請更新這台裝置上的 Acpira。',
   'devices.encrypted': '端對端加密',
   'devices.add': '新增裝置',
   'devices.code': '配對碼',

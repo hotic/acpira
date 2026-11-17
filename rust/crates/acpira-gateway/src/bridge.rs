@@ -20,7 +20,8 @@ use crate::engine::{Link, Log};
 use crate::wire_stats::WireStats;
 
 /// What a device may leave unread before the gateway drops it: it reconnects and gets whole views again, where a queue
-/// with no bound would grow with every patch of every running session
+/// with no bound would grow with every patch of every running session. One message past it alone is left out instead
+/// (`oversized`): the reconnect would only bring it again
 const MAX_BEHIND: usize = 32 << 20;
 
 #[derive(Clone)]
@@ -89,6 +90,8 @@ pub async fn run(
       _ => return Ended::Device,
     }
   };
+  // What the gateway itself tells the device is in the device's language
+  let locale = acpira_shared::i18n::resolve_locale(None, hello["env"]["hostLanguage"].as_str().unwrap_or("en"));
   let hello = peer_hello(&hello, who);
   // Stable across reconnects, disjoint from desktop tabs and other devices even when their client ids coincide.
   let terminal_prefix = format!("device:{}:", who.id);
@@ -143,9 +146,17 @@ pub async fn run(
     let push = push.clone();
     let to_engine = to_engine.clone();
     let terminal_prefix = terminal_prefix.clone();
+    let (log, device) = (log.clone(), who.device.clone());
     tasks.spawn(async move {
       // The empty line: the engine let the wire go
       while let Some(line) = from_engine.recv().await.filter(|l| !l.is_empty()) {
+        if line.len() > MAX_BEHIND {
+          log(&format!("{device}: left out one message of {} MB, past what a device can be sent", line.len() >> 20));
+          if let Some(told) = oversized(&line, locale) {
+            push(FrameKind::Envelope, told);
+          }
+          continue;
+        }
         engine_line(line, &*push, &to_engine, &sessions_dir, &terminal_prefix);
       }
       let _ = engine_end_tx.send("the engine closed the connection".to_owned());
@@ -216,6 +227,17 @@ fn peer_hello(device: &Value, who: &Who) -> Value {
     },
     "settings": {},
   })
+}
+
+/// What a device gets in place of a session view too large to send it: why the session does not open. Only an app
+/// from before windowed views (`ready` without `window`) is ever sent one; any other message that large has no stand-in
+fn oversized(line: &str, locale: acpira_shared::i18n::Locale) -> Option<Vec<u8>> {
+  // SidecarMsg and HostMsg serialize their tag first, and a view its id
+  let (envelope, message) = line.split_once(",\"message\":{\"type\":\"")?;
+  let id = message.strip_prefix("session\",\"session\":{\"id\":\"")?.split_once('"')?.0;
+  let reason = acpira_shared::i18n::translate(locale, "devices.sessionTooLong", &[]);
+  let message = json!({ "type": "sessionUnavailable", "id": id, "reason": reason });
+  Some(format!("{envelope},\"message\":{message}}}").into_bytes())
 }
 
 fn engine_line(
@@ -335,6 +357,19 @@ mod tests {
     let envelope = json!({ "type": "webviewMessage", "viewId": "V", "message": message });
     from_device(&serde_json::to_vec(&envelope).unwrap(), &push, &tx, &log, prefix);
     (rx.try_recv().ok().map(|s| serde_json::from_str(&s).unwrap()), frames.into_inner())
+  }
+
+  #[test]
+  fn a_session_view_too_large_to_send_is_answered_with_why() {
+    let view = json!({ "id": "abc-1", "agent": "claude", "turns": [{ "role": "user", "id": "u", "text": "x" }] });
+    let line = json!({ "type": "hostMessage", "viewId": "V", "message": { "type": "session", "session": view } }).to_string();
+    let told: Value = serde_json::from_slice(&oversized(&line, acpira_shared::i18n::Locale::En).unwrap()).unwrap();
+    assert_eq!((told["type"].clone(), told["viewId"].clone()), (json!("hostMessage"), json!("V")));
+    assert_eq!((told["message"]["type"].clone(), told["message"]["id"].clone()), (json!("sessionUnavailable"), json!("abc-1")));
+    assert!(told["message"]["reason"].as_str().unwrap().contains("Update Acpira"));
+    // anything else that large has no stand-in
+    let other = json!({ "type": "hostMessage", "viewId": "V", "message": { "type": "sessionMarkdown", "seq": 1, "markdown": "x" } }).to_string();
+    assert!(oversized(&other, acpira_shared::i18n::Locale::En).is_none());
   }
 
   #[test]

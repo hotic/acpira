@@ -93,7 +93,7 @@ struct ChatScreen: View {
       .safeAreaInset(edge: .bottom, spacing: 0) {
         DockSeat(homeInset: homeInset) {
           // The dock's copy of the session leaves out the streamed transcript, so a chunk does not rebuild the dock
-          Dock(session: dockSession(session), turns: session.turns.count, draft: bindings.text, staged: bindings.staged,
+          Dock(session: dockSession(session), turns: session.turnCount, draft: bindings.text, staged: bindings.staged,
                edit: bindings.edit)
             .readableWidth()
         }
@@ -187,6 +187,7 @@ struct ChatScreen: View {
     if !hasAccountMenu(agent) { actions.account = nil }
     if helpers.isEmpty { actions.subagents = nil }
     if session.cwd.isEmpty { actions.changes = nil }
+    actions.exportJSON = session.earlier == nil
     actions.subagentCounts = countsLabel(helpers)
     actions.cwd = session.cwd
     actions.projects = model.projects
@@ -284,7 +285,8 @@ struct HeaderActions {
   var archive: ((Bool) -> Void)?
   var rename: () -> Void = {}
   var export: (ExportFormat) -> Void = { _ in }
-  /// JSON export is offered: it is built from the view the phone holds, which a list row's session may not have
+  /// JSON export is offered: it is built from the view the phone holds, which a list row's session may not have, and
+  /// which holds only the tail of a long session until the thread loaded the rest (`SessionView.earlier`)
   var exportJSON = true
   /// The project's terminal page
   var terminal: (() -> Void)?
@@ -368,8 +370,11 @@ struct Thread: View {
       TranscriptViewport(safe: proxy.frame(in: .global), control: control)
     }
     .background {
-      TranscriptCollection(items: threadItems(session, preOpen: preOpen), control: control,
-                           running: session.running, motion: motion) { values in
+      TranscriptCollection(items: threadItems(session, preOpen: preOpen,
+                                              loadingEarlier: model?.loadingEarlier[session.id] != nil), control: control,
+                           running: session.running, motion: motion, earlier: session.earlier,
+                           loadEarlier: { [model] in model?.loadEarlier(session.id) },
+                           fillEarlier: { [model] in model?.fillEarlier(session.id) }) { values in
         values.applyThread(session, quiet: quiet)
         values.holdScroll = control.holdScroll
         values.scrollGesture = control.gesture
@@ -471,7 +476,8 @@ struct QuietSignature: Equatable {
 
   init(_ session: SessionView) {
     rev = session.rev
-    turnCount = session.turns.count
+    // The session's, so an earlier part landing ahead of the view is no change
+    turnCount = session.turnCount
     lastAgent = session.turns.reversed().lazy.compactMap { if case .agent(let t) = $0 { t } else { nil } }.first
     subagents = session.subagents
   }

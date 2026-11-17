@@ -265,6 +265,25 @@ fn a_phone_pairs_drives_a_session_and_is_revoked() {
       assert!(r.is_err(), "{sid}/{name}");
     }
 
+    // A view that takes windows: a session longer than a window comes as its tail, the rest one answer per ask
+    for n in ["a", "b"] {
+      p.msg("V", json!({ "type": "send", "sessionId": id, "text": format!("say:{}", n.repeat(300_000)), "clientId": format!("long-{n}") })).await;
+    }
+    p.session(at, |s| s["running"] == false && turns(s) == 8).await;
+    let from = p.seen.lock().len();
+    p.send(json!({ "type": "attachView", "viewId": "W", "host": "editor", "initial": id })).await;
+    p.msg("W", json!({ "type": "ready", "patches": true, "listPatches": true, "window": true })).await;
+    let (from, init) = p.wait(from, "the windowed init", |_, v| v["viewId"] == "W" && v["message"]["type"] == "init").await;
+    let active = &init["message"]["state"]["active"];
+    let opened = active["earlier"]["turns"].as_u64().expect("a long session opens at its tail");
+    assert_eq!(turns(active) as u64 + opened, 8);
+    p.msg("W", json!({ "type": "loadEarlier", "sessionId": id })).await;
+    let (_, earlier) = p.wait(from, "the part ahead of the window", |_, v| v["viewId"] == "W" && v["message"]["type"] == "sessionEarlier").await;
+    let chunk = &earlier["message"]["chunk"];
+    assert_eq!((chunk["id"].as_str(), chunk["from"]["turns"].as_u64()), (Some(id.as_str()), Some(opened)));
+    assert!(!chunk["turns"].as_array().unwrap().is_empty());
+    p.send(json!({ "type": "detachView", "viewId": "W" })).await;
+
     // Notifications: the registration the phone sends is kept beside the devices, and goes with the device
     let target = json!({ "token": "ab".repeat(32), "topic": "cc.hotic.acpira", "team": "TEAM", "sandbox": true });
     p.tx.send(FrameKind::Control, json!({ "type": "push", "target": target }).to_string().as_bytes()).await.unwrap();

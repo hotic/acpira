@@ -25,7 +25,8 @@ struct Outgoing: Equatable {
   var attachments: [Attachment]
   /// Sent with steering on into a running turn: it stands as a steer card, not as a new prompt
   var steer: Bool
-  /// The session's turn count when it was sent
+  /// The session's turn count when it was sent (`SessionView.turnCount`: an earlier part landing ahead of the view
+  /// since then is none of the turns that came after)
   var turns: Int
   /// The queue entries the session held when it was sent
   var queued: Set<String>
@@ -53,7 +54,7 @@ struct Outgoing: Equatable {
     self.text = text
     self.attachments = attachments
     self.steer = steer
-    turns = session.turns.count
+    turns = session.turnCount
     queued = Set((session.queued ?? []).map(\.id))
     steers = steer ? Set(Self.steerIds(session.turns.suffix(1))) : []
   }
@@ -62,13 +63,15 @@ struct Outgoing: Equatable {
   /// queue entries); `steering` marks the entry the engine is steering this one in as
   fileprivate func copies(in session: SessionView) -> [(id: String, steering: Bool)] {
     let all = session.turns
-    var found = all.indices.dropFirst(turns).compactMap { i -> (id: String, steering: Bool)? in
+    // The turns of the view that came after the send; a view that starts later than that holds only such turns
+    let since = max(turns - session.turnBase, 0)
+    var found = all.indices.dropFirst(since).compactMap { i -> (id: String, steering: Bool)? in
       guard case .user(let user) = all[i] else { return nil }
-      return (user.id ?? "#\(i)", false)
+      return (user.id ?? "#\(i + session.turnBase)", false)
     }
     // A steer lands in the turn that ran when it was sent, or in a later one
     if steer {
-      found += Self.steerIds(all.dropFirst(max(turns - 1, 0))).filter { !steers.contains($0) }.map { ($0, false) }
+      found += Self.steerIds(all.dropFirst(max(since - 1, 0))).filter { !steers.contains($0) }.map { ($0, false) }
     }
     found += (session.queued ?? []).filter { !queued.contains($0.id) }.map { ($0.id, steer && $0.sending == true) }
     return found.filter { !taken.contains($0.id) }

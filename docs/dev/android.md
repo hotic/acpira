@@ -25,6 +25,7 @@
 - A `SelectionContainer` keeps its selection on a tap outside it, and `SelectionState.selectedTexts` is not snapshot state (`snapshotFlow` never fires): Select text on a block or a sent prompt goes through `SelectAllWhile` in `ui/prose/TextSelection.kt`, which polls the selection and clears it on the thread's taps (`ThreadTaps`).
 - A recorded `GraphicsLayer` hides through its alpha, never by being left out of the frame: once no display list draws it, the renderer drops its children's own layers' content, and they come back empty because Compose does not re-record them (`ui/BarHandoff.kt`).
 - Pages run under the gesture bar: a scrolling page pads `navigationBars` inside its scroll, never on the Scaffold, or the bar's strip shows as a black band.
+- A windowed view's thread (`logic/ThreadWindow.kt`, one lazy item per turn keyed by its session index): a part landing ahead is held from a `SideEffect`, before the list measures it; a cut turn that grew at its top goes back by its end from a positioned callback with a forced remeasure (a scroll delta alone shows a frame late, forcing during layout throws). Runs, fold parts and their folds are named after the block the process opened on (`runId`): named by their first block, what the reader opened closes when blocks land ahead. Loads come from the reader's nested-scroll events only (`EarlierReach`), so the scrolls the screen issues itself must stay off nested scroll.
 
 ## Wide windows
 

@@ -758,9 +758,8 @@ fn remote_view(
   v.as_object_mut()?.insert("rev".to_owned(), Value::from(rev));
   let running = v["running"].as_bool().unwrap_or(false);
   let head = serde_json::value::to_raw_value(&v).ok()?;
-  let whole = crate::bus::splice(&head, "turns", &turns)?;
   let parts = ViewParts(Arc::new(acpira_shared::session_patch::ViewPartsData { id: id.to_owned(), epoch, rev, head, turns, last }));
-  let msg = HostMsg::Session { session: RawJson(Arc::from(whole)), running, parts: Some(parts.clone()) };
+  let msg = HostMsg::Session { session: acpira_shared::protocol::ViewJson::of(parts.clone()), running, parts: Some(parts.clone()) };
   Some((parts, msg))
 }
 

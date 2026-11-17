@@ -22,7 +22,7 @@ extension AppModel {
     pendingSummaries[view.id] = PendingSummary(
       originalTitle: original,
       title: view.turns.isEmpty && view.queued?.isEmpty != false && untitled && !text.isEmpty ? title(from: text) : nil,
-      turns: view.turns.count, updatedAt: max(remote?.updatedAt ?? "", view.updatedAt))
+      turns: view.turnCount, updatedAt: max(remote?.updatedAt ?? "", view.updatedAt))
     // The session push can precede its first list push. It must already be visible when the chat is swiped away.
     if existing == nil {
       summaries.insert(SessionSummary(id: view.id, title: original, agent: view.agent, cwd: view.cwd,
@@ -59,7 +59,7 @@ extension AppModel {
     guard var pending = pendingSummaries[view.id], pending.working else { return }
     let failed = view.status != .starting && view.status != .ready
     let ended: Bool = if case .agent = view.turns.last { true } else { false }
-    let finished = ended && view.turns.count > pending.turns && !view.running && heldHead(view) == nil
+    let finished = ended && view.turnCount > pending.turns && !view.running && heldHead(view) == nil
       && outgoing[view.id]?.isEmpty != false
     guard failed || finished else { return }
     pending.working = false

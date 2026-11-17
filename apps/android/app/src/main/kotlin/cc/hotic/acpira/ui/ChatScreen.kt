@@ -11,9 +11,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -25,6 +28,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -33,8 +37,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.Remeasurement
+import androidx.compose.ui.layout.RemeasurementModifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -43,6 +55,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.lifecycle.Lifecycle
 import cc.hotic.acpira.design.Haptic
 import cc.hotic.acpira.design.Lucide
@@ -55,7 +68,10 @@ import cc.hotic.acpira.logic.canEditPrompts
 import cc.hotic.acpira.logic.canSetGoal
 import cc.hotic.acpira.logic.editTurnConfig
 import cc.hotic.acpira.logic.editingView
-import cc.hotic.acpira.logic.exchanges
+import cc.hotic.acpira.logic.EarlierReach
+import cc.hotic.acpira.logic.ThreadItem
+import cc.hotic.acpira.logic.ThreadStart
+import cc.hotic.acpira.logic.holdPlace
 import cc.hotic.acpira.logic.heldPrompt
 import cc.hotic.acpira.logic.heldStage
 import cc.hotic.acpira.logic.lastTypedPrompt
@@ -63,11 +79,13 @@ import cc.hotic.acpira.logic.pendingPlanReview
 import cc.hotic.acpira.logic.retryableTurn
 import cc.hotic.acpira.logic.reviseOption
 import cc.hotic.acpira.logic.turnEndHaptic
+import cc.hotic.acpira.model.AgentTurn
 import cc.hotic.acpira.model.GoalAction
 import cc.hotic.acpira.model.SessionControls
 import cc.hotic.acpira.model.SessionStatus
 import cc.hotic.acpira.model.SessionView
 import cc.hotic.acpira.model.SubagentState
+import cc.hotic.acpira.model.UserTurn
 import cc.hotic.acpira.store.AppModel
 import cc.hotic.acpira.store.Screen
 import cc.hotic.acpira.store.beginEdit
@@ -109,7 +127,7 @@ import kotlinx.coroutines.launch
 
 /**
  * A session's chat (apps/ios Chat/ChatScreen.swift): the top bar with back, new session and the session menu (a pill
- * saying the agent is starting in the title's place while it does), the thread by exchange with queued prompts at its
+ * saying the agent is starting in the title's place while it does), the thread turn by turn with queued prompts at its
  * end, the to-do card floating over its bottom with the way back to the latest message, and the dock (ui/Dock.kt) at
  * the bottom. The thread follows the newest output while the reader stays at the end, and stays put once they scroll up
  */
@@ -166,9 +184,15 @@ fun ChatScreen(model: AppModel, id: String) {
     wasLive[0] = live
   }
   val thread = rememberLazyListState()
-  val items = remember(held?.turns) { held?.let { exchanges(it.turns) }.orEmpty() }
+  val turns = held?.turns.orEmpty()
   val queued = held?.queued.orEmpty()
-  val total = items.size + if (queued.isEmpty()) 0 else 1
+  // The thread holds one item per turn, keyed by the turn's place in the session, and a lead item ahead of them while
+  // the view leaves part of the session out (a windowed view, logic/ThreadWindow.kt): a chunk of the earlier part then
+  // only adds items in front, and no item changes its key
+  val start = remember(held?.earlier) { held?.let(ThreadStart::of) }
+  val before = start?.turns ?: 0
+  val lead = start?.lead ?: 0
+  val total = lead + turns.size + if (queued.isEmpty()) 0 else 1
   // What a prompt's long-press menu offers: edit while the session is idle, Set as goal on the newest typed prompt
   val editable = held?.let(::canEditPrompts) == true
   val goalPrompt = remember(held) { held?.takeIf(::canSetGoal)?.let { lastTypedPrompt(it.turns) } }
@@ -228,6 +252,50 @@ fun ChatScreen(model: AppModel, id: String) {
       if (last == null || !following || thread.isScrollInProgress || last[0] != count - 1) return@collect
       thread.scrollToItem(count - 1, Int.MAX_VALUE / 2)
     }
+  }
+  // A chunk of the earlier part went in front of what the thread shows: what the reader looks at stays where it is.
+  // Read off the layout from before the chunk, here, ahead of the list's measure with it (holdPlace)
+  val startSeen = remember(id) { arrayOfNulls<ThreadStart>(1) }
+  val reach = remember(id) { EarlierReach() }
+  val grown = remember(thread) { GrownHold(thread) }
+  SideEffect {
+    val old = startSeen[0]
+    startSeen[0] = start
+    if (old == null || start == null) return@SideEffect
+    // A whole view opened the window anew (a chunk only ever moves the start ahead)
+    if (start != old && !start.aheadOf(old)) reach.opened()
+    if (!start.aheadOf(old)) return@SideEffect
+    val shown = thread.layoutInfo.visibleItemsInfo.map { ThreadItem(it.key, it.index, it.offset, it.size) }
+    val hold = holdPlace(old, start, shown) ?: return@SideEffect
+    // "Following" only says the last turn is in view. A reader further up inside it (a long last turn is where a
+    // window gets cut) is not at the end: the chunk changed the turns, and following would take them there
+    if (thread.canScrollForward) following = false
+    hold.request?.let { (index, offset) -> thread.requestScrollToItem(index, offset) }
+    grown.pending = hold.grown
+  }
+  // When the part ahead of a windowed thread is asked for (EarlierReach): by the reader's own drag or fling towards
+  // the start with it within reach, never by where the layout stands. The scrolls issued here (holding the place, following the
+  // end) do not come through nested scroll, so they do not count as the reader's
+  val reaching = remember(id, model, thread, reach) {
+    object : NestedScrollConnection {
+      override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        // y grows towards the thread's start: what the list took of a drag or fling that way, and what it left
+        if (thread.nearStart() && reach.reached(consumed.y, available.y, source == NestedScrollSource.UserInput)) model.loadEarlier(id)
+        return Offset.Zero
+      }
+      // Every drag ends here, whatever its speed
+      override suspend fun onPreFling(available: Velocity): Velocity {
+        reach.released()
+        return Velocity.Zero
+      }
+    }
+  }
+  // A thread that opens too short to scroll would leave the reader nothing to scroll for: it fills itself, a few parts
+  // at most. Asked once the list is laid out from this start, a frame on
+  LaunchedEffect(id, start) {
+    if (start == null || start.lead == 0) return@LaunchedEffect
+    withFrameNanos { }
+    if (reach.laidOut(thread.canScrollBackward || thread.canScrollForward)) model.loadEarlier(id)
   }
   // Back to the latest: offered while the thread's end sits more than half a screen below the view
   val far by remember {
@@ -395,41 +463,64 @@ fun ChatScreen(model: AppModel, id: String) {
     LazyColumn(
       state = thread,
       modifier = Modifier.fillMaxSize().gooRecede(goo, model.motion).topFade(scrolled, padding.calculateTopPadding())
+        .nestedScroll(reaching).then(grown).onGloballyPositioned { grown.settle() }
         .threadTaps(threadTaps).testTag("chat.thread"),
       // The list stays full width so a drag beside the reading column still scrolls it
       contentPadding = readablePadding(maxWidth, top = padding.calculateTopPadding() + Metrics.s2, bottom = padding.calculateBottomPadding() + planDock + Metrics.pad),
       verticalArrangement = Arrangement.spacedBy(Metrics.msgGap),
     ) {
-      items.forEachIndexed { e, exchange ->
-        item(key = "x:${exchange.id}") {
-          Column(verticalArrangement = Arrangement.spacedBy(Metrics.msgGap)) {
-            exchange.user?.let { user ->
-              UserBubble(
-                user, onToast = turnActions.toast,
-                onEdit = if (editable) ({ handlers.editPrompt(exchange.id) }) else null,
-                onGoal = if (exchange.id == goalPrompt) ({ handlers.goal(GoalAction.set, user.text.trim()) }) else null,
-              )
-              // The subagent returns that woke this reply, in the relay handback's shape (ThreadItems.swift)
-              if (user.auto == true && user.autoReason == "subagents") {
-                val reports = remember(user.text) { shownReports(user.text) }
-                if (reports.isNotEmpty()) SubagentReturns(reports)
+      // The part of the session ahead of the view is asked for as the reader reaches for it; the lead keeps its room
+      // whether or not a request is on its way, so the spinner moves nothing
+      if (lead > 0) {
+        item(key = "earlier", contentType = "earlier") {
+          Box(Modifier.fillMaxWidth().height(Metrics.icon).testTag("chat.earlier"), contentAlignment = Alignment.Center) {
+            if (model.loadingEarlier(id)) {
+              CircularProgressIndicator(Modifier.size(Metrics.icon).testTag("chat.earlier.loading"), color = Palette.fg3, strokeWidth = Metrics.pairCodeLine)
+            }
+          }
+        }
+      }
+      // The selections of the prompt each reply answers; a window can open on a reply whose prompt is still left out
+      var prompt: UserTurn? = null
+      turns.forEachIndexed { index, turn ->
+        // The turn's place in the session: its key, and what the engine is told (edit, fork, a subagent's anchor)
+        val at = before + index
+        when (turn) {
+          is UserTurn -> {
+            prompt = turn
+            item(key = at, contentType = "user") {
+              Column(verticalArrangement = Arrangement.spacedBy(Metrics.msgGap)) {
+                UserBubble(
+                  turn, onToast = turnActions.toast,
+                  onEdit = if (editable) ({ handlers.editPrompt(at) }) else null,
+                  onGoal = if (index == goalPrompt) ({ handlers.goal(GoalAction.set, turn.text.trim()) }) else null,
+                )
+                // The subagent returns that woke this reply, in the relay handback's shape (ThreadItems.swift)
+                if (turn.auto == true && turn.autoReason == "subagents") {
+                  val reports = remember(turn.text) { shownReports(turn.text) }
+                  if (reports.isNotEmpty()) SubagentReturns(reports)
+                }
               }
             }
-            for ((index, turn) in exchange.agents) {
-              val last = e == items.size - 1 && index == exchange.agents.last().first
+          }
+          is AgentTurn -> {
+            val settings = prompt?.settings
+            item(key = at, contentType = "agent") {
+              val last = index == turns.size - 1
               AgentMessage(
                 turn = turn,
                 running = running && last,
-                key = "$id:$index",
+                key = "$id:$at",
                 now = { model.clockNow().toEpochMilli() },
                 onPermission = { block, option -> model.permission(id, block, option) },
-                index = index,
+                index = at,
                 retry = index == retryAt,
-                settings = exchange.user?.settings,
+                settings = settings,
                 controls = held.controls,
                 actions = turnActions,
-                subagents = nodes[index].orEmpty(),
+                subagents = nodes[at].orEmpty(),
                 last = last,
+                cut = if (index == 0) start?.blocks ?: 0 else 0,
               )
             }
           }
@@ -484,3 +575,38 @@ fun ChatScreen(model: AppModel, id: String) {
 
 /** How long a launch's picker waits before opening, so a recording shows it come out */
 private const val POPUP_DELAY_MS = 1_000L
+
+/** The items at the thread's start a reader counts as near it from: the lead, then a prompt and its reply */
+private const val EARLIER_REACH = 2
+
+/** The reader is within reach of the thread's start: among its first items, and less than a screen into the one on top */
+private fun LazyListState.nearStart(): Boolean {
+  val info = layoutInfo
+  val first = info.visibleItemsInfo.firstOrNull() ?: return true
+  return first.index <= EARLIER_REACH && -first.offset < info.viewportEndOffset - info.viewportStartOffset
+}
+
+/**
+ * Puts the end of a turn that grew at its top back where it stood (ThreadHold.grown), in the frame that laid it out
+ * again. `settle` runs from a positioned callback, after the layout and ahead of the draw; the scroll alone would be
+ * placed a frame later (the list only invalidates its placement for it), so the list is remeasured by hand
+ */
+private class GrownHold(private val list: LazyListState) : RemeasurementModifier {
+  /** The turn's key and where its end stood, until the list has laid it out again */
+  var pending: Pair<Int, Int>? = null
+  private var remeasurement: Remeasurement? = null
+
+  override fun onRemeasurementAvailable(remeasurement: Remeasurement) {
+    this.remeasurement = remeasurement
+  }
+
+  fun settle() {
+    val (key, end) = pending ?: return
+    pending = null
+    val now = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+    val moved = now.offset + now.size - end
+    if (moved == 0) return
+    list.dispatchRawDelta(moved.toFloat())
+    remeasurement?.forceRemeasure()
+  }
+}

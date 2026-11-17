@@ -362,6 +362,21 @@ data class SessionPatch(
 )
 
 /**
+ * One answer to loadEarlier (sessionWindow.ts SessionEarlier): the part right ahead of what the page holds. `from` is
+ * the window the chunk was cut for, so it applies only while the page's view of `id` still starts there. `blocks` go
+ * ahead of the blocks of the held `turns[0]` (the cut turn), then `turns` ahead of the held turns; `earlier` is what is
+ * still left out, absent once the view is whole
+ */
+@Serializable
+data class SessionEarlier(
+  val id: String,
+  val from: ViewEarlier = ViewEarlier(),
+  val turns: List<Turn> = emptyList(),
+  val blocks: List<AgentBlock>? = null,
+  val earlier: ViewEarlier? = null,
+)
+
+/**
  * The session list as runs over the list the phone holds (protocol.ts SessionsPatch, acpira-shared sessions_patch.rs).
  * The engine sends it instead of the whole list once `ready` said `listPatches`
  */
@@ -428,6 +443,8 @@ sealed interface HostMsg {
   data class SessionUnavailable(val id: String, val reason: String) : HostMsg
   data class Session(val session: SessionView) : HostMsg
   data class Patch(val patch: SessionPatch) : HostMsg
+  /** sessionEarlier: the answer to loadEarlier, only to pages that said `window` in ready */
+  data class Earlier(val chunk: SessionEarlier) : HostMsg
   /** sessionsPatch: the session list as runs over the list sent last; only to pages that said `listPatches` in ready */
   data class ListPatch(val patch: SessionsPatch) : HostMsg
   data class Accounts(val accounts: List<AccountInfo>) : HostMsg
@@ -501,11 +518,11 @@ sealed interface HostMsg {
   companion object {
     /** The `type` literals this build reads */
     val types = listOf(
-      "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "sessionsPatch", "accounts",
-      "accountActions", "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob",
-      "stagedFile", "sessionMarkdown", "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput",
-      "terminalState", "editTurnResult", "deleteSessionResult", "appearance", "connections", "localDir", "providers",
-      "providerProbed", "sessionUnavailable",
+      "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "sessionEarlier", "sessionsPatch",
+      "accounts", "accountActions", "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource",
+      "imageBlob", "stagedFile", "sessionMarkdown", "projectDir", "projectStatus", "projectFile", "sessionChanges",
+      "terminalOutput", "terminalState", "editTurnResult", "deleteSessionResult", "appearance", "connections", "localDir",
+      "providers", "providerProbed", "sessionUnavailable",
     )
 
     /**
@@ -530,6 +547,7 @@ sealed interface HostMsg {
         "sessionUnavailable" -> SessionUnavailable(obj.string("id") ?: "", obj.string("reason") ?: "")
         "session" -> Session(field("session", SessionView.serializer()))
         "sessionPatch" -> Patch(field("patch", SessionPatch.serializer()))
+        "sessionEarlier" -> Earlier(field("chunk", SessionEarlier.serializer()))
         "sessionsPatch" -> ListPatch(field("patch", SessionsPatch.serializer()))
         "accounts" -> Accounts(field("accounts", ListSerializer(AccountInfo.serializer())))
         "accountActions" -> AccountActions(field("actions", ListSerializer(AccountAction.serializer())))
@@ -612,10 +630,15 @@ sealed interface Draft {
  * steerQueued): the engine running the session runs each id once, so a resend after a lost link is safe
  */
 sealed interface WebviewMsg {
-  /** The page is mounted: the engine answers with `init`. patches: the page applies `sessionPatch`; listPatches: `sessionsPatch` */
-  data class Ready(val patches: Boolean = true, val listPatches: Boolean? = null) : WebviewMsg
+  /**
+   * The page is mounted: the engine answers with `init`. patches: the page applies `sessionPatch`; listPatches:
+   * `sessionsPatch`; window: session views start at their tail (`SessionView.earlier`), the rest comes by [LoadEarlier]
+   */
+  data class Ready(val patches: Boolean = true, val listPatches: Boolean? = null, val window: Boolean? = null) : WebviewMsg
   /** A sessionPatch did not fit the view the page holds: the engine sends the whole view again */
   data object Resync : WebviewMsg
+  /** The part of the session right ahead of what the page holds, answered with one sessionEarlier */
+  data class LoadEarlier(val sessionId: String) : WebviewMsg
   /** A sessionsPatch did not fit the list the page holds: the engine sends the whole list again */
   data object ResyncSessions : WebviewMsg
   /** steer: join the running turn instead of queueing behind it (SessionView.canSteer) */
@@ -763,6 +786,7 @@ sealed interface WebviewMsg {
     get() = when (this) {
       is Ready -> "ready"
       Resync -> "resync"
+      is LoadEarlier -> "loadEarlier"
       ResyncSessions -> "resyncSessions"
       is Send -> "send"
       is Stop -> "stop"
@@ -857,7 +881,8 @@ sealed interface WebviewMsg {
   fun toJson(): JsonObject = buildJsonObject {
     put("type", type)
     when (val m = this@WebviewMsg) {
-      is Ready -> { put("patches", m.patches); m.listPatches?.let { put("listPatches", it) } }
+      is Ready -> { put("patches", m.patches); m.listPatches?.let { put("listPatches", it) }; m.window?.let { put("window", it) } }
+      is LoadEarlier -> put("sessionId", m.sessionId)
       Resync, ResyncSessions, MarkAllRead, Connections, Providers -> {}
       is Send -> {
         opt("sessionId", m.sessionId); put("text", m.text)
@@ -950,8 +975,8 @@ sealed interface WebviewMsg {
   companion object {
     /** The `type` literals this build sends */
     val types = listOf(
-      "ready", "resync", "resyncSessions", "send", "stop", "permission", "answer", "buildPlan", "setMode", "setConfig",
-      "selectSession", "deselectSession", "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession",
+      "ready", "resync", "loadEarlier", "resyncSessions", "send", "stop", "permission", "answer", "buildPlan", "setMode",
+      "setConfig", "selectSession", "deselectSession", "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession",
       "archiveSession", "setSessionUnread", "markAllRead", "searchSessions", "forkSession", "selectAccount", "refreshQuota",
       "compact", "retry", "takeOverSession", "dequeue", "sendQueued", "steerQueued", "editQueued", "categoryOp",
       "moveSession", "sessionMarkdown", "addAccount", "removeAccount", "unlockCredentials", "login", "reconnect",

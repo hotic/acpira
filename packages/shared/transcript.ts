@@ -809,6 +809,13 @@ export interface RemoteAuth {
 }
 
 // Everything a session looks like to the webview: the host pushes the whole thing on every change (the transcript is small, not worth diffing)
+// What a windowed view leaves out ahead of its first turn: `turns` whole turns, and the first `blocks` blocks of the first
+// turn it does hold (an agent turn)
+export interface ViewEarlier {
+  turns: number;
+  blocks: number;
+}
+
 export interface SessionView {
   id: string;
   remoteAuth?: RemoteAuth;
@@ -824,6 +831,10 @@ export interface SessionView {
   canTakeOver?: boolean;
   authMethods?: AuthMethodInfo[];
   turns: Turn[];
+  // Only in a view sent to a page that said `window` in ready (sessionWindow.ts): what it leaves out ahead of turns[0].
+  // Turn indices everywhere else (editTurn, forkSession, SubagentSummary.turnIndex, search hits) count from the session's
+  // first turn: such a page adds `earlier.turns` to its own
+  earlier?: ViewEarlier;
   running: boolean;
   // Monotonic snapshot id for this process. Turns are mutated in place and postMessage clones
   // asynchronously, so an older running:true payload can arrive after settle; the webview drops a

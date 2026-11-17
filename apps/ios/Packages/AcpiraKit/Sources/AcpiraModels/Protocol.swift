@@ -582,6 +582,23 @@ public struct SessionPatch: Codable, Hashable, Sendable {
   }
 }
 
+/// One answer to `loadEarlier` (sessionWindow.ts SessionEarlier): the part of session `id` right ahead of what the page
+/// holds. `from` is the window the chunk was cut for: the page takes it only while its view still starts there.
+/// `blocks` go ahead of the blocks of `turns[0]` of the held view (the cut turn), then `turns` ahead of its turns; the
+/// first of `turns` is itself cut when `earlier.blocks` is not 0. `earlier` is what is still left out, absent once the
+/// view is whole
+public struct SessionEarlier: Codable, Hashable, Sendable {
+  public var id: String
+  public var from: ViewEarlier
+  public var turns: [Turn]
+  public var blocks: [AgentBlock]?
+  public var earlier: ViewEarlier?
+
+  public init(id: String, from: ViewEarlier, turns: [Turn], blocks: [AgentBlock]? = nil, earlier: ViewEarlier? = nil) {
+    self.id = id; self.from = from; self.turns = turns; self.blocks = blocks; self.earlier = earlier
+  }
+}
+
 // MARK: - Page → host
 
 /// The actions the phone sends (WebviewMsg), wrapped in a webviewMessage envelope. A session action carries the id of
@@ -591,8 +608,12 @@ public struct SessionPatch: Codable, Hashable, Sendable {
 /// engine running the session runs each id once
 public enum WebviewMsg: Codable, Hashable, Sendable {
   /// The page is mounted: the engine answers with `init`. patches: the page applies `sessionPatch`; listPatches:
-  /// `sessionsPatch` (the app sends both)
-  case ready(patches: Bool? = nil, listPatches: Bool? = nil)
+  /// `sessionsPatch`; window: session views start at their tail (`SessionView.earlier`) and the rest is asked for with
+  /// `loadEarlier`, which needs patches (the app sends all three)
+  case ready(patches: Bool? = nil, listPatches: Bool? = nil, window: Bool? = nil)
+  /// The part of the session right ahead of what the page holds, answered with one `sessionEarlier` (or with the whole
+  /// `session` again, when the engine no longer knows what the page holds)
+  case loadEarlier(sessionId: String)
   /// A sessionPatch did not fit the view the page holds: the engine sends the whole view again
   case resync
   /// A sessionsPatch did not fit the list the page holds: the engine sends the whole list again
@@ -729,7 +750,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
 
   /// The `type` literals this build mirrors: the actions the app can send
   public static let types = [
-    "ready", "resync", "resyncSessions", "send", "stop", "permission", "answer", "buildPlan", "setMode", "setConfig", "selectSession",
+    "ready", "loadEarlier", "resync", "resyncSessions", "send", "stop", "permission", "answer", "buildPlan", "setMode", "setConfig", "selectSession",
     "deselectSession", "newSession", "renameSession", "deleteSession", "restoreSession", "pinSession", "archiveSession", "setSessionUnread", "markAllRead", "searchSessions",
     "forkSession", "selectAccount", "refreshQuota", "compact", "retry", "takeOverSession", "dequeue", "sendQueued",
     "steerQueued", "editQueued", "categoryOp", "moveSession", "sessionMarkdown", "addAccount", "removeAccount",
@@ -744,6 +765,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   public var type: String {
     switch self {
     case .ready: "ready"
+    case .loadEarlier: "loadEarlier"
     case .resync: "resync"
     case .resyncSessions: "resyncSessions"
     case .send: "send"
@@ -817,7 +839,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   }
 
   private enum Keys: String, CodingKey {
-    case type, patches, listPatches, sessionId, text, attachments, steer, blockId, optionId, answers, images, skip, planId, model, id, configId
+    case type, patches, listPatches, window, sessionId, text, attachments, steer, blockId, optionId, answers, images, skip, planId, model, id, configId
     case value, agent, category, cwd, chat, title, pinned, archived, unread, query, seq, turnIndex, retainedAttachments, clientId
     case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
     case toolCallId, nth, cols, rows, data, binary, chars, format, shown, probe, also
@@ -830,7 +852,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     func int(_ k: Keys) throws -> Int { try c.decode(Int.self, forKey: k) }
     switch try str(.type) {
     case "ready":
-      self = .ready(patches: try c.decodeIfPresent(Bool.self, forKey: .patches), listPatches: try c.decodeIfPresent(Bool.self, forKey: .listPatches))
+      self = .ready(patches: try c.decodeIfPresent(Bool.self, forKey: .patches), listPatches: try c.decodeIfPresent(Bool.self, forKey: .listPatches),
+                    window: try c.decodeIfPresent(Bool.self, forKey: .window))
+    case "loadEarlier": self = .loadEarlier(sessionId: try str(.sessionId))
     case "resync": self = .resync
     case "resyncSessions": self = .resyncSessions
     case "send":
@@ -933,9 +957,12 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     var c = encoder.container(keyedBy: Keys.self)
     try c.encode(type, forKey: .type)
     switch self {
-    case let .ready(patches, listPatches):
+    case let .ready(patches, listPatches, window):
       try c.encodeIfPresent(patches, forKey: .patches)
       try c.encodeIfPresent(listPatches, forKey: .listPatches)
+      try c.encodeIfPresent(window, forKey: .window)
+    case .loadEarlier(let sessionId):
+      try c.encode(sessionId, forKey: .sessionId)
     case let .send(sessionId, text, attachments, steer, clientId):
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
       try c.encode(text, forKey: .text)
@@ -1147,6 +1174,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case session(session: SessionView)
   /// The changes since the view sent last; only to pages that said `patches` in ready
   case sessionPatch(patch: SessionPatch)
+  /// The answer to `loadEarlier`; only to pages that said `window` in ready
+  case sessionEarlier(chunk: SessionEarlier)
   /// The session list as runs over the list sent last; only to pages that said `listPatches` in ready
   case sessionsPatch(patch: SessionsPatch)
   case accounts(accounts: [AccountInfo])
@@ -1209,6 +1238,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "stagedFile", "sessionMarkdown",
     "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
     "deleteSessionResult", "appearance", "connections", "localDir", "providers", "providerProbed", "sessionUnavailable",
+    "sessionEarlier",
   ]
 
   /// The wire `type`
@@ -1222,6 +1252,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .sessionUnavailable: "sessionUnavailable"
     case .session: "session"
     case .sessionPatch: "sessionPatch"
+    case .sessionEarlier: "sessionEarlier"
     case .sessionsPatch: "sessionsPatch"
     case .accounts: "accounts"
     case .accountActions: "accountActions"
@@ -1257,7 +1288,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case controls, shapes, commands, cwd, seq, hits
     case sessionId, subagentId, rev, running, turns, files, source, blob, size, markdown, error, entries, root, marks, text
     case hunks, id, data, title, cols, rows, replay, exit, requestId, undo, appearance, connections, path, parent, view, outcome
-    case reason
+    case reason, chunk
   }
 
   public init(from decoder: Decoder) throws {
@@ -1274,6 +1305,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case "sessionUnavailable": self = .sessionUnavailable(id: try str(.id), reason: try str(.reason))
     case "session": self = .session(session: try c.decode(SessionView.self, forKey: .session))
     case "sessionPatch": self = .sessionPatch(patch: try c.decode(SessionPatch.self, forKey: .patch))
+    case "sessionEarlier": self = .sessionEarlier(chunk: try c.decode(SessionEarlier.self, forKey: .chunk))
     case "sessionsPatch": self = .sessionsPatch(patch: try c.decode(SessionsPatch.self, forKey: .patch))
     case "accounts": self = .accounts(accounts: try c.decode([AccountInfo].self, forKey: .accounts))
     case "accountActions": self = .accountActions(actions: try c.decode([AccountAction].self, forKey: .actions))
@@ -1332,6 +1364,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .categories(let categories): try c.encode(categories, forKey: .categories)
     case .session(let session): try c.encode(session, forKey: .session)
     case .sessionPatch(let patch): try c.encode(patch, forKey: .patch)
+    case .sessionEarlier(let chunk): try c.encode(chunk, forKey: .chunk)
     case .sessionsPatch(let patch): try c.encode(patch, forKey: .patch)
     case .accounts(let accounts): try c.encode(accounts, forKey: .accounts)
     case .accountActions(let actions): try c.encode(actions, forKey: .actions)

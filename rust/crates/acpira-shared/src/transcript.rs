@@ -13,7 +13,7 @@ use crate::subagents::SubagentSummary;
 pub type AgentId = String;
 pub type StrMap = BTreeMap<String, String>;
 
-fn is_false(v: &bool) -> bool {
+pub(crate) fn is_false(v: &bool) -> bool {
   !*v
 }
 
@@ -1760,6 +1760,10 @@ pub struct SessionView {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub auth_methods: Option<Vec<AuthMethodInfo>>,
   pub turns: Vec<Turn>,
+  /// Only in a view sent to a page that takes windows: what it leaves out ahead of its first turn (`session_window.rs`,
+  /// which writes it into the encoded view; a session never sets it)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub earlier: Option<crate::session_window::Earlier>,
   pub running: bool,
   #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
   pub rev: Option<i64>,
