@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import type { AccountQuota, QuotaWindow } from '@acpira/shared/transcript';
 import { cn } from './cn';
 import { getLocale, t, tOr } from '../i18n';
@@ -7,8 +7,13 @@ import { getLocale, t, tOr } from '../i18n';
 const LOW = 0.3;
 const CRITICAL = 0.1;
 
-// Each window has a metadata line above its tube. Wide account rows place windows side by side.
-export function QuotaBars({ quota, className }: { quota: AccountQuota; className?: string }) {
+// Each window has a metadata line above its tube: its name, the time to its reset in a dimmer tone, its share. The
+// tubes sit closer to each other than the block does to the identity above it. Wide account rows place windows side
+// by side.
+// `stale`: the last read failed, so these are the last known figures: grey tubes and dimmed text.
+// Windows that come in pairs under one label (a model group's 5-hour and weekly allowance) share a row at any width: the
+// label once, then each window's reset and share, which is what tells the two apart.
+export function QuotaBars({ quota, stale, className }: { quota: AccountQuota; stale?: boolean; className?: string }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -16,15 +21,24 @@ export function QuotaBars({ quota, className }: { quota: AccountQuota; className
   }, []);
   const balance = balanceLabel(quota);
   if (!quota.windows.length && !balance) return null;
+  const pairs = labelPairs(quota.windows);
   return (
     <span
       role="img"
       aria-label={[...quota.windows.map(w => `${t('quota.aria', { window: windowLabel(w.id), pct: Math.round(w.remaining * 100) })}${t('common.metaSep')}${resetLabel(w, now)}`), balance].filter(Boolean).join(t('common.listSep'))}
-      className={cn('@container/quota block w-full min-w-0 pt-2 text-3 text-fg-2 tabular-nums', className)}
+      className={cn('@container/quota block w-full min-w-0 pt-2 text-3 tabular-nums', stale ? 'text-fg-3' : 'text-fg-2', className)}
     >
-      <span className={cn('grid grid-cols-1 gap-gap', quota.windows.length > 1 && '@quota/quota:grid-cols-2')}>
-        {quota.windows.map(w => <QuotaBar key={w.id} window={w} now={now} />)}
-      </span>
+      {pairs
+        ? <span className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-x-gap gap-y-1.5">
+          {pairs.map(([a, b]) => <Fragment key={a.id}>
+            <span className={cn('self-center whitespace-nowrap', !stale && 'text-fg-1')}>{windowLabel(a.id)}</span>
+            <QuotaBar window={a} now={now} stale={stale} bare />
+            <QuotaBar window={b} now={now} stale={stale} bare />
+          </Fragment>)}
+        </span>
+        : <span className={cn('grid grid-cols-1 gap-x-gap gap-y-1.5', quota.windows.length > 1 && '@quota/quota:grid-cols-2')}>
+          {quota.windows.map(w => <QuotaBar key={w.id} window={w} now={now} stale={stale} />)}
+        </span>}
       {balance && <span className={cn('flex min-w-0 items-baseline justify-between gap-2', quota.windows.length > 0 && 'mt-2')} title={balance}>
         <span className="min-w-0 truncate">{t('quota.onDemandBalance')}</span>
         <span className="shrink-0 whitespace-nowrap">{formatBalance(quota.onDemandBalanceUsd!)}</span>
@@ -33,21 +47,41 @@ export function QuotaBars({ quota, className }: { quota: AccountQuota; className
   );
 }
 
-function QuotaBar({ window: w, now }: { window: QuotaWindow; now: number }) {
+// The windows two by two when every such pair shares its label; undefined for any other list
+function labelPairs(windows: QuotaWindow[]): [QuotaWindow, QuotaWindow][] | undefined {
+  if (!windows.length || windows.length % 2) return undefined;
+  const pairs: [QuotaWindow, QuotaWindow][] = [];
+  for (let i = 0; i < windows.length; i += 2) {
+    const [a, b] = [windows[i]!, windows[i + 1]!];
+    if (windowLabel(a.id) !== windowLabel(b.id)) return undefined;
+    pairs.push([a, b]);
+  }
+  return pairs;
+}
+
+// `bare`: a window in a labelled pair, without its own label and, where the row is narrow, with the reset in its largest
+// unit only, or a dash for a window without one: "Not started" does not fit half a narrow row in most languages (the
+// hint and the wide row keep the words)
+const NO_RESET = '—';
+function QuotaBar({ window: w, now, stale, bare }: { window: QuotaWindow; now: number; stale?: boolean; bare?: boolean }) {
   const pct = Math.round(w.remaining * 100);
   const label = windowLabel(w.id);
   const time = w.resetsAt && Number.isFinite(Date.parse(w.resetsAt)) ? fmtUntil(w.resetsAt, now) : undefined;
+  const ahead = !!time && Date.parse(w.resetsAt!) > now;
   const hint = time ? t('quota.hint', { window: label, pct, time }) : t('quota.hintNoReset', { window: label, pct });
   return (
     <span className="flex min-w-0 flex-col gap-1" title={hint}>
-      <span className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 whitespace-nowrap">
-        <span className="shrink-0">{label}</span>
-        <span className="min-w-0 max-w-full justify-self-start truncate rounded-sm bg-active px-1 text-fg-2" title={w.resetsAt && Number.isFinite(Date.parse(w.resetsAt)) ? new Date(w.resetsAt).toLocaleString() : undefined}>{time && Date.parse(w.resetsAt!) > now ? fmtUntil(w.resetsAt!, now, true) : resetLabel(w, now)}</span>
-        <span className="ml-auto shrink-0">{t('quota.left', { pct })}</span>
+      <span className={cn('grid min-w-0 items-center whitespace-nowrap', bare ? 'grid-cols-[minmax(0,1fr)_auto] gap-x-1 @quota/quota:gap-x-2' : 'grid-cols-[auto_minmax(0,1fr)_auto] gap-x-2')}>
+        {!bare && <span className={cn('shrink-0', !stale && 'text-fg-1')}>{label}</span>}
+        <span className="min-w-0 max-w-full justify-self-start truncate text-fg-3/85" title={w.resetsAt && Number.isFinite(Date.parse(w.resetsAt)) ? new Date(w.resetsAt).toLocaleString() : undefined}>
+          {bare && <span className="@quota/quota:hidden">{ahead ? fmtUntil(w.resetsAt!, now, true, true) : NO_RESET}</span>}
+          <span className={cn(bare && 'hidden @quota/quota:inline')}>{ahead ? fmtUntil(w.resetsAt!, now, true) : resetLabel(w, now)}</span>
+        </span>
+        <span className="ml-auto shrink-0">{pct}%</span>
       </span>
       <span className="h-(--quota-track) overflow-hidden rounded-full bg-active">
         <span
-          className={cn('block h-full rounded-full transition-[width,background-color] duration-(--quota-fill-duration) ease-out', w.remaining <= CRITICAL ? 'bg-(--quota-danger)' : w.remaining <= LOW ? 'bg-(--quota-warn)' : 'bg-(--quota-ok)')}
+          className={cn('block h-full rounded-full transition-[width,background-color] duration-(--quota-fill-duration) ease-out', stale ? 'bg-fg-3/50' : w.remaining <= CRITICAL ? 'bg-(--quota-danger)' : w.remaining <= LOW ? 'bg-(--quota-warn)' : 'bg-(--quota-ok)')}
           style={{ width: `${pct}%` }}
         />
       </span>
@@ -82,7 +116,7 @@ function resetLabel(w: QuotaWindow, now: number): string {
   return t('quota.reset', { time: fmtUntil(w.resetsAt, now) });
 }
 
-function fmtUntil(iso: string, now: number, compact = false): string {
+function fmtUntil(iso: string, now: number, compact = false, largestOnly = false): string {
   const ms = Math.max(0, Date.parse(iso) - now);
   const minutes = Math.ceil(ms / 60_000);
   const unit = (name: 'minutes' | 'hours' | 'days', n: number) => t(compact ? `quota.time.short.${name}` : `quota.time.${name}`, { n });
@@ -90,6 +124,6 @@ function fmtUntil(iso: string, now: number, compact = false): string {
   const separator = compact && ['zh-CN', 'zh-TW', 'ja'].includes(getLocale()) ? '' : ' ';
   if (minutes < 60) return unit('minutes', minutes);
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return [unit('hours', hours), minutes % 60 ? unit('minutes', minutes % 60) : undefined].filter(Boolean).join(separator);
-  return [unit('days', Math.floor(hours / 24)), hours % 24 ? unit('hours', hours % 24) : undefined].filter(Boolean).join(separator);
+  if (hours < 24) return [unit('hours', hours), minutes % 60 && !largestOnly ? unit('minutes', minutes % 60) : undefined].filter(Boolean).join(separator);
+  return [unit('days', Math.floor(hours / 24)), hours % 24 && !largestOnly ? unit('hours', hours % 24) : undefined].filter(Boolean).join(separator);
 }

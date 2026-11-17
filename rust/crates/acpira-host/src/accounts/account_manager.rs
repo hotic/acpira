@@ -210,10 +210,9 @@ impl AccountManager {
     if let Some(q) = self.quotas.lock().get(&a.id) {
       a.quota = Some(q.clone());
     }
-    // Last known bars win over a failed re-read; the issue only explains why there are none
-    if a.quota.is_none() {
-      a.quota_issue = self.quota_failures.lock().get(&a.id).map(|f| f.issue);
-    }
+    // The last known bars stay through a failed re-read; the issue beside them marks them stale, or explains why
+    // there are none
+    a.quota_issue = self.quota_failures.lock().get(&a.id).map(|f| f.issue);
     a
   }
 
