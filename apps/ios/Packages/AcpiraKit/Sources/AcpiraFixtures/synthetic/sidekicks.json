@@ -1,0 +1,230 @@
+{
+  "id": "sidekicks",
+  "agent": "claude",
+  "title": "跨 CLI 副手",
+  "cwd": "/Users/dev/projects/acpira",
+  "status": "ready",
+  "running": false,
+  "turns": [],
+  "controls": {
+    "modes": [
+      {
+        "id": "default",
+        "name": "Default"
+      },
+      {
+        "id": "plan",
+        "name": "Plan"
+      }
+    ],
+    "modeId": "default",
+    "options": [
+      {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "value": "opus",
+        "options": [
+          {
+            "id": "opus",
+            "name": "Opus 5.5"
+          },
+          {
+            "id": "fable",
+            "name": "Fable 5.2"
+          },
+          {
+            "id": "sonnet",
+            "name": "Sonnet 5.5"
+          },
+          {
+            "id": "haiku",
+            "name": "Haiku 5.5"
+          }
+        ]
+      },
+      {
+        "id": "effort",
+        "name": "Effort",
+        "category": "thought_level",
+        "value": "medium",
+        "options": [
+          {
+            "id": "low",
+            "name": "Low"
+          },
+          {
+            "id": "medium",
+            "name": "Medium"
+          },
+          {
+            "id": "high",
+            "name": "High"
+          },
+          {
+            "id": "xhigh",
+            "name": "Xhigh"
+          },
+          {
+            "id": "max",
+            "name": "Max"
+          }
+        ]
+      },
+      {
+        "id": "host_sidekick",
+        "name": "Sidekick",
+        "category": "_sidekick",
+        "value": "acpira/openrouter/opus",
+        "options": [
+          {
+            "id": "none",
+            "name": "None"
+          },
+          {
+            "id": "claude/opus",
+            "name": "Opus 5.5",
+            "description": "Claude Code",
+            "group": {
+              "id": "claude",
+              "name": "Claude Code"
+            }
+          },
+          {
+            "id": "claude/fable",
+            "name": "Fable 5.2",
+            "description": "Claude Code",
+            "group": {
+              "id": "claude",
+              "name": "Claude Code"
+            }
+          },
+          {
+            "id": "claude/sonnet",
+            "name": "Sonnet 5.5",
+            "description": "Claude Code",
+            "group": {
+              "id": "claude",
+              "name": "Claude Code"
+            }
+          },
+          {
+            "id": "claude/haiku",
+            "name": "Haiku 5.5",
+            "description": "Claude Code",
+            "group": {
+              "id": "claude",
+              "name": "Claude Code"
+            }
+          },
+          {
+            "id": "codex/sol",
+            "name": "GPT-6.1 Sol",
+            "description": "Codex",
+            "group": {
+              "id": "codex",
+              "name": "Codex"
+            }
+          },
+          {
+            "id": "codex/luna",
+            "name": "GPT-6 Luna",
+            "description": "Codex",
+            "group": {
+              "id": "codex",
+              "name": "Codex"
+            }
+          },
+          {
+            "id": "antigravity/flash",
+            "name": "Gemini 3.8 Flash",
+            "description": "Antigravity",
+            "group": {
+              "id": "antigravity",
+              "name": "Antigravity"
+            }
+          },
+          {
+            "id": "acpira/deepseek/flash",
+            "name": "DeepSeek V4.1 Flash",
+            "description": "Acpira",
+            "group": {
+              "id": "acpira",
+              "name": "Acpira"
+            },
+            "source": {
+              "id": "deepseek",
+              "name": "DeepSeek",
+              "kind": "custom"
+            }
+          },
+          {
+            "id": "acpira/deepseek/pro",
+            "name": "DeepSeek V4 Pro",
+            "description": "Acpira",
+            "group": {
+              "id": "acpira",
+              "name": "Acpira"
+            },
+            "source": {
+              "id": "deepseek",
+              "name": "DeepSeek",
+              "kind": "custom"
+            }
+          },
+          {
+            "id": "acpira/openrouter/opus",
+            "name": "Opus 5.5",
+            "description": "Acpira",
+            "group": {
+              "id": "acpira",
+              "name": "Acpira"
+            },
+            "source": {
+              "id": "openrouter",
+              "name": "OpenRouter",
+              "kind": "custom"
+            }
+          },
+          {
+            "id": "acpira/openrouter/luna",
+            "name": "GPT-6 Luna",
+            "description": "Acpira",
+            "group": {
+              "id": "acpira",
+              "name": "Acpira"
+            },
+            "source": {
+              "id": "openrouter",
+              "name": "OpenRouter",
+              "kind": "custom"
+            }
+          }
+        ]
+      },
+      {
+        "id": "host_sidekick_effort",
+        "name": "Sidekick effort",
+        "category": "_sidekick_effort",
+        "value": "high",
+        "options": [
+          {
+            "id": "low",
+            "name": "Low"
+          },
+          {
+            "id": "medium",
+            "name": "Medium"
+          },
+          {
+            "id": "high",
+            "name": "High"
+          }
+        ]
+      }
+    ]
+  },
+  "commands": [],
+  "createdAt": "2026-10-09T09:00:00Z",
+  "updatedAt": "2026-10-09T09:05:18Z"
+}

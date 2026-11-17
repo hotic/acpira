@@ -42,6 +42,7 @@ import cc.hotic.acpira.design.sidekickPulse
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.ComposerControls
 import cc.hotic.acpira.logic.ModelChoices
+import cc.hotic.acpira.model.ConfigControl
 import cc.hotic.acpira.model.SessionOption
 
 // The model chip's Fusion and sidekick beans (apps/ios Design/Goo.swift LiquidControls `fusionModelBean`,
@@ -91,48 +92,68 @@ internal fun fusionModelBean(c: ModelChoices, sidekick: Boolean, fold: () -> Uni
  * The sidekick's bean at the end of the lead's column: its mark with the plus badge (a faint fading plus for none), its
  * model's name and what a sidekick does beside it. A tap trades the beans for the sidekick's own
  */
-internal fun sidekickBean(c: ModelChoices, enter: () -> Unit): Bean? {
+internal fun sidekickBean(c: ModelChoices, enter: (opening: Int) -> Unit): Bean? {
   if (c.fusion != null) {
     val name = c.curVar?.sidekick.orEmpty()
-    return Bean("sidekick", t("composer.sidekick"), name, glyph = { SidekickMark(SessionOption(name, name)) }, tap = enter, note = t("composer.sidekick"))
+    return Bean("sidekick", t("composer.sidekick"), name, glyph = { SidekickMark(SessionOption(name, name)) }, tap = { enter(0) }, note = t("composer.sidekick"))
   }
-  if (c.sidekick == null) return null
+  val sk = c.sidekick ?: return null
   val picked = c.sidekickPicked
+  // None yet, with models from two or more CLIs: the tap goes straight to the CLI list, not to a lone agent bean
+  val toAgents = picked == null && ComposerControls.sidekickClis(sk.options).size > 1
   return Bean(
     "sidekick", t("composer.sidekick"), picked?.name ?: t("composer.sidekickNone"),
-    glyph = { SidekickMark(picked) }, tap = enter, note = t("composer.sidekickHint"),
+    glyph = { SidekickMark(picked) }, tap = { enter(if (toAgents) 1 else 0) }, note = t("composer.sidekickHint"),
   )
 }
 
 /**
- * The sidekick level's beans, as the lead's read: its model (a list with None first), its reasoning level while the
- * model has levels, and its Fast while the model has a fast tier, flipped on a tap. A Fusion pair's level is its
- * sidekick list alone
+ * The sidekick level's beans, as the lead's read: with models from two or more CLIs (the host's select) first the CLI,
+ * as the desktop's rail is, then its model (one CLI's models, filed by channel, so a group label always names a
+ * channel), its reasoning level while the model has levels, and its Fast while the model has a fast tier, flipped on a
+ * tap. With one CLI the model list holds None first. A Fusion pair's level is its sidekick list alone
  */
-internal fun sidekickBeans(c: ModelChoices, onSetConfig: (String, String) -> Unit, fold: () -> Unit, haptics: HapticFeedback): List<Bean> {
+internal fun sidekickBeans(c: ModelChoices, onSetConfig: (String, String) -> Unit, fold: () -> Unit, haptics: HapticFeedback, goo: Goo): List<Bean> {
   if (c.fusion != null) return listOf(fusionModelBean(c, sidekick = true, fold))
   val sk = c.sidekick ?: return emptyList()
   val current = sk.value ?: ComposerControls.noSidekick
   val picked = c.sidekickPicked
   val none = t("composer.sidekickNone")
-  val out = mutableListOf(
-    Bean(
+  val clis = ComposerControls.sidekickClis(sk.options)
+  val out = mutableListOf<Bean>()
+  var listed: List<SessionOption>? = sk.options
+  if (clis.size > 1) {
+    val mine = clis.firstOrNull { it.id == picked?.group?.id }
+    out += agentBean(sk, clis, mine, onSetConfig, fold, goo)
+    listed = (clis.firstOrNull { it.id == goo.browse } ?: mine)?.options
+  }
+  if (listed != null) {
+    val groups = ComposerControls.byChannel(listed)
+    val order = groups?.flatMap { it.second } ?: listed
+    out += Bean(
       "sidekick.model", t("stats.model"), picked?.name ?: none,
       // The badged mark, so this column reads as the sidekick's and not the lead's
       glyph = { SidekickMark(picked) },
-      rows = sk.options.size,
+      rows = listed.size,
+      labels = groups?.count { it.first.isNotEmpty() } ?: 0,
       panel = {
-        GooList(sk.options.indexOfFirst { it.id == current }) {
-          for (o in sk.options) {
-            val isNone = o.id == ComposerControls.noSidekick
-            GooRow(if (isNone) none else o.name, o.id == current, glyph = { SidekickRowGlyph(if (isNone) null else o, Metrics.iconCtl) }) {
-              onSetConfig(sk.id, o.id); fold()
-            }
+        @Composable
+        fun row(o: SessionOption) {
+          val isNone = o.id == ComposerControls.noSidekick
+          GooRow(if (isNone) none else o.name, o.id == current, glyph = { SidekickRowGlyph(if (isNone) null else o, Metrics.iconCtl) }) {
+            onSetConfig(sk.id, o.id); fold()
+          }
+        }
+        GooList(order.indexOfFirst { it.id == current }) {
+          if (groups == null) for (o in listed) row(o)
+          else for ((channel, options) in groups) {
+            if (channel.isNotEmpty()) GooSection(channel)
+            for (o in options) row(o)
           }
         }
       },
-    ),
-  )
+    )
+  }
   val effort = c.sidekickEffort
   val scale = if (picked == null) null else effort?.takeIf { ComposerControls.reasoningVisible(it) }?.let { ComposerControls.presentReasoning(it) }
   if (effort != null && scale != null && scale.efforts.size > 1) {
@@ -155,6 +176,38 @@ internal fun sidekickBeans(c: ModelChoices, onSetConfig: (String, String) -> Uni
     })
   }
   return out
+}
+
+/**
+ * The CLI the sidekick runs in: its mark and name (a faint fading plus and None while there is none), and a panel of
+ * None and every CLI. None turns the sidekick off; a CLI is no pick of its own, so it opens the model bean (the second)
+ * on that CLI's models
+ */
+private fun agentBean(
+  sk: ConfigControl, clis: List<ComposerControls.SidekickCli>, picked: ComposerControls.SidekickCli?,
+  onSetConfig: (String, String) -> Unit, fold: () -> Unit, goo: Goo,
+): Bean {
+  val none = t("composer.sidekickNone")
+  return Bean(
+    "sidekick.agent", t("common.agent"), picked?.name ?: none,
+    glyph = {
+      if (picked == null) Lucide("circleFadingPlus", Palette.fg3, size = Metrics.barIcon)
+      else VendorMark(picked.id, picked.name, Palette.fg1, size = Metrics.barIcon, fit = true)
+    },
+    rows = clis.size + 1,
+    panel = {
+      GooList(if (picked == null) 0 else clis.indexOf(picked) + 1) {
+        GooRow(none, picked == null, glyph = { SidekickRowGlyph(null, Metrics.iconCtl) }) {
+          onSetConfig(sk.id, ComposerControls.noSidekick); goo.browse = null; fold()
+        }
+        for (cli in clis) {
+          GooRow(cli.name, cli.id == picked?.id, glyph = { VendorMark(cli.id, cli.name, Palette.fgStrong, size = Metrics.iconCtl, fit = true) }) {
+            goo.browse = cli.id; goo.stage = 2
+          }
+        }
+      }
+    },
+  )
 }
 
 /** The live sidekick's colour on the chip: its model vendor's own, else the neutral ink; none while the select reads None */

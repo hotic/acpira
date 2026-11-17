@@ -112,6 +112,8 @@ export class Goo {
   @Trace open: string | undefined = undefined;
   @Trace stage: number = 0;
   @Trace deeper: string | undefined = undefined;
+  /** The CLI whose models the sidekick's model bean lists, once one was picked from its agent bean; undefined: the picked sidekick's */
+  @Trace browse: string | undefined = undefined;
   /** Where the chips sit in window vp (their left edges and their shared top), so the beans rise out of them */
   @Trace attachLeft: number = 0;
   @Trace modelLeft: number = 0;

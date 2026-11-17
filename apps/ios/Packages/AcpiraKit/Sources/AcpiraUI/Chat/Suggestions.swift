@@ -55,6 +55,69 @@ struct SuggestionRowStyle: ButtonStyle {
   }
 }
 
+/// A row of the `/` list: a working mode the composer enters itself, or one of the agent's commands
+enum SlashHit: Hashable {
+  case mode(SessionOption)
+  case command(SlashCommand)
+
+  var key: String {
+    switch self {
+    case .mode(let m): "mode:\(m.id)"
+    case .command(let c): c.name
+    }
+  }
+}
+
+/// SlashList's host action row: the mode's glyph, its name bright, one line on what it does faint after it
+struct ModeRow: View {
+  let mode: SessionOption
+  var body: some View {
+    Icon(modeIcon(mode), size: Metrics.icon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)
+    Text(web: modeName(mode), paragraph: false)
+      .textStyle(TypeScale.text2)
+      .foregroundStyle(Palette.fgStrong)
+      .lineLimit(1)
+      .layoutPriority(2)
+    if let hint = modeHint(mode), !hint.isEmpty {
+      Text(web: hint, paragraph: false)
+        .textStyle(TypeScale.text3)
+        .foregroundStyle(Palette.fg3)
+        .lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+}
+
+/// The working mode in force, after the bar's chips (Composer.tsx ModePill): outlined where the chips are glass, so it
+/// reads as a token and not a third picker. The whole pill leaves the mode (a phone's × alone is too small to hit)
+struct ModePill: View {
+  let mode: SessionOption
+  let exit: () -> Void
+  var body: some View {
+    let name = modeName(mode)
+    Button(action: exit) {
+      HStack(spacing: Metrics.s1) {
+        Icon(modeIcon(mode), size: Metrics.icon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)
+        Text(web: name, paragraph: false)
+          .textStyle(TypeScale.text2)
+          .foregroundStyle(Palette.fg1)
+          .lineLimit(1)
+          .fixedSize()
+        Icon(.x, size: Metrics.chevron, strokeWidth: 1.75).foregroundStyle(Palette.fg3)
+      }
+      .padding(.leading, Metrics.s2)
+      .padding(.trailing, Metrics.s1_5)
+      .frame(height: Metrics.rowDense)
+      .overlay(Capsule().strokeBorder(Palette.conversationLine))
+      // The bar's height takes the tap, not just the outline
+      .frame(height: Metrics.barCtl)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(Text(web: t("composer.modeExit", ["mode": name])))
+  }
+}
+
 /// SlashList's row: the glyph, `/name` bright, the input hint faint beside it, the description trailing
 struct CommandRow: View {
   let command: SlashCommand

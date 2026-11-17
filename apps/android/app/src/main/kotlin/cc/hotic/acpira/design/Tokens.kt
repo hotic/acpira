@@ -313,6 +313,8 @@ object Metrics {
   /** The chat wait page's failure note: a short column, so the engine's sentence wraps well inside the screen */
   val waitNoteW = 260.dp
   val gooRow = 40.dp
+  /** A group label among a panel's rows ([cc.hotic.acpira.ui.GooSection]): the channel a run of sidekick models comes through */
+  val gooSection = 28.dp
   const val gooPanelRows = 6.5f
   val rGooPanel = 22.dp
   val gooPadX = 14.dp

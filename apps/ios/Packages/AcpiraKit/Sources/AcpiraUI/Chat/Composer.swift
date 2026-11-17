@@ -47,6 +47,8 @@ struct Composer: View {
   @State private var source: AttachSource?
   /// The width of the bar's group of `+` and the mark (the mark is gone when the agent offers nothing to pick)
   @State private var lead = Metrics.barCtl * 2
+  /// The working mode's pill with its margins, beside the chips while a working mode is in force
+  @State private var pillWidth: CGFloat = 0
   /// The chips' top on the screen below its bar (`GooColumn.space`): how far their beans may rise
   @State private var chipTop = CGFloat.infinity
   @Environment(\.initialPopup) private var initialPopup
@@ -90,6 +92,9 @@ struct Composer: View {
 
   /// The card form: opened for typing, or a draft waiting
   private var expanded: Bool { card || filled }
+
+  /// The room the pill takes from the field at rest
+  private var restPill: CGFloat { ComposerControls.workingMode(session.controls) == nil ? 0 : pillWidth }
 
   /// The field: a snapshot draws the placeholder (or the draft) where the field would be
   private var field: some View {
@@ -257,7 +262,7 @@ struct Composer: View {
               .padding(.top, fieldTop)
               .padding(.bottom, expanded ? Metrics.s1 + Metrics.barCtl + Metrics.s1 : line - Metrics.fieldInkDrop)
               // In the card the text starts on the `+`'s ink below it
-              .padding(.leading, expanded ? Metrics.s3 + Metrics.s1 * 2 : lead + Metrics.s1)
+              .padding(.leading, expanded ? Metrics.s3 + Metrics.s1 * 2 : lead + restPill + Metrics.s1)
               // In the card the text stops short of the expand corner's column
               .padding(.trailing, expanded ? Metrics.s3 + Metrics.icon + Metrics.s1 : Metrics.barCtl + Metrics.s1)
           }
@@ -322,6 +327,19 @@ struct Composer: View {
         }
         .padding([.trailing, .bottom], expanded ? Metrics.s1 : 0)
         .animation(recedeCurve) { $0.opacity(goo != nil ? Metrics.gooRecede : 1) }
+      }
+      // The working mode in force beside a permission bean (Composer.tsx ModePill), after the chips. Over the
+      // container for the same reason as send: inside it the pill's ink came out refracted into a blur
+      .overlay(alignment: .bottomLeading) {
+        if let mode = ComposerControls.workingMode(session.controls), let rest = session.controls.modes.first {
+          ModePill(mode: mode) { onSetMode(rest.id) }
+            .padding(.horizontal, Metrics.s1)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pillWidth = $0 }
+            .padding(.leading, lead + (expanded ? Metrics.s1 : 0))
+            .padding(.bottom, expanded ? Metrics.s1 : 0)
+            .animation(recedeCurve) { $0.opacity(goo != nil ? Metrics.gooRecede : 1) }
+            .transition(.opacity)
+        }
       }
       // Over the container for the same reason as send
       .overlay(alignment: .topTrailing) {
@@ -474,9 +492,12 @@ struct Composer: View {
     return SlashCommands.mentionAt(text, caret: c.at)
   }
 
-  /// The commands matching the `/` token, the list shown only with hits: without one the slash stays plain text
-  private var slashHits: [SlashCommand] {
-    slashSpan.map { SlashCommands.match(session.commands, query: $0.query) } ?? []
+  /// The `/` token's hits, the list shown only with some: without one the slash stays plain text. The working modes
+  /// beside a permission bean lead by name (Composer.tsx `hostActions`), then the agent's commands
+  private var slashHits: [SlashHit] {
+    guard let span = slashSpan else { return [] }
+    let modes = SlashCommands.matchModes(ComposerControls.workingModes(session.controls) ?? [], name: modeName, query: span.query)
+    return modes.map(SlashHit.mode) + SlashCommands.match(session.commands, query: span.query).map(SlashHit.command)
   }
 
   /// What the field paints as pills (PromptMarks.swift): the advertised commands and the summonable personas
@@ -490,7 +511,12 @@ struct Composer: View {
   @ViewBuilder private var suggestions: some View {
     let commands = slashHits
     if !commands.isEmpty {
-      SuggestionList(items: commands, key: \.name, pick: pickCommand) { CommandRow(command: $0) }
+      SuggestionList(items: commands, key: \.key, pick: pickCommand) { hit in
+        switch hit {
+        case .mode(let mode): ModeRow(mode: mode)
+        case .command(let command): CommandRow(command: command)
+        }
+      }
     } else if let span = mentionSpan {
       let hits = MentionPersona.hits(personas, query: span.query) + (files?.hits ?? [])
       let answered = files?.answered == span.query
@@ -502,10 +528,17 @@ struct Composer: View {
     }
   }
 
-  /// A command completes the token in place (`/name `); it goes out through the ordinary send, the agent runs it
-  private func pickCommand(_ command: SlashCommand) {
+  /// A command completes the token in place (`/name `); it goes out through the ordinary send, the agent runs it. A
+  /// working mode is entered at once and its token leaves the draft
+  private func pickCommand(_ hit: SlashHit) {
     guard let span = slashSpan else { return }
-    apply(SlashCommands.complete(text, span: span, caret: caret.at, name: command.name))
+    switch hit {
+    case .mode(let mode):
+      apply(SlashCommands.dropCommand(text, span: span, caret: caret.at))
+      onSetMode(mode.id)
+    case .command(let command):
+      apply(SlashCommands.complete(text, span: span, caret: caret.at, name: command.name))
+    }
   }
 
   /// A persona is summoned by name; a file leaves the text and rides along as an attachment
@@ -987,6 +1020,19 @@ func modeLabel(_ mode: SessionOption) -> String {
   ]
   guard let key = short[mode.id] else { return mode.name }
   return t(key)
+}
+
+/// modeIcons.ts `modeName`: a working mode where it is picked by name (the `/` list, the bar's pill), the bare name
+/// without the bean labels' padding to one length; unknown modes keep the label
+func modeName(_ mode: SessionOption) -> String {
+  let names = ["plan": "composer.modeName.plan", "team": "composer.modeName.team", "raw": "composer.modeName.raw"]
+  return names[mode.id].map { t($0) } ?? modeLabel(mode)
+}
+
+/// modeIcons.ts `modeHint`: one line on what the mode does, else the agent's own description
+func modeHint(_ mode: SessionOption) -> String? {
+  let hints = ["plan": "composer.modeHint.plan", "team": "composer.modeHint.team", "raw": "composer.modeHint.raw"]
+  return hints[mode.id].map { t($0) } ?? mode.description
 }
 
 // MARK: - Send

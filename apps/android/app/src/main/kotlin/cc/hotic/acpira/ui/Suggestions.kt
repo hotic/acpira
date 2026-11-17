@@ -44,6 +44,7 @@ import cc.hotic.acpira.design.VendorMark
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.MentionPersona
 import cc.hotic.acpira.model.FileHit
+import cc.hotic.acpira.model.SessionOption
 import cc.hotic.acpira.model.SlashCommand
 import cc.hotic.acpira.store.FileSearch
 
@@ -118,6 +119,17 @@ fun ColumnScope.SuggestionReveal(shown: Boolean, motion: Boolean, content: @Comp
     enter = if (motion) fadeIn(spring()) + scaleIn(spring(), initialScale = SEED, transformOrigin = origin) else fadeIn(snap()),
     exit = if (motion) fadeOut(spring()) + scaleOut(spring(), targetScale = SEED, transformOrigin = origin) else fadeOut(snap()),
   ) { content() }
+}
+
+/** SlashList's host action row: the mode's glyph, its name bright, one line on what it does faint after it */
+@Composable
+fun RowScope.ModeRow(mode: SessionOption) {
+  Lucide(modeIcon(mode), Palette.fg1, size = Metrics.icon)
+  Text(modeName(mode), color = Palette.fgStrong, fontSize = Type.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+  val hint = modeHint(mode)
+  if (!hint.isNullOrEmpty()) {
+    Text(hint, color = Palette.fg3, fontSize = Type.text3, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+  }
 }
 
 /** SlashList's row: the glyph, `/name` bright, the input hint faint beside it, the description trailing */

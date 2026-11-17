@@ -370,7 +370,8 @@ export struct ChatPage {
             popup: this.popup,
             onSend: (text: string, staged: Attachment[]) => this.model.composerSend(text, staged),
             onStop: () => this.model.stop(),
-            onCompact: () => this.model.compact()
+            onCompact: () => this.model.compact(),
+            onSetMode: (mode: string) => this.model.setMode(mode)
           })
         }
         .justifyContent(FlexAlign.Center)

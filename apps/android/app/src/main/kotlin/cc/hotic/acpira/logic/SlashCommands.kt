@@ -79,6 +79,24 @@ object SlashCommands {
   }
 
   /**
+   * Slash.tsx `matchActions`: the working modes the `/` list leads with, matched on the shown name or the id (so `/plan`
+   * finds Plan in any language), prefixes first, then names containing the query. An empty query lists all
+   */
+  fun matchModes(modes: List<SessionOption>, name: (SessionOption) -> String, query: String): List<SessionOption> {
+    val q = query.lowercase()
+    if (q.isEmpty()) return modes
+    val prefix = modes.filter { m -> listOf(name(m).lowercase(), m.id.lowercase()).any { it.startsWith(q) } }
+    return prefix + modes.filter { it !in prefix && name(it).lowercase().contains(q) }
+  }
+
+  /** A host action picked from the `/` list runs at once: its token leaves the draft with what the caret had left of it */
+  fun dropCommand(text: String, span: SigilSpan, caret: Int): PromptEdit {
+    val head = text.take(span.start.coerceAtMost(text.length))
+    val rest = text.substring(caret.coerceIn(0, text.length)).dropWhile { !it.isWhitespace() }.dropWhile { it.isWhitespace() }
+    return PromptEdit(head + rest, head.length)
+  }
+
+  /**
    * matchCommands: name prefixes first, then names containing the query or descriptions with a word starting with it,
    * each tier in the agent's order; case-insensitive. An empty query lists everything
    */

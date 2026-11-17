@@ -27,6 +27,7 @@ import cc.hotic.acpira.logic.SigilSpan
 import cc.hotic.acpira.logic.SlashCommands
 import cc.hotic.acpira.model.Draft
 import cc.hotic.acpira.model.FileHit
+import cc.hotic.acpira.model.SessionOption
 import cc.hotic.acpira.model.SlashCommand
 import kotlinx.coroutines.delay
 
@@ -34,12 +35,22 @@ import kotlinx.coroutines.delay
 // the hits they raise, and what a pick writes. A command completes in place and goes out with the ordinary send (the
 // agent runs it); a persona is summoned by name; a file leaves the text and rides along as an attachment.
 
+/** A row of the `/` list: a working mode the composer enters itself, or one of the agent's commands */
+sealed interface SlashHit {
+  val key: String
+  data class Mode(val mode: SessionOption) : SlashHit { override val key get() = "mode:${mode.id}" }
+  data class Command(val command: SlashCommand) : SlashHit { override val key get() = command.name }
+}
+
 /** The tokens under the caret and the picks on them, rebuilt with the field's value */
 class ComposerTokens(
   private val state: TextFieldState,
   private val assist: ComposerAssist,
   private val staged: List<Staged>,
   private val onStaged: (List<Staged>) -> Unit,
+  /** The working modes the `/` list leads with (beside a permission bean), and entering one */
+  private val modes: List<SessionOption>,
+  private val onSetMode: (String) -> Unit,
   private val focusField: () -> Unit,
 ) {
   private val text = state.text.toString()
@@ -51,16 +62,28 @@ class ComposerTokens(
   val mentionSpan: SigilSpan? =
     if (assist.files == null && assist.personas.isEmpty()) null else caret?.let { SlashCommands.mentionAt(text, it) }
 
-  /** The commands matching the `/` token, the list shown only with hits: without one the slash stays plain text */
-  val slashHits: List<SlashCommand> = slashSpan?.let { SlashCommands.match(assist.commands, it.query) }.orEmpty()
+  /**
+   * The `/` token's hits, the list shown only with some: without one the slash stays plain text. The working modes lead
+   * by name (Composer.tsx `hostActions`), then the agent's commands
+   */
+  val slashHits: List<SlashHit> = slashSpan?.let { span ->
+    SlashCommands.matchModes(modes, ::modeName, span.query).map { SlashHit.Mode(it) } +
+      SlashCommands.match(assist.commands, span.query).map { SlashHit.Command(it) }
+  }.orEmpty()
 
   /** The input hint of the command the text names, while the list is not showing it */
   val commandHint: String? = if (slashHits.isEmpty()) SlashCommands.hint(assist.commands, text) else null
 
-  /** A command completes the token in place (`/name `) */
-  fun pickCommand(command: SlashCommand) {
+  /** A command completes the token in place (`/name `); a working mode is entered at once and its token leaves the draft */
+  fun pickCommand(hit: SlashHit) {
     val span = slashSpan ?: return
-    apply(SlashCommands.complete(text, span, caret ?: text.length, command.name))
+    when (hit) {
+      is SlashHit.Mode -> {
+        apply(SlashCommands.dropCommand(text, span, caret ?: text.length))
+        onSetMode(hit.mode.id)
+      }
+      is SlashHit.Command -> apply(SlashCommands.complete(text, span, caret ?: text.length, hit.command.name))
+    }
   }
 
   /** A persona is summoned by name; a file leaves the text and rides along as an attachment */
@@ -94,13 +117,18 @@ fun rememberTokens(
   assist: ComposerAssist,
   staged: List<Staged>,
   onStaged: (List<Staged>) -> Unit,
+  modes: List<SessionOption>,
+  onSetMode: (String) -> Unit,
   focusField: () -> Unit,
 ): ComposerTokens {
   val focus by rememberUpdatedState(focusField)
+  val setMode by rememberUpdatedState(onSetMode)
   // Read here, so the tokens follow every keystroke and caret move
   val text = state.text
   val selection = state.selection
-  val tokens = remember(text, selection, assist, staged, onStaged) { ComposerTokens(state, assist, staged, onStaged) { focus() } }
+  val tokens = remember(text, selection, assist, staged, onStaged, modes) {
+    ComposerTokens(state, assist, staged, onStaged, modes, { setMode(it) }) { focus() }
+  }
   // Mention.tsx useMentionHits: the query goes out a moment after the last keystroke, and the list closing drops
   // whatever is still on its way
   val query = tokens.mentionSpan?.query
@@ -125,7 +153,16 @@ fun ColumnScope.Suggestions(tokens: ComposerTokens, assist: ComposerAssist, moti
   // (a plain holder, not state: writing it here must not ask for another composition)
   val last = remember { arrayOfNulls<@Composable () -> Unit>(1) }
   val now: (@Composable () -> Unit)? = when {
-    commands.isNotEmpty() -> { { SuggestionList(commands, key = { it.name }, pick = tokens::pickCommand) { CommandRow(it) } } }
+    commands.isNotEmpty() -> {
+      {
+        SuggestionList(commands, key = { it.key }, pick = tokens::pickCommand) { hit ->
+          when (hit) {
+            is SlashHit.Mode -> ModeRow(hit.mode)
+            is SlashHit.Command -> CommandRow(hit.command)
+          }
+        }
+      }
+    }
     showMentions -> {
       {
         SuggestionList(mentions, key = { it.uri }, pick = tokens::pickMention, empty = t("mention.noFiles")) { hit ->

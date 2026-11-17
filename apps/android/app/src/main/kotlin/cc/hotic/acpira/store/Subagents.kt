@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -148,7 +148,7 @@ class SubagentStore(private val model: AppModel, private val context: Context, p
       WireJson.parseToJsonElement(text).jsonObject.mapValues { (_, v) ->
         val o = v as JsonObject
         SubagentTranscript(
-          rev = o["rev"]?.jsonPrimitive?.intOrNull ?: 0,
+          rev = o["rev"]?.jsonPrimitive?.longOrNull ?: 0,
           running = o["running"]?.jsonPrimitive?.booleanOrNull ?: false,
           turns = o["turns"]?.let { WireJson.decodeFromJsonElement(ListSerializer(Turn.serializer()), it) }.orEmpty(),
         )

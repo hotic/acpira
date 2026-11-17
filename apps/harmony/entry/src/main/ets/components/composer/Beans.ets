@@ -1,6 +1,6 @@
 import { SessionOption } from '../../wire/Wire';
 import {
-  accessLabel, ComposerControls, ModelChoices, ModelFamily, modeIcon, modeLabel, optionBrand, Toggle, vendorBrand,
+  accessIcon, accessLabel, ChannelGroup, ComposerControls, ModelChoices, SidekickCli, ModelFamily, modeIcon, modeLabel, optionBrand, Toggle, vendorBrand,
   workLabel
 } from '../../logic/ModelCatalog';
 import { MentionPersona } from '../../logic/SlashCommands';
@@ -35,8 +35,8 @@ export interface GooChoice {
   toggle?: Toggle;
   /** Faint text at the row's end (a persona's CLI) */
   note?: string;
-  /** Faint text ahead of the check (the CLI a sidekick model runs in, while the list holds several) */
-  source?: string;
+  /** A label over this row, the channel it and the rows after it come through (a sidekick model list's group label) */
+  section?: string;
   action: () => void;
 }
 
@@ -173,14 +173,18 @@ export function modelBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[]
   if (access !== undefined) {
     const level = access.options.find((o: SessionOption) => o.id === access.value) ?? access.options[0];
     out.push(bean('access', t('composer.access'), level !== undefined ? accessLabel(level) : access.name,
-      lucideGlyph(level !== undefined ? modeIcon(level) : 'circleDashed'),
-      access.options.map((o: SessionOption) => choice(o.id, accessLabel(o), o.id === level?.id, lucideGlyph(modeIcon(o)), () => {
+      lucideGlyph(level !== undefined ? accessIcon(level) : 'circleDashed'),
+      access.options.map((o: SessionOption) => choice(o.id, accessLabel(o), o.id === level?.id, lucideGlyph(accessIcon(o)), () => {
         act.setConfig(access.id, o.id);
         fold();
       })), access.options.findIndex((o: SessionOption) => o.id === level?.id)));
   }
+  // None yet, with models from two or more CLIs: the sidekick bean goes straight to the CLI list, not to a lone agent bean
+  const toAgents = c.fusion === undefined && c.sidekick !== undefined && pickedSidekick(c) === undefined &&
+    ComposerControls.sidekickClis(c.sidekick.options).length > 1;
   const enter = () => {
-    goo.stage = 0;
+    goo.browse = undefined;
+    goo.stage = toAgents ? 1 : 0;
     goo.deeper = Goo.sidekickLevel;
   };
   if (c.fusion !== undefined) {
@@ -199,6 +203,25 @@ export function modelBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[]
     out.push(b);
   }
   return out;
+}
+
+/**
+ * The CLI the sidekick runs in: its mark and name (a faint fading plus and None while there is none), and a panel of
+ * None and every CLI. None turns the sidekick off; a CLI is no pick of its own, so it opens the model bean (the second)
+ * on that CLI's models
+ */
+function agentBean(clis: SidekickCli[], picked: SidekickCli | undefined, goo: Goo, none: () => void): Bean {
+  const rows: GooChoice[] = [choice(ComposerControls.noSidekick, t('composer.sidekickNone'), picked === undefined,
+    lucideGlyph('circleFadingPlus', 'fg3'), none)];
+  clis.forEach((cli: SidekickCli) => {
+    rows.push(choice(cli.id, cli.name, cli.id === picked?.id, markGlyph(cli.id, cli.name), () => {
+      goo.browse = cli.id;
+      goo.stage = 2;
+    }));
+  });
+  const glyph = picked !== undefined ? markGlyph(picked.id, picked.name) : lucideGlyph('circleFadingPlus', 'fg3');
+  return bean('sidekick.agent', t('common.agent'), picked?.name ?? t('composer.sidekickNone'), glyph, rows,
+    picked !== undefined ? clis.indexOf(picked) + 1 : 0);
 }
 
 /** The sidekick picked, none while the select reads None */
@@ -240,8 +263,10 @@ function fusionBean(c: ModelChoices, goo: Goo, sidekick: boolean): Bean {
 }
 
 /**
- * The sidekick's own beans, as the lead's read: its model (a list with None first), its reasoning level while the model
- * has levels, and its Fast while the model has a fast tier. Every pick writes the id of the control found by category
+ * The sidekick's own beans, as the lead's read: with models from two or more CLIs (the host's select) first the CLI, as
+ * the desktop's rail is, then its model (one CLI's models, filed by channel, so a group label always names a channel),
+ * its reasoning level while the model has levels, and its Fast while the model has a fast tier. With one CLI the model
+ * list holds None first. Every pick writes the id of the control found by category
  */
 function sidekickBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[] {
   const sk = c.sidekick;
@@ -253,25 +278,36 @@ function sidekickBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[] {
   };
   const current = sk.value ?? ComposerControls.noSidekick;
   const picked = pickedSidekick(c);
-  // A host sidekick lists the models of every CLI, each option's `description` naming its own: shown once the list
-  // holds two (ModelPicker.tsx bySource), so the same model in two CLIs reads apart
-  const sources = new Set<string>();
-  sk.options.forEach((o: SessionOption) => {
-    if (o.description !== undefined && o.description.length > 0) {
-      sources.add(o.description);
-    }
-  });
-  const out: Bean[] = [bean('sidekick.model', t('stats.model'), picked?.name ?? t('composer.sidekickNone'),
-    sidekickGlyph(picked), sk.options.map((o: SessionOption) => {
+  const clis = ComposerControls.sidekickClis(sk.options);
+  const out: Bean[] = [];
+  let listed: SessionOption[] | undefined = sk.options;
+  if (clis.length > 1) {
+    const mine = clis.find((cli: SidekickCli) => cli.id === picked?.group?.id);
+    out.push(agentBean(clis, mine, goo, () => {
+      act.setConfig(sk.id, ComposerControls.noSidekick);
+      goo.browse = undefined;
+      fold();
+    }));
+    listed = (clis.find((cli: SidekickCli) => cli.id === goo.browse) ?? mine)?.options;
+  }
+  if (listed !== undefined) {
+    const groups = ComposerControls.byChannel(listed);
+    const ordered = groups !== undefined ? groups.reduce((all: SessionOption[], g: ChannelGroup) => all.concat(g.options), [] as SessionOption[]) : listed;
+    const rows = ordered.map((o: SessionOption) => {
       const none = o.id === ComposerControls.noSidekick;
       const glyph = none ? lucideGlyph('circleFadingPlus', 'fg3') : markGlyph(optionBrand(o), o.name);
       const row = choice(o.id, none ? t('composer.sidekickNone') : o.name, o.id === current, glyph, () => {
         act.setConfig(sk.id, o.id);
         fold();
       });
-      row.source = sources.size > 1 && !none ? o.description : undefined;
+      // The first row of each named channel carries its label
+      const g = groups?.find((group: ChannelGroup) => group.options[0]?.id === o.id);
+      row.section = g !== undefined && g.channel.length > 0 ? g.channel : undefined;
       return row;
-    }), sk.options.findIndex((o: SessionOption) => o.id === current))];
+    });
+    out.push(bean('sidekick.model', t('stats.model'), picked?.name ?? t('composer.sidekickNone'), sidekickGlyph(picked), rows,
+      ordered.findIndex((o: SessionOption) => o.id === current)));
+  }
   const effort = c.sidekickEffort;
   if (picked !== undefined && effort !== undefined && ComposerControls.reasoningVisible(effort)) {
     const scale = ComposerControls.presentReasoning(effort);

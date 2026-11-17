@@ -458,6 +458,8 @@ public enum Metrics {
   /// The chat wait page's failure note: a short column, so the engine's sentence wraps well inside the screen
   public static let waitNoteW: CGFloat = 260
   public static let gooRow: CGFloat = 40
+  /// A group label among a panel's rows (`GooSection`): the channel a run of sidekick models comes through
+  public static let gooSection: CGFloat = 28
   /// Rows shown before the panel scrolls; the half row shows there is more
   public static let gooPanelRows: CGFloat = 6.5
   public static let rGooPanel: CGFloat = 22

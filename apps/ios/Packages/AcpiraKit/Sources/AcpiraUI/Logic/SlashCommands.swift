@@ -87,6 +87,23 @@ enum SlashCommands {
     return mergeSkillCopies(prefix + rest)
   }
 
+  /// Slash.tsx `matchActions`: the working modes the `/` list leads with, matched on the shown name or the id (so
+  /// `/plan` finds Plan in any language), prefixes first, then names containing the query. An empty query lists all
+  static func matchModes(_ modes: [SessionOption], name: (SessionOption) -> String, query: String) -> [SessionOption] {
+    let q = query.lowercased()
+    guard !q.isEmpty else { return modes }
+    let prefix = modes.filter { [name($0).lowercased(), $0.id.lowercased()].contains { $0.hasPrefix(q) } }
+    return prefix + modes.filter { m in !prefix.contains(m) && name(m).lowercased().contains(q) }
+  }
+
+  /// A host action picked from the `/` list runs at once: its token leaves the draft with what the caret had left of it
+  static func dropCommand(_ text: String, span: SigilSpan, caret: Int) -> PromptEdit {
+    let chars = Array(text)
+    let head = String(chars[..<min(span.start, chars.count)])
+    let rest = String(chars[min(caret, chars.count)...]).drop { !$0.isWhitespace }.drop(while: \.isWhitespace)
+    return PromptEdit(text: head + rest, caret: head.count)
+  }
+
   /// Devin lists a skill found in both `~/.agents/skills` and `~/.claude/skills` twice (`agents:dig`, `claude:dig`): the
   /// first copy in ranking order stays, and the picked name is sent verbatim
   private static func mergeSkillCopies(_ commands: [SlashCommand]) -> [SlashCommand] {

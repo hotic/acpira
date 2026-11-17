@@ -1,7 +1,7 @@
-import { Attachment, FileHit, SessionControls, SlashCommand, Usage } from '../wire/Wire';
+import { Attachment, FileHit, SessionControls, SessionOption, SlashCommand, Usage } from '../wire/Wire';
 import { Cmp, Metrics, Type } from '../design/Tokens';
 import { draftBytes, MESSAGE_BYTES, PastedText } from '../logic/Composing';
-import { ModelChoices } from '../logic/ModelCatalog';
+import { ComposerControls, ModelChoices, modeIcon, modeName } from '../logic/ModelCatalog';
 import { MentionPersona, PromptEdit, SigilSpan, SlashCommands } from '../logic/SlashCommands';
 import { AttachSource, ComposerDraft, FileSearch, Goo } from '../store/Composing';
 import { pickFiles, pickPhotos, takePhoto } from '../store/AttachPickers';
@@ -43,6 +43,8 @@ export struct Composer {
   @Event onSend: (text: string, staged: Attachment[]) => void = () => {};
   @Event onStop: () => void = () => {};
   @Event onCompact: () => void = () => {};
+  /** A working mode entered from the `/` list, or the resting one when the pill leaves it */
+  @Event onSetMode: (mode: string) => void = () => {};
   /** The card form, opened at once on a tap rather than waiting for focus to land */
   @Local card: boolean = false;
   /** The caret (and selection end) the `/` and `@` tokens are read at; -1 before the field reports one */
@@ -53,6 +55,8 @@ export struct Composer {
   @Local stripHeight: number = 0;
   /** The draft is open in the whole-screen editor */
   @Local fullEditor: boolean = false;
+  /** The pill's width with its margins, so the field at rest starts after it */
+  @Local pillWidth: number = 0;
   private controller: TextAreaController = new TextAreaController();
   private fullController: TextAreaController = new TextAreaController();
   private mentionTimer: number = -1;
@@ -195,6 +199,18 @@ export struct Composer {
     return span !== undefined ? SlashCommands.match(this.commands, span.query) : [];
   }
 
+  /** The working modes beside a permission bean the `/` list leads with (Composer.tsx `hostActions`) */
+  private modeHits(): SessionOption[] {
+    const span = this.slashSpan();
+    const modes = ComposerControls.workingModes(this.controls) ?? [];
+    return span !== undefined && modes.length > 0 ? SlashCommands.matchModes(modes, modeName, span.query) : [];
+  }
+
+  /** The working mode in force: the bar's pill */
+  private pill(): SessionOption | undefined {
+    return ComposerControls.workingMode(this.controls);
+  }
+
   private mentionHits(): FileHit[] {
     const span = this.mentionSpan();
     if (span === undefined) {
@@ -211,7 +227,8 @@ export struct Composer {
 
   /** The input hint of the command the text names, while the list is not showing it */
   private commandHint(): string | undefined {
-    return this.slashHits().length === 0 ? SlashCommands.hint(this.commands, this.d().text) : undefined;
+    return this.slashHits().length === 0 && this.modeHits().length === 0 ? SlashCommands.hint(this.commands, this.d().text) :
+      undefined;
   }
 
   /** Mention.tsx useMentionHits: the query goes out a moment after the last keystroke; the list closing drops it */
@@ -234,6 +251,15 @@ export struct Composer {
     const span = this.slashSpan();
     if (span !== undefined) {
       this.apply(SlashCommands.complete(this.d().text, span, this.caret(), command.name));
+    }
+  }
+
+  /** A working mode is entered at once and its token leaves the draft */
+  private pickMode(mode: SessionOption): void {
+    const span = this.slashSpan();
+    if (span !== undefined) {
+      this.apply(SlashCommands.dropCommand(this.d().text, span, this.caret()));
+      this.onSetMode(mode.id);
     }
   }
 
@@ -293,8 +319,11 @@ export struct Composer {
   build() {
     Column({ space: Cmp.s1_5 }) {
       // The `/` list, else the `@` list
-      if (this.slashHits().length > 0) {
-        CommandList({ items: this.slashHits(), pick: (c: SlashCommand) => this.pickCommand(c) })
+      if (this.slashHits().length > 0 || this.modeHits().length > 0) {
+        CommandList({
+          modes: this.modeHits(), items: this.slashHits(), pick: (c: SlashCommand) => this.pickCommand(c),
+          pickMode: (m: SessionOption) => this.pickMode(m)
+        })
       } else if (this.showsMentions()) {
         MentionList({
           items: this.mentionHits(), personas: this.personas, empty: t('mention.noFiles'),
@@ -323,6 +352,9 @@ export struct Composer {
           this.attachChip()
           if (this.showsModel()) {
             this.modelChip()
+          }
+          if (this.pill() !== undefined) {
+            this.modePill()
           }
         }
         .margin({ left: this.expanded() ? Metrics.s1 : 0, bottom: this.expanded() ? Metrics.s1 : 0 })
@@ -394,7 +426,7 @@ export struct Composer {
     if (this.expanded()) {
       return Cmp.s3 + Metrics.s1 * 2;
     }
-    return (this.showsModel() ? Cmp.bar * 2 : Cmp.bar) + Metrics.s1;
+    return (this.showsModel() ? Cmp.bar * 2 : Cmp.bar) + (this.pill() !== undefined ? this.pillWidth : 0) + Metrics.s1;
   }
 
   private padEnd(): number {
@@ -525,6 +557,42 @@ export struct Composer {
     .height(Cmp.bar)
     .accessibilityText(this.choices().cur?.name ?? t('stats.model'))
     .onClick(() => this.goo.toggle('model'))
+  }
+
+  /**
+   * The working mode in force, after the chips (Composer.tsx ModePill): outlined where the chips are plain, so it reads
+   * as a token and not a third picker. The whole pill leaves the mode (a phone's × alone is too small to hit), and the
+   * bar's height takes the tap
+   */
+  @Builder
+  modePill() {
+    Stack() {
+      Row({ space: Metrics.s1 }) {
+        Lucide({ name: modeIcon(this.pill()!), tint: $r('app.color.fg1'), extent: Metrics.icon })
+        Text(modeName(this.pill()!))
+          .fontSize(Type.text2)
+          .fontColor($r('app.color.fg1'))
+          .maxLines(1)
+        Lucide({ name: 'x', tint: $r('app.color.fg3'), extent: Cmp.chevron })
+      }
+      .height(Cmp.rowDense)
+      .padding({ left: Metrics.s2, right: Cmp.s1_5 })
+      .borderRadius(Cmp.rowDense / 2)
+      .border({ width: Metrics.hairline, color: $r('app.color.conversation_line') })
+    }
+    .id('composer.modePill')
+    .height(Cmp.bar)
+    .margin({ left: Metrics.s1, right: Metrics.s1 })
+    .accessibilityText(t('composer.modeExit', new Map<string, string>([['mode', modeName(this.pill()!)]])))
+    .onAreaChange((_: Area, now: Area) => {
+      this.pillWidth = (now.width as number) + Metrics.s1 * 2;
+    })
+    .onClick(() => {
+      const rest = this.controls?.modes[0];
+      if (rest !== undefined) {
+        this.onSetMode(rest.id);
+      }
+    })
   }
 
   /**

@@ -94,6 +94,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.TextStyle
@@ -165,6 +168,8 @@ class Goo {
   var deeper by mutableStateOf<String?>(null)
   /** The beans are tucked into the chip while they trade for another level's ([enter]) */
   var held by mutableStateOf(false)
+  /** The CLI whose models the sidekick's model bean lists, once one was picked from its agent bean; null: the picked sidekick's */
+  var browse by mutableStateOf<String?>(null)
   private var swap: Job? = null
 
   fun toggle(id: String) {
@@ -183,18 +188,20 @@ class Goo {
 
   /**
    * Trades the beans for another level's (`sidekick`, or null for the chip's own): they head home into the chip, the
-   * level changes while they are small there, and the new beans squeeze out. Without motion it swaps at once
+   * level changes while they are small there, and the new beans squeeze out, `opening` that bean's panel at once (1…).
+   * Without motion it swaps at once
    */
-  fun enter(level: String?) {
+  fun enter(level: String?, opening: Int = 0) {
     stage = 0
+    browse = null
     val scope = scope
-    if (!motion || scope == null) { deeper = level; return }
+    if (!motion || scope == null) { deeper = level; stage = opening; return }
     held = true
     swap?.cancel()
     swap = scope.launch {
       delay(GooMotion.levelSwapMs)
       // Closed meanwhile (a tap outside): the level stays as it was, and the next open starts on the chip's own beans
-      if (open != null) deeper = level
+      if (open != null) { deeper = level; stage = opening }
       held = false
     }
   }
@@ -223,6 +230,8 @@ class Bean(
   val tap: (() -> Unit)? = null,
   /** A line under the value saying what the setting is (the sidekick's), wrapped to the room beside the bean */
   val note: String? = null,
+  /** Group labels among the rows ([GooSection]), shorter than a row */
+  val labels: Int = 0,
 )
 
 /**
@@ -273,7 +282,10 @@ fun Composer(
   // The field's text with its caret, the `/` and `@` tokens under it, and the lists they raise (ui/ComposerTokens.kt)
   val prompt = rememberPromptState(text, onText)
   val longPaste = rememberLongPaste(staged, onStaged, onToast)
-  val tokens = rememberTokens(prompt, assist, staged, onStaged) { focus.requestFocus(); keyboard?.show() }
+  // Beside a permission bean the working modes lead the `/` list, and the one in force is the bar's pill
+  val working = remember(controls) { ComposerControls.workingModes(controls).orEmpty() }
+  val pill = remember(controls) { ComposerControls.workingMode(controls) }
+  val tokens = rememberTokens(prompt, assist, staged, onStaged, working, onSetMode) { focus.requestFocus(); keyboard?.show() }
   // The whole-screen editor is open (ExpandedComposer), and the field's laid-out lines, from which it is offered
   var fullEditor by remember { mutableStateOf(false) }
   var lines by remember { mutableIntStateOf(1) }
@@ -297,7 +309,9 @@ fun Composer(
 
   // The card's shape and the field's insets move with one curve, as the iOS card grows around its corners
   fun anim() = if (motion) spring<Dp>(dampingRatio = COMPOSER_DAMPING, stiffness = COMPOSER_STIFFNESS) else snap()
-  val lead = if (modelBeans.isEmpty()) Metrics.barCtl else Metrics.barCtl * 2
+  // The pill rides in the chips' group, so the field at rest starts after it
+  var pillWidth by remember { mutableStateOf(Metrics.s0) }
+  val lead = (if (modelBeans.isEmpty()) Metrics.barCtl else Metrics.barCtl * 2) + (if (pill != null) pillWidth else Metrics.s0)
   val line = (Metrics.barCtl - FIELD_LINE) / 2
   val corner by animateDpAsState(if (expanded) Metrics.rComposer else Metrics.barCtl / 2, anim(), label = "corner")
   val padStart by animateDpAsState(if (expanded) Metrics.s3 + Metrics.s1 * 2 else lead + Metrics.s1, anim(), label = "start")
@@ -362,6 +376,13 @@ fun Composer(
           if (modelBeans.isNotEmpty()) {
             Chip("model", goo, Modifier.testTag("composer.model")) {
               ModelGlyph(goo, choices, agentMark, agentName, sidekickLive, motion)
+            }
+          }
+          val rest = controls.modes.firstOrNull()
+          if (pill != null && rest != null) {
+            val density = LocalDensity.current
+            ModePill(pill, Modifier.padding(horizontal = Metrics.s1).onSizeChanged { pillWidth = with(density) { it.width.toDp() } + Metrics.s1 * 2 }) {
+              onSetMode(rest.id)
             }
           }
         }
@@ -490,7 +511,7 @@ internal fun brandOf(context: Context, o: SessionOption): String? = IconStore.br
 private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig: (String, String) -> Unit, goo: Goo): List<Bean> {
   val fold = { goo.stage = 0 }
   val haptics = LocalHapticFeedback.current
-  if (goo.deeper == SIDEKICK_LEVEL && (c.fusion != null || c.sidekick != null)) return sidekickBeans(c, onSetConfig, fold, haptics)
+  if (goo.deeper == SIDEKICK_LEVEL && (c.fusion != null || c.sidekick != null)) return sidekickBeans(c, onSetConfig, fold, haptics, goo)
   val out = mutableListOf<Bean>()
   val cur = c.cur
   if (c.hasModel && cur != null) {
@@ -577,12 +598,12 @@ private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig
     val level = access.options.firstOrNull { it.id == access.value } ?: access.options.firstOrNull()
     out += Bean(
       "access", t("composer.access"), level?.let(::accessLabel) ?: access.name,
-      glyph = { Lucide(level?.let(::modeIcon) ?: "circleDashed", Palette.fg1, size = Metrics.barIcon) },
+      glyph = { Lucide(level?.let(::accessIcon) ?: "circleDashed", Palette.fg1, size = Metrics.barIcon) },
       rows = access.options.size,
       panel = {
         GooList(access.options.indexOfFirst { it.id == level?.id }) {
           for (o in access.options) {
-            GooRow(accessLabel(o), o.id == level?.id, glyph = { Lucide(modeIcon(o), Palette.fgStrong, size = Metrics.icon) }) {
+            GooRow(accessLabel(o), o.id == level?.id, glyph = { Lucide(accessIcon(o), Palette.fgStrong, size = Metrics.icon) }) {
               onSetConfig(access.id, o.id); fold()
             }
           }
@@ -590,7 +611,7 @@ private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig
       },
     )
   }
-  sidekickBean(c) { goo.enter(SIDEKICK_LEVEL) }?.let { out += it }
+  sidekickBean(c) { opening -> goo.enter(SIDEKICK_LEVEL, opening) }?.let { out += it }
   return out
 }
 
@@ -1081,7 +1102,7 @@ fun GooLayer(goo: Goo, motion: Boolean) {
       val panel = bean.panel
       val s = panels[i].value
       if (panel != null && s > GONE) {
-        val h = panelHeight(bean.rows, room, density)
+        val h = panelHeight(bean.rows, bean.labels, room, density)
         Box(
           Modifier.layout { m, c ->
             val p = m.measure(androidx.compose.ui.unit.Constraints.fixed(Metrics.gooPanelW.roundToPx(), h.toInt()))
@@ -1130,10 +1151,10 @@ fun Modifier.gooAside(goo: Goo, motion: Boolean): Modifier = composed {
 }
 
 /** A bean's panel: its rows up to [Metrics.gooPanelRows], no taller than the room above the chip */
-private fun panelHeight(rows: Int, room: Float, density: androidx.compose.ui.unit.Density): Float = with(density) {
+private fun panelHeight(rows: Int, labels: Int, room: Float, density: androidx.compose.ui.unit.Density): Float = with(density) {
   val pad = (Metrics.s1_5 * 2).toPx()
   val row = Metrics.gooRow.toPx()
-  val natural = min(rows.toFloat(), Metrics.gooPanelRows) * row + pad
+  val natural = min(rows * row + labels * Metrics.gooSection.toPx(), Metrics.gooPanelRows * row) + pad
   max(row + pad, min(natural, room))
 }
 
@@ -1146,6 +1167,17 @@ internal fun GooList(current: Int, content: @Composable () -> Unit) {
     if (current > 0) scroll.scrollTo(with(density) { (Metrics.gooRow * current - Metrics.gooRow * 2).roundToPx() }.coerceAtLeast(0))
   }
   Column(Modifier.fillMaxWidth().verticalScroll(scroll)) { content() }
+}
+
+/**
+ * A label over a run of rows in a bean's panel, the channel they come through (the desktop's group label): fainter and
+ * smaller than a row, on the rows' inset, sitting on the first row it names (Goo.swift `GooSection`)
+ */
+@Composable
+internal fun GooSection(title: String) {
+  Box(Modifier.fillMaxWidth().height(Metrics.gooSection).padding(horizontal = Metrics.gooPadX).semantics { heading() }, contentAlignment = Alignment.BottomStart) {
+    Text(title, color = Palette.fg3, fontSize = Type.text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+  }
 }
 
 /** One choice in a bean's panel: glyph, name, and the check (or a trailing control such as Thinking's switch) */
@@ -1213,6 +1245,56 @@ fun modeLabel(mode: SessionOption): String {
     "workspace-write" to "workspace", "ask" to "ask", "code" to "code", "accept-edits" to "code",
   )
   return short[mode.id]?.let { t("composer.modeShort.$it") } ?: mode.name
+}
+
+/**
+ * modeIcons.ts `modeName`: a working mode where it is picked by name (the `/` list, the bar's pill), the bare name without
+ * the bean labels' padding to one length; unknown modes keep the label
+ */
+fun modeName(mode: SessionOption): String {
+  val names = mapOf("plan" to "composer.modeName.plan", "team" to "composer.modeName.team", "raw" to "composer.modeName.raw")
+  return names[mode.id]?.let { t(it) } ?: modeLabel(mode)
+}
+
+/** modeIcons.ts `modeHint`: one line on what the mode does, else the agent's own description */
+fun modeHint(mode: SessionOption): String? {
+  val hints = mapOf("plan" to "composer.modeHint.plan", "team" to "composer.modeHint.team", "raw" to "composer.modeHint.raw")
+  return hints[mode.id]?.let { t(it) } ?: mode.description
+}
+
+/**
+ * modeIcons.ts `accessIcon`: the approval levels (the built-in agent's, and `auto` from the engine's split of Claude's
+ * modes) as one shield family, so the bean reads as a scale; other levels keep their mode glyph
+ */
+private fun accessIcon(level: SessionOption): String {
+  val icons = mapOf("ask" to "shieldEllipsis", "auto-edit" to "shieldCheck", "auto" to "shieldHalf", "full" to "shieldOff")
+  return icons[level.id] ?: modeIcon(level)
+}
+
+/**
+ * The working mode in force, after the bar's chips (Composer.tsx ModePill): outlined where the chips are plain, so it
+ * reads as a token and not a third picker. The whole pill leaves the mode (a phone's × alone is too small to hit), and
+ * the bar's height takes the tap
+ */
+@Composable
+private fun ModePill(mode: SessionOption, modifier: Modifier, onExit: () -> Unit) {
+  val name = modeName(mode)
+  val exit = t("composer.modeExit", "mode" to name)
+  Box(
+    modifier.height(Metrics.barCtl).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onExit)
+      .semantics { contentDescription = exit; role = Role.Button }.testTag("composer.modePill"),
+    contentAlignment = Alignment.Center,
+  ) {
+    Row(
+      Modifier.height(Metrics.rowDense).border(Metrics.hairline, Palette.conversationLine, CircleShape).padding(start = Metrics.s2, end = Metrics.s1_5),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(Metrics.s1),
+    ) {
+      Lucide(modeIcon(mode), Palette.fg1, size = Metrics.icon)
+      Text(name, color = Palette.fg1, fontSize = Type.text2, maxLines = 1, softWrap = false)
+      Lucide("x", Palette.fg3, size = Metrics.chevron)
+    }
+  }
 }
 
 /** Codex's collaboration mode: its `default` is the Build mode, not the permission default beside it */

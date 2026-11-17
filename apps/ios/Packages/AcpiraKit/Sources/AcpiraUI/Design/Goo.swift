@@ -449,9 +449,9 @@ enum GooColumn {
   /// A bean's panel: its rows up to `gooPanelRows`, and no taller than `room`, the space above the chip, where it
   /// rests on the column's bottom corner, its list scrolling inside. With the keyboard up that room is short, and a
   /// panel of full height climbed under the navigation bar
-  static func panelHeight(rows: Int, room: CGFloat) -> CGFloat {
+  static func panelHeight(rows: Int, labels: Int = 0, room: CGFloat) -> CGFloat {
     let pad = Metrics.s1_5 * 2
-    let natural = min(CGFloat(rows), Metrics.gooPanelRows) * Metrics.gooRow + pad
+    let natural = min(CGFloat(rows) * Metrics.gooRow + CGFloat(labels) * Metrics.gooSection, Metrics.gooPanelRows * Metrics.gooRow) + pad
     return max(Metrics.gooRow + pad, min(natural, room - Metrics.gooGap))
   }
 
@@ -593,6 +593,8 @@ struct GooBean {
   let glyph: AnyView
   let caption: AnyView
   var rows = 0
+  /// Group labels among the rows (`GooSection`), shorter than a row
+  var labels = 0
   var panel: AnyView? = nil
   /// A bean that acts in place (Fast flips) instead of opening a panel
   var tap: (() -> Void)? = nil
@@ -610,7 +612,7 @@ extension GooColumn {
       if let tap = b.tap {
         return GooPiece(id: "bean.\(b.key)", name: b.title, offset: at, glyph: b.glyph, caption: b.caption, action: tap)
       }
-      let h = panelHeight(rows: b.rows, room: room)
+      let h = panelHeight(rows: b.rows, labels: b.labels, room: room)
       return GooPiece(id: "bean.\(b.key)", name: b.title, offset: at, glyph: b.glyph, caption: b.caption,
                       panel: b.panel.map { GooPanel(size: CGSize(width: Metrics.gooPanelW, height: h), content: $0) }) {
         withAnimation(motion ? Motion.gooSpring : nil) {
@@ -646,6 +648,9 @@ struct LiquidControls: View {
   @Environment(\.hiddenModels) private var hidden
   /// The beans tucked into the chip while they trade for the other level's
   @State private var held = false
+  /// The CLI whose models the sidekick's model bean lists, once one was picked from its agent bean; nil: the picked
+  /// sidekick's CLI
+  @State private var browse: String?
 
   /// The value of `deeper` while the sidekick's beans are out
   static let sidekickLevel = "sidekick"
@@ -804,8 +809,8 @@ struct LiquidControls: View {
                    }))
   }
 
-  /// The agent's modes, one row each. The approval level is a bean of its own (`accessBean`), not a control inside
-  /// this panel: a phone opens one list per button, it does not stack a second kind of picker under the rows
+  /// The agent's modes, one row each, for an agent without a permission control of its own. Beside one (`accessBean`)
+  /// there is no mode bean: the working modes come from the `/` list and show as the bar's pill (`ModePill`)
   private func modeBean(_ c: ModelChoices) -> GooBean {
     let modes = c.modes
     let mode = c.mode
@@ -827,17 +832,17 @@ struct LiquidControls: View {
                    }))
   }
 
-  /// The approval level offered as a config option (the built-in agent's): its own bean after the modes, the level
-  /// in force beside it, and a panel with one row per level
+  /// The approval level offered as a config option (the built-in agent's, Claude's): its own bean, the level in force
+  /// beside it, and a panel with one row per level
   private func accessBean(_ access: ConfigControl) -> GooBean {
     let level = access.options.first { $0.id == access.value } ?? access.options.first
     return GooBean(key: "access", title: t("composer.access"),
-                   glyph: AnyView(Icon(level.map(modeIcon) ?? .circleDashed, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
+                   glyph: AnyView(Icon(level.map(accessIcon) ?? .circleDashed, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
                    caption: AnyView(GooCaption(text: level.map(accessLabel) ?? access.name)), rows: access.options.count,
                    panel: AnyView(GooList(current: level?.id) {
                      ForEach(access.options) { o in
                        GooRow(name: accessLabel(o), checked: o.id == level?.id) {
-                         Icon(modeIcon(o), size: Metrics.icon, strokeWidth: 1.75)
+                         Icon(accessIcon(o), size: Metrics.icon, strokeWidth: 1.75)
                        } action: {
                          onSetConfig(access.id, o.id)
                          fold()
@@ -852,10 +857,12 @@ struct LiquidControls: View {
   /// sidekick's own (`sidekickBeans`)
   private func sidekickBean(_ sk: ConfigControl, fast: FastState?) -> GooBean {
     let picked = Self.picked(sk)
+    // None yet, with models from two or more CLIs: the tap goes straight to the CLI list, not to a lone agent bean
+    let toAgents = picked == nil && ComposerControls.sidekickClis(sk.options).count > 1
     return GooBean(key: "sidekick", title: t("composer.sidekick"),
                    glyph: AnyView(SidekickMark(picked: picked).foregroundStyle(Palette.fg1)),
                    caption: AnyView(GooCaption(text: picked?.name ?? t("composer.sidekickNone"), note: t("composer.sidekickHint"))),
-                   tap: { enter(Self.sidekickLevel) })
+                   tap: { enter(Self.sidekickLevel, opening: toAgents ? 1 : 0) })
   }
 
   /// The sidekick's own beans, as the lead's read: its model (a list with None first), its reasoning level while the
@@ -864,22 +871,44 @@ struct LiquidControls: View {
     guard let sk = c.sidekick else { return [] }
     let current = sk.value ?? ComposerControls.noSidekick
     let picked = Self.picked(sk)
-    var out = [GooBean(key: "sidekick.model", title: t("stats.model"),
-                       // The badged mark, so this column reads as the sidekick's and not the lead's
-                       glyph: AnyView(SidekickMark(picked: picked).foregroundStyle(Palette.fg1)),
-                       caption: AnyView(GooCaption(text: picked?.name ?? t("composer.sidekickNone"))), rows: sk.options.count,
-                       panel: AnyView(GooList(current: current) {
-                         ForEach(sk.options) { o in
-                           let none = o.id == ComposerControls.noSidekick
-                           GooRow(name: none ? t("composer.sidekickNone") : o.name, checked: o.id == current) {
-                             SidekickRowGlyph(option: none ? nil : o, size: Metrics.iconCtl)
-                           } action: {
-                             onSetConfig(sk.id, o.id)
-                             fold()
+    let clis = ComposerControls.sidekickClis(sk.options)
+    var out: [GooBean] = []
+    // Models from two or more CLIs (the host's select): the CLI is a bean of its own, first, as the desktop's rail is,
+    // and the model bean lists one CLI's models; a group label in it then always names a channel, never a CLI
+    var listed: [SessionOption]? = sk.options
+    if clis.count > 1 {
+      let mine = clis.first { $0.id == picked?.group?.id }
+      out.append(agentBean(sk, clis: clis, picked: mine))
+      listed = (clis.first { $0.id == browse } ?? mine)?.options
+    }
+    if let listed {
+      let groups = ComposerControls.byChannel(listed)
+      let row = { (o: SessionOption) in
+        let none = o.id == ComposerControls.noSidekick
+        return GooRow(name: none ? t("composer.sidekickNone") : o.name, checked: o.id == current) {
+          SidekickRowGlyph(option: none ? nil : o, size: Metrics.iconCtl)
+        } action: {
+          onSetConfig(sk.id, o.id)
+          fold()
+        }
+        .id(o.id)
+      }
+      out.append(GooBean(key: "sidekick.model", title: t("stats.model"),
+                         // The badged mark, so this column reads as the sidekick's and not the lead's
+                         glyph: AnyView(SidekickMark(picked: picked).foregroundStyle(Palette.fg1)),
+                         caption: AnyView(GooCaption(text: picked?.name ?? t("composer.sidekickNone"))), rows: listed.count,
+                         labels: groups?.filter { !$0.channel.isEmpty }.count ?? 0,
+                         panel: AnyView(GooList(current: current) {
+                           if let groups {
+                             ForEach(groups, id: \.channel) { g in
+                               if !g.channel.isEmpty { GooSection(title: g.channel) }
+                               ForEach(g.options) { row($0) }
+                             }
+                           } else {
+                             ForEach(listed) { row($0) }
                            }
-                           .id(o.id)
-                         }
-                       }))]
+                         })))
+    }
     let scale = picked == nil ? nil
       : c.sidekickEffort.flatMap { ComposerControls.reasoningVisible($0) ? ComposerControls.presentReasoning($0) : nil }
     if let effort = c.sidekickEffort, let scale, scale.efforts.count > 1 {
@@ -906,6 +935,39 @@ struct LiquidControls: View {
     return out
   }
 
+  /// The CLI the sidekick runs in: its mark and name (a faint fading plus and None while there is none), and a panel of
+  /// None and every CLI. None turns the sidekick off; a CLI is no pick of its own, so it opens the model bean on that
+  /// CLI's models
+  private func agentBean(_ sk: ConfigControl, clis: [ComposerControls.SidekickCli], picked: ComposerControls.SidekickCli?) -> GooBean {
+    let none = ComposerControls.noSidekick
+    let glyph = picked.map { AnyView(VendorMark(brand: $0.id, name: $0.name, size: Metrics.barIcon).foregroundStyle(Palette.fg1)) }
+      ?? AnyView(Icon(.circleFadingPlus, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg3))
+    return GooBean(key: "sidekick.agent", title: t("common.agent"), glyph: glyph,
+                   caption: AnyView(GooCaption(text: picked?.name ?? t("composer.sidekickNone"))), rows: clis.count + 1,
+                   panel: AnyView(GooList(current: picked?.id ?? none) {
+                     GooRow(name: t("composer.sidekickNone"), checked: picked == nil) {
+                       SidekickRowGlyph(option: nil, size: Metrics.iconCtl)
+                     } action: {
+                       onSetConfig(sk.id, none)
+                       browse = nil
+                       fold()
+                     }
+                     .id(none)
+                     ForEach(clis) { cli in
+                       GooRow(name: cli.name, checked: cli.id == picked?.id) {
+                         VendorMark(brand: cli.id, name: cli.name, size: Metrics.iconCtl)
+                       } action: {
+                         // The agent bean is first, the model bean second
+                         withAnimation(motion ? Motion.gooSpring : nil) {
+                           browse = cli.id
+                           stage = 2
+                         }
+                       }
+                       .id(cli.id)
+                     }
+                   }))
+  }
+
   /// The sidekick picked, none while the select reads None
   private static func picked(_ sk: ConfigControl) -> SessionOption? {
     let current = sk.value ?? ComposerControls.noSidekick
@@ -913,10 +975,12 @@ struct LiquidControls: View {
   }
 
   /// Trades the beans for another level's (`sidekick`, or nil for the lead's): they head home into the chip, the level
-  /// changes while they are small there, and the new beans squeeze out. Without motion it swaps at once
-  private func enter(_ level: String?) {
+  /// changes while they are small there, and the new beans squeeze out, `opening` that bean's panel at once (1…).
+  /// Without motion it swaps at once
+  private func enter(_ level: String?, opening: Int = 0) {
+    browse = nil
     guard motion else {
-      stage = 0
+      stage = opening
       deeper = level
       return
     }
@@ -929,7 +993,10 @@ struct LiquidControls: View {
       // Closed meanwhile (a tap outside): the level stays as it was, and the next open starts on the lead's beans
       guard open == "model" else { held = false; return }
       deeper = level
-      withAnimation(Motion.gooSpring) { held = false }
+      withAnimation(Motion.gooSpring) {
+        held = false
+        stage = opening
+      }
     }
   }
 
@@ -989,6 +1056,13 @@ struct SidekickMark: View {
 func accessLabel(_ level: SessionOption) -> String {
   let keys = ["ask": "composer.access.ask", "auto-edit": "composer.access.autoEdit", "full": "composer.access.full"]
   return keys[level.id].map { t($0) } ?? modeLabel(level)
+}
+
+/// modeIcons.ts `accessIcon`: the approval levels (the built-in agent's, and `auto` from the engine's split of Claude's
+/// modes) as one shield family, so the bean reads as a scale; other levels keep their mode glyph
+func accessIcon(_ level: SessionOption) -> LucideIcon {
+  let icons: [String: LucideIcon] = ["ask": .shieldEllipsis, "auto-edit": .shieldCheck, "auto": .shieldHalf, "full": .shieldOff]
+  return icons[level.id] ?? modeIcon(level)
 }
 
 /// A collaboration mode's name: Codex's `default` is its Build mode, not the permission default beside it
@@ -1052,7 +1126,8 @@ struct ModelChoices {
     self.modelId = model?.id
     self.effort = Self.effort(split: split, cur: cur, curVar: curVar, modelId: model?.id, onSetConfig: onSetConfig)
     self.mode = controls.modes.first { $0.id == controls.modeId } ?? controls.modes.first
-    self.modes = controls.modes.count > 1 ? controls.modes : []
+    // Beside a permission control the modes have no bean: the working ones are picked from the `/` list (Composer.tsx)
+    self.modes = controls.modes.count > 1 && ComposerControls.workingModes(controls) == nil ? controls.modes : []
     self.collaboration = split.collaboration.first { $0.options.count > 1 }
     self.access = split.permission.first { $0.options.count > 1 }
     let sidekick = Self.sidekick(split, hidden: hidden)
@@ -1286,6 +1361,23 @@ struct GooRow<Glyph: View, Trailing: View>: View {
 extension GooRow where Trailing == GooCheck {
   init(name: String, checked: Bool, @ViewBuilder glyph: @escaping () -> Glyph, action: @escaping () -> Void) {
     self.init(name: name, checked: checked, glyph: glyph, trailing: { GooCheck(on: checked) }, action: action)
+  }
+}
+
+/// A label over a run of rows in a bean's panel, the channel they come through (the desktop's group label): fainter
+/// and smaller than a row, on the rows' inset, sitting on the first row it names
+struct GooSection: View {
+  var title: String
+
+  var body: some View {
+    Text(web: title, paragraph: false)
+      .lineLimit(1)
+      .textStyle(TypeScale.text3)
+      .foregroundStyle(Palette.fg3)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, Metrics.gooPadX)
+      .frame(height: Metrics.gooSection, alignment: .bottom)
+      .accessibilityAddTraits(.isHeader)
   }
 }
 
