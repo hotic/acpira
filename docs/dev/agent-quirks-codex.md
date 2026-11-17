@@ -21,3 +21,16 @@ How codex-acp and the bundled codex behave on the ACP wire, with the version obs
 - Goal behaviour (1.13.0 and 2.2.2, live): an unmet goal continues after the turn with no `session/prompt`, bracketed by `threadStatus` active … idle; the host runs it as a detached turn. After two continuations without progress Codex sets `blocked` itself.
 - Pause / clear never interrupt a running turn, only further continuations (a paused goal can still reach `complete`). `/goal resume` on a `complete` goal reactivates it. `usageLimited` / `budgetLimited` map to `limited`.
 - Open: codex-acp 2.x's "AIR tool call contract, exact diff patches" not run at turn level.
+
+## SSH local run (exec-server)
+
+Codex under local run in an `ssh://` folder (`remote/codex_exec.rs`, `remote.md`). Observed on codex 0.166.0 / codex-acp 2.6.0 against a Linux host.
+
+- Seam: `CODEX_EXEC_SERVER_URL=ws://…` in the adapter's environment makes the thread's only environment the remote one (`none`: no environment; unset: `local`); codex-acp passes no `environments`, and `$CODEX_HOME/environments.toml` only adds one beside `local`. `session/new` then takes a cwd that exists only on the host and loads the host's `AGENTS.md`. Shell, `apply_patch`, file reads, project config (`environmentConfig/read`) and HTTP MCP requests (`http/request`: a `localhost` MCP URL means the host's) go through the server; `~/.codex` config, stdio MCP servers and hooks stay this machine's.
+- Server: `codex exec-server --listen ws://127.0.0.1:0` prints `ws://127.0.0.1:<port>`; `--ws-auth capability-token --ws-token-sha256 <hex>` wants `Authorization: Bearer` on the upgrade (401 otherwise). The client sends the URL's path untouched, which is where the tunnel's secret rides. The host gets this machine's exact version; mixed versions are unverified.
+- Build: the `@openai/codex@<version>-<platform>-<arch>` package's `vendor/<triple>/`; the server needs only `bin/codex`, `codex-package.json`, `codex-path/` and `codex-resources/bwrap`.
+- Stop: a cancelled turn sends the server no `process/terminate` (the CLI's exit does), so its command runs on, where a local one is killed. SIGTERM has the server end its commands and exit; SIGKILL leaves them running, each a session of its own. Hence one server per session, ended on stop through the helper's `exec` `graceMs` (`ExecTunnel::stop_commands`).
+- Reconnect: the client retries about ten times a second, first with `resumeSessionId`. The same server resumes with its processes alive; a new one answers `unknown session id` (the open tool call fails) and the next connect starts clean.
+- Sandbox: built by the server on the host. Where bubblewrap cannot set up (`kernel.apparmor_restrict_unprivileged_userns=1`, Ubuntu 24.04's default: `bwrap: loopback: Failed RTM_NEWADDR`) every command first exits `sandboxDenied` and waits for Guardian Review or an approval, as Codex run on that host does; `use_legacy_landlock` panics there. `agent-full-access` skips the sandbox.
+- Limits: a summoned Codex child in a host folder is refused (`relay/round.rs`); the first start on a host waits for the upload with log lines only. Unverified: macOS hosts, a helper older than `graceMs` (it kills, leaving the commands).
+- Probe: `scripts/probe/remote-codex-host.ts`.

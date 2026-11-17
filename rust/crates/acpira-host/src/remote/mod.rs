@@ -2,10 +2,12 @@
 //! engine; `client` is the engine's end of that channel; `wire` the frames both speak. `ssh`, `ssh_config` and `deploy`
 //! reach a host through the system ssh, `connections` keeps the hosts and their channels; `peer` is this engine as a
 //! client of a host's engine (remote run); `host_store` keeps one session history per host (the host's own store), `host_models` this machine's model sources
-//! on every host; `tcp` is a loopback port on a host as a byte stream
+//! on every host; `tcp` is a loopback port on a host as a byte stream; `codex_exec` is Codex's own exec-server on a host,
+//! for a Codex that runs here
 
 pub mod archive;
 pub mod client;
+pub mod codex_exec;
 pub mod connections;
 pub mod deflate;
 pub mod deploy;

@@ -110,5 +110,5 @@ What the engine (`rust/`) and its shells cannot give back from a quick look. Age
 Only a prompt-less `pnpm probe` (or one with only `--mcp`) spends no model calls. Give a CLI a temp store (`DSH_HOME`, `PI_CODING_AGENT_DIR`) where it has one. Flags: script headers.
 
 - `pnpm probe <agent>` (`scripts/probe/acp.ts`): raw `initialize` + `session/new` (+ one prompt), launched as the engine does; first stop for protocol issues. `--wait` keeps listening for `available_commands_update`: Grok / Kimi send it after `session/new` returns, Devin during.
-- `scripts/probe/*-host.ts` drive the webview path through the sidecar (`agent-host`: generic smoke; `antigravity-accounts-host`: saved accounts, no prompt sent; `remote-claude-host` needs a local-run SSH host). Raw-wire variants: `subagents.ts`, `steering.ts`.
+- `scripts/probe/*-host.ts` drive the webview path through the sidecar (`agent-host`: generic smoke; `antigravity-accounts-host`: saved accounts and quota, no prompt sent; `remote-claude-host` / `remote-codex-host` need a local-run SSH host). Raw-wire variants: `subagents.ts`, `steering.ts`.
 - OpenCode retries a 503 silently: if a prompt never returns, curl the gateway, pass `--model`.

@@ -405,6 +405,7 @@ const SSH_LOCAL_DESC: Record<string, MsgKey> = {
   acpira: 'settings.agent.sshLocal.descBuiltin',
   claude: 'settings.agent.sshLocal.descClaude',
   antigravity: 'settings.agent.sshLocal.descClaude',
+  codex: 'settings.agent.sshLocal.descClaude',
 };
 function SshHostSection({ agent, settings, on }: { agent: AgentInfo; settings: SettingsView; on: SettingsHandlers }) {
   if (!SSH_LOCAL_AGENTS.includes(agent.id) || !remoteOffered()) return null;

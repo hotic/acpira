@@ -112,20 +112,21 @@ describe('SSH folder agent selection', () => {
     { id: 'acpira', name: 'Acpira', available: true },
     { id: 'claude', name: 'Claude Code', available: true },
     { id: 'antigravity', name: 'Antigravity', available: true },
-    { id: 'codex', name: 'Codex', available: false },
+    { id: 'kimi', name: 'Kimi', available: false },
   ];
   const hostAgents: AgentInfo[] = [
     { id: 'acpira', name: 'Acpira', available: true },
     { id: 'claude', name: 'Claude Code', available: false },
     { id: 'antigravity', name: 'Antigravity', available: false },
-    { id: 'codex', name: 'Codex', available: true },
+    { id: 'kimi', name: 'Kimi', available: true },
   ];
 
   it('includes antigravity in SSH_LOCAL_AGENTS so opting in keeps local credentials on SSH folders', () => {
     expect(SSH_LOCAL_AGENTS).toContain('antigravity');
     const merged = agentsForFolder(localAgents, 'ssh://gen1/work', hostAgents, SSH_LOCAL_AGENTS);
     expect(merged.find(a => a.id === 'antigravity')?.available).toBe(true);
-    expect(merged.find(a => a.id === 'codex')?.available).toBe(true);
+    // An agent that cannot run here in a host folder is the host's own
+    expect(merged.find(a => a.id === 'kimi')?.available).toBe(true);
     expect(pickFolderAgent(localAgents, 'antigravity', 'ssh://gen1/work', '/local/repo', undefined, SSH_LOCAL_AGENTS)).toBe('antigravity');
   });
 
@@ -138,7 +139,7 @@ describe('SSH folder agent selection', () => {
       pickFolderAgent(localAgents, 'antigravity', 'ssh://gen1/work', 'ssh://gen1/other', hostAgents, remoteRunForAgy),
     ).toBe('acpira');
     expect(
-      pickFolderAgent(localAgents, 'codex', 'ssh://gen1/work', 'ssh://gen1/other', hostAgents, remoteRunForAgy),
-    ).toBe('codex');
+      pickFolderAgent(localAgents, 'kimi', 'ssh://gen1/work', 'ssh://gen1/other', hostAgents, remoteRunForAgy),
+    ).toBe('kimi');
   });
 });
