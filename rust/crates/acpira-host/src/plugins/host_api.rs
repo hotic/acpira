@@ -96,8 +96,17 @@ impl Api {
       "session/get" => {
         let m = self.manager()?;
         let id = params.get("session").and_then(Value::as_str).ok_or_else(|| bad("`session` is needed"))?;
-        let Some(s) = m.live_session(id) else { return Ok(json!({ "session": null })) };
-        let mut view = serde_json::to_value(s.view()).map_err(|e| RpcError::internal(e.to_string()))?;
+        let mut view = match m.live_session(id) {
+          Some(s) => serde_json::to_value(s.view()),
+          // A session a remote host's engine runs: its record from there, which carries the turns, controls and ids a
+          // view has (`turn.ended` reaches the plugins here for it too, session_manager/hosts/events.rs)
+          None => match m.host_record(id).await {
+            Some(Ok(record)) => serde_json::to_value(record),
+            Some(Err(e)) => return Err(RpcError::new(-32000, e.to_string())),
+            None => return Ok(json!({ "session": null })),
+          },
+        }
+        .map_err(|e| RpcError::internal(e.to_string()))?;
         // The newest turns only: a long session would flood the process
         let keep = params.get("turns").and_then(Value::as_u64).map_or(TURNS_SHOWN, |n| n as usize);
         if let Some(turns) = view.get_mut("turns").and_then(Value::as_array_mut)

@@ -35,7 +35,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - `mcp`: entries for new local sessions after the shared servers (a shared entry of the same name shadows it). Never sent to SSH sessions: the remote agent cannot start a local program.
 - `hooks`: chained after the project's `.agents/hooks.json` (`HooksConfig.chained`), also where it has none. Runs in the frozen copy with the project's `cwd` / `ACPIRA_PROJECT_DIR`; only the project's `watch` / `rounds` count. Not on SSH sessions.
 - `theme`: one skin in effect (`state.json` `skin`; absent = last committed theme, `""` = none), dropped in safe mode. The page drops a theme push older than the generation it shows.
-  - Tokens go on `.acp-shell.acp-shell[data-skin]` to beat palette.css's automatic-mode derivation by one class; `styles/skin.css` derives the rest from the seeds, never from the host's `--vscode-*` colours. Glass tiers are page CSS (surfaces depend on the layout); a plugin only names a tier.
+  - Tokens go on `.acp-shell.acp-shell[data-skin]` to beat palette.css's automatic-mode derivation by one class; `styles/skin.css` derives the rest from the seeds, never from the host's `--vscode-*` colours. Glass tiers are page CSS; a plugin only names a tier.
 - `style`: every plugin's sheet applies after the skin's; a detail look (rows by state) belongs here since a theme is exclusive.
 - `prompts` are taken at session start only (a mid-session change breaks the prompt cache). Skills reach external agents as a `<plugin-skills>` block, never linked into a CLI's skills folder.
 - `providers`: a key in the file is refused (keys come from the vault or `keyEnv`); the fast-model pick reads only the user's file.
@@ -84,7 +84,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Events
 
-- Live only, from the engine owning the session. `text.delta` / `thought.delta` only by exact name, never through `*`. `permission.asked` fires before any gate, yolo or card decides (`acp/session/plugin_events.rs`).
+- Live only, from the engine owning the session; an SSH host's session raises a bare `turn.ended` when its `completedAt` moves on (`hosts/events.rs`), `session/get` reading its host record. `text.delta` / `thought.delta` only by exact name, never through `*`. `permission.asked` fires before any gate, yolo or card decides (`acp/session/plugin_events.rs`).
 
 ## Session API
 
@@ -108,7 +108,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 ## Interface
 
 - Pieces go to `UI_SLOTS` (`acpira-shared`); an empty push and safe mode remove them. Desktop only, where the frame document is served.
-- A piece runs in `<iframe sandbox="allow-scripts">` without `allow-same-origin`, loading `/plugin-frame.html`, not `srcdoc`: a srcdoc frame inherits the page's nonce-only script policy, so inline code never runs. `document.open` keeps the no-network policy and the `acpira` object in WKWebView (desktop smoke checks it).
+- A piece runs in `<iframe sandbox="allow-scripts">` without `allow-same-origin`, loading `/plugin-frame.html`, not `srcdoc`: a srcdoc frame inherits the page's nonce-only script policy, so inline code never runs. `document.open` keeps the no-network policy and the `acpira` object in WKWebView.
 - The host-message handler (`App.tsx`) ignores child frames, so a piece cannot forge `pluginUi` and borrow another plugin's methods. The bridge accepts only registered frames whose origin reads `null`; a frame calls only its own plugin's methods. The outline sent to frames carries counts, never text, paths or commands.
 - Page-held documents (backdrop, thumbnails) may be unconfirmed versions, so they neither call methods nor hear `ui/post`. Thumbnails run 2D: a page has few WebGL contexts.
 - The sandbox keeps page state and sessions out of a piece's reach, not the plugin out of anything.
@@ -145,4 +145,4 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Telling the model
 
-- The MCP server instructions name the plugins folder from `HubOp::Features` (another data home moves it). How to write a plugin reaches every agent, the built-in one included, only through them and `plugin_guide`; no skill repeats it. The built-in agent alone gets the engine's `skill-creator` (`plugins/skill-creator/`), safe mode included: Codex and Claude Code ship their own, so other CLIs are never sent a second.
+- The MCP server instructions name the plugins folder from `HubOp::Features`. How to write a plugin reaches every agent, the built-in one included, only through them and `plugin_guide`; no skill repeats it. The built-in agent alone gets the engine's `skill-creator`, safe mode included: Codex and Claude Code ship their own, so other CLIs are never sent a second.
