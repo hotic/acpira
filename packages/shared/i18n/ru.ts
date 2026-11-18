@@ -791,6 +791,7 @@ export const ru = {
   'plugin.card.keep': "Оставить эту версию",
   'plugin.card.replaced': "Заменено на {name}",
   'plugin.card.newer': "Используется более новая версия",
+  'plugin.card.removed': "Плагин удалён",
   'plugin.card.safeMode': "Безопасный режим включён",
   'plugin.card.files': "Показать файлы",
   'plugin.card.runs': "Запускает",

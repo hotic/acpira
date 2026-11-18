@@ -777,6 +777,7 @@ export const fr = {
   'plugin.card.keep': "Garder cette version",
   'plugin.card.replaced': "Remplacé par {name}",
   'plugin.card.newer': "Une version plus récente est active",
+  'plugin.card.removed': "Le plugin a été supprimé",
   'plugin.card.safeMode': "Mode sans échec actif",
   'plugin.card.files': "Voir les fichiers",
   'plugin.card.runs': "Exécute",

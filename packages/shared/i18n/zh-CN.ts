@@ -795,6 +795,7 @@ export const zhCN = {
   'plugin.card.keep': "仍用这一版",
   'plugin.card.replaced': "已换成「{name}」",
   'plugin.card.newer': "已有新版本",
+  'plugin.card.removed': "插件已删除",
   'plugin.card.safeMode': "安全模式已开启",
   'plugin.card.files': "查看文件",
   'plugin.card.runs': "运行",
