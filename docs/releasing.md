@@ -57,6 +57,19 @@ Both constants are set. Keep a copy of the seed outside the repository, such as 
 
 A retry keeps the assets already attached, like the other jobs; a changed app needs a new version.
 
+## Android app
+
+The `android` job builds the Android app's release APK for arm64-v8a and x86_64 (`apps/android/scripts/build-net.sh`, then `:app:assembleRelease`), checks its signature with `apksigner` and attaches `Acpira-<version>-android.apk` to the version's Release; its hash joins `SHA256SUMS`. The app carries Acpira's version: `versionName` is `X.Y.Z` and `versionCode` is `X*1000000 + Y*1000 + Z` (`apps/android/app/build.gradle.kts`). Without `ANDROID_KEYSTORE` the job builds nothing: an unsigned or debug-signed APK on the Release would leave its installs on a key no later build matches.
+
+Android installs an update only when it is signed with the same key, so the release key is permanent: once an APK signed with it is out, losing it means no update can reach those installs, and a leaked copy lets anyone ship an update in its name. Keep two copies outside the repository. A Google Play listing would add Play App Signing on top; enrol with this key as the upload and app signing key so Play and GitHub installs update each other.
+
+One-time setup: `keytool -genkeypair -storetype PKCS12 -keystore acpira-release.p12 -alias acpira -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=Acpira"`. Gradle signs with the alias `acpira` and the one store password (a PKCS12 store has no separate key password). A local signed build sets `ACPIRA_ANDROID_KEYSTORE` (the file) and `ACPIRA_ANDROID_KEYSTORE_PASSWORD`; without them `assembleRelease` leaves the APK unsigned. The `bench` build stays debug-signed, so it does not install over a release APK (or the reverse) without an uninstall.
+
+| Secret | Source |
+| --- | --- |
+| `ANDROID_KEYSTORE` | The PKCS12 keystore, base64-encoded (`base64 -i acpira-release.p12`). |
+| `ANDROID_KEYSTORE_PASSWORD` | Its store password. |
+
 ## Validate or retry
 
 IntelliJ release builds rerun Gradle tasks with the build cache disabled. Dependency downloads remain cached, but production and test classes are compiled together from the selected tag so inlined Kotlin constants cannot come from different builds.

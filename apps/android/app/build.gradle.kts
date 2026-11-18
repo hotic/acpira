@@ -13,6 +13,18 @@ val sharedAssets = layout.buildDirectory.dir("generated/acpira-assets")
 val net = rootDir.resolve("net")
 val withNet = net.resolve("stamp").exists()
 
+// The app ships with Acpira's version (the root package.json, which `pnpm version:set` writes): X.Y.Z becomes the
+// versionCode X*1_000_000 + Y*1_000 + Z, so every release installs over the one before it
+val acpiraVersion = Regex(""""version":\s*"(\d+)\.(\d+)\.(\d+)"""")
+  .find(rootDir.resolve("../../package.json").readText())
+  ?.destructured?.let { (x, y, z) -> Triple(x.toInt(), y.toInt(), z.toInt()) }
+  ?: error("no X.Y.Z version in the root package.json")
+
+// Release signing (docs/releasing.md): a PKCS12 keystore named by ACPIRA_ANDROID_KEYSTORE, holding the key alias
+// "acpira" under the one ACPIRA_ANDROID_KEYSTORE_PASSWORD. Without it the release APK stays unsigned. Android only
+// installs an update signed with the same key, so this key can never change once an APK signed with it is out
+val releaseKeystore = providers.environmentVariable("ACPIRA_ANDROID_KEYSTORE").orNull?.let(::file)?.takeIf { it.isFile }
+
 val syncSharedAssets by tasks.registering(Sync::class) {
   into(sharedAssets)
   from(ios.resolve("AcpiraUI/Resources/i18n")) { into("i18n") }
@@ -35,13 +47,28 @@ android {
     applicationId = "cc.hotic.acpira"
     minSdk = 29
     targetSdk = 37
-    versionCode = 1
-    versionName = "0.1.0"
+    versionCode = acpiraVersion.let { (x, y, z) -> x * 1_000_000 + y * 1_000 + z }
+    versionName = acpiraVersion.toList().joinToString(".")
+  }
+
+  signingConfigs {
+    if (releaseKeystore != null) {
+      create("release") {
+        val password = providers.environmentVariable("ACPIRA_ANDROID_KEYSTORE_PASSWORD").orNull
+          ?: error("ACPIRA_ANDROID_KEYSTORE is set without ACPIRA_ANDROID_KEYSTORE_PASSWORD")
+        storeFile = releaseKeystore
+        storeType = "pkcs12"
+        storePassword = password
+        keyAlias = "acpira"
+        keyPassword = password
+      }
+    }
   }
 
   buildTypes {
     release {
       isMinifyEnabled = false
+      if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
     }
     // Timing builds (touch-sim's BENCH=1): release code, not debuggable, so ART compiles it as it would the store
     // build; debug-signed so it installs over a debug build; profileable from the shell (src/bench/AndroidManifest.xml)

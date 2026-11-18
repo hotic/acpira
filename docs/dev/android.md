@@ -9,7 +9,7 @@
   - `:sync`: transport, envelope client and session patches (`sessionPatch.ts` / `sessionViews.ts` are the reference, as for iOS). `SessionPatchTest` replays `test/fixtures/engine-patches.json`.
   - `:app`: `design/` tokens, fonts, icons; `logic/` pure ports of the iOS `Logic/` files; `store/` the app model and launch options; `ui/` the screens.
 - Shared with the iOS app, not copied: fonts, i18n tables and synthetic fixtures are synced from `apps/ios/Packages/AcpiraKit/Sources` into the build by the `syncSharedAssets` task. `app/src/main/assets/icons.json` (lucide, vendor marks, model brand rules) is written by `scripts/export/android-icons.ts`, drift test `test/android-icons.test.ts`.
-- Build types: `debug`, `release`, and `bench` (release code, debug-signed, profileable) for frame timing.
+- Build types: `debug`, `release` (what the GitHub Release ships, signed with the permanent release key: `docs/releasing.md`, "Android app"), and `bench` (release code, debug-signed, profileable) for frame timing.
 - `net/` (git-ignored) is `rust/crates/acpira-mobile` as `.so` plus UniFFI Kotlin bindings, from `scripts/build-net.sh`. `app/build.gradle.kts` compiles `src/net` (the iroh-backed `PairingService`) only while `net/stamp` exists, else `src/nonet` (no pairing); rerun the script after acpira-mobile, acpira-net or acpira-shared change (`--if-stale` does nothing otherwise).
 
 ## Rules
