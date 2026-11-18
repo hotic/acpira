@@ -156,11 +156,24 @@ impl SessionManager {
     if *run.items.lock() == items {
       return;
     }
+    self.emit_host_turns_ended(run, &items);
     run.deleted.lock().retain(|id, until| *until > tokio::time::Instant::now() && !items.iter().any(|s| &s.id == id));
     self.save_host_list(&run.alias, &items);
     *run.items.lock() = items;
     drop(scope);
     self.emit_sessions();
+  }
+
+  /// `turn.ended` for this engine's plugins when a host-run session's list entry says another turn ended there
+  /// (`completedAt` moved on): the host's engine owns the session, so no live session here carries its events, yet a
+  /// plugin installed here sees every session this machine drives. `host` names where it ran; no usage rides along,
+  /// `session/get` reads it from the host. A session first seen (a fresh connection's whole list) tells nothing
+  fn emit_host_turns_ended(&self, run: &Arc<HostRun>, items: &[SessionSummary]) {
+    let Some(rt) = self.deps.plugin_runtime.as_ref().filter(|rt| rt.hears("turn.ended")) else { return };
+    let ended = turns_ended(&run.items.lock(), items);
+    for s in ended {
+      rt.emit("turn.ended", || json!({ "session": s.id, "agent": s.agent, "cwd": s.cwd, "host": run.alias }));
+    }
   }
 
   /// A subagent transcript the host pushed through a session's view (a page here observes it: `observeSubagent` went to that
@@ -282,6 +295,18 @@ impl SessionManager {
       }
     }
   }
+}
+
+/// The sessions of a new host list whose turn ended since the list before it: `completedAt` set or moved on
+pub(super) fn turns_ended(before: &[SessionSummary], items: &[SessionSummary]) -> Vec<SessionSummary> {
+  items
+    .iter()
+    .filter(|s| {
+      let Some(done) = s.completed_at else { return false };
+      before.iter().find(|b| b.id == s.id).is_some_and(|b| b.completed_at.is_none_or(|was| done > was))
+    })
+    .cloned()
+    .collect()
 }
 
 /// A whole view as parts: its head without turns, every turn, and the live agent turn split into its head and blocks

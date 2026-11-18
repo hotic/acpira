@@ -647,7 +647,7 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use super::events::{apply_patch, split_view};
+  use super::events::{apply_patch, split_view, turns_ended};
   use acpira_shared::session_patch::{ViewPartsData, encode_turns, raw, session_patch};
   use acpira_shared::transcript::Turn;
 
@@ -719,5 +719,17 @@ mod tests {
     // A patch for more than this engine holds does not apply
     let short = held(&json!({ "id": "s", "rev": 1, "cwd": "/w", "turns": [] }));
     assert!(apply_patch(&short, &patch).is_none());
+  }
+
+  #[test]
+  fn a_host_list_tells_which_turns_ended() {
+    let summary = |id: &str, done: Option<i64>| -> SessionSummary {
+      serde_json::from_value(json!({ "id": id, "agent": "droid", "title": "", "cwd": "/w", "updatedAt": "", "completedAt": done })).unwrap()
+    };
+    let before = [summary("a", Some(1)), summary("b", None), summary("c", Some(5))];
+    let items = [summary("a", Some(2)), summary("b", Some(3)), summary("c", Some(5)), summary("new", Some(9))];
+    let ended: Vec<String> = turns_ended(&before, &items).into_iter().map(|s| s.id).collect();
+    // Moved on and newly set count; unchanged and first seen do not
+    assert_eq!(ended, ["a", "b"]);
   }
 }
