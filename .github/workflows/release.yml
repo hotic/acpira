@@ -614,6 +614,84 @@ jobs:
             grep -Fxq "$(basename "$file")" assets.txt || gh release upload "$RELEASE_TAG" "$file"
           done
 
+  # The Android app's release APK (arm64-v8a for phones, x86_64 for emulators and Chromebooks), signed with
+  # ANDROID_KEYSTORE (docs/releasing.md). Without the secret the job builds nothing and the Release carries no APK:
+  # an unsigned or debug-signed APK on the Release would strand whoever installs it on a key later builds cannot match
+  android:
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      version: ${{ needs.build.outputs.version }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
+      PUBLISH: ${{ github.event_name == 'release' || inputs.publish }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      HAS_KEY: ${{ secrets.ANDROID_KEYSTORE != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        if: env.HAS_KEY == 'true'
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        if: env.HAS_KEY == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: dtolnay/rust-toolchain@master
+        if: env.HAS_KEY == 'true'
+        with:
+          toolchain: '1.99.1'
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        if: env.HAS_KEY == 'true'
+        with:
+          workspaces: rust -> ../apps/android/build/net/target
+          key: android
+      - name: Build the signed APK
+        if: env.HAS_KEY == 'true'
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ACPIRA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.p12"
+          export ACPIRA_ANDROID_KEYSTORE="$RUNNER_TEMP/release.p12"
+          ABIS="arm64-v8a x86_64" apps/android/scripts/build-net.sh
+          (cd apps/android && ./gradlew --no-daemon :app:assembleRelease)
+          apk=apps/android/app/build/outputs/apk/release/app-release.apk
+          # Fails on an unsigned APK; the certificate digest goes to the summary to compare across releases
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          "$apksigner" verify --print-certs "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p dl sums
+          cp "$apk" "dl/Acpira-$version-android.apk"
+          (cd dl && sha256sum *) > sums/android.sha256
+          cat sums/android.sha256 >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP/release.p12"
+      - uses: actions/upload-artifact@v7
+        if: env.HAS_KEY == 'true'
+        with:
+          name: android
+          path: dl/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: env.HAS_KEY == 'true'
+        with:
+          name: sums-android
+          path: sums/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach the APK to the GitHub Release
+        if: env.HAS_KEY == 'true' && env.PUBLISH == 'true'
+        run: |
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
+          for file in dl/*; do
+            grep -Fxq "$(basename "$file")" assets.txt || gh release upload "$RELEASE_TAG" "$file"
+          done
+
   # One update manifest for every desktop platform that built (macOS is left out without its signing secrets), signed
   # once with DESKTOP_UPDATE_KEY. It goes up last: until then the latest release offers no update that points at
   # missing files. Without the key nothing is merged and installed apps keep the previous release's manifest
@@ -714,7 +792,7 @@ jobs:
   # built (the macOS app is missing without its secrets). Then files of versions outside the newest ten stable Releases
   # leave the packages Release: deltas only reach back three, and an engine that old fetches no SSH helper anymore
   release-sums:
-    needs: [build, release-asset, desktop, desktop-windows, desktop-linux]
+    needs: [build, release-asset, desktop, desktop-windows, desktop-linux, android]
     if: always() && needs.build.result == 'success' && (github.event_name == 'release' || inputs.publish)
     runs-on: ubuntu-latest
     timeout-minutes: 10
