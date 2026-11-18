@@ -45,7 +45,7 @@ import { rememberFold, rememberedFold } from './foldMemory';
 import { ProcessHistory } from './ProcessHistory';
 import { compactionForDisplay } from './compactionDisplay';
 import { splitPlanSections } from './planSections';
-import { PluginCard } from '../plugins/PluginCard';
+import { PluginCard, shownCards } from '../plugins/PluginCard';
 import { TurnActions } from './TurnActions';
 import { LiveElapsed } from './TurnClock';
 import { SubagentGroup } from './subagents/SubagentGroup';
@@ -237,7 +237,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   const sections = useMemo(() => splitPlanSections(raw.blocks, placed), [raw.blocks, placed]);
   // Plugin cards follow the reply once the turn has ended: `plugin_activate` returns at once and the agent goes on
   // working, so a card offered mid-turn read as a stop in the work. The offering call stays a row of the process
-  const cards = running ? undefined : turn.pluginCards;
+  const cards = running ? undefined : shownCards(turn.pluginCards);
   const delegations = useMemo<Delegations | undefined>(() => placedNodes && onInspect
     ? { byId: placedNodes, all: allSubagents ?? subagents!, onInspect, onPermission } : undefined,
   [placedNodes, allSubagents, subagents, onInspect, onPermission]);

@@ -778,6 +778,7 @@ export const de = {
   'plugin.card.keep': "Diese Version nutzen",
   'plugin.card.replaced': "Ersetzt durch {name}",
   'plugin.card.newer': "Eine neuere Version ist aktiv",
+  'plugin.card.removed': "Das Plugin wurde entfernt",
   'plugin.card.safeMode': "Abgesicherter Modus aktiv",
   'plugin.card.files': "Dateien anzeigen",
   'plugin.card.runs': "Führt aus",

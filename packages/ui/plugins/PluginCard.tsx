@@ -23,12 +23,16 @@ import { askPluginsView, backdropsShown, expectReveal, usePluginBackdrop, usePlu
 // (chat/PlanDocument.tsx), so the two read as one family: a Card as wide as the reply, the files glyph in the corner on
 // hover, and an action bar under a hairline with small controls at its end. Never folds open.
 // Its state is read from the plugins' state, so every window and the settings page agree: pending, applied, replaced
-// (applied here, then another skin took over), newer (another version of the plugin is in use)
+// (applied here, then another skin took over), newer (another version of the plugin is in use), removed (the plugin
+// left the store)
 
-export type CardState = 'pending' | 'applied' | 'replaced' | 'newer';
+export type CardState = 'pending' | 'applied' | 'replaced' | 'newer' | 'removed';
 
 export function cardState(card: Card_, view: PluginsView | undefined): { state: CardState; replacedBy?: string } {
   const info = view?.plugins.find(p => p.id === card.plugin);
+  // The view lists every source folder and every plugin the state knows: one in neither was removed, and applying the
+  // frozen copy the card names would bring back a plugin the user took away
+  if (view && !info) return { state: 'removed' };
   const enabledHere = !!info?.enabled && info.snapshot === card.snapshot;
   const skin = card.kind === 'skin';
   if (enabledHere && (!skin || view?.skin === card.plugin)) return { state: 'applied' };
@@ -39,6 +43,15 @@ export function cardState(card: Card_, view: PluginsView | undefined): { state: 
     return { state: 'replaced', replacedBy: view.plugins.find(p => p.id === view.skin)?.name ?? view.skin };
   }
   return { state: 'pending' };
+}
+
+// The cards a turn shows: an agent that fixes its plugin and offers it again leaves the earlier card behind, which
+// would read as a second plugin still to apply. Only the last card of each plugin stays, and an earlier one applied
+// from here (it holds an undo) keeps its button
+export function shownCards(cards: readonly Card_[] | undefined): readonly Card_[] | undefined {
+  if (!cards || cards.length < 2) return cards;
+  const kept = cards.filter((card, i) => card.undo || !cards.slice(i + 1).some(later => later.plugin === card.plugin));
+  return kept.length === cards.length ? cards : kept;
 }
 
 // How long after the click an apply still flies: the dynamic check of a program may take a while
@@ -89,8 +102,14 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
     { key: 'applied', text: t('plugin.card.undo') },
     { key: 'replaced', text: t('plugin.card.restore') },
     { key: 'newer', text: t('plugin.card.keep') },
+    // Still the apply word, greyed out: the note beside it says why
+    { key: 'removed', text: t(card.kind === 'exec' ? 'plugin.card.enable' : 'plugin.card.apply') },
   ];
-  const note = view?.safeMode ? t('plugin.card.safeMode') : state === 'replaced' ? t('plugin.card.replaced', { name: replacedBy ?? '' }) : state === 'newer' ? t('plugin.card.newer') : undefined;
+  const note = view?.safeMode ? t('plugin.card.safeMode')
+    : state === 'replaced' ? t('plugin.card.replaced', { name: replacedBy ?? '' })
+    : state === 'newer' ? t('plugin.card.newer')
+    : state === 'removed' ? t('plugin.card.removed')
+    : undefined;
   const act = (e: MouseEvent<HTMLButtonElement>) => {
     const undo = state === 'applied';
     const button = e.currentTarget;
@@ -148,7 +167,7 @@ export const PluginCard = memo(function PluginCard({ card }: { card: Card_ }) {
           )}
         </span>
         {note && <span className="shrink-0 px-1.5 text-3 text-fg-3">{note}</span>}
-        <Button variant="primary" className="h-ctl-sm shrink-0 justify-center" disabled={!view || view.safeMode || !sessionId} onClick={act}>
+        <Button variant="primary" className="h-ctl-sm shrink-0 justify-center" disabled={!view || view.safeMode || !sessionId || state === 'removed'} onClick={act}>
           <StableText items={words} current={state} itemClassName="text-center" />
         </Button>
       </div>

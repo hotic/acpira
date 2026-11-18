@@ -763,6 +763,7 @@
   "plugin.card.keep": "仍用這一版",
   "plugin.card.replaced": "已換成「{name}」",
   "plugin.card.newer": "已有新版本",
+  "plugin.card.removed": "外掛已刪除",
   "plugin.card.safeMode": "安全模式已開啟",
   "plugin.card.files": "檢視檔案",
   "plugin.card.runs": "執行",

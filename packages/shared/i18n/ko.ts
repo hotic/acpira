@@ -775,6 +775,7 @@ export const ko = {
   'plugin.card.keep': "이 버전 사용",
   'plugin.card.replaced': "{name}(으)로 바뀜",
   'plugin.card.newer': "새 버전 사용 중",
+  'plugin.card.removed': "삭제된 플러그인",
   'plugin.card.safeMode': "안전 모드 켜짐",
   'plugin.card.files': "파일 보기",
   'plugin.card.runs': "실행",

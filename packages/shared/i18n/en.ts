@@ -782,6 +782,7 @@ export const en = {
   'plugin.card.keep': "Use this version",
   'plugin.card.replaced': "Replaced by {name}",
   'plugin.card.newer': "A newer version is in use",
+  'plugin.card.removed': "This plugin was removed",
   'plugin.card.safeMode': "Safe mode is on",
   'plugin.card.files': "View files",
   'plugin.card.runs': "Runs",
