@@ -105,12 +105,17 @@ pub async fn serve(send: SendStream, recv: RecvStream, ssh: Option<Arc<dyn SshDi
   }
 }
 
-/// Answers a device that holds `tunnel::MAX_STREAMS` already, without reading its request
-pub async fn busy(send: SendStream) {
+/// Answers a device that holds `tunnel::MAX_STREAMS` already. Reads the request frame first and keeps `recv` alive
+/// until the header is sent so QUIC does not emit `STOP_SENDING` while the peer is still writing its request
+pub async fn busy(send: SendStream, recv: RecvStream) {
   let f = TcpFailure::new(TcpCode::Busy, format!("too many connections at once (at most {})", tunnel::MAX_STREAMS));
-  if let Ok(Ok(mut send)) = tokio::time::timeout(Duration::from_secs(2), tunnel::answer(send, Err(&f))).await {
-    let _ = send.finish();
-  }
+  let _ = tokio::time::timeout(Duration::from_secs(2), async {
+    let _recv = tunnel::read_request(recv).await;
+    if let Ok(mut send) = tunnel::answer(send, Err(&f)).await {
+      let _ = send.finish();
+    }
+  })
+  .await;
 }
 
 /// The connection a request asks for; none for a check (port 0) that passed
