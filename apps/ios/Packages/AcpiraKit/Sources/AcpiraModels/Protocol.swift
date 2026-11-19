@@ -159,9 +159,9 @@ public struct SessionCategories: Codable, Hashable, Sendable {
 }
 
 /// How an account action comes in (AccountActionVia): import the CLI's own login, log in a new one in a terminal,
-/// `auto` (import if not yet, else log in), or unlock the credential store
+/// `auto` (import if not yet, else log in), unlock the credential store, or store a pasted API key
 public enum AccountActionVia: String, TolerantEnum {
-  case `import`, login, auto, unlock, unknown
+  case `import`, login, auto, unlock, key, unknown
   public static var unknownCase: Self { .unknown }
 }
 

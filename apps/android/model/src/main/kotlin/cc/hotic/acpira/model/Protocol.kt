@@ -116,7 +116,7 @@ data class SettingsView(
 
 /** How an account action comes in: import the CLI's own login, log in a new one, `auto`, or unlock the credential store */
 @Serializable(with = AccountActionVia.S::class)
-enum class AccountActionVia { `import`, login, auto, unlock, unknown;
+enum class AccountActionVia { `import`, login, auto, unlock, key, unknown;
   object S : TolerantEnumSerializer<AccountActionVia>("AccountActionVia", entries, unknown)
 }
 
