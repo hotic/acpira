@@ -50,13 +50,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -127,19 +129,17 @@ private data class SessionGroup(val id: String, val caption: String?, val sessio
 @Composable
 fun SessionListScreen(model: AppModel) {
   val lists = model.lists
-  var query by rememberSaveable { mutableStateOf("") }
-  // The view menu's "archived": the list shows the archived sessions, and only those
-  var archivedOnly by rememberSaveable { mutableStateOf(false) }
+  val query = lists.query
+  val archivedOnly = lists.archivedOnly
   // The row standing swiped open, Delete bared (SwipeToDelete.kt)
   var swiped by remember { mutableStateOf<String?>(null) }
-  // Per open project, how many sessions past its latest few are out (SessionList.tsx `more`)
-  var moreShown by remember { mutableStateOf(mapOf<String, Int>()) }
   // The session the rename dialog and the move menu's "Add folder" are for
   var renaming by remember { mutableStateOf<String?>(null) }
   var movingTo by remember { mutableStateOf<String?>(null) }
   var sectionPrompt by remember { mutableStateOf<SectionPrompt?>(null) }
   val drag = remember { ListDrag() }
-  val listState = rememberLazyListState()
+  // Restore the list's scroll offset after leaving for a chat or folding the sidebar; switching computers starts at the top
+  val listState = key(model.computer) { rememberLazyListState(lists.scrollIndex, lists.scrollOffset) }
   val terms = searchTerms(query)
   // Paired remote access: the followed computer's state takes the page until it has sessions to list. The bar sits over
   // both, so the frame giving way to the list moves nothing in it
@@ -153,8 +153,26 @@ fun SessionListScreen(model: AppModel) {
 
   // The conversation search goes out once typing pauses (SessionList.tsx SEARCH_DEBOUNCE)
   LaunchedEffect(query) {
+    if (lists.isSearched(query)) return@LaunchedEffect
     if (query.isNotEmpty()) delay(SEARCH_DEBOUNCE_MS)
     lists.search(query)
+  }
+  // Keep the latest scroll offset in SessionLists so returning from a chat lands back where the reader was
+  LaunchedEffect(listState, lists, covered) {
+    if (covered) return@LaunchedEffect
+    snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+      .collect { (index, offset) ->
+        lists.scrollIndex = index
+        lists.scrollOffset = offset
+      }
+  }
+  DisposableEffect(listState, lists, covered) {
+    onDispose {
+      if (!covered) {
+        lists.scrollIndex = listState.firstVisibleItemIndex
+        lists.scrollOffset = listState.firstVisibleItemScrollOffset
+      }
+    }
   }
   // A scroll puts a swiped row back, as in the system's lists
   LaunchedEffect(listState.isScrollInProgress) { if (listState.isScrollInProgress) swiped = null }
@@ -163,7 +181,7 @@ fun SessionListScreen(model: AppModel) {
     ListViewMenu(
       view = lists.view, onView = lists::pickView,
       pinPlace = lists.pinPlace, onPinPlace = lists::pickPinPlace,
-      archived = archivedOnly, onArchived = { archivedOnly = it },
+      archived = archivedOnly, onArchived = { lists.archivedOnly = it },
       unread = model.summaries.any { it.unread == true || it.state == SessionState.unread },
       onMarkAllRead = lists::markAllRead,
       onNewSection = { sectionPrompt = SectionPrompt.Create() },
@@ -200,7 +218,7 @@ fun SessionListScreen(model: AppModel) {
       // the page's colour as the bar is: rows leave under it through the top fade, not beside the field
       if (inSidebar && !covered) {
         Box(Modifier.fillMaxWidth().background(Palette.bg0).padding(horizontal = Metrics.pad).padding(bottom = Metrics.s2)) {
-          SearchPill(query, { query = it })
+          SearchPill(query, { lists.query = it })
         }
       }
       }
@@ -210,7 +228,7 @@ fun SessionListScreen(model: AppModel) {
         // In the sidebar the foot holds settings and the computer; new sessions come from the page beside it
         if (inSidebar) SidebarFoot(model, pairing)
         // A new session starts in the latest project, as the iOS list's button does
-        else ListBottomBar(query, { query = it }) { model.open(Screen.New(cwd = lists.projects.firstOrNull())) }
+        else ListBottomBar(query, { lists.query = it }) { model.open(Screen.New(cwd = lists.projects.firstOrNull())) }
       }
     },
   ) { padding ->
@@ -219,8 +237,8 @@ fun SessionListScreen(model: AppModel) {
       return@Scaffold
     }
     val scene = ListScene(
-      model = model, drag = drag, terms = terms, archivedOnly = archivedOnly, swiped = swiped, moreShown = moreShown,
-      onSwiped = { swiped = it }, onMore = { cwd, n -> moreShown = if (n == null) moreShown - cwd else moreShown + (cwd to n) },
+      model = model, drag = drag, terms = terms, archivedOnly = archivedOnly, swiped = swiped, moreShown = lists.moreShown,
+      onSwiped = { swiped = it }, onMore = lists::setMore,
       onRename = { renaming = it }, onAddFolder = { movingTo = it }, onSectionPrompt = { sectionPrompt = it },
     )
     // Rows leave under the bar through a fade, once the list has moved off its top

@@ -88,6 +88,15 @@ class SessionLists(private val model: AppModel, private val context: Context, pr
   var connections by mutableStateOf<List<ConnectionView>>(emptyList())
   /** The history search's content hits, for the query they answered */
   var hits by mutableStateOf<SessionHits?>(null)
+  /** The search field's text, kept across navigations and sidebar folds so returning to the list keeps its hits */
+  var query by mutableStateOf("")
+  /** The view menu's "archived": the list shows the archived sessions, and only those */
+  var archivedOnly by mutableStateOf(false)
+  /** Per open project, how many sessions past its latest few are out (SessionList.tsx `more`) */
+  var moreShown by mutableStateOf<Map<String, Int>>(emptyMap())
+  /** Last visible scroll position of the session list; plain ints so scrolling never triggers recomposition */
+  var scrollIndex = 0
+  var scrollOffset = 0
   /** Projects folded open in the by-project view; null until one is toggled (the demo opens the latest one) */
   private var opened by mutableStateOf<Set<String>?>(null)
   /** The current toast's button, keyed by the toast's text so a later toast never shows it */
@@ -107,6 +116,17 @@ class SessionLists(private val model: AppModel, private val context: Context, pr
   fun toggleOpen(cwd: String) {
     val now = openProjects
     opened = if (cwd in now) now - cwd else now + cwd
+  }
+
+  /** Sets or clears how many extra rows are expanded for a project (or chats) */
+  fun setMore(cwd: String, count: Int?) {
+    moreShown = if (count == null) moreShown - cwd else moreShown + (cwd to count)
+  }
+
+  /** Whether [query] already matches what [search] last asked for or answered, so re-entering the list skips a duplicate ask */
+  fun isSearched(query: String): Boolean {
+    val q = searchTerms(query).joinToString(" ")
+    return q == searchQuery && (q.isEmpty() || hits?.query == q)
   }
 
   // Toasts
@@ -172,6 +192,12 @@ class SessionLists(private val model: AppModel, private val context: Context, pr
     removedProjects = from.removedProjects
     connections = from.connections
     hits = from.hits
+    searchQuery = from.searchQuery
+    query = from.query
+    archivedOnly = from.archivedOnly
+    moreShown = from.moreShown
+    scrollIndex = from.scrollIndex
+    scrollOffset = from.scrollOffset
     opened = from.opened
   }
 
