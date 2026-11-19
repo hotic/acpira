@@ -25,15 +25,16 @@ export async function highlightDiff(lines: DiffLine[], theme: CodeTheme, source?
   for (let end = 0; end <= rows.length; end++) {
     if (end < rows.length && rows[end]!.kind !== 'hunk') continue;
     const segment = rows.slice(start, end);
+    start = end + 1;
+    if (!segment.length) continue;
     const old = segment.filter(row => row.kind !== 'add');
     const next = segment.filter(row => row.kind !== 'del');
     const [oldTokens, newTokens] = await Promise.all([
-      tokenizeCode(old.map(row => row.text.slice(1)).join('\n'), language, theme, pause),
-      tokenizeCode(next.map(row => row.text.slice(1)).join('\n'), language, theme, pause),
+      old.some(row => row.kind === 'del') ? tokenizeCode(old.map(row => row.text.slice(1)).join('\n'), language, theme, pause) : [],
+      next.length ? tokenizeCode(next.map(row => row.text.slice(1)).join('\n'), language, theme, pause) : [],
     ]);
     old.forEach((row, index) => { if (row.kind === 'del' && oldTokens[index]) row.tokens = oldTokens[index]!; });
     next.forEach((row, index) => { if (newTokens[index]) row.tokens = newTokens[index]!; });
-    start = end + 1;
   }
   return rows;
 }
