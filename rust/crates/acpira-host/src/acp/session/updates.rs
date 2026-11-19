@@ -10,7 +10,7 @@ use acpira_shared::transcript::*;
 
 use crate::acp::session::compaction::CompactionCompletion;
 use crate::acp::session::failure::failure_of;
-use crate::acp::session::{AcpSession, Core};
+use crate::acp::session::{AcpSession, Core, late_reply};
 use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_task, apply_goal, apply_update, find_tool, mark_responded};
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx, native_sidekick_call};
@@ -36,6 +36,10 @@ impl AcpSession {
       if RUNNING_KINDS.contains(&kind.as_str()) {
         replay.push(u);
       }
+      return;
+    }
+    // What a background command leaves behind, streamed with no prompt running (`late_reply.rs`)
+    if n.get(late_reply::REPLAYED).is_none() && !self.late_live(&mut c, &session_id, &kind, &u) {
       return;
     }
     if c.phase.editing {

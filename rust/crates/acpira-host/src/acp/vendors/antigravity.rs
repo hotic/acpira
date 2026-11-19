@@ -68,6 +68,16 @@ pub fn reply_error(text: &str) -> Option<(usize, ReplyError)> {
   Some((at, ReplyError::Other(tail.to_owned())))
 }
 
+/// `agy acp` 1.5.12 answers `session/cancel` mid-stream by recording `The stream was interrupted. Please continue the
+/// task you were working on.` for its model and sending it as a warning line, as it does a failure. The cancel is no
+/// failure and the stop row already shows it: where that line starts, when the last text block ends on it
+pub fn cancel_note(text: &str) -> Option<usize> {
+  let body = text.trim_end();
+  let at = body.rfind(CANCEL_NOTE)?;
+  let (before, line) = body.split_at_checked(at)?;
+  ((before.is_empty() || before.ends_with('\n')) && !line.contains('\n')).then_some(at)
+}
+
 /// `agy acp` 1.5.9 finishes a `run_command` row with a receipt as its text (and `rawOutput.output`): `Created At: …`,
 /// `Completed At: …`, `Command exited with code N.`, a blank line, `Command output:` and then the output. The row's
 /// output card gets the output alone, with a failing exit code noted under it as for the other agents; any other text
@@ -99,8 +109,8 @@ fn command_output(text: &str) -> Option<String> {
 /// The task a background command's row carries, before the call's id
 pub const COMMAND_TASK: &str = "agy-command:";
 
-/// The updates a replay may add to the transcript: the agent's own, never the prompts
-const REPLAY_AGENT_KINDS: [&str; 5] = ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"];
+/// The agent's own updates, never the prompts: what a replay may add to the transcript, and what a late reply streams
+pub const REPLAY_AGENT_KINDS: [&str; 5] = ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"];
 
 fn kind_of(u: &Value) -> &str {
   u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("")
@@ -138,12 +148,6 @@ pub fn replay_tail(replay: &[Value], known: usize) -> Vec<Value> {
   replay.iter().skip(known).filter(|u| REPLAY_AGENT_KINDS.contains(&kind_of(u))).cloned().collect()
 }
 
-/// Whether a replay ends on the agent's words, as a finished reply does: one still being written ends on a call or a
-/// thought
-pub fn replay_ends_on_reply(replay: &[Value]) -> bool {
-  replay.iter().rev().find(|u| REPLAY_AGENT_KINDS.contains(&kind_of(u))).is_some_and(|u| kind_of(u) == "agent_message_chunk")
-}
-
 static RECEIPT: LazyLock<Regex> = LazyLock::new(|| {
   acpira_shared::re::compile(r"(?s)\A(?:Created At: [^\n]*\n)?(?:Completed At: [^\n]*\n)?Command exited with code (-?\d+)\.\n\nCommand output:\n?(.*)\z")
 });
@@ -152,6 +156,8 @@ static RECEIPT: LazyLock<Regex> = LazyLock::new(|| {
 const WARNING: &str = "\u{26a0} ";
 
 const EXECUTION: &str = "Agent execution error: ";
+
+const CANCEL_NOTE: &str = "\u{26a0} The stream was interrupted.";
 
 /// The start of every failure text `prompt` sends, each at the start of a line
 static TAIL: LazyLock<Regex> = LazyLock::new(|| {
@@ -261,5 +267,15 @@ mod tests {
     let (at, _) = reply_error(cut).unwrap();
     assert_eq!(cut.get(..at), Some("Half the answer\n"));
     assert!(reply_error("Done.\n\n\u{26a0} Note: the tests\nstill need a run.").is_none());
+  }
+
+  #[test]
+  fn the_note_a_cancel_leaves_is_found_on_its_own_last_line() {
+    let note = "\n\u{26a0} The stream was interrupted. Please continue the task you were working on.\n";
+    assert_eq!(cancel_note(note), Some(1));
+    let cut = format!("Half the answer{note}");
+    assert_eq!(cut.get(..cancel_note(&cut).unwrap()), Some("Half the answer\n"));
+    assert!(cancel_note("Quoting it: \u{26a0} The stream was interrupted. Please continue").is_none());
+    assert!(cancel_note(&format!("{note}And then more text")).is_none());
   }
 }
