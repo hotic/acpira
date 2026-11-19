@@ -113,12 +113,9 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - The host-message handler (`App.tsx`) ignores child frames, so a piece cannot forge `pluginUi` and borrow another plugin's methods. The bridge accepts only registered frames whose origin reads `null`; a frame calls only its own plugin's methods. The outline sent to frames carries counts, never text, paths or commands.
 - Page-held documents (backdrop, thumbnails) may be unconfirmed versions, so they neither call methods nor hear `ui/post`. Thumbnails run 2D: a page has few WebGL contexts.
 - The sandbox keeps page state and sessions out of a piece's reach, not the plugin out of anything.
-- `composer.above` takes no clicks, never covering a control; its height joins the dock's clearance so reply actions stay clear. `BUTTON_SLOTS` are native buttons: a frame per message costs too much, and no frame sees the selection. `prompt.actions` is the only thing under a sent prompt: the page puts nothing of its own there, so the strip exists only while a plugin fills it.
+- A `message.actions` click opens a popover (`MessageActions.tsx`) a `{ note }` answer fills; any other answer closes it. Nothing is recorded: each opening calls again.
+- `composer.above` takes no clicks, never covering a control; its height joins the dock's clearance so reply actions stay clear. `BUTTON_SLOTS` are native buttons: a frame per message costs too much, and no frame sees the selection.
 - Theme `css` and `style` reach the page only through `STYLE_HOOKS`; `test/pluginStyleHooks.test.ts` fails when the page drops one. Renaming a hook or a `data-state` value breaks plugins.
-
-## Parity with OpenCode
-
-- Against `@opencode/plugin` 2.1.4: lacks reference sources, terminal reading, vcs backends, transport hooks; adds blocking prompts, edit gates, whole agents, frozen versions.
 
 ## Activation
 
