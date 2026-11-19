@@ -433,7 +433,7 @@ async fn serve_device(g: Arc<Gateway>, conn: Connection, device: Device) {
         // Reaped here rather than in the select above, which would cancel an accept halfway through a stream's kind byte
         while tunnels.try_join_next().is_some() {}
         if tunnels.len() >= acpira_net::tunnel::MAX_STREAMS {
-          tunnel::busy(send).await;
+          tunnel::busy(send, recv).await;
           continue;
         }
         tunnels.spawn(tunnel::serve(send, recv, g.ssh.clone(), tally.clone(), g.log.clone(), device.name.clone()));

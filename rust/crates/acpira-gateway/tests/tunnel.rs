@@ -12,7 +12,9 @@ use std::time::Duration;
 use acpira_gateway::gateway::{Gateway, Opts};
 use acpira_gateway::tunnel::{Dialing, Pipe, SshDial};
 use acpira_net::endpoint::{self, ALPN_LINK, Options, Relays};
+use acpira_net::frame::{Codec, FrameKind, FrameReader, FrameWriter};
 use acpira_net::iroh::endpoint::Connection;
+use acpira_net::link::STREAM_TCP;
 use acpira_net::pair::{self, DeviceKind};
 use acpira_net::tunnel::{self, MAX_STREAMS, TcpCode, TcpFailure, TcpRequest};
 use acpira_net::{Endpoint, SecretKey};
@@ -183,6 +185,19 @@ fn streams_are_capped_and_end_with_the_link() {
     until("every stream reached the server", || server.open.load(Ordering::SeqCst) == MAX_STREAMS).await;
     let busy = open(&conn, &here(), "localhost", server.port).await.unwrap_err();
     assert_eq!(busy.code, TcpCode::Busy, "{busy}");
+
+    // A peer whose request frame arrives after the kind byte (e.g. an older build or scheduler stall) must still read
+    // Busy instead of hitting QUIC STOP_SENDING while writing its request
+    let (mut send, recv) = conn.open_bi().await.unwrap();
+    send.write_all(&[STREAM_TCP]).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut tx = FrameWriter::start(send, Codec::Plain).await.unwrap();
+    let req = TcpRequest { folder: here(), host: "localhost".into(), port: server.port };
+    tx.send(FrameKind::Control, &serde_json::to_vec(&req).unwrap()).await.unwrap();
+    let mut rx = FrameReader::start(recv).await.unwrap();
+    let (_, head) = rx.next().await.unwrap().unwrap();
+    let head: serde_json::Value = serde_json::from_slice(&head).unwrap();
+    assert_eq!(head["code"], "busy", "{head}");
 
     // One ends: its place comes free
     let first = held.remove(0);

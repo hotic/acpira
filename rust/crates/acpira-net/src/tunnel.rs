@@ -148,18 +148,31 @@ pub struct Opened {
 pub async fn open(conn: &Connection, req: &TcpRequest, within: Duration) -> Result<std::result::Result<Opened, TcpFailure>> {
   tokio::time::timeout(within, async {
     let (mut send, recv) = conn.open_bi().await?;
-    send.write_all(&[STREAM_TCP]).await?;
-    let mut tx = FrameWriter::start(send, Codec::Plain).await?;
+    // Send the stream kind and request frame in one write so the gateway does not see `STREAM_TCP` alone and drop
+    // `recv` (sending QUIC STOP_SENDING) before the request is written; if an older gateway still stops our send side
+    // early (e.g. on Busy), read its header first so the refusal surfaces instead of a link error
+    let mut request = vec![STREAM_TCP];
+    let mut tx = FrameWriter::start(&mut request, Codec::Plain).await?;
     tx.send(FrameKind::Control, &serde_json::to_vec(req)?).await?;
-    let send = tx.into_inner();
-    let mut rx = FrameReader::start(recv).await?;
-    let (_, head) = rx.next().await?.ok_or_else(|| anyhow!("the computer ended the tunnel stream unanswered"))?;
-    let head: TcpHeader = serde_json::from_slice(&head)?;
-    if let Some(message) = head.error {
-      return Ok(Err(TcpFailure { code: head.code.unwrap_or(TcpCode::Failed), message }));
+    let write_err = send.write_all(&request).await.err();
+    let header = async {
+      let mut rx = FrameReader::start(recv).await?;
+      let (_, head) = rx.next().await?.ok_or_else(|| anyhow!("the computer ended the tunnel stream unanswered"))?;
+      let head: TcpHeader = serde_json::from_slice(&head)?;
+      Ok::<_, anyhow::Error>((head, rx))
     }
-    let first = rx.take_buffered();
-    Ok(Ok(Opened { send, recv: rx.into_inner(), first }))
+    .await;
+    match header {
+      Ok((TcpHeader { error: Some(message), code }, _)) => Ok(Err(TcpFailure { code: code.unwrap_or(TcpCode::Failed), message })),
+      Ok((_, mut rx)) => {
+        if let Some(err) = write_err {
+          return Err(err.into());
+        }
+        let first = rx.take_buffered();
+        Ok(Ok(Opened { send, recv: rx.into_inner(), first }))
+      }
+      Err(read_err) => Err(write_err.map(anyhow::Error::from).unwrap_or(read_err)),
+    }
   })
   .await
   .map_err(|_| anyhow!("the computer did not answer the tunnel stream in time"))?
