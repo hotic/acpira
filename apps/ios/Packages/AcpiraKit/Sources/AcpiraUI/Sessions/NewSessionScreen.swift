@@ -18,6 +18,8 @@ struct NewSessionScreen: View {
   @State private var homeInset: CGFloat = 0
   /// Each agent keeps its own picks; later probe replies must not replace a draft that has been edited.
   @State private var picks: [AgentId: SessionControls] = [:]
+  /// An agent was picked on the ring: the draft keeps it from then on
+  @State private var agentPicked = false
   /// The agent ring is out: the page dims under it and a tap anywhere folds it
   @State private var ring = false
   /// The hero's bottom and the composer's top on the page, so a composer grown into the hero hides it
@@ -118,6 +120,12 @@ struct NewSessionScreen: View {
     // has started the CLI (the session's own list replaces them once it runs)
     .onChange(of: model.commands(for: draft.agent, cwd: draft.cwd), initial: true) { _, commands in draft.commands = commands }
     .onChange(of: model.knownControls(draft.agent, cwd: draft.cwd)) { _, _ in followKnown() }
+    // The built-in agent's answer shows no model source: until a pick the draft moves to an agent that can answer
+    .onChange(of: model.lacksModel(draft.agent, cwd: draft.cwd)) { _, lacks in
+      guard lacks, !agentPicked else { return }
+      let next = model.newSessionAgent(asked: nil, cwd: draft.cwd)
+      if next != draft.agent { follow(next) }
+    }
     // Another folder may mean another machine (an SSH host's engine runs the agent with its own models): picks made
     // from one machine's list do not carry over to the other's
     .onChange(of: draft.cwd) { old, new in
@@ -169,8 +177,14 @@ struct NewSessionScreen: View {
     if known != draft.controls { draft.controls = known }
   }
 
-  /// Another agent: its own controls (models and modes differ per CLI)
+  /// Another agent picked on the ring
   private func pickAgent(_ id: AgentId) {
+    agentPicked = true
+    follow(id)
+  }
+
+  /// Another agent: its own controls (models and modes differ per CLI)
+  private func follow(_ id: AgentId) {
     draft.agent = id
     draft.controls = picks[id] ?? model.controls(for: id, cwd: draft.cwd)
   }

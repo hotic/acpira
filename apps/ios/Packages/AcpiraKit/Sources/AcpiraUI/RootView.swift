@@ -407,8 +407,7 @@ public struct RootView: View {
       ChatScreen(id: id)
     case .new(let agent, let cwd):
       let folder = cwd ?? model.projects.first ?? ""
-      let start = agent ?? model.summaries.max { $0.updatedAt < $1.updatedAt }?.agent
-        ?? launchable(model.agents).first { $0.available != false }?.id ?? ""
+      let start = model.newSessionAgent(asked: agent, cwd: folder)
       NewSessionScreen(agent: start, cwd: folder, controls: model.controls(for: start, cwd: folder))
     case .changes(let id):
       ChangesScreen(sessionId: id)

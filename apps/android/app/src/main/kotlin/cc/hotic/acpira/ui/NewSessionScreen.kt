@@ -73,10 +73,6 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   // Until the user picks one the default follows the engine: the split's detail column opens this page before init
   // brings the agents and sessions, and the built-in fallback it had then cannot start anything
   var pickedAgent by rememberSaveable { mutableStateOf<String?>(null) }
-  // The newest session's agent only while it can still start (it may have been switched off since)
-  val agent = pickedAgent
-    ?: screen.agent ?: model.summaries.filter { s -> startable.any { it.id == s.agent } }.maxByOrNull { it.updatedAt }?.agent
-    ?: startable.firstOrNull()?.id ?: model.settings.defaultAgent
   // Every known project, the latest first, those taken off the list left out (apps/ios AppModel `projects`)
   val projects = model.lists.projects
   // Until a pick the folder follows the list; a blank folder asks for a chat (the list's "new chat", as apps/ios
@@ -84,6 +80,13 @@ fun NewSessionScreen(model: AppModel, screen: Screen.New) {
   var picked by rememberSaveable { mutableStateOf(false) }
   var pickedCwd by rememberSaveable { mutableStateOf<String?>(null) }
   val cwd = if (picked) pickedCwd else if (screen.cwd == "") null else screen.cwd ?: projects.firstOrNull()
+  // The built-in agent without a model source is passed over while another agent can start (AppModel.lacksModel)
+  val ready = startable.filter { !model.lacksModel(it.id, cwd) }.ifEmpty { startable }
+  // The newest session's agent only while it can still start (it may have been switched off since)
+  val agent = pickedAgent
+    ?: screen.agent?.takeIf { asked -> ready.any { it.id == asked } || !model.lacksModel(asked, cwd) }
+    ?: model.summaries.filter { s -> ready.any { it.id == s.agent } }.maxByOrNull { it.updatedAt }?.agent
+    ?: ready.firstOrNull()?.id ?: model.settings.defaultAgent
   // The capsule and the menu's tick read a chat where the engine keeps chats (apps/ios AppModel `startsChat`)
   val chat = model.startsChat(cwd)
   var draft by rememberSaveable { mutableStateOf("") }
