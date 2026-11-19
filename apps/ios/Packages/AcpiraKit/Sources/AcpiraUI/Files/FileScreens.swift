@@ -222,7 +222,7 @@ struct FileScreen: View {
         .padding(Metrics.pad)
     }
     .environment(\.openURL, OpenURLAction { url in
-      guard let link = FileLinks.decode(url) else { return model.openLink(url) ? .handled : .systemAction }
+      guard let link = FileLinks.decode(url) else { return model.openLink(url) || WebPage.open(url) ? .handled : .systemAction }
       Task { await open(link) }
       return .handled
     })

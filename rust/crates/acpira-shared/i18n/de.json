@@ -1623,6 +1623,7 @@
   "mobile.engine.demo": "Nicht verbunden · Demodaten",
   "mobile.engine.desc": "Bis die App mit einer Acpira-Engine auf deinem Computer gekoppelt ist, zeigt sie Beispielsitzungen, und gesendete Nachrichten bekommen eine lokale Demo-Antwort.",
   "mobile.link.missing": "Diese Sitzung gibt es hier nicht",
+  "mobile.link.copy": "Link kopieren",
   "mobile.changes.none": "Diese Sitzung hat noch keine Dateien geändert",
   "mobile.engine.disconnected": "Verbindung zur Engine getrennt",
   "mobile.engine.dropped": "Eine Nachricht der Engine wurde nicht verstanden. Aktualisiere die App.",

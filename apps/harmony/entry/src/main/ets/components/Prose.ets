@@ -3,7 +3,9 @@ import { MdBlock, MdInline, parseMarkdown, plainInline, repairStream } from '../
 import { codeLanguage, CodeToken, highlightCached } from '../logic/Syntax';
 import { tp } from '../logic/Folding';
 import { t } from '../store/L10n';
-import { copyText, openLink } from './Copy';
+import { copyText, linkPress, openLink, openOutside } from './Copy';
+import { isWebPage } from './WebPage';
+import { text } from '@kit.ArkGraphics2D';
 import { Lucide } from './Glyphs';
 
 // An agent's Markdown (chat/Prose.tsx + styles/prose.css, apps/ios Prose/Prose.swift, apps/android ui/Prose.kt): blocks
@@ -155,9 +157,41 @@ export struct InlineText {
   @Param ink: ResourceColor = $r('app.color.fg1');
   @Param strongInk: ResourceColor = $r('app.color.fg_strong');
   @Param oneLine: boolean = false;
+  private controller: TextController = new TextController();
+
+  /** The web address whose glyph lies under a point (vp, the text's own coordinates) */
+  webLinkAt(x: number, y: number): string {
+    const runs = spanRuns(this.inlines);
+    if (!runs.some((r: SpanRun) => isWebPage(r.url))) {
+      return '';
+    }
+    // The layout speaks px
+    const px = this.getUIContext().vp2px(x);
+    const py = this.getUIContext().vp2px(y);
+    const layout = this.controller.getLayoutManager();
+    const caret = layout.getGlyphPositionAtCoordinate(px, py).position;
+    let start = 0;
+    for (const r of runs) {
+      const end = start + r.text.length;
+      if (isWebPage(r.url)) {
+        // The caret sits between two characters: each side is asked for its own box
+        for (const k of [caret, caret - 1]) {
+          if (k < start || k >= end) {
+            continue;
+          }
+          const boxes = layout.getRectsForRange({ start: k, end: k + 1 }, text.RectWidthStyle.TIGHT, text.RectHeightStyle.MAX);
+          if (boxes.some((b: text.TextBox) => px >= b.rect.left && px <= b.rect.right && py >= b.rect.top && py <= b.rect.bottom)) {
+            return r.url;
+          }
+        }
+      }
+      start = end;
+    }
+    return '';
+  }
 
   build() {
-    Text() {
+    Text(undefined, { controller: this.controller }) {
       ForEach(spanRuns(this.inlines), (s: SpanRun) => {
         if (s.code) {
           Span(s.text)
@@ -191,8 +225,40 @@ export struct InlineText {
     .maxLines(this.oneLine ? 1 : WebMetrics.allLines)
     .copyOption(CopyOptions.LocalDevice)
     .width(this.oneLine ? undefined : '100%')
+    .onTouch((e: TouchEvent) => {
+      if (e.type === TouchType.Down && e.touches.length > 0) {
+        linkPress.url = this.webLinkAt(e.touches[0].x, e.touches[0].y);
+      }
+    })
+    // A long press on a web link selects its word: the selection menu leads with the link's own actions, since a tap
+    // already reads it in the app
+    .editMenuOptions({
+      onCreateMenu: (items: Array<TextMenuItem>): Array<TextMenuItem> => {
+        if (linkPress.url.length === 0) {
+          return items;
+        }
+        const open: TextMenuItem = { content: t('browser.openSystem'), id: TextMenuItemId.of(LINK_OPEN) };
+        const copy: TextMenuItem = { content: t('mobile.link.copy'), id: TextMenuItemId.of(LINK_COPY) };
+        return [open, copy].concat(items);
+      },
+      onMenuItemClick: (item: TextMenuItem, range: TextRange): boolean => {
+        const url = linkPress.url;
+        if (item.id.equals(TextMenuItemId.of(LINK_OPEN))) {
+          openOutside(this.getUIContext(), url);
+        } else if (item.id.equals(TextMenuItemId.of(LINK_COPY))) {
+          copyText(this.getUIContext(), url);
+        } else {
+          return false;
+        }
+        this.controller.closeSelectionMenu();
+        return true;
+      }
+    })
   }
 }
+
+const LINK_OPEN = 'acpira.link.open';
+const LINK_COPY = 'acpira.link.copy';
 
 /**
  * CodeSurface: one fence on the code background inside the conversation ring, its header naming the language with a

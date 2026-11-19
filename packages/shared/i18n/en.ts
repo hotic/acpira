@@ -1692,6 +1692,7 @@ export const en = {
   'mobile.engine.demo': 'Not connected · demo data',
   'mobile.engine.desc': 'Until the app pairs with an Acpira engine on your computer it shows sample sessions, and sent messages get a local demo reply.',
   'mobile.link.missing': 'That session is not here',
+  'mobile.link.copy': 'Copy link',
   'mobile.changes.none': 'This session has not changed any files',
   'mobile.engine.disconnected': 'Disconnected from the engine',
   'mobile.engine.dropped': 'A message from the engine was not understood. Update the app.',

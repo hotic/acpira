@@ -1646,6 +1646,7 @@
   "mobile.engine.demo": "未连接 · 演示数据",
   "mobile.engine.desc": "App 与电脑上的 Acpira 引擎配对之前，显示的是示例会话，发出的消息由本地演示回复。",
   "mobile.link.missing": "这里没有这个会话",
+  "mobile.link.copy": "复制链接",
   "mobile.changes.none": "这个会话还没有改动文件",
   "mobile.engine.disconnected": "已与引擎断开",
   "mobile.engine.dropped": "看不懂引擎发来的一条消息，请更新 App。",
