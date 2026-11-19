@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@acpira/shared/transcript';
 import { FAKE, bundleFakeAgent } from '../../test/fakeAgentBundle';
 import { Host, type View } from '../lib/host';
-import { CONFIGS, type Config, nativeHelpers, setupHelpers } from './configs';
+import { CONFIGS, type Config, HOST_SIDEKICK, nativeHelpers, setupHelpers } from './configs';
 import { HARNESSES, type HarnessSetup, MODELS } from './harnesses';
 import { deepseekKey, gatewayKey } from './keys';
 import { type Call, OUTAGE, startMeter } from './meter';
@@ -256,8 +256,10 @@ async function driveSidecar(setup: HarnessSetup, o: {
   picks: Record<string, string>; mode?: string; agents?: Record<string, unknown>; env: Record<string, string>;
 }): Promise<Outcome> {
   const { work, home, acpiraHome } = o;
+  // With the host's sidekick, the view opens on a draft in the sidekick's CLI (see below)
+  const sidekickCli = !DRY && HOST_SIDEKICK in o.picks ? o.picks[HOST_SIDEKICK]!.split('/')[0]! : undefined;
   const host = await Host.start({
-    cwd: work, home: acpiraHome, defaultAgent: setup.agent, agents: o.agents,
+    cwd: work, home: acpiraHome, defaultAgent: sidekickCli ?? setup.agent, agents: o.agents,
     env: { HOME: home, PYTHONDONTWRITEBYTECODE: '1', ...o.env, ...setup.env },
   });
   const view = await host.view();
@@ -270,6 +272,14 @@ async function driveSidecar(setup: HarnessSetup, o: {
     if (setup.importLogin && !DRY) {
       const a = await view.addAccount(setup.agent, 'import').finally(() => scrub(setup));
       if (a.status !== 'success') throw new Error(`importing the ${setup.agent} login: ${a.status} ${a.error ?? ''}`);
+    }
+    // The host's sidekick select lists a CLI only once its models are known (a fresh home has no records), and reads
+    // them when the lead's connection is made. A probe is the way in, but a session of that CLI starting retires the
+    // probe, and an empty one is dropped when the next opens: so the view opens on the sidekick CLI's draft, the probe
+    // runs once that draft has started, and the lead's session replaces it
+    if (sidekickCli) {
+      await view.until(() => view.active()?.agent === sidekickCli && view.active()?.status === 'ready', 60_000, `the ${sidekickCli} draft`);
+      await view.probeControls(sidekickCli);
     }
     await view.newSession(setup.agent);
     if (!DRY) await applyPicks(view, o.picks);
@@ -378,6 +388,13 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const setup = HARNESSES[cell.harness]!({ model: spec, base: `${o.meterUrl}/r/${runId}/${upstream}`, home, acpiraHome });
   const helped = cell.config ? setupHelpers(cell.config, { home, acpiraHome, baseFor: id => `${o.meterUrl}/r/${runId}.${id}/gw` }) : { picks: {}, env: {} };
   const picks = { ...cell.config?.pick, ...helped.picks };
+  // The host's sidekick as a returning user has it: remembered from an earlier session of the lead's CLI, so the new
+  // session starts with it held. Picked only once the session runs, it reaches a lead with no persona on the roster
+  // through tools/list_changed alone, which Codex (codex-acp 2.7.0) ignores: ask_agent never appears in that session
+  if (!DRY && HOST_SIDEKICK in picks) {
+    mkdirSync(join(acpiraHome, 'sessions'), { recursive: true });
+    writeFileSync(join(acpiraHome, 'sessions/prefs.json'), JSON.stringify({ lastSettings: { [setup.agent]: { config: { [HOST_SIDEKICK]: picks[HOST_SIDEKICK] } } } }, null, 2) + '\n');
+  }
   // A dry run's agents, lead and helpers alike, are the fake one under their own ids
   const agents = DRY ? Object.fromEntries([setup.agent, ...(cell.config?.helpers ?? []).map(h => h.agent)].map(id => [id, { name: `Fake ${id}`, command: process.execPath, args: [FAKE] }])) : undefined;
   const natives = DRY ? [] : nativeAgents(setup, cell.config);
@@ -413,7 +430,7 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   // A Claude helper's tokens are its own transcripts under the run's HOME, which holds no other Claude session (no
   // Claude lead beside a Claude helper, setupHelpers)
   const nativeIds = new Set(nativeHelpers(cell.config).map(h => h.id));
-  const helpers = Object.fromEntries([...(cell.config?.helpers ?? []).map(h => [h.id, h.model] as const), ...(cell.config?.sidekick ? [['sidekick', cell.config.sidekick] as const] : [])]
+  const helpers = Object.fromEntries([...(cell.config?.helpers ?? []).map(h => [h.id, h.model] as const), ...(cell.config?.sidekick || cell.config?.hostSidekick ? [['sidekick', (cell.config.sidekick ?? cell.config.hostSidekick)!] as const] : [])]
     .map(([id, model]) => {
       const u = nativeIds.has(id) && !DRY ? { ...claudeUsage(home), reasoning: 0, nativeUsage: true } : sumCalls(o.calls.filter(c => c.run === `${runId}.${id}`));
       return [id, { ...u, costUsd: Math.round(cost({ model, ...u }) * 1000) / 1000 }];
@@ -468,7 +485,7 @@ async function main() {
   // The gateway's key for every lead and helper on it, DeepSeek's own only when a lead runs there
   const keys: Record<string, string> = {};
   if (DRY) keys.gw = 'dry';
-  else if (cells.some(c => MODELS[c.model]!.upstream !== 'ds' || c.config?.helpers?.length || c.config?.sidekick)) keys.gw = gatewayKey();
+  else if (cells.some(c => MODELS[c.model]!.upstream !== 'ds' || c.config?.helpers?.length || c.config?.sidekick || c.config?.hostSidekick)) keys.gw = gatewayKey();
   if (!DRY && cells.some(c => MODELS[c.model]!.upstream === 'ds')) {
     keys.ds = deepseekKey() ?? '';
     if (!keys.ds) throw new Error('no DeepSeek key (EVAL_DS_KEY or EVAL_DS_KEY_FILE)');

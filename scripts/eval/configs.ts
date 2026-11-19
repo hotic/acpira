@@ -34,6 +34,9 @@ export interface Config {
   // The built-in agent's sidekick: a MODELS key, listed by a provider of its own and picked as the session's
   // `sidekick` option (P1)
   sidekick?: string;
+  // A sidekick in another CLI through the host's own select (`host_sidekick.rs`, every CLI session without one of its
+  // own): a MODELS key the built-in agent runs, picked as `acpira/eval-sidekick/<id>`
+  hostSidekick?: string;
   // The session mode set once the session starts (the built-in agent's `team`)
   mode?: string;
   // A line put before the task's prompt, on its own line: how a user starts this configuration's orchestration
@@ -46,6 +49,9 @@ const ledgerWorker = (model: string): Helper => ({
   when: 'One whole work item of its own (implement, test, commit); several threads of it can run at once.',
 });
 const LEDGER_TRIGGER = 'Use @Worker for the work items: one new Worker thread per item, all four at once.';
+
+// The host's sidekick select (`acp/session/host_sidekick.rs`)
+export const HOST_SIDEKICK = 'host_sidekick';
 
 const REVIEW_WHEN = 'An independent review of a change before you call the task done: give it the requirement and where the change is, not your account of it.';
 
@@ -77,6 +83,11 @@ export const CONFIGS: Record<string, Config> = {
   'acpira-astra-swe': { harness: 'acpira', model: 'gpt-6-astra', sidekick: 'swe-2' },
   // Astra with the sidekick Cognition pairs with Opus: the widest price gap on the gateway (about a hundredfold)
   'acpira-astra-luna': { harness: 'acpira', model: 'gpt-6-astra', sidekick: 'gpt-6-luna' },
+  // Vendor CLIs leading through the host's sidekick select, with the built-in agent on GPT-6 Luna as the sidekick:
+  // does the Fusion split carry over to a lead whose own loop Acpira does not run? Their baselines are `claude-opus`
+  // and `codex-astra`
+  'claude-opus-sk-luna': { harness: 'claude-max', model: 'claude-opus-5.5', pick: { model: 'opus', effort: 'high' }, hostSidekick: 'gpt-6-luna' },
+  'codex-astra-sk-luna': { harness: 'codex', model: 'gpt-6-astra', hostSidekick: 'gpt-6-luna' },
   // The same leads without a sidekick, which tells the sidekick's effect apart from the harness's
   'acpira-astra': { harness: 'acpira', model: 'gpt-6-astra' },
   'acpira-opus': { harness: 'acpira', model: 'claude-opus-5.5' },
@@ -123,10 +134,11 @@ export function setupHelpers(c: Config, o: { home: string; acpiraHome: string; b
     else builtin.push({ id: `eval-${h.id}`, api: spec.api, base: o.baseFor(h.id), models: [{ spec }] });
   }
   const picks: Record<string, string> = {};
-  if (c.sidekick) {
-    const spec = MODELS[c.sidekick]!;
+  if (c.sidekick || c.hostSidekick) {
+    const spec = MODELS[(c.sidekick ?? c.hostSidekick)!]!;
     builtin.push({ id: 'eval-sidekick', api: spec.api, base: o.baseFor('sidekick'), models: [{ spec }] });
-    picks.sidekick = `eval-sidekick/${spec.id}`;
+    if (c.sidekick) picks.sidekick = `eval-sidekick/${spec.id}`;
+    else picks[HOST_SIDEKICK] = `acpira/eval-sidekick/${spec.id}`;
   }
   if (c.harness.startsWith('acpira')) picks.model = `evalgw/${MODELS[c.model]!.id}`;
   if (builtin.length) addBuiltinProviders(o.acpiraHome, builtin);
