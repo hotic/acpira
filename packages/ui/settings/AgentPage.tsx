@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, LoaderCircle, LockKeyhole, LogIn, Plus, RefreshCw, Settings2, SquareTerminal, WandSparkles, X } from 'lucide-react';
+import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, LoaderCircle, LockKeyhole, LogIn, Plus, RefreshCw, Settings2, SquareTerminal, WandSparkles, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
-import type { AgentInstallProgress } from '@acpira/shared/protocol';
+import type { AccountAction, AgentInstallProgress } from '@acpira/shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventoryScope, InventorySkill } from '@acpira/shared/inventory';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
@@ -48,6 +48,8 @@ export interface AgentSettingsProps {
   accounts: AccountInfo[];
   // This agent's latest in-app install, if any
   install?: AgentInstallProgress;
+  // This agent's latest account action, if any (the API key field follows its check)
+  accountAction?: AccountAction;
   inventory?: AgentInventory;
   // The select-type configOptions this agent offered in its latest session; undefined until one has been opened
   controls?: ConfigControl[];
@@ -112,7 +114,10 @@ export function AgentDialog(p: AgentSettingsProps & {
     <SettingsDialog wide tall icon={<AgentMark id={agent.id} name={agent.name} />} title={agent.name} sub={sub} onClose={p.onClose}
       control={<Switch checked={p.enabled} disabled={p.last && p.enabled} onChange={p.onEnabled} label={t('settings.agent.enabled', { agent: agent.name })} />}
       footer={<>
-        <SectionActionLeft icon={<RefreshCw strokeWidth={1.75} className={cn(p.busy && 'animate-spin live-spin')} />} disabled={p.busy} onClick={() => { setDetect(n => n + 1); p.on.refreshAgent(agent.id); }}>{refresh}</SectionActionLeft>
+        {/* A footer button like Done, not bare text: the dialog's one other action, on the left */}
+        <Button disabled={p.busy} onClick={() => { setDetect(n => n + 1); p.on.refreshAgent(agent.id); }} className="shrink-0 disabled:pointer-events-none disabled:opacity-60 [&_svg]:size-icon">
+          <RefreshCw strokeWidth={1.75} className={cn(p.busy && 'animate-spin live-spin')} />{refresh}
+        </Button>
         <span className="flex-1" />
         <Button variant="primary" onClick={p.onClose}>{t('common.done')}</Button>
       </>}>
@@ -172,7 +177,7 @@ export function AgentSettings({ agent, accounts, install, inventory, controls, p
   }
 }
 
-function AccountsTab({ agent, accounts, on }: { agent: AgentInfo; accounts: AccountInfo[]; on: SettingsHandlers }) {
+function AccountsTab({ agent, accounts, action, on }: { agent: AgentInfo; accounts: AccountInfo[]; action?: AccountAction; on: SettingsHandlers }) {
   return <>
     {/* The sign-in stands where the accounts section keeps "Add account": the section's one action, at its title's end */}
     {agent.localAccount && <Section title={t('quota.officialAccount')} desc={t('quota.local.desc')}
@@ -191,6 +196,8 @@ function AccountsTab({ agent, accounts, on }: { agent: AgentInfo; accounts: Acco
             key={a.id}
             title={<AccountLabel label={a.label} detail={a.detail} />}
             extra={(a.quota || a.quotaIssue) && <SavedAccountQuota account={a} />}
+            // The bars run to the card's content edge; the hover-only remove stands on the title line above them
+            extraWide
             trailing={
               <IconButton title={t('common.remove')} aria-label={t('common.removeNamed', { name: a.label })} onClick={() => on.removeAccount(a.id)} className="-mr-ctl-bleed text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
                 <X strokeWidth={1.5} />
@@ -198,9 +205,27 @@ function AccountsTab({ agent, accounts, on }: { agent: AgentInfo; accounts: Acco
             }
           />
         ))}
+        {agent.accountKeys && on.addAccountKey && <AccountKeyField agent={agent} action={action} onSave={on.addAccountKey} />}
       </Section>
     )}
   </>;
+}
+
+// The other way in beside the section's terminal sign-in (AgentInfo.accountKeys): a pasted API key, sent on paste and
+// checked with the vendor before it is stored. Every key is an account of its own; one of an identity already saved
+// replaces that account's credential (a rotated key). The second line follows the host-owned check, a refused key is
+// explained by the toast, and the account row appears once it is stored
+function AccountKeyField({ agent, action, onSave }: { agent: AgentInfo; action?: AccountAction; onSave: (agent: AgentInfo['id'], key: string) => void }) {
+  const checking = action?.via === 'key' && action.status === 'pending';
+  const label = t('settings.agent.accountKey');
+  return (
+    <Field label={label} desc={<StableText current={checking ? 'checking' : 'idle'} items={[
+      { key: 'idle', text: t('settings.agent.accountKey.desc') },
+      { key: 'checking', text: <Shimmer active={checking}>{t('settings.agent.accountKey.checking')}</Shimmer> },
+    ]} />}>
+      <KeyBox label={label} placeholder={t('settings.agent.accountKey.placeholder')} disabled={checking} sendOnPaste onSave={key => onSave(agent.id, key)} />
+    </Field>
+  );
 }
 
 // The built-in agent's behaviour, one list: the fast model, how it compacts, where it searches the web (with that
@@ -351,35 +376,14 @@ function DeepSeekRows({ state, on }: { state: ProvidersState; on: SettingsHandle
   );
 }
 
-// A keyed backend's key, in the right column like any control: typed, then saved with the check or Enter. The box
-// empties once sent; the second line says whether one is stored, which is all the page ever learns about it
+// A keyed backend's key, in the right column like any control. The second line says whether one is stored, which is all
+// the page ever learns about it
 function WebKeyField({ backend, stored, on }: { backend: Exclude<WebSearchBackend, 'default'>; stored: boolean; on: SettingsHandlers }) {
-  const [key, setKey] = useState('');
-  const [show, setShow] = useState(false);
-  const save = () => {
-    const k = key.trim();
-    if (!k) return;
-    on.providerAction?.({ kind: 'webSearch', backend, key: k });
-    setKey('');
-    setShow(false);
-  };
-  const eyeLabel = show ? t('settings.providers.hideKey') : t('settings.providers.showKey');
   const label = t(WEB_KEY_FIELDS[backend].label);
   return (
     <Field label={label} desc={<span className="inline-flex items-center gap-1.5"><Dot ok={stored} warn={!stored} />{stored ? t('settings.providers.keySaved') : t('settings.agent.webSearch.noKey')}</span>}>
-      {/* The visibility toggle and the save check sit inside the box, so it keeps the column's width */}
-      <div className="flex h-ctl w-(--ctl-w) max-w-full min-w-0 items-center rounded-md border border-line bg-hover pl-3 transition-colors focus-within:bg-active hover:border-line-strong">
-        <input type={show ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={key} onChange={e => setKey(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') save(); }}
-          aria-label={label} placeholder={stored ? t('settings.providers.keyKept') : t(WEB_KEY_FIELDS[backend].placeholder)}
-          className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
-        <IconButton size="sm" title={eyeLabel} aria-label={eyeLabel} aria-pressed={show} onClick={() => setShow(v => !v)} className="text-fg-3">
-          {show ? <EyeOff strokeWidth={1.5} /> : <Eye strokeWidth={1.5} />}
-        </IconButton>
-        <IconButton size="sm" title={t('settings.providers.save')} aria-label={t('settings.providers.save')} disabled={!key.trim()} onClick={save} className="mr-0.5 text-fg-2 disabled:opacity-40">
-          <Check strokeWidth={1.75} />
-        </IconButton>
-      </div>
+      <KeyBox label={label} placeholder={stored ? t('settings.providers.keyKept') : t(WEB_KEY_FIELDS[backend].placeholder)}
+        onSave={key => on.providerAction?.({ kind: 'webSearch', backend, key })} />
     </Field>
   );
 }
@@ -655,7 +659,7 @@ function hostOf(url: string): string {
 // the master switch on top, then one block per group, rows with what the family spans. An adapter that classifies its
 // sources gets one block per source (official or custom as the second line), so one provider's models switch together;
 // every block head carries a switch over all its models, the search aside
-function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; controls?: ConfigControl[]; settings: SettingsView; on: SettingsHandlers }) {
+function ModelsSection({ agent, controls, probing, settings, on }: { agent: AgentInfo; controls?: ConfigControl[]; probing?: boolean; settings: SettingsView; on: SettingsHandlers }) {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(false);
   const catalogs = (controls ?? []).map(control => ({ control, families: prioritizeModels(groupModels(control.options)) }));

@@ -28,7 +28,8 @@ impl SessionManager {
     let actions = {
       let mut st = self.state.lock();
       let pending = st.account_actions.iter().find(|a| a.agent == agent && a.status == AccountActionStatus::Pending);
-      if pending.is_some_and(|a| matches!(a.via, AccountActionVia::Import | AccountActionVia::Unlock)) {
+      // A key check is short and stores on success: a second action meanwhile would race it, not replace it
+      if pending.is_some_and(|a| matches!(a.via, AccountActionVia::Import | AccountActionVia::Unlock | AccountActionVia::Key)) {
         return None;
       }
       // A terminal may have been closed without notifying this engine. Never make its wait an exclusive lock.
@@ -84,21 +85,36 @@ impl SessionManager {
       return Ok(());
     }
     let Some(cancel) = self.begin_account_action(agent, via.into()) else { return Ok(()) };
-    let action = |status, error| AccountAction { agent: agent.to_owned(), via: via.into(), status, error };
     let result = match via {
       AddAccountVia::Import => accounts.import(agent).await,
       AddAccountVia::Login => accounts.login(agent, cancel.clone()).await,
       AddAccountVia::Auto => accounts.add(agent, cancel.clone()).await,
     };
+    self.settle_add(v, agent, via.into(), result, &cancel).await
+  }
+
+  /// An account from a pasted API key (the settings page): checked with the vendor, then stored like a login. A refused
+  /// key ends the action with the reason and stores nothing
+  pub async fn add_account_key(&self, v: &Viewer, agent: &str, key: &str) -> Result<()> {
+    let Some(accounts) = self.deps.accounts.clone() else { return Ok(()) };
+    let Some(cancel) = self.begin_account_action(agent, AccountActionVia::Key) else { return Ok(()) };
+    let result = accounts.add_key(agent, key).await.map(Some);
+    self.settle_add(v, agent, AccountActionVia::Key, result, &cancel).await
+  }
+
+  /// The end of an add: the action's outcome for every page, and a new account binds the viewer's current session of
+  /// that agent when it stopped on sign-in or has none
+  async fn settle_add(&self, v: &Viewer, agent: &str, via: AccountActionVia, result: Result<Option<AccountInfo>>, cancel: &Cancel) -> Result<()> {
+    let action = |status, error| AccountAction { agent: agent.to_owned(), via, status, error };
     if cancel.is_cancelled() {
       return Ok(());
     }
     match result {
       Ok(None) => {
         self.set_account_action(action(
-          if via == AddAccountVia::Import { AccountActionStatus::Missing } else { AccountActionStatus::Cancelled },
+          if via == AccountActionVia::Import { AccountActionStatus::Missing } else { AccountActionStatus::Cancelled },
           None,
-        ), &cancel);
+        ), cancel);
         Ok(())
       }
       Ok(Some(acc)) => {
@@ -107,15 +123,15 @@ impl SessionManager {
           && (cur.status() == SessionStatus::AuthRequired || cur.account_id().is_none())
           && let Err(e) = cur.rebind_account(&acc.id).await
         {
-          self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())), &cancel);
+          self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())), cancel);
           return Err(e);
         }
         self.pool.invalidate(None);
-        self.set_account_action(action(AccountActionStatus::Success, None), &cancel);
+        self.set_account_action(action(AccountActionStatus::Success, None), cancel);
         Ok(())
       }
       Err(e) => {
-        self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())), &cancel);
+        self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())), cancel);
         Err(e)
       }
     }

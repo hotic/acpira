@@ -187,6 +187,11 @@ impl AccountManager {
     self.providers.contains_key(agent)
   }
 
+  /// The agent's accounts can also come from a pasted API key (`add_key`)
+  pub fn accepts_keys(&self, agent: &str) -> bool {
+    self.providers.get(agent).is_some_and(|p| p.accepts_keys())
+  }
+
   pub fn list(&self) -> Vec<AccountInfo> {
     self.store.list(None).into_iter().map(|a| self.with_quota(a)).collect()
   }
@@ -515,6 +520,28 @@ impl AccountManager {
       return Ok(None);
     };
     Ok(Some(self.store_draft(agent, draft, "login", "host.accountAdded").await?))
+  }
+
+  /// An account from a pasted API key. The provider checks the key with the vendor first, so a refused one stores
+  /// nothing. An account of the same identity takes the key in place (`AccountStore::add`), and what its old credential
+  /// kept outside the vault (another private CLI home) goes with it; a key re-pasted for the same identity keeps its home
+  pub async fn add_key(self: &Arc<Self>, agent: &str, key: &str) -> Result<AccountInfo> {
+    let p = self.provider(agent)?;
+    let draft = p.key_account(key.trim().to_owned()).await?;
+    let home = |meta: &Option<std::collections::BTreeMap<String, String>>| meta.as_ref().and_then(|m| m.get("home").cloned());
+    let new_home = home(&draft.meta);
+    let same = self.store.list(Some(agent)).into_iter().find(|a| a.label == draft.label);
+    let replaced = match same {
+      Some(a) => self.store.credential(&a.id).await.ok().flatten(),
+      None => None,
+    };
+    let added = self.store_draft(agent, draft, "key added", "host.accountAdded").await?;
+    if let Some(old) = replaced.filter(|old| home(&old.meta) != new_home)
+      && let Some(fut) = p.forget(old)
+    {
+      fut.await;
+    }
+    Ok(added)
   }
 
   /// Unlock the agent's credential store: the provider's unlock command runs in a terminal where the user types the

@@ -391,3 +391,39 @@ async fn per_prompt_token_usage_lands_on_the_agent_turn() {
   prompt(&s, "usage-grok").await;
   expect_match(&last_turn(&view(&s))["usage"], json!({ "input": 38_140, "output": 20, "modelCalls": 2, "model": "grok-4.6", "requestId": "req-grok-1" }));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn droid_turn_usage_is_the_native_counter_delta_not_the_context_or_last_model_call() {
+  let fake = fake_or_skip!();
+  let home = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "droid", json!({ "env": { "FACTORY_HOME_OVERRIDE": home.path() } }));
+  let s = started(&h, home.path().to_str().unwrap()).await;
+  let sid = s.to_record().acp_session_id.unwrap();
+  let dir = home.path().join(".factory/sessions/-native-project");
+  std::fs::create_dir_all(&dir).unwrap();
+  let path = dir.join(format!("{sid}.settings.json"));
+  let write = |(miss, output, read, cache_write, thinking)| {
+    let snapshot = json!({
+      "tokenUsage": { "inputTokens": miss, "outputTokens": output, "cacheReadTokens": read, "cacheCreationTokens": cache_write, "thinkingTokens": thinking },
+      "inclusiveTokenUsage": { "outputTokens": 90_000 },
+      "lastCallTokenUsage": { "outputTokens": 10 },
+    });
+    std::fs::write(&path, snapshot.to_string()).unwrap();
+  };
+  // With no before snapshot the whole native tally must not land on the current response.
+  for (snapshot, expected) in [
+    ((80, 50, 80, 0, 20), json!({ "output": null })),
+    ((180, 370, 880, 40, 70), json!({ "input": 940, "output": 320, "cachedRead": 800, "cachedWrite": 40, "reasoning": 50, "total": 1260 })),
+    ((680, 491, 970, 40, 110), json!({ "input": 590, "output": 121, "cachedRead": 90, "cachedWrite": 0, "reasoning": 40, "total": 711 })),
+    ((680, 491, 970, 40, 110), json!({ "output": null })),
+  ] {
+    let p = spawn_prompt(&s, "use tool");
+    let perm = wait_block(&s, "permission").await;
+    write(snapshot);
+    s.resolve_permission(perm["id"].as_str().unwrap(), "allow");
+    p.await.unwrap();
+    let turn = last_turn(&view(&s));
+    expect_match(&turn, json!({ "stop": "end_turn", "usage": { "context": { "used": 1234, "size": 100_000 } } }));
+    expect_match(&turn["usage"], expected);
+  }
+}

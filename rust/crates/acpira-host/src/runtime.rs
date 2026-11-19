@@ -20,6 +20,7 @@ use crate::accounts::antigravity::AntigravityAccountProvider;
 use crate::accounts::claude::ClaudeAccountProvider;
 use crate::accounts::codex::CodexAccountProvider;
 use crate::accounts::devin::{BinaryFn, DevinAccountProvider};
+use crate::accounts::droid::DroidAccountProvider;
 use crate::accounts::local::LocalAccounts;
 use crate::accounts::switch::SwitchStrategy;
 use crate::acp::agents::registry::{AgentRegistry, SELF_AGENT_ID};
@@ -139,6 +140,8 @@ impl HostRuntime {
     // the agent keeps its one CLI login
     if cfg!(target_os = "macos") {
       account_providers.push(Arc::new(AntigravityAccountProvider::new(root.join("accounts").join("antigravity"), binary_of("antigravity"))));
+      // Droid's login key is read from the macOS keychain only; Linux and Windows keep it in a keyring (accounts/droid.rs)
+      account_providers.push(Arc::new(DroidAccountProvider::new(root.join("accounts").join("droid"), binary_of("droid"))));
     }
     let accounts = AccountManager::new(
       account_store,

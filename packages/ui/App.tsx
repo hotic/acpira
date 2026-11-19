@@ -540,6 +540,8 @@ export function App() {
     markAllRead: () => post({ type: 'markAllRead' }),
     selectAccount: id => post({ type: 'selectAccount', sessionId: activeId.current, id }),
     addAccount: (agent, via) => post({ type: 'addAccount', sessionId: activeId.current, agent, via }),
+    // To this page's own engine, which binds the viewer's current session once the key is stored
+    addAccountKey: (agent, key) => post({ type: 'addAccountKey', agent, key }),
     removeAccount: id => post({ type: 'removeAccount', sessionId: activeId.current, id }),
     refreshQuota: agent => post({ type: 'refreshQuota', sessionId: activeId.current, agent }),
     unlockCredentials: agent => post({ type: 'unlockCredentials', sessionId: activeId.current, agent }),
@@ -612,6 +614,7 @@ export function App() {
     },
     selectAccount: id => post({ type: 'selectAccount', id }),
     addAccount: agent => post({ type: 'addAccount', agent, via: 'auto' }),
+    addAccountKey: (agent, key) => post({ type: 'addAccountKey', agent, key }),
     removeAccount: id => post({ type: 'removeAccount', id }),
     refreshQuota: agent => post({ type: 'refreshQuota', agent }),
     unlockCredentials: agent => post({ type: 'unlockCredentials', agent }),
@@ -710,6 +713,7 @@ export function App() {
         agents={agents}
         accounts={accounts}
         installs={agentInstalls}
+        accountActions={accountActions}
         inventories={inventories}
         shared={shared}
         providers={providers}

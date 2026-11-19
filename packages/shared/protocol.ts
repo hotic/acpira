@@ -404,8 +404,9 @@ export interface NativeSessionsState {
 // How an account comes in: import reads the CLI's own local login; login runs an isolated login in the terminal that leaves the local login untouched;
 // auto is the "+" in the menu: import the local login if it hasn't been imported yet, otherwise log in a new one in the terminal
 export type AddAccountVia = 'import' | 'login' | 'auto';
-// unlock: the credential store holding the agent's logins (macOS keychain) is unlocked in a terminal, no account is added
-export type AccountActionVia = AddAccountVia | 'unlock';
+// unlock: the credential store holding the agent's logins (macOS keychain) is unlocked in a terminal, no account is added;
+// key: a pasted API key is checked with the vendor and stored as an account (addAccountKey)
+export type AccountActionVia = AddAccountVia | 'unlock' | 'key';
 
 // Host-owned progress survives webview remounts and prevents duplicate imports across panels.
 export interface AccountAction {
@@ -578,6 +579,8 @@ export type WebviewMsg =
   | { type: 'selectAccount'; sessionId?: string; id: string }
   // A session id routes chat account actions to its owning SSH engine; settings omit it and stay local.
   | { type: 'addAccount'; sessionId?: string; agent: AgentId; via: AddAccountVia }
+  // A pasted API key as an account (AgentInfo.accountKeys), from the settings page to its own engine
+  | { type: 'addAccountKey'; agent: AgentId; key: string }
   | { type: 'removeAccount'; sessionId?: string; id: string }
   // AgentInfo.credentialsLocked: unlock the credential store in a terminal, then reconnect the agent's sessions stuck on sign-in
   | { type: 'unlockCredentials'; sessionId?: string; agent: AgentId }

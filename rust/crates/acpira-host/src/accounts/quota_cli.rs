@@ -1,4 +1,4 @@
-//! `acpira quota [--json] [codex|claude|devin…]`: the quota windows of each CLI's own login, read the way the account
+//! `acpira quota [--json] [codex|claude|devin|droid…]`: the quota windows of each CLI's own login, read the way the account
 //! view reads them, with nothing imported or stored (no account, no keychain item, no token refresh). The evaluation
 //! scripts record it before and after a run. Secrets never reach the output: only the login's label, plan and windows
 
@@ -10,6 +10,7 @@ use super::account_store::AccountCredential;
 use super::claude::ClaudeAccountProvider;
 use super::codex::CodexAccountProvider;
 use super::devin::{BinaryFn, DevinAccountProvider};
+use super::droid::DroidAccountProvider;
 use super::provider::AccountProvider;
 
 pub async fn cli(args: &[String]) -> i32 {
@@ -22,7 +23,8 @@ pub async fn cli(args: &[String]) -> i32 {
   let providers: Vec<Box<dyn AccountProvider>> = vec![
     Box::new(CodexAccountProvider::new(scratch.join("codex"), none.clone())),
     Box::new(ClaudeAccountProvider::new(scratch.join("claude"), none.clone())),
-    Box::new(DevinAccountProvider::new(scratch.join("devin"), none)),
+    Box::new(DevinAccountProvider::new(scratch.join("devin"), none.clone())),
+    Box::new(DroidAccountProvider::new(scratch.join("droid"), none)),
   ];
   let mut out = Map::new();
   for p in providers.iter().filter(|p| wanted.is_empty() || wanted.contains(&p.agent())) {

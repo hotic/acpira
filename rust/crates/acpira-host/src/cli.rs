@@ -19,7 +19,7 @@
 //!   acpira handoff-pack --cwd DIR [--base REV] [--recipe FILE] [--json]
 //!                                                the handoff pack of a work tree (diff with whole functions, small files,
 //!                                                optional references), as a summoned agent would get it
-//!   acpira quota [--json] [codex|claude|devin…]  the quota windows of each CLI's own login, read without storing anything
+//!   acpira quota [--json] [codex|claude|devin|droid…]  the quota windows of each CLI's own login, read without storing anything
 //!   acpira store revert ID [--home DIR]          write a SQLite-backed session back to a complete legacy JSON record
 //!   acpira pdf-pages FIRST LIMIT MAX_BYTES        the built-in agent's PDF parser in a child process (the PDF on stdin,
 //!                                                the pages as JSON on stdout), so a parser panic ends only that child

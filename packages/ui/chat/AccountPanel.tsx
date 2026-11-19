@@ -6,6 +6,7 @@ import { PanelHeader } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
 import { AccountLabel, type AccountState } from '../ui/AccountLabel';
 import { QuotaBars } from '../ui/QuotaBars';
+import { savedIssueText } from '../ui/LocalAccountQuota';
 import { t } from '../i18n';
 
 export interface AccountPanelProps {
@@ -114,7 +115,7 @@ export function AccountPanel(p: AccountPanelProps) {
 function savedState(agent: AgentInfo, a: AccountInfo): AccountState | undefined {
   if (agent.credentialsLocked) return { text: t('quota.short.locked'), warn: true, title: t('notice.locked.short') };
   if (!a.quotaIssue) return undefined;
-  return { text: t(`quota.short.${a.quotaIssue}`), warn: a.quotaIssue === 'expired', title: t(`quota.status.${a.quotaIssue}`) };
+  return { text: savedIssueText(a, 'short')!, warn: a.quotaIssue === 'expired', title: savedIssueText(a, 'status') };
 }
 // The bars stand twice as far under the identity line as they do from each other, so the identity reads as their title
 const QUOTA_UNDER = 'pt-3';

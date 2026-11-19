@@ -20,6 +20,7 @@ acpira-agent.workspace = true
 acpira-desktop = { path = "../acpira-desktop" }
 # Paired devices: the gateway runs inside the engine (devices/host.rs)
 acpira-gateway = { path = "../acpira-gateway" }
+aes-gcm.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 flate2.workspace = true

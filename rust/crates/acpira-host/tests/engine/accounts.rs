@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
 use acpira_host::accounts::account_manager::AccountManager;
-use acpira_host::accounts::account_store::{AccountCredential, AccountDraft, AccountStore, FileVault, account_secret_key};
+use acpira_host::accounts::account_store::{AUTH_API_KEY, AccountCredential, AccountDraft, AccountStore, FileVault, META_AUTH, account_secret_key};
 use acpira_host::accounts::devin::{DevinAccountProvider, parse_status, parse_user_status, read_credentials, toml_of};
 use acpira_host::accounts::provider::{AccountProvider, LoginFlow, QuotaRead};
 use acpira_host::acp::transport::process::AgentProcess;
@@ -309,6 +309,8 @@ struct FakeProvider {
   locked: AtomicBool,
   /// The plan the vendor reports on quota reads of the local login (secret `local`)
   plan: Mutex<Option<String>>,
+  /// Secrets of the credentials `forget` was asked to drop
+  forgotten: Mutex<Vec<String>>,
 }
 
 impl FakeProvider {
@@ -340,6 +342,24 @@ impl AccountProvider for FakeProvider {
   fn login(&self) -> BoxFuture<Result<LoginFlow>> {
     let flow = self.login_flows.lock().unwrap().pop();
     Box::pin(async move { flow.ok_or_else(|| anyhow!("not in test")) })
+  }
+  fn accepts_keys(&self) -> bool {
+    true
+  }
+  /// `fk-bad` is refused; another key signs in as the label after its `:` (else key@example.com), one home per label
+  fn key_account(&self, key: String) -> BoxFuture<Result<AccountDraft>> {
+    Box::pin(async move {
+      if key == "fk-bad" {
+        return Err(anyhow!("refused"));
+      }
+      let label = key.split_once(':').map_or("key@example.com", |(_, l)| l).to_owned();
+      let home = format!("/homes/{label}");
+      Ok(draft(&label, None, &key, Some(&[("home", &home), (META_AUTH, AUTH_API_KEY)])))
+    })
+  }
+  fn forget(&self, cred: AccountCredential) -> Option<BoxFuture<()>> {
+    self.forgotten.lock().unwrap().push(cred.secret);
+    None
   }
   fn authenticate(&self, proc: Arc<AgentProcess>, cred: AccountCredential) -> Option<BoxFuture<Result<()>>> {
     self.authentications.fetch_add(1, Ordering::SeqCst);
@@ -528,6 +548,35 @@ async fn a_missing_local_login_is_reported_and_another_attempt_is_allowed() {
   *s.provider.import_draft.lock().unwrap() = provider;
   s.m.handle(json!({ "type": "addAccount", "agent": "fake", "via": "import" })).await;
   assert_eq!(actions(&s.m), json!([{ "agent": "fake", "via": "import", "status": "success" }]));
+  s.m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pasted_key_is_checked_before_it_is_stored_and_the_same_identity_takes_it_in_place() {
+  let fake = fake_or_skip!();
+  let s = setup(&fake, false);
+  assert_eq!(s.m.m.agents().iter().find(|a| a.id == "fake").and_then(|a| a.account_keys), Some(true));
+  // A refused key ends the action with the reason and stores nothing
+  s.m.handle(json!({ "type": "addAccountKey", "agent": "fake", "key": "fk-bad" })).await;
+  assert_eq!(actions(&s.m), json!([{ "agent": "fake", "via": "key", "status": "error", "error": "refused" }]));
+  assert!(s.accounts.list().is_empty());
+  // A key the vendor takes: a key account, the key in the vault and never in accounts.json
+  s.m.handle(json!({ "type": "addAccountKey", "agent": "fake", "key": "fk-good" })).await;
+  assert_eq!(actions(&s.m), json!([{ "agent": "fake", "via": "key", "status": "success" }]));
+  let list = s.accounts.list();
+  assert_eq!(list.iter().map(|a| (a.label.as_str(), a.key_auth)).collect::<Vec<_>>(), [("key@example.com", Some(true))]);
+  assert!(!std::fs::read_to_string(s.dir.path().join("accounts.json")).unwrap().contains("fk-good"));
+  assert!(std::fs::read_to_string(s.dir.path().join("secrets.json")).unwrap().contains("fk-good"));
+  // The same identity imported as a login takes the key in place, and what that login kept outside the vault goes
+  s.m.handle(json!({ "type": "addAccount", "agent": "fake", "via": "import" })).await;
+  s.m.handle(json!({ "type": "addAccountKey", "agent": "fake", "key": "fk-1:one@example.com" })).await;
+  assert_eq!(*s.provider.forgotten.lock().unwrap(), ["good-key"]);
+  // A key pasted again for that identity (a rotated key) keeps its home: nothing more is dropped
+  s.m.handle(json!({ "type": "addAccountKey", "agent": "fake", "key": "fk-2:one@example.com" })).await;
+  assert_eq!(*s.provider.forgotten.lock().unwrap(), ["good-key"]);
+  let one = s.accounts.list().into_iter().find(|a| a.label == "one@example.com").unwrap();
+  assert_eq!((one.key_auth, s.accounts.list().len()), (Some(true), 2));
+  assert_eq!(s.store.credential(&one.id).await.unwrap().unwrap().secret, "fk-2:one@example.com");
   s.m.dispose().await;
 }
 

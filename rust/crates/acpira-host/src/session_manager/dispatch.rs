@@ -466,6 +466,7 @@ impl SessionManager {
       }
       W::SelectAccount { session_id, id } => self.select_account(v, &id, session_id.as_deref()).await?,
       W::AddAccount { agent, via, .. } => self.add_account(v, &agent, via).await?,
+      W::AddAccountKey { agent, key } => self.add_account_key(v, &agent, &key).await?,
       W::RemoveAccount { id, .. } => {
         if let Some(a) = &self.deps.accounts {
           a.remove(&id).await?;

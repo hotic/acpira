@@ -22,6 +22,11 @@ pub fn account_secret_key(id: &str) -> String {
   format!("{SECRET_PREFIX}{id}")
 }
 
+/// The `meta` entry naming how a credential signs in, when it is not the provider's usual login; `AUTH_API_KEY` marks a
+/// pasted API key (the secret), which no sign-in renews
+pub const META_AUTH: &str = "auth";
+pub const AUTH_API_KEY: &str = "apiKey";
+
 /// Persistent vault at secrets.json: every change re-reads the file under its lock, so a secret another host stored
 /// meanwhile survives. A corrupt file is logged and never overwritten
 pub struct FileVault {
@@ -129,6 +134,7 @@ impl StoredAccount {
       last_used_at: self.last_used_at.clone(),
       quota: self.quota.clone(),
       quota_issue: None,
+      key_auth: self.meta.as_ref().is_some_and(|m| m.get(META_AUTH).is_some_and(|a| a == AUTH_API_KEY)).then_some(true),
     }
   }
 }
