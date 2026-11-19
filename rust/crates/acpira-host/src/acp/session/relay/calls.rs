@@ -544,8 +544,19 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       return HubReply::Error(format!("Unknown thread {th}."));
     };
     let shown = who(&node_persona(&h, name.as_deref()));
+    // Said how the last round ended: "nothing to stop" alone reads to the caller as if that agent had never run,
+    // and the user's own stop (or a round that never started) then gets reported back as a stop that did nothing
     if state != SubagentState::Running {
-      return HubReply::Done(format!("{shown} is not working on anything (thread: {th}); there is nothing to stop."));
+      let ended = match state {
+        SubagentState::Cancelled => "was already stopped".to_owned(),
+        SubagentState::Failed => {
+          let why = self.core.lock().tree.relay_outcome(&node).and_then(|(.., e)| e).unwrap_or_default();
+          if why.trim().is_empty() { "failed".to_owned() } else { format!("failed: {}", why.trim()) }
+        }
+        SubagentState::Disconnected => "lost its process".to_owned(),
+        _ => "already finished".to_owned(),
+      };
+      return HubReply::Done(format!("{shown}'s last round {ended} (thread: {th}). Nothing of it is running, so there is nothing to stop."));
     }
     let rx = {
       let mut c = self.core.lock();
