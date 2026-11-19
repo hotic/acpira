@@ -158,6 +158,7 @@ impl AcpSession {
   pub(crate) fn drop_process(&self, c: &mut Core) -> Option<BoxFuture<()>> {
     // Codex's exec-server on an SSH host ends with its CLI, also one that never came up
     self.exec_tunnel.lock().take();
+    c.adapter_stale = false;
     let proc = c.proc.take()?;
     c.proc_gen += 1;
     c.perms.epoch += 1;
@@ -678,18 +679,18 @@ impl AcpSession {
   /// and the native session restorable through session/resume or session/load (`SessionManager::release_idle`)
   pub fn releasable(&self) -> bool {
     let c = self.core.lock();
-    let Some(proc) = c.proc.as_ref().filter(|p| p.alive()) else { return false };
-    let caps = proc.caps();
-    let restorable =
-      crate::json::truthy(caps.get("sessionCapabilities").and_then(|s| s.get("resume"))) || crate::json::truthy(caps.get("loadSession"));
-    restorable
+    Self::restartable(&c) && c.queue.entries.is_empty()
+  }
+
+  /// `releasable` less the queue: prompts waiting there are sent by whichever process the session has next
+  pub(crate) fn restartable(c: &Core) -> bool {
+    Self::restorable(c)
       && c.status == SessionStatus::Ready
       && c.acp_session_id.is_some()
-      && !Self::busy(&c)
+      && !Self::busy(c)
       && !c.building_plan
       && c.pending_prompt.is_none()
       && c.compaction.completion.is_none()
-      && c.queue.entries.is_empty()
       && c.perms.pending.is_empty()
       && c.questions.pending.is_empty()
       && c.relays.rounds.is_empty()
@@ -697,6 +698,13 @@ impl AcpSession {
       && !has_live_async_task(&c.state)
       // Releasing would kill the process and the wakeup with it
       && c.wake.pending(crate::util::now_ms()).is_none()
+  }
+
+  /// A live process whose native session another one can pick up through session/resume or session/load
+  fn restorable(c: &Core) -> bool {
+    let Some(proc) = c.proc.as_ref().filter(|p| p.alive()) else { return false };
+    let caps = proc.caps();
+    crate::json::truthy(caps.get("sessionCapabilities").and_then(|s| s.get("resume"))) || crate::json::truthy(caps.get("loadSession"))
   }
 
   /// Stopped on sign-in with nothing waiting on it: the process never resumed the native session, so ending it loses
@@ -771,6 +779,42 @@ impl AcpSession {
     }
     self.reopen().await;
     Ok(())
+  }
+
+  /// The adapter under this session's process was replaced on disk (an in-app update). The process keeps its own image
+  /// but starts helpers from the new package (an older codex could not decode its newer code-mode host's frames), so
+  /// the session reopens on the new adapter: now when nothing is in flight, otherwise at the next pause `flush_queue`
+  /// sees. A background task or scheduled wakeup holds it back like any release. False when it has to wait; a session
+  /// that cannot be restored stays on its process and waits for nothing
+  pub fn adapter_updated(self: &Arc<Self>) -> bool {
+    {
+      let mut c = self.core.lock();
+      if !Self::restorable(&c) {
+        return true;
+      }
+      c.adapter_stale = true;
+      if !Self::reserve_reopen(&mut c) {
+        return false;
+      }
+    }
+    self.spawn_reopen();
+    true
+  }
+
+  /// Claim the reopen an updated adapter is owed, when nothing would be lost by it. `Starting` is set under the
+  /// caller's lock so that a prompt arriving before `start` runs queues behind it
+  pub(crate) fn reserve_reopen(c: &mut Core) -> bool {
+    if !c.adapter_stale || !Self::restartable(c) {
+      return false;
+    }
+    c.adapter_stale = false;
+    c.status = SessionStatus::Starting;
+    true
+  }
+
+  pub(crate) fn spawn_reopen(self: &Arc<Self>) {
+    let me = self.clone();
+    tokio::spawn(async move { me.reopen().await });
   }
 
   /// The native session is locked by an agent another Acpira sidecar left running (an extension host orphaned by a dropped

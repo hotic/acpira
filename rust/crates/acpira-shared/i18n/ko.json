@@ -816,6 +816,7 @@
   "host.installFailedCode": "설치 프로그램이 종료 코드 {code}로 끝났습니다. 원인은 아래 로그를 확인하세요.",
   "host.installSpawnFailed": "설치 프로그램을 시작할 수 없습니다: {error}",
   "host.installDone": "{agent} 설치 완료",
+  "host.installDoneBusy": "{agent} 설치 완료. 작업 중인 세션은 끝난 뒤 새 버전으로 전환됩니다.",
   "host.installDoneNotFound": "{agent} 설치는 끝났지만 Acpira가 아직 찾지 못했습니다. 로그에 설치 위치가 있으니 그 폴더를 PATH에 추가하세요.",
   "host.unknownAgent": "알 수 없는 에이전트: {id}",
   "host.noAccountLayer": "{agent}은(는) 계정 관리 대상이 아닙니다",

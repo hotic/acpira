@@ -216,6 +216,12 @@ impl AcpSession {
       {
         return false;
       }
+      // An updated adapter waited for this pause (`adapter_updated`); `start` flushes again on the new process
+      if AcpSession::reserve_reopen(&mut c) {
+        drop(c);
+        self.spawn_reopen();
+        return true;
+      }
       // Nothing of the user's waits: results owed to the root by summoned agents may go now, else an active goal's next
       // turn
       if c.queue.entries.is_empty() {

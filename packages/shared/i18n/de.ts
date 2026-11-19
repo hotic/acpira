@@ -833,6 +833,7 @@ export const de = {
   'host.installFailedCode': 'Das Installationsprogramm endete mit Code {code}. Das Protokoll unten zeigt den Grund.',
   'host.installSpawnFailed': 'Das Installationsprogramm konnte nicht gestartet werden: {error}',
   'host.installDone': '{agent} ist installiert',
+  'host.installDoneBusy': '{agent} ist installiert. Beschäftigte Sitzungen wechseln nach Abschluss zur neuen Version.',
   'host.installDoneNotFound': '{agent} ist installiert, aber Acpira findet es noch nicht. Das Protokoll zeigt den Zielordner; diesen Ordner zu PATH hinzufügen.',
   'host.unknownAgent': 'Unbekannter Agent: {id}',
   'host.noAccountLayer': '{agent} nutzt die Kontoverwaltung nicht',

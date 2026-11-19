@@ -852,6 +852,7 @@ export const zhCN = {
   'host.installFailedCode': '安装程序退出码 {code}，原因见下方日志。',
   'host.installSpawnFailed': '无法启动安装程序：{error}',
   'host.installDone': '{agent} 已安装',
+  'host.installDoneBusy': '{agent} 已安装，正在忙的会话会在结束后切换过去。',
   'host.installDoneNotFound': '{agent} 安装完成，但 Acpira 还找不到它。日志里有安装位置，把该目录加入 PATH 即可。',
   'host.unknownAgent': '未知 agent：{id}',
   'host.noAccountLayer': '{agent} 不走账号层',

@@ -135,6 +135,33 @@ async fn reconnect_replaces_the_process_and_resumes_the_same_native_session() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_updated_adapter_reopens_an_idle_session_at_once_and_a_busy_one_after_its_turn() {
+  let fake = fake_or_skip!();
+  let cwd = tempfile::Builder::new().prefix("acpira-flaky-resume-").tempdir().unwrap();
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, cwd.path().to_str().unwrap()).await;
+  prompt(&s, "hi").await;
+  let native = s.to_record().acp_session_id;
+  let spawns = || h.logs().iter().filter(|l| l.contains("spawn ")).count();
+  assert!(s.adapter_updated(), "nothing in flight: no wait");
+  until(|| spawns() == 2 && view(&s)["status"] == "ready", 5000).await;
+  assert_eq!(s.to_record().acp_session_id, native);
+  assert_eq!(turn_count(&s), 2);
+  // A running turn keeps its process, and the reopen follows its end
+  let p = spawn_prompt(&s, "slow");
+  until(|| view(&s)["running"] == true, 5000).await;
+  assert!(!s.adapter_updated());
+  assert_eq!(spawns(), 2);
+  s.cancel().await;
+  p.await.unwrap();
+  until(|| spawns() == 3 && view(&s)["status"] == "ready", 5000).await;
+  assert_eq!(s.to_record().acp_session_id, native);
+  prompt(&s, "hi").await;
+  expect_match(view(&s)["turns"].as_array().unwrap().last().unwrap(), json!({ "role": "agent", "stop": "end_turn" }));
+  assert_eq!(spawns(), 3, "one reopen per update");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn reconnect_is_refused_while_a_turn_runs_and_the_process_is_kept() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));

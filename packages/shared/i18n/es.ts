@@ -831,6 +831,7 @@ export const es = {
   'host.installFailedCode': 'El instalador terminó con el código {code}. El registro de abajo muestra el motivo.',
   'host.installSpawnFailed': 'No se pudo iniciar el instalador: {error}',
   'host.installDone': '{agent} está instalado',
+  'host.installDoneBusy': '{agent} está instalado. Las sesiones ocupadas cambiarán a la nueva versión al terminar.',
   'host.installDoneNotFound': '{agent} terminó de instalarse, pero Acpira aún no lo encuentra. El registro muestra dónde quedó; añade esa carpeta al PATH.',
   'host.unknownAgent': 'Agente desconocido: {id}',
   'host.noAccountLayer': '{agent} no usa la gestión de cuentas',

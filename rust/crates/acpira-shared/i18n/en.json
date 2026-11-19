@@ -824,6 +824,7 @@
   "host.installFailedCode": "The installer exited with code {code}. The log below shows why.",
   "host.installSpawnFailed": "Could not start the installer: {error}",
   "host.installDone": "{agent} is installed",
+  "host.installDoneBusy": "{agent} is installed. Busy sessions switch to it once they finish.",
   "host.installDoneNotFound": "{agent} finished installing, but Acpira cannot find it yet. The log shows where it went, so add that folder to PATH.",
   "host.unknownAgent": "Unknown agent: {id}",
   "host.noAccountLayer": "{agent} is not on the account layer",

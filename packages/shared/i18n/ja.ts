@@ -835,6 +835,7 @@ export const ja = {
   'host.installFailedCode': 'インストーラーが終了コード {code} で終了しました。原因は下のログを確認してください。',
   'host.installSpawnFailed': 'インストーラーを起動できませんでした：{error}',
   'host.installDone': '{agent} をインストールしました',
+  'host.installDoneBusy': '{agent} をインストールしました。実行中のセッションは完了後に切り替わります。',
   'host.installDoneNotFound': '{agent} のインストールは完了しましたが、Acpira からまだ見つかりません。ログにインストール先があるので、そのフォルダーを PATH に追加してください。',
   'host.unknownAgent': '不明なエージェント：{id}',
   'host.noAccountLayer': '{agent} はアカウント管理の対象外です',
