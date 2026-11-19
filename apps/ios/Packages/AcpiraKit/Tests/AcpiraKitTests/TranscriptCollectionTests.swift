@@ -1,4 +1,5 @@
 #if os(iOS)
+import AcpiraDesign
 import AcpiraModels
 import SwiftUI
 import Testing
@@ -17,7 +18,7 @@ import UIKit
                  exchange: index)
     }
     let host = UIHostingController(rootView: TranscriptCollection(items: items, control: control,
-      running: false, motion: false) { _ in })
+      motion: false) { _ in })
     host.safeAreaRegions = []
     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
     window.rootViewController = host
@@ -81,6 +82,52 @@ import UIKit
                      view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom)
     #expect(oldOffset > bottom + 400)
     #expect(view.contentOffset.y <= bottom + 0.5)
+    #expect(view.maintainsBottomAnchor)
+  }
+
+  /// A fold toggled by hand lets go of the end even while the thread follows, so the tapped row stays under the
+  /// finger. The end takes over again only once the settled fold leaves it in view (`followIfAtEndAfterFold`)
+  @Test func aFoldByHandLetsGoOfTheEndUntilItSettlesThere() async throws {
+    let layout = UICollectionViewFlowLayout()
+    layout.itemSize = CGSize(width: 402, height: 1600)
+    let view = TranscriptCollectionView(frame: CGRect(x: 0, y: 0, width: 402, height: 874), collectionViewLayout: layout)
+    let source = SingleRow()
+    view.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "row")
+    view.dataSource = source
+    // As the thread sets it up: its own insets, none from the window's safe area
+    view.contentInsetAdjustmentBehavior = .never
+    view.contentInset = UIEdgeInsets(top: 100, left: 0, bottom: 200, right: 0)
+    let controller = UIViewController()
+    controller.view.addSubview(view)
+    let window = UIWindow(frame: view.frame)
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let control = TranscriptControl()
+    control.view = view
+    view.reloadData()
+    view.layoutIfNeeded()
+    view.followBottom(animated: false)
+    let offset = view.contentOffset.y
+
+    // Opened: the row grows below the reader, who stays put, and the end now lies below the room
+    control.hold()
+    #expect(!view.maintainsBottomAnchor)
+    layout.itemSize.height = 2200
+    layout.invalidateLayout()
+    view.layoutIfNeeded()
+    #expect(abs(view.contentOffset.y - offset) <= 0.5)
+    try await Task.sleep(for: .milliseconds(Int(Motion.foldSettle * 1000) + 200))
+    #expect(!view.maintainsBottomAnchor)
+
+    // Closed again: the end is back in view, so the thread follows it once the fold has settled
+    control.hold()
+    layout.itemSize.height = 1600
+    layout.invalidateLayout()
+    view.layoutIfNeeded()
+    #expect(abs(view.contentOffset.y - offset) <= 0.5)
+    #expect(!view.maintainsBottomAnchor)
+    try await Task.sleep(for: .milliseconds(Int(Motion.foldSettle * 1000) + 200))
     #expect(view.maintainsBottomAnchor)
   }
 
@@ -199,7 +246,7 @@ import UIKit
     let items = [ThreadItem(id: "a1", kind: .agent(turn, index: 1, scope: "layout:1", running: false, last: true,
                                                  settings: nil, retry: false, subagents: []), exchange: 0)]
     let host = UIHostingController(rootView: TranscriptCollection(items: items, control: control,
-      running: false, motion: false) { _ in })
+      motion: false) { _ in })
     host.safeAreaRegions = []
     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 874))
     window.rootViewController = host

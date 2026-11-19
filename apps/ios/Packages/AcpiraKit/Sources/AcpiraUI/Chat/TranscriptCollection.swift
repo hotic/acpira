@@ -42,8 +42,6 @@ import WebKit
   let folds = FoldMemory()
   /// The older reply whose action row a tap has opened
   let reveal = TurnReveal()
-  /// A turn is running: a fold tapped while the thread follows it keeps following
-  var running = false
   /// Keep the closure's identity across streamed pushes; a new one invalidates every hosted fold's environment.
   lazy var holdScroll = HoldScroll { [weak self] in self?.hold() }
 
@@ -51,12 +49,16 @@ import WebKit
     view?.followBottom(animated: animated)
   }
 
-  /// A fold about to open or close: unless the thread follows a running turn, the end lets go so the tapped row stays
-  /// under the finger while the fold grows below it (the reader anchor keeps the rows on screen in place)
+  /// A fold about to open or close by hand: the end lets go so the tapped row stays under the finger while the fold
+  /// grows or shrinks below it (the reader anchor keeps the rows on screen in place). This holds while a running turn
+  /// is followed too, as on the desktop (useBottomFollow.ts: a fold opened by hand never moves the view): kept pinned,
+  /// the end pushed the tapped row and everything above it up by the fold's height, and back down on the close. Once
+  /// the fold has settled with the end back in view, the thread follows it again (`followIfAtEndAfterFold`)
   func hold() {
-    guard let view, !(running && view.maintainsBottomAnchor) else { return }
+    guard let view else { return }
     view.releaseReaderAnchor()
     view.maintainsBottomAnchor = false
+    view.followIfAtEndAfterFold()
   }
 }
 
@@ -81,7 +83,6 @@ struct TranscriptViewport: UIViewRepresentable {
 struct TranscriptCollection: UIViewRepresentable {
   let items: [ThreadItem]
   let control: TranscriptControl
-  var running: Bool
   var motion: Bool
   /// What the view leaves out ahead of its first row (`SessionView.earlier`), and the asks for it, of which one is under
   /// way at a time: the rows start with a spinner, the reader's scrolling near it asks (`AppModel.loadEarlier`), and a
@@ -122,7 +123,6 @@ struct TranscriptCollection: UIViewRepresentable {
     // This belongs in the copied environment: an outer override would be replaced by the cell's `\.self` below.
     values.hostedTranscript = true
     control.view = view
-    control.running = running
     view.loadEarlier = earlier == nil ? nil : loadEarlier
     view.fillEarlier = earlier == nil ? nil : fillEarlier
     view.motion = motion
@@ -512,6 +512,27 @@ final class TranscriptCollectionView: UICollectionView {
   func releaseReaderAnchor() {
     pendingReaderAnchor = nil
     lastReaderAnchor = nil
+  }
+
+  /// The latest fold toggled by hand (`followIfAtEndAfterFold`); an older one's check stands down
+  private var foldToggles = 0
+
+  /// A fold toggled by hand let go of the end (`TranscriptControl.hold`). Once it has settled, a thread whose end is in
+  /// view again (a fold closed back down to it, or a thread shorter than its room) follows it, as a drag let go there
+  /// does; one whose end the fold pushed below the room stays where the reader is
+  func followIfAtEndAfterFold() {
+    foldToggles += 1
+    let toggle = foldToggles
+    DispatchQueue.main.asyncAfter(deadline: .now() + Motion.foldSettle) { [weak self] in
+      guard let self, toggle == foldToggles, window != nil, !maintainsBottomAnchor,
+            !isTracking, !isDragging, !isDecelerating else { return }
+      // The fold's last frame may still wait for its layout pass; the end is read from the settled rows. At the end
+      // means within a point, as on the desktop (`followsBottom`)
+      layoutIfNeeded()
+      guard distanceToEnd < 1 else { return }
+      maintainsBottomAnchor = true
+      setNeedsLayout()
+    }
   }
 
   override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
