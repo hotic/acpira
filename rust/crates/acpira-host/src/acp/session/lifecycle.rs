@@ -258,6 +258,13 @@ impl AcpSession {
     // A plugin's `agent.launch` hook changes how this session's agent starts, so a warm process will not do
     let launched = self.deps.plugin_runtime.as_ref().is_some_and(|rt| rt.has_hook("agent.launch"));
     let def = if launched { crate::acp::session::plugin_hooks::plugin_launch(self.deps.plugin_runtime.as_ref(), &def, &self.id, &dir).await } else { def };
+    // A stand-in CLI starts with its gate's arguments and environment (`StandProfile::launch`), after any plugin's, so no
+    // launch hook can drop them
+    let stand = self.remote_stand();
+    let def = match &stand {
+      Some(s) => s.profile.launch(&def),
+      None => def,
+    };
     let (gen_id, account) = {
       let mut c = self.core.lock();
       c.usage.reset_for_process();
@@ -280,8 +287,10 @@ impl AcpSession {
     self.load_host_sidekick().await;
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
-    // Codex in a folder on an SSH host takes its exec-server's address at start, which no warm process was given
-    let on_host = self.vendor.remote_exec() && self.remote_folder().is_some();
+    // Codex in a folder on an SSH host takes its exec-server's address at start, and a stand-in CLI may start with
+    // arguments of its own there, which no warm process was given
+    let on_host = (self.local_run() == Some(crate::acp::local_run::LocalRun::Exec) && self.remote_folder().is_some())
+      || stand.as_ref().is_some_and(|s| s.profile.launches());
     let borrowed = match &self.deps.pool {
       Some(pool) if !launched && !on_host => pool.take(&self.agent, &dir, account.as_deref(), handlers.clone()).await,
       _ => None,

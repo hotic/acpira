@@ -3,7 +3,7 @@
 //! requests, which go to the host's helper (`remote::helper`, the `tool` op) over the host's connection. The helper's
 //! progress chunks go back to the agent as `_acpira/remoteProgress` notifications, its spilled outputs ride in the
 //! answer. A turn's cancel reaches the agent's request as `$/cancel_request`, which drops the helper call and with it
-//! the command's process group on the host. Claude Code's project tools take the same path (`remote_claude.rs`)
+//! the command's process group on the host. A stand-in CLI's project tools take the same path (`stand.rs`)
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -85,11 +85,12 @@ impl AcpSession {
     FileReader::Host(crate::workspace::Workspace::open(&self.cwd, self.deps.remote.as_deref()).await.ok())
   }
 
-  /// Refuse an agent that cannot work in the session's folder: under local run only the built-in agent's tools,
-  /// stand-in agents' project tools (`remote_claude.rs`) and Codex's own (`remote_exec_env`) go to the host
+  /// Refuse an agent that cannot work in the session's folder: under local run only an agent with a `LocalRun` gets its
+  /// tools to the host (the built-in agent's, a stand-in CLI's project tools in `stand.rs`, Codex's own in
+  /// `remote_exec_env`)
   pub(crate) fn check_remote_agent(&self, name: &str) -> anyhow::Result<()> {
     match self.remote_folder() {
-      Some(f) if self.agent != crate::acp::agents::registry::SELF_AGENT_ID && self.remote_stand().is_none() && !self.vendor.remote_exec() => {
+      Some(f) if self.local_run().is_none() => {
         anyhow::bail!(crate::i18n::tp("host.remoteBuiltinOnly", &[("agent", name), ("host", &f.alias)]))
       }
       _ => Ok(()),
@@ -185,7 +186,7 @@ impl AcpSession {
   /// it is missing, which the session's start waits for. None for any other session
   pub(crate) async fn remote_exec_env(&self, def: &crate::acp::agents::registry::AgentDef, binary: &str) -> anyhow::Result<Option<acpira_shared::transcript::StrMap>> {
     use crate::remote::codex_exec;
-    let Some(f) = self.remote_folder().filter(|_| self.vendor.remote_exec()) else { return Ok(None) };
+    let Some(f) = self.remote_folder().filter(|_| self.local_run() == Some(crate::acp::local_run::LocalRun::Exec)) else { return Ok(None) };
     let connections = self.deps.remote.clone().ok_or_else(|| anyhow::anyhow!("this engine has no SSH connections"))?;
     let codex = codex_exec::local_codex(binary, def).await?;
     let tunnel = connections.codex.open(&connections, &f.alias, &codex).await?;

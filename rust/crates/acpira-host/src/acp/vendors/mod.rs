@@ -5,7 +5,6 @@
 pub mod antigravity;
 pub mod claude_auth;
 pub mod claude_autonomous;
-pub mod claude_remote;
 pub mod claude_retry;
 pub mod claude_thinking;
 pub mod claude_ultracode;
@@ -196,22 +195,6 @@ impl Vendor {
   /// A `/goal` command is answered with its local output as reply text (`goal::is_command_echo`)
   pub fn echoes_goal_command(self) -> bool {
     self == Vendor::Claude
-  }
-
-  /// Runs on this machine in a stand-in folder for an SSH workspace, with its project tools routed through `acpira mcp`
-  /// (`claude_remote`)
-  pub fn remote_stand(self) -> Option<claude_remote::Dialect> {
-    match self {
-      Vendor::Claude => Some(claude_remote::Dialect::Claude),
-      Vendor::Antigravity => Some(claude_remote::Dialect::Antigravity),
-      _ => None,
-    }
-  }
-
-  /// Runs on this machine for an SSH workspace with its own tools on the host, in its exec-server there
-  /// (`remote::codex_exec`): no stand-in folder, the session's folder is the host's path
-  pub fn remote_exec(self) -> bool {
-    self == Vendor::Codex
   }
 
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)

@@ -337,9 +337,9 @@ pub fn run(version: &str) -> i32 {
           tools.push(browser_tool_def());
         }
         tools.extend(session_tool_defs());
-        // A Claude Code session in a folder on an SSH host: the project tools that run there
+        // A stand-in CLI's session in a folder on an SSH host (`acp::local_run`): the project tools that run there
         if let Some(alias) = &features.remote_tools {
-          tools.extend(crate::acp::vendors::claude_remote::tool_defs(alias));
+          tools.extend(crate::acp::local_run::tools::tool_defs(alias));
         }
         // The tool groups the plugin page switched off leave every agent's list; the plugins' own tools join it
         let (plugin_tools, off) = plugins.unwrap_or_default();

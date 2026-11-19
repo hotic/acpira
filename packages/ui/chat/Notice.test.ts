@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agentsForFolder, pickFolderAgent } from '@acpira/shared/agentOrder';
-import { SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
+import { SSH_LOCAL_AGENTS, sshLocalAgents } from '@acpira/shared/remote';
 import type { AgentInfo, AuthMethodInfo } from '@acpira/shared/transcript';
 import { setLocale } from '../i18n';
 import { Notice, type NoticeProps } from './Notice';
@@ -128,6 +128,17 @@ describe('SSH folder agent selection', () => {
     // An agent that cannot run here in a host folder is the host's own
     expect(merged.find(a => a.id === 'kimi')?.available).toBe(true);
     expect(pickFolderAgent(localAgents, 'antigravity', 'ssh://gen1/work', '/local/repo', undefined, SSH_LOCAL_AGENTS)).toBe('antigravity');
+  });
+
+  it('narrows the setting to the agents the engine says can run here, an older engine by its fixed list', () => {
+    const newer: AgentInfo[] = [
+      { id: 'droid', name: 'Droid', sshLocal: true },
+      { id: 'claude', name: 'Claude Code', sshLocal: false },
+      { id: 'kimi', name: 'Kimi', sshLocal: false },
+    ];
+    expect(sshLocalAgents(newer, ['droid', 'claude', 'kimi'])).toEqual(['droid']);
+    expect(sshLocalAgents(localAgents, ['claude', 'kimi', 'gone'])).toEqual(['claude']);
+    expect(sshLocalAgents(localAgents, undefined)).toEqual([]);
   });
 
   it('falls back when an agent is set to remote-run and missing on the SSH host, or defers to an unprobed host', () => {

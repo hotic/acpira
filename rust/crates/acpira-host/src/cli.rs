@@ -25,8 +25,9 @@
 //!                                                the pages as JSON on stdout), so a parser panic ends only that child
 //!   acpira remote --stdio                       the helper an SSH host runs for another machine's engine (frames over stdio,
 //!                                                docs/dev/remote.md); ends on stdin EOF or a missed heartbeat
-//!   acpira agy-guard                             Antigravity's file-tool `PreToolUse` hook in an SSH stand-in: the payload
-//!                                                on stdin, a deny on stdout unless the call stays in `~/.gemini`
+//!   acpira tool-guard AGENT                      a stand-in CLI's `PreToolUse` hook in an SSH stand-in (`agy-guard`: the
+//!                                                same for Antigravity): the payload on stdin, a deny unless the call stays
+//!                                                in the CLI's own files (`acp/local_run/stand.rs`)
 //!   acpira launch PROGRAM [ARGS…]                runs PROGRAM as its child, hands it the stop signals, exits as it did:
 //!                                                the macOS engine's fixed parent (machine_engine/launcher.rs)
 //!   acpira engine [--home DIR] [--no-dev-takeover]
@@ -89,15 +90,19 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
   )
 }
 
-/// `acpira agy-guard`: the hook payload on stdin, a deny decision (or nothing) on stdout
-fn agy_guard() -> i32 {
+/// `acpira tool-guard <agent>`: the hook payload on stdin, a deny (or nothing) on stdout / stderr and the exit code
+fn tool_guard(agent: &str) -> i32 {
   use std::io::{Read, Write};
   let mut payload = String::new();
   let _ = std::io::stdin().read_to_string(&mut payload);
-  if let Some(line) = crate::acp::vendors::claude_remote::agy_guard(&payload, &crate::store::data_dir::home_dir()) {
-    let _ = writeln!(std::io::stdout(), "{line}");
+  let Some(v) = crate::acp::local_run::stand::guard(agent, &payload, &crate::store::data_dir::home_dir()) else { return 0 };
+  if !v.stdout.is_empty() {
+    let _ = writeln!(std::io::stdout(), "{}", v.stdout);
   }
-  0
+  if !v.stderr.is_empty() {
+    let _ = writeln!(std::io::stderr(), "{}", v.stderr);
+  }
+  v.code
 }
 
 /// Runs the command line `args` (without the program name) to its end; the exit code
@@ -110,9 +115,15 @@ pub fn run(args: Vec<String>) -> i32 {
   if args.first().map(String::as_str) == Some(crate::machine_engine::launcher::SUPERVISE) {
     return crate::machine_engine::launcher::supervise(&args[1..]);
   }
-  // Antigravity's file-tool hook in an SSH stand-in: runs per tool call, so before anything else
-  if args.first().map(String::as_str) == Some(crate::acp::vendors::claude_remote::GUARD_COMMAND) {
-    return agy_guard();
+  // A stand-in CLI's file-tool hook in an SSH stand-in: runs per tool call, so before anything else. `agy-guard` is what
+  // hook files written by older engines run
+  {
+    use crate::acp::local_run::stand::{AGY_GUARD_COMMAND, GUARD_COMMAND};
+    match args.first().map(String::as_str) {
+      Some(GUARD_COMMAND) => return tool_guard(args.get(1).map(String::as_str).unwrap_or("")),
+      Some(AGY_GUARD_COMMAND) => return tool_guard("antigravity"),
+      _ => {}
+    }
   }
   // A process running from a landed engine copy keeps it from being pruned (machine_engine/stage.rs)
   crate::machine_engine::stage::hold_in_use();

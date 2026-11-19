@@ -132,7 +132,7 @@ impl SessionManager {
   /// host is away. None when the session would start here, so the caller answers from this machine
   pub async fn host_controls(&self, agent: &str, cwd: &str, fresh: bool) -> Option<HostControls> {
     let folder = parse_remote_folder(cwd)?;
-    if (self.deps.ssh_local_agents)().iter().any(|a| a == agent) {
+    if self.runs_here_on_ssh(agent) {
       return None;
     }
     // The built-in agent on a host that keeps this machine's settings (as the last push found, not merely offered): a
@@ -169,6 +169,12 @@ impl SessionManager {
     })
   }
 
+  /// A new session of `agent` in a host folder runs on this machine: the user turned that on (`sshLocalAgents`) for an
+  /// agent that can (`AgentDef::local_run`); a stale name of one that cannot goes to the host like any other
+  pub(crate) fn runs_here_on_ssh(&self, agent: &str) -> bool {
+    (self.deps.ssh_local_agents)().iter().any(|a| a == agent) && self.registry().try_get(agent).is_some_and(|d| d.local_run.is_some())
+  }
+
   pub(crate) async fn host_action(self: &Arc<Self>, v: &Arc<Viewer>, m: &WebviewMsg) -> Option<Result<()>> {
     use WebviewMsg as W;
     if self.hosts.runs.lock().is_empty() {
@@ -181,7 +187,7 @@ impl SessionManager {
       // current session's folder), and either may be a host's
       W::NewSession { cwd, agent, category, chat } if *chat != Some(true) => self.new_session_folder(v, cwd.clone(), category.as_ref()).as_deref().and_then(parse_remote_folder).and_then(|f| {
         let agent = agent.clone().unwrap_or_else(|| self.default_agent());
-        if (self.deps.ssh_local_agents)().contains(&agent) {
+        if self.runs_here_on_ssh(&agent) {
           return None;
         }
         let run = self.hosts.runs.lock().get(&f.alias).cloned();

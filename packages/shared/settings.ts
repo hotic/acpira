@@ -2,7 +2,6 @@ import type { AgentId } from './transcript';
 import { sanitizePersonas, type SubagentGroup, type SubagentPersona } from './subagents';
 import { isLanguage, type Language, type Locale } from './i18n/core';
 import { sanitizeKeybindings, type KeybindingMap } from './keybindings';
-import { SSH_LOCAL_AGENTS } from './remote';
 
 // Hidden option families (acpira.hiddenOptions): agent → configOption id → source-qualified family keys (legacy family names remain readable; see models.ts) kept out of the composer menus.
 // Long lists (Devin's 210 models) are trimmed to what is actually used via this; the option currently selected is never hidden
@@ -254,7 +253,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
     case 'planAutoApprove':
       return idList(value) as SettingsView[K];
     case 'sshLocalAgents':
-      return (Array.isArray(value) ? idList(value).filter(a => SSH_LOCAL_AGENTS.includes(a)) : fallback) as SettingsView[K];
+      // Which agents can run here is each agent's (`canRunHere`), read where the list is used
+      return (Array.isArray(value) ? idList(value) : fallback) as SettingsView[K];
     case 'subagents':
       return sanitizePersonas(value) as SettingsView[K];
     case 'proxy': {

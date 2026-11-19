@@ -63,8 +63,8 @@ pub enum HubOp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     result: Option<serde_json::Value>,
   },
-  /// A project tool of a Claude Code session in a folder on an SSH host (`host_tools::REMOTE`, `vendors::claude_remote`),
-  /// run there or, for Claude's own files, here; `tool_use_id` is the model's call (`_meta["claudecode/toolUseId"]`),
+  /// A project tool of a stand-in CLI's session in a folder on an SSH host (`host_tools::REMOTE`, `acp::local_run`), run
+  /// there or, for the CLI's own files, here; `tool_use_id` is the model's call (`_meta["claudecode/toolUseId"]`),
   /// which ties it to its row. Answered `Tool` (the MCP result) or `Error`. The caller closing the socket cancels it
   RemoteTool {
     name: String,

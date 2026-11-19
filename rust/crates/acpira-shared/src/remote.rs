@@ -70,12 +70,6 @@ pub fn format_remote_folder(alias: &str, path: &str) -> Option<String> {
   Some(format!("{REMOTE_SCHEME}{alias}{}", normalize_remote_path(path)?))
 }
 
-/// The agents that can run on this machine in a folder on an SSH host, its tools running there (`acpira remote`): the
-/// built-in agent, Claude Code and Antigravity with their file and shell tools swapped for Acpira's, and Codex with
-/// its own tools in its exec-server on the host. Which of them do so is the `sshLocalAgents` setting; every other
-/// agent, and these when off, runs in the host's own engine
-pub const SSH_LOCAL_AGENTS: [&str; 4] = ["acpira", "claude", "antigravity", "codex"];
-
 /// A connection's state as the settings page and the column show it
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

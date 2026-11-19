@@ -51,7 +51,7 @@ import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { imageMimeOf, stagedFileBlob } from '@acpira/shared/attachments';
 import { mediaKind } from '../panel/files';
 import { agentsForFolder, launchable, pickFolderAgent } from '@acpira/shared/agentOrder';
-import { parseRemoteFolder, SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
+import { canRunHere, parseRemoteFolder, sshLocalAgents } from '@acpira/shared/remote';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ProjectDialog } from './ProjectDialog';
 import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postWindowControl, useShellCommands, useShellToasts } from '../desktop';
@@ -684,14 +684,16 @@ export function Shell(p: ShellProps) {
   // with the agent last used; a folder picked in the dialog or dropped on the column joins the projects and opens there.
   // The start page shows while the session on screen has not said a word
   const startPage = desktop && !p.noProject && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
-  const startAgents = useMemo(() => agentsForFolder(p.agents, p.cwd, p.hostAgents, p.sshLocalAgents), [p.agents, p.cwd, p.hostAgents, p.sshLocalAgents]);
+  // The agents the setting runs here that can (`canRunHere`), as the engine routes new sessions
+  const localOnSsh = useMemo(() => sshLocalAgents(p.agents, p.sshLocalAgents), [p.agents, p.sshLocalAgents]);
+  const startAgents = useMemo(() => agentsForFolder(p.agents, p.cwd, p.hostAgents, localOnSsh), [p.agents, p.cwd, p.hostAgents, localOnSsh]);
   const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
   const folderAgent = useCallback((dir?: string): AgentId | undefined => (
-    pickFolderAgent(p.agents, p.agent.id, dir ?? p.cwd, p.cwd, p.hostAgents, p.sshLocalAgents)
-  ), [p.agents, p.agent.id, p.cwd, p.hostAgents, p.sshLocalAgents]);
+    pickFolderAgent(p.agents, p.agent.id, dir ?? p.cwd, p.cwd, p.hostAgents, localOnSsh)
+  ), [p.agents, p.agent.id, p.cwd, p.hostAgents, localOnSsh]);
   // A session in a folder on an SSH host, of an agent that runs in the host's engine but could run here (the host lacks
   // its CLI or its login, or cannot reach the vendor): its notice offers to run it on this machine instead
-  const runHere = on.runHere && p.cwd && parseRemoteFolder(p.cwd) && SSH_LOCAL_AGENTS.includes(p.agent.id) && !p.sshLocalAgents?.includes(p.agent.id)
+  const runHere = on.runHere && p.cwd && parseRemoteFolder(p.cwd) && p.agents.some(a => a.id === p.agent.id && canRunHere(a)) && !localOnSsh.includes(p.agent.id)
     ? () => on.runHere!(p.agent.id, p.cwd!) : undefined;
   const installHere = useMemo(() => on.installAgent ? () => on.installAgent!(p.agent.id) : undefined, [on.installAgent, p.agent.id]);
   const cancelInstallHere = useMemo(() => on.cancelInstall ? () => on.cancelInstall!(p.agent.id) : undefined, [on.cancelInstall, p.agent.id]);

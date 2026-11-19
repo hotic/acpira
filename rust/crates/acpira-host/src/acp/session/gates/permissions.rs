@@ -98,6 +98,19 @@ impl AcpSession {
       });
       (target, epoch, plan_file, last_agent, plan_id, edit, row)
     };
+    // A stand-in's gate reads the call as its row knows it: a sparse request (an id and a title) says neither its kind
+    // nor its paths, and would pass as no write or command at all
+    let classified = match (&edit, tool_call.as_object()) {
+      (Some((kind, paths)), Some(o)) => {
+        let mut o = o.clone();
+        o.entry("kind").or_insert_with(|| json!(kind));
+        if !paths.is_empty() {
+          o.entry("locations").or_insert_with(|| json!(paths.iter().map(|p| json!({ "path": p })).collect::<Vec<_>>()));
+        }
+        Value::Object(o)
+      }
+      _ => tool_call.clone(),
+    };
     // The workspace gate sees an announced edit before anyone approves it, yolo included
     if let Some((kind, paths)) = edit
       && self.hooks_check_edit(&tool_call_id, kind, paths, tool_call.get("rawInput").cloned()).await.is_some()
@@ -142,8 +155,8 @@ impl AcpSession {
     }
     // Read outside the session lock: the setting lives with the shell
     let plan_auto_on = self.deps.policy.plan_auto_approve(&self.agent);
-    let remote_perm = self.remote_perm(&tool_call_id, &tool_call);
-    if remote_perm == crate::acp::session::remote_claude::RemotePerm::BlockedLocalTool {
+    let remote_perm = self.remote_perm(&tool_call_id, &classified);
+    if remote_perm == crate::acp::session::stand::RemotePerm::BlockedLocalTool {
       return Ok(rejected_permission(&req));
     }
     let rx = {
@@ -217,22 +230,22 @@ impl AcpSession {
         && !insist
         && in_plan
         && captured.is_none()
-        && remote_perm != crate::acp::session::remote_claude::RemotePerm::HostEdit
+        && remote_perm != crate::acp::session::stand::RemotePerm::HostEdit
         && tool_call.get("kind").and_then(Value::as_str) != Some("switch_mode")
         && default_to_no(&req) != Some(true)
         && let Some(id) = single_allow_once(&options)
       {
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
       }
-      // Remote tools on an SSH host (`remote_claude.rs`) ask where native ones would not: read-only tools on CLIs without
+      // Remote tools on an SSH host (`session/stand.rs`) ask where native ones would not: read-only tools on CLIs without
       // `allowedTools` (`agy acp`), the CLI's own plan / artifact files here, and host writes in accept-edits mode
       let accept_edits = c.state.controls.mode_id.as_deref() == Some("acceptEdits") || c.access.wire.as_deref() == Some("acceptEdits");
       if root
         && !insist
         && (matches!(
           remote_perm,
-          crate::acp::session::remote_claude::RemotePerm::ReadOnly | crate::acp::session::remote_claude::RemotePerm::AgentOwnFile
-        ) || (accept_edits && remote_perm == crate::acp::session::remote_claude::RemotePerm::HostEdit))
+          crate::acp::session::stand::RemotePerm::ReadOnly | crate::acp::session::stand::RemotePerm::AgentOwnFile
+        ) || (accept_edits && remote_perm == crate::acp::session::stand::RemotePerm::HostEdit))
         && let Some(id) = single_allow_once(&options)
       {
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));

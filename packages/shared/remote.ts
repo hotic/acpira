@@ -4,12 +4,19 @@
 
 export const REMOTE_SCHEME = 'ssh://';
 
-/** The agents that can run on this machine in a folder on an SSH host, only their tools running there: the built-in
- * agent, Claude Code and Antigravity with their own file and shell tools swapped for Acpira's (rust
- * vendors/claude_remote.rs), and Codex with its own tools in its exec-server on the host (rust remote/codex_exec.rs).
- * Which of them do is the `sshLocalAgents` setting; every other agent, and these when off, runs in the host's own
- * engine. Mirrors acpira_shared::remote::SSH_LOCAL_AGENTS */
+/** The agents an engine from before `AgentInfo.sshLocal` lets run on this machine in a folder on an SSH host. A newer
+ * engine says it per agent, from each definition's way there (rust acp/local_run) */
 export const SSH_LOCAL_AGENTS: readonly string[] = ['acpira', 'claude', 'antigravity', 'codex'];
+
+/** Whether an agent of this machine can run here in a folder on an SSH host, only its tools there. Which of those do is
+ * the `sshLocalAgents` setting; every other agent, and these when off, runs in the host's own engine */
+export const canRunHere = (a: { id: string; sshLocal?: boolean }): boolean => a.sshLocal ?? SSH_LOCAL_AGENTS.includes(a.id);
+
+/** The `sshLocalAgents` setting narrowed to this machine's agents that can run here: a name of one that cannot (an
+ * agents.json entry since removed) goes to the host like any other, as the engine routes it */
+export function sshLocalAgents(agents: readonly { id: string; sshLocal?: boolean }[], setting: readonly string[] | undefined): string[] {
+  return (setting ?? []).filter(id => agents.some(a => a.id === id && canRunHere(a)));
+}
 
 export interface RemoteFolder { alias: string; path: string }
 
