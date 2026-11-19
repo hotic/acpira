@@ -741,6 +741,8 @@ export const ja = {
   'host.remoteFileFailed': '{host} から {path} を取得できませんでした',
   'host.remoteUnreachable': '{host} に今は接続できません。接続されてからもう一度お試しください',
   'host.exited': '{agent} のプロセスが終了しました（{code}）',
+  'host.droidGeminiThinkingOnly': 'Gemini が推論だけを返し、応答やツール呼び出しがありませんでした。Droid が再試行しています。',
+  'host.droidGeminiCut': '同じリクエストで Gemini が 2 回続けて推論だけを返したため、Droid の再試行を停止しました。推論の強度を下げるか、タスクを分割するか、モデルを切り替えてから続けてください。',
   'host.emptyResponse': 'CLI は返信もエラーの詳細もないままリクエストを終了しました（ACP: end_turn）。再試行するか、CLI のログを確認してください。',
   'host.agentMcpSkipped': '{agent} が MCP サーバー {name} を起動できず（{reason}）、ターンを停止しました。今後このセッションでは除外し、接続をそれなしで作り直しています。再試行で続行できます。再び使うにはサーバーを修正して新しいセッションを始めてください。',
   'host.agentMcpFailed': '{agent} が MCP サーバー {name} を起動できず（{reason}）、設定されている限りすべてのターンが停止します。これは {agent} 自身の MCP 設定（~/.gemini/config/mcp_config.json）に由来します。そこで修正または削除してから、新しいセッションを始めてください。',

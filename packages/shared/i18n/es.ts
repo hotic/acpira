@@ -737,6 +737,8 @@ export const es = {
   'host.remoteFileFailed': 'No se pudo obtener {path} de {host}',
   'host.remoteUnreachable': 'No se puede conectar con {host} ahora; inténtalo de nuevo cuando esté conectado',
   'host.exited': 'El proceso de {agent} terminó ({code})',
+  'host.droidGeminiThinkingOnly': 'Gemini solo devolvió razonamiento, sin respuesta ni llamada a herramientas. Droid está reintentando.',
+  'host.droidGeminiCut': 'Gemini terminó dos veces la misma solicitud con razonamiento pero sin respuesta. Se detuvieron los reintentos de Droid. Reduce el esfuerzo de razonamiento, divide la tarea o cambia de modelo antes de continuar.',
   'host.emptyResponse': 'El CLI terminó la solicitud sin respuesta ni detalles del error (ACP: end_turn). Reintenta o revisa los registros del CLI.',
   'host.agentMcpSkipped': '{agent} no pudo iniciar el servidor MCP {name} ({reason}) y detuvo el turno. A partir de ahora queda fuera de esta sesión y la conexión se está rehaciendo sin él: pulsa Reintentar para continuar. Corrige el servidor y empieza una sesión nueva para volver a usarlo.',
   'host.agentMcpFailed': '{agent} no pudo iniciar el servidor MCP {name} ({reason}) y detiene cada turno mientras siga configurado. Procede de la propia configuración MCP de {agent} (~/.gemini/config/mcp_config.json): corrígelo o quítalo allí y empieza una sesión nueva.',

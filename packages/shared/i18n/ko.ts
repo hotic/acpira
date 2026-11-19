@@ -736,6 +736,8 @@ export const ko = {
   'host.remoteFileFailed': '{host}에서 {path}을(를) 가져오지 못했습니다',
   'host.remoteUnreachable': '지금은 {host}에 연결할 수 없습니다. 연결된 뒤 다시 시도하세요',
   'host.exited': '{agent} 프로세스가 종료되었습니다 ({code})',
+  'host.droidGeminiThinkingOnly': 'Gemini가 답변이나 도구 호출 없이 추론만 반환했습니다. Droid가 재시도하고 있습니다.',
+  'host.droidGeminiCut': 'Gemini가 같은 요청에 두 번 연속 답변 없이 추론만 반환하여 Droid의 재시도를 중단했습니다. 추론 강도를 낮추거나 작업을 나누거나 모델을 바꾼 뒤 계속하세요.',
   'host.emptyResponse': 'CLI가 응답이나 오류 정보 없이 요청을 끝냈습니다 (ACP: end_turn). 다시 시도하거나 CLI 로그를 확인하세요.',
   'host.agentMcpSkipped': '{agent}이(가) MCP 서버 {name}을(를) 시작하지 못해({reason}) 턴을 중지했습니다. 이제부터 이 세션에서는 제외되며, 그 서버 없이 연결을 다시 만드는 중입니다. 다시 시도하면 계속됩니다. 다시 사용하려면 서버를 고친 뒤 새 세션을 시작하세요.',
   'host.agentMcpFailed': '{agent}이(가) MCP 서버 {name}을(를) 시작하지 못해({reason}), 설정에 남아 있는 동안 모든 턴이 중지됩니다. 이 서버는 {agent} 자체 MCP 설정(~/.gemini/config/mcp_config.json)에서 왔습니다. 그곳에서 고치거나 제거한 뒤 새 세션을 시작하세요.',
