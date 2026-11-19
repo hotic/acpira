@@ -204,7 +204,7 @@ public struct Row<Lead: View, Content: View, Trailing: View>: View {
   }
 
   public var body: some View {
-    HStack(alignment: leadTop ? .top : .center, spacing: Metrics.gap) {
+    HStack(alignment: leadTop ? .top : .center, spacing: WebMetrics.rowGap) {
       // Group(subviews:) drops a slot whose view renders nothing, so an empty lead / trailing takes no gap
       Group(subviews: lead) { parts in
         if !parts.isEmpty {
@@ -219,11 +219,10 @@ public struct Row<Lead: View, Content: View, Trailing: View>: View {
             }
           }
             .frame(width: WebMetrics.lead, height: WebMetrics.lead)
-            // The slot's contents centre on an icon-wide column at the row's start, so an icon's ink stands on the
-            // text edge above and below it rather than three points in; smaller marks centre on that column and
-            // larger ones overhang it evenly. The slot keeps its width, so the label column stays put
-            .padding(.trailing, (WebMetrics.lead - WebMetrics.icon) / 2)
-            .padding(.leading, -(WebMetrics.lead - WebMetrics.icon) / 2)
+            // The slot gives up its air on both sides (chat.css `.row-lead` in the thread): it takes the icon's width, so
+            // an icon's ink stands on the text edge above and below it, and the label follows the row gap. Smaller
+            // marks centre on that column, larger ones (the Orb) overhang it evenly
+            .padding(.horizontal, -(WebMetrics.lead - WebMetrics.icon) / 2)
             .foregroundStyle(tone == .action ? Palette.actionFg : Palette.fg3)
             // lead-top: centre the slot on the first text line
             // The icon here is where a connected rail starts and ends

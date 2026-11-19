@@ -85,7 +85,7 @@ export struct SubagentRow {
   build() {
     Row() {
       SubagentStateIcon({ node: this.node })
-        .margin({ left: (WebMetrics.icon - WebMetrics.lead) / 2, right: Metrics.gap - (WebMetrics.lead - WebMetrics.icon) / 2 })
+        .margin({ left: (WebMetrics.icon - WebMetrics.lead) / 2, right: WebMetrics.rowGap - (WebMetrics.lead - WebMetrics.icon) / 2 })
       Column({ space: Metrics.gap }) {
         Row({ space: Metrics.s2 }) {
           // Title and meta share the room left by the status; the meta gives way first

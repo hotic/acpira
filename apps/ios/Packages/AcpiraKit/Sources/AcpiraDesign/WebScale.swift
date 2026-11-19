@@ -41,8 +41,11 @@ public enum WebMetrics {
   public static let ctl: CGFloat = 32
   public static let ctlSm: CGFloat = 26
   public static let msgGap: CGFloat = 24
-  /// The label column: the lead slot and the gap after it
-  public static var indent: CGFloat { lead + Metrics.gap }
+  /// The transcript's row gap (chat.css `--row-gap`): a row's lead takes only the icon's width, so its label follows the
+  /// gap plus 4, the slot's air no longer stacked on the gap
+  public static var rowGap: CGFloat { Metrics.gap + 4 }
+  /// The label column (chat.css `--indent`): the icon and the row gap after it. Bodies under a row start here
+  public static var indent: CGFloat { icon + rowGap }
   /// --code-output-max / --code-output-line-height
   public static let codeOutputMax: CGFloat = 350
   public static let codeOutputLine: CGFloat = 22

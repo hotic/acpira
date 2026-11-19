@@ -410,8 +410,13 @@ export class WebMetrics {
   static readonly chevron: number = 12;
   static readonly ctl: number = 40;
   static readonly ctlSm: number = 26;
-  /** The label column: the lead slot and the gap after it */
-  static readonly indent: number = 32;
+  /**
+   * The transcript's row gap (chat.css `--row-gap`): a row's lead takes only the icon's width, so its label follows the
+   * gap plus 4, the slot's air no longer stacked on the gap
+   */
+  static readonly rowGap: number = Metrics.gap + 4;
+  /** The label column (chat.css `--indent`): the icon and the row gap after it. Bodies under a row start here */
+  static readonly indent: number = WebMetrics.icon + WebMetrics.rowGap;
   /** A tappable row's press fill reaches this far past the text column */
   static readonly hit: number = 6;
   static readonly railWidth: number = 1;

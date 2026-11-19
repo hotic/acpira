@@ -358,8 +358,8 @@ export struct OutcomeMark {
 
 /**
  * ui/Row: the lead slot (its icon centred on an icon-wide column at the row's start, so the ink stands on the text edge
- * above and below it; the slot keeps its width, so the label column stays put), the content parts on one line with an
- * 8 vp gap, trailing meta right-aligned in caption type
+ * above and below it; the label follows that column by the row gap), the content parts on one line with an 8 vp gap,
+ * trailing meta right-aligned in caption type
  */
 @ComponentV2
 export struct AcpRow {
@@ -413,7 +413,9 @@ export struct AcpRow {
     }
     .width(WebMetrics.lead)
     .height(this.spec.wrap ? WebType.text2Line : WebMetrics.lead)
-    .margin({ left: (WebMetrics.icon - WebMetrics.lead) / 2, right: Metrics.gap - (WebMetrics.lead - WebMetrics.icon) / 2 })
+    // The slot gives up its air on both sides (chat.css `.row-lead` in the thread): it takes the icon's width, and the
+    // label follows the row gap
+    .margin({ left: (WebMetrics.icon - WebMetrics.lead) / 2, right: WebMetrics.rowGap - (WebMetrics.lead - WebMetrics.icon) / 2 })
   }
 
   build() {
