@@ -296,6 +296,8 @@ pub(crate) struct Core {
   pub rev: i64,
   /// An automatic account switch is between the exhausted turn and its continue: prompts queue, manual switches wait
   pub switching: bool,
+  /// The adapter was updated on disk under this process (`adapter_updated`): reopened as soon as nothing is in flight
+  pub adapter_stale: bool,
   /// Summoned children's processes, rounds in flight and root calls waiting for their node (`relay.rs`)
   pub relays: crate::acp::session::relay::Relays,
   /// Claude's host-made Ultra effort level (`ultracode.rs`)
@@ -507,6 +509,7 @@ impl AcpSession {
           },
           rev: 0,
           switching: false,
+          adapter_stale: false,
           relays: Default::default(),
           ultracode,
           sidekick,

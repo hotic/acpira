@@ -846,6 +846,7 @@ export const zhTW = {
   'host.installFailedCode': '安裝程式結束碼 {code}，原因見下方日誌。',
   'host.installSpawnFailed': '無法啟動安裝程式：{error}',
   'host.installDone': '{agent} 已安裝',
+  'host.installDoneBusy': '{agent} 已安裝，正在忙的工作階段會在結束後切換過去。',
   'host.installDoneNotFound': '{agent} 安裝完成，但 Acpira 還找不到它。日誌裡有安裝位置，把該目錄加入 PATH 即可。',
   'host.unknownAgent': '未知 agent：{id}',
   'host.noAccountLayer': '{agent} 不走帳號層',

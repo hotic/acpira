@@ -263,7 +263,10 @@ impl SessionManager {
             });
           }
         }
+        // An update under live sessions: they move to the new adapter, the busy ones once they pause
+        let waiting = ok && found && m.live_sessions().into_iter().filter(|s| s.agent == id && !s.adapter_updated()).count() > 0;
         let key = match (ok, found) {
+          (true, true) if waiting => Some(("info", "host.installDoneBusy")),
           (true, true) => Some(("info", "host.installDone")),
           (true, false) => Some(("info", "host.installDoneNotFound")),
           _ => None,

@@ -846,6 +846,7 @@ export const ru = {
   'host.installFailedCode': 'Установщик завершился с кодом {code}. Причина — в журнале ниже.',
   'host.installSpawnFailed': 'Не удалось запустить установщик: {error}',
   'host.installDone': '{agent} установлен',
+  'host.installDoneBusy': '{agent} установлен. Занятые сессии перейдут на новую версию после завершения.',
   'host.installDoneNotFound': '{agent} установлен, но Acpira пока его не находит. В журнале указано, куда он установлен; добавьте эту папку в PATH.',
   'host.unknownAgent': 'Неизвестный агент: {id}',
   'host.noAccountLayer': '{agent} не использует управление аккаунтами',

@@ -20,6 +20,7 @@ How codex-acp and the bundled codex behave on the ACP wire, with the version obs
 - **Goals**: 1.13.0 advertises `_meta.goal { controlMethod: '_session/goal', actions: set/pause/resume/clear }` and snapshots at `session_info_update._meta.goal`; 2.x moves both under `_meta.jetbrains.air` (`vendors/goal.rs` reads both). `/goal …` prompts equal the requests.
 - Goal behaviour (1.13.0 and 2.2.2, live): an unmet goal continues after the turn with no `session/prompt`, bracketed by `threadStatus` active … idle; the host runs it as a detached turn. After two continuations without progress Codex sets `blocked` itself.
 - Pause / clear never interrupt a running turn, only further continuations (a paused goal can still reach `complete`). `/goal resume` on a `complete` goal reactivates it. `usageLimited` / `budgetLimited` map to `limited`.
+- An npm upgrade under a live process breaks it: codex starts `codex-code-mode-host` from its package path on each `exec`, the two share an unversioned IPC that rejects unknown fields, and the upgrade leaves the old codex running against the new host (2.1.1 → 2.7.0: every `exec` fails `failed to decode code-mode IPC frame: unknown field result_buffered_for_ns`, logged in `~/.codex/logs_2.sqlite`). Hence `AcpSession::adapter_updated` after an in-app update; an upgrade run by hand is not seen.
 - Open: codex-acp 2.x's "AIR tool call contract, exact diff patches" not run at turn level.
 
 ## SSH local run (exec-server)
