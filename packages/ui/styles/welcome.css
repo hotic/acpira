@@ -130,9 +130,6 @@
   .wl-step.is-past { background: color-mix(in srgb, var(--fg-1) 48%, transparent); }
   .wl-step.is-now { width: 22px; background: var(--fg-1); }
 
-  .wl-quiet { justify-self: start; display: inline-flex; align-items: baseline; gap: 8px; font-size: var(--text-2); color: var(--fg-3); transition: color .15s ease; }
-  .wl-quiet:hover { color: var(--fg-1); }
-
   /* Intro: type on the left, the mark in outline on the right at poster scale, cropped by the window */
   .wl-intro { position: absolute; inset: 0; transition: opacity .22s ease, scale .5s var(--wl-ease); }
   .wl-intro:not([data-open]) { opacity: 0; scale: .985; pointer-events: none; }
@@ -154,7 +151,7 @@
   .wl-agent-mark { width: 16px; height: 16px; }
   .wl-none { font-size: var(--text-2); color: var(--fg-2); animation: wl-agent .55s var(--wl-ease) .15s backwards; }
   @keyframes wl-agent { from { opacity: 0; translate: -4px 0; } }
-  .wl-actions { margin-top: 38px; display: flex; align-items: center; gap: 22px; animation: wl-rise .6s var(--wl-ease) 1.35s backwards; }
+  .wl-actions { margin-top: 38px; display: flex; align-items: center; gap: 10px; animation: wl-rise .6s var(--wl-ease) 1.35s backwards; }
   /* Over Button's own size utilities, which outrank this layer */
   .wl-cta { height: 34px !important; gap: 10px !important; padding: 0 16px !important; }
 

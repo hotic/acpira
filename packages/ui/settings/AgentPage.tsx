@@ -130,18 +130,8 @@ export function AgentDialog(p: AgentSettingsProps & {
   );
 }
 
-// A footer's quiet action on its left edge (Refresh), its words on the body's text edge
-function SectionActionLeft({ icon, onClick, disabled, children }: { icon: ReactNode; onClick: () => void; disabled?: boolean; children: ReactNode }) {
-  return (
-    <button type="button" onClick={onClick} disabled={disabled}
-      className="-ml-2 flex h-ctl shrink-0 items-center gap-1.5 rounded-md px-2 text-2 text-fg-2 transition-colors enabled:hover:bg-hover enabled:hover:text-fg-1 focus-visible:bg-hover disabled:opacity-60 [&_svg]:size-icon">
-      {icon}{children}
-    </button>
-  );
-}
-
 // One tab's blocks. The reads it needs run while the dialog is open: the inventory once, the quotas every minute
-export function AgentSettings({ agent, accounts, install, inventory, controls, providers, settings, env, on, onShared, tab, detect }: AgentSettingsProps & { tab: AgentTab; detect?: number }) {
+export function AgentSettings({ agent, accounts, install, accountAction, inventory, controls, providers, settings, env, on, onShared, tab, detect, busy }: AgentSettingsProps & { tab: AgentTab; detect?: number; busy?: boolean }) {
   useEffect(() => { if (!inventory) on.refreshInventory(agent.id); }, [agent.id, inventory, on]);
   // Re-read when the dialog opens and whenever the set of accounts changes (a login finishes while it is open)
   const accountKey = accounts.map(a => a.id).join();

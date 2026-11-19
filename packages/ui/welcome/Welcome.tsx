@@ -663,7 +663,8 @@ function Intro({ open, still, agents, ctaRef, onStart, onSkip }: { open: boolean
         </div>
         <div className="wl-actions">
           <Button ref={ctaRef} variant="primary" className="wl-cta" onClick={onStart}>{t('welcome.start')}</Button>
-          <button type="button" className="wl-quiet" onClick={onSkip}>{t('welcome.skip')}</button>
+          {/* A secondary of the same size, not bare text: beside an outlined button a text link read as a label */}
+          <Button className="wl-cta" onClick={onSkip}>{t('welcome.skip')}</Button>
         </div>
       </div>
     </div>
