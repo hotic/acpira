@@ -17,12 +17,19 @@ export interface AccountState { text: string; warn?: boolean; title?: string }
 // chip of an account row. A login with something wrong shows that in the tag instead of its plan; a long state
 // is one short word in every language (the hint has the sentence), so the identity keeps the row: the tag gives way
 // only past half of it
-export function AccountLabel({ label, detail, state, className }: { label: string; detail?: string; state?: AccountState; className?: string }) {
+// An account a plugin lists carries the plugin's tag in the plan's place: `badge` the tag, `source` the plugin's name
+export function AccountLabel({ label, detail, badge, source, state, className }: { label: string; detail?: string; badge?: string; source?: string; state?: AccountState; className?: string }) {
   const plan = detail && planName(detail);
-  return <span className={cn('flex min-w-0 items-center gap-2', className)} title={[label, detail].filter(Boolean).join(t('common.metaSep'))}>
+  return <span className={cn('flex min-w-0 items-center gap-2', className)} title={[label, badge ? source : detail].filter(Boolean).join(t('common.metaSep'))}>
     <span className="min-w-0 truncate">{label}</span>
     {state
       ? <span title={state.title ?? state.text} className={cn('max-w-1/2 shrink-0 truncate rounded-sm px-1 text-3 font-normal', state.warn ? 'bg-warn/15 text-warn' : 'bg-active text-fg-3')}>{state.text}</span>
-      : plan && <span className="shrink-0 rounded-sm bg-active px-1 text-3 font-normal text-fg-2">{plan}</span>}
+      : badge ? <SourceTag text={badge} title={source} /> : plan && <span className="shrink-0 rounded-sm bg-active px-1 text-3 font-normal text-fg-2">{plan}</span>}
   </span>;
+}
+
+// The tag of an account a plugin vouches for, in the one colour all of them share (`--account-source`), so it never
+// reads as a plan the vendor reported
+export function SourceTag({ text, title }: { text: string; title?: string }) {
+  return <span title={title} className="max-w-1/2 shrink-0 truncate rounded-sm border border-(--account-source)/25 bg-(--account-source)/10 px-1 text-3 font-normal text-(--account-source)">{text}</span>;
 }

@@ -113,6 +113,21 @@ impl Inbound for PluginInbound {
         }
         return Box::pin(async move { rt.rpc(&plugin, &name, args, &from).await.map_err(|e| RpcError::new(-32000, e)) });
       }
+      // The accounts this plugin lists, replacing the last list (accounts/plugin_accounts.rs)
+      "accounts/set" => {
+        let (Some(list), Some(rt)) = (params.get("accounts").and_then(Value::as_array).cloned(), self.runtimes.upgrade()) else {
+          return Box::pin(async { Err(RpcError::new(-32602, "`accounts` must be an array")) });
+        };
+        let (id, removable) = (self.id.clone(), self.want.def.methods.iter().any(|m| m == super::ACCOUNT_REMOVE));
+        // A process starts before the account layer is handed over: an early list waits for it like a host call
+        return Box::pin(async move {
+          let t = Instant::now();
+          while !rt.has_accounts() && rt.host_coming.load(Ordering::Relaxed) && t.elapsed() < HOST_CALL_WAIT {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+          }
+          rt.set_live_accounts(&id, &list, removable).map(|n| json!({ "accounts": n })).map_err(|e| RpcError::new(-32602, e))
+        });
+      }
       "providers/set" => match (params.get("providers").and_then(Value::as_array), self.runtimes.upgrade()) {
         (None, _) => Err(RpcError::new(-32602, "`providers` must be an array")),
         (_, None) => Err(RpcError::new(-32000, "the engine is closing")),

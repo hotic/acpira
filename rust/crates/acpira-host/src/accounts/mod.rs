@@ -8,6 +8,7 @@ pub mod devin;
 pub mod droid;
 pub mod keychain;
 pub mod local;
+pub mod plugin_accounts;
 pub mod provider;
 pub mod quota_cache;
 pub mod quota_cli;

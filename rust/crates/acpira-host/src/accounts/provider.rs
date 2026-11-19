@@ -71,6 +71,9 @@ pub trait AccountProvider: Send + Sync {
   fn spawn_env(&self, _cred: &AccountCredential) -> Option<BTreeMap<String, String>> {
     None
   }
+  /// A plugin account's variables (`accounts/set`) get what `spawn_env` adds around a saved account's: a store they name
+  /// is linked to the regular one, and anything else the CLI needs to read a login from it is set
+  fn complete_plugin_env(&self, _env: &mut BTreeMap<String, String>) {}
   fn authenticate(&self, _proc: Arc<AgentProcess>, _cred: AccountCredential) -> Option<BoxFuture<Result<()>>> {
     None
   }

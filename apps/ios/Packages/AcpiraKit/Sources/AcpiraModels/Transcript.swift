@@ -165,6 +165,12 @@ public struct AccountInfo: Codable, Hashable, Sendable, Identifiable {
   public var quota: AccountQuota?
   /// Absent while `quota` is set
   public var quotaIssue: AccountQuotaIssue?
+  /// The name of the plugin that lists this account; it lives while that plugin runs
+  public var plugin: String?
+  /// The plugin's tag beside the label, shown in place of a plan
+  public var badge: String?
+  /// False: the account cannot be removed here (its plugin keeps it)
+  public var removable: Bool?
 }
 
 // MARK: - Controls

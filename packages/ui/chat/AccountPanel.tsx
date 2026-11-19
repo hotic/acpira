@@ -8,6 +8,7 @@ import { RadioGroup } from '../ui/RadioGroup';
 import { AccountLabel, type AccountState } from '../ui/AccountLabel';
 import { QuotaBars } from '../ui/QuotaBars';
 import { savedIssueText } from '../ui/LocalAccountQuota';
+import { cn } from '../ui/cn';
 import { t } from '../i18n';
 
 export interface AccountPanelProps {
@@ -92,8 +93,9 @@ export function AccountPanel(p: AccountPanelProps) {
               "+" stands: the check, or the remove button over it on hover. The radio's own `:has(+ …)` sees the remove button's
               keyboard focus; a group-level `:has()` restyled the whole shell on every keystroke */}
           <span className="flex min-w-0 items-center gap-2">
-            <AccountLabel label={a.label} detail={a.detail} state={savedState(p.agent, a)} className="flex-1 font-medium text-fg-1" />
-            <span className="flex size-icon shrink-0 items-center justify-center transition-opacity group-hover/item:opacity-0 [button:has(+[data-remove-slot]_[data-remove]:focus-visible)_&]:opacity-0" aria-hidden>
+            <AccountLabel label={a.label} detail={a.detail} badge={a.badge} source={a.plugin} state={savedState(p.agent, a)} className="flex-1 font-medium text-fg-1" />
+            {/* An account its plugin keeps (`removable: false`) has no remove button, so its check stays on hover */}
+            <span className={cn('flex size-icon shrink-0 items-center justify-center transition-opacity', a.removable !== false && 'group-hover/item:opacity-0 [button:has(+[data-remove-slot]_[data-remove]:focus-visible)_&]:opacity-0')} aria-hidden>
               {a.id === p.accountId && <Check className="size-icon text-fg-1" strokeWidth={2} />}
             </span>
           </span>
@@ -102,7 +104,7 @@ export function AccountPanel(p: AccountPanelProps) {
         {/* A button cannot sit inside the radio's, so the remove button lies over the row in a copy of the identity line's box:
             the same padding and an invisible strut one text line tall, so it centres on that line at every density, not on a
             row the quota bars make tall */}
-        <span data-remove-slot className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-end px-2 py-1.5 text-2">
+        {a.removable !== false && <span data-remove-slot className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-end px-2 py-1.5 text-2">
           <span className="invisible w-0" aria-hidden>{'\u00a0'}</span>
           <span className="flex size-icon shrink-0 items-center justify-center">
             <button type="button" data-remove aria-label={t('common.removeNamed', { name: a.label })} title={t('common.remove')}
@@ -111,7 +113,7 @@ export function AccountPanel(p: AccountPanelProps) {
               <X className="size-3" strokeWidth={2} />
             </button>
           </span>
-        </span>
+        </span>}
         </div>
       </Fragment>)}
     </RadioGroup.Root>

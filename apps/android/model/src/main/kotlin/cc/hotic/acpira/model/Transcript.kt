@@ -171,6 +171,12 @@ data class AccountInfo(
   val quota: AccountQuota? = null,
   /** Absent while `quota` is set */
   val quotaIssue: AccountQuotaIssue? = null,
+  /** The plugin listing this account (`accounts/set`), by its display name */
+  val plugin: String? = null,
+  /** The plugin's short tag for it, shown in the source colour */
+  val badge: String? = null,
+  /** False when the plugin cannot take it back: no delete */
+  val removable: Boolean? = null,
 )
 
 // Controls

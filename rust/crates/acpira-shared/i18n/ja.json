@@ -839,6 +839,7 @@
   "host.keyRejected": "キーが拒否されました（HTTP {status}）。確認して貼り直してください。",
   "host.keyCheckFailed": "キーを確認できませんでした：{error}",
   "host.credentialGone": "{label} の認証情報がなくなりました。サインインし直してください",
+  "host.pluginAccountGone": "このアカウントはプラグイン {plugin} のもので、今は提供されていません。別のアカウントを選んでください",
   "host.accountSwitched": "{from} の利用枠を使い切ったため、{to} に切り替えて続行しました",
   "host.autoContinuePrompt": "アカウントの利用枠を使い切ったため前のターンが中断され、このセッションは別のアカウントに移りました。中断したところから未完了のタスクを続けてください。完了済みの手順は繰り返さないでください。",
   "host.hooksInvalid": "ワークスペースの hooks を読み込めませんでした：{error}",

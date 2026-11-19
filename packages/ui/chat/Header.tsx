@@ -125,7 +125,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
             : [
               ...mine.map(a => (
                 <DropdownMenu.Item key={a.id} onClick={() => on.selectAccount(a.id)}>
-                  <OptionContent icon={<UserRound strokeWidth={1.5} />} description={a.detail && planName(a.detail)} checked={a.id === accountId} checkSlot>{a.label}</OptionContent>
+                  <OptionContent icon={<UserRound strokeWidth={1.5} />} description={a.badge ?? (a.detail && planName(a.detail))} checked={a.id === accountId} checkSlot>{a.label}</OptionContent>
                 </DropdownMenu.Item>
               )),
               ...mine.length ? [] : [<DropdownMenu.Item key="none" disabled><OptionContent>{t('settings.agent.accounts.none')}</OptionContent></DropdownMenu.Item>],

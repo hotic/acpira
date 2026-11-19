@@ -304,6 +304,16 @@ impl AccountProvider for DroidAccountProvider {
     Some(env)
   }
 
+  /// A home a plugin names (FACTORY_HOME_OVERRIDE) joins the regular `.factory` the way a saved account's does, keeping
+  /// a key account's own entries when the plugin signs in with FACTORY_API_KEY
+  fn complete_plugin_env(&self, env: &mut BTreeMap<String, String>) {
+    let Some(home) = env.get(HOME_ENV).filter(|h| !h.is_empty()).map(PathBuf::from) else { return };
+    let dir = factory_dir(&home);
+    if std::fs::create_dir_all(&dir).is_ok() {
+      link_shared(&dir, &factory_dir(&default_home()), if env.contains_key(KEY_ENV) { &KEY_OWN[..] } else { &OWN[..] });
+    }
+  }
+
   fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {
     if is_key(&cred) {
       return Some(Box::pin(key_quota(cred)));

@@ -166,7 +166,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       : undefined;
     primary = noLocal ? terminalWay : importWay;
     groups = [
-      (accounts ?? []).filter(a => a.id !== accountId).map(a => ({ key: `account:${a.id}`, label: a.label, icon: rowIcon(UserRound), hint: a.detail && planName(a.detail), title: a.detail, run: () => onSelectAccount(a.id) })),
+      (accounts ?? []).filter(a => a.id !== accountId).map(a => ({ key: `account:${a.id}`, label: a.label, icon: rowIcon(UserRound), hint: a.badge ?? (a.detail && planName(a.detail)), title: a.badge ? a.plugin : a.detail, run: () => onSelectAccount(a.id) })),
       [noLocal ? importWay : terminalWay, ...keyWay ? [keyWay] : []],
       (authMethods ?? []).filter(m => !(keyWay && ENV_KEY_METHODS[agent.id] === m.id)).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(m.terminal ? SquareTerminal : KeyRound), hint: t('notice.cliLoginTag'), title: [m.description, t('notice.cliLoginHint')].filter(Boolean).join('\n'), run: () => onLogin(m.id) })),
       runHere,

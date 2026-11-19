@@ -93,6 +93,7 @@ class Plugin:
         })
         self.model = _Calls({"generate": lambda prompt, **rest: r("model/generate", {"prompt": prompt, **rest})})
         self.providers = _Calls({"set": lambda providers: r("providers/set", {"providers": providers})})
+        self.accounts = _Calls({"set": lambda accounts: r("accounts/set", {"accounts": accounts})})
 
     # Registration
 

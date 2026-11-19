@@ -4,6 +4,7 @@ import type { AccountQuota } from '@acpira/shared/transcript';
 import { callPluginMethod, usePluginPieces } from '../pluginSlots';
 import { QuotaBars } from '../ui/QuotaBars';
 import { cn } from '../ui/cn';
+import { SourceTag } from '../ui/AccountLabel';
 
 export interface PublishedAccountRow { label: string; badge: string; selected: boolean; windows: AccountQuota['windows'] }
 
@@ -26,7 +27,7 @@ export function PublishedAccountRow({ row, source, showCheck, separated = true }
   return <div data-plugin-account className={cn('mx-1 flex min-w-0 flex-col px-1 py-1.5 text-2', separated && 'border-t border-line')}>
     <div className="flex min-w-0 items-center gap-2">
       <span className="truncate font-medium text-fg-1" title={row.label}>{row.label}</span>
-      <span title={source} className="max-w-1/2 shrink-0 truncate rounded-sm border border-(--account-source)/25 bg-(--account-source)/10 px-1 text-3 text-(--account-source)">{row.badge}</span>
+      <SourceTag text={row.badge} title={source} />
       {showCheck && row.selected && <Check aria-label={row.label} className="ml-auto size-icon shrink-0 text-fg-1" />}
     </div>
     {!!row.windows.length && <QuotaBars quota={{ windows: row.windows, fetchedAt: '' }} className="pt-3" />}

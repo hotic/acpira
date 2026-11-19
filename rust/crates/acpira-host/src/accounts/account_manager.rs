@@ -1,7 +1,7 @@
 //! Account master: who supports the account layer, the list,
 //! import / login / removal, the session hooks, and in-memory quotas
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,6 +11,7 @@ use acpira_shared::transcript::{AccountInfo, AccountQuota, AccountQuotaIssue, St
 
 use super::account_store::AccountStore;
 use super::cli_home::{LOCAL_LOGIN, poll_until};
+use super::plugin_accounts::{self, PluginAccount};
 use super::provider::{AccountProvider, QuotaRead, QuotaTokenExpired};
 use super::quota_cache::{QuotaCache, QuotaEntry, QuotaFailure};
 use super::switch::{SwitchStrategy, parked_until, pick_fallback};
@@ -20,7 +21,7 @@ use crate::acp::transport::rpc::BoxFuture;
 use crate::acp::session::SessionAccountHooks;
 use crate::i18n::{t, tp};
 use crate::store::transcript_store::LogFn;
-use crate::util::{ms_of_iso, now_ms};
+use crate::util::{ms_of_iso, now_iso, now_ms};
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const UNLOCK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -64,6 +65,10 @@ pub type Toast = Arc<dyn Fn(&str, &str) + Send + Sync>;
 pub type SwitchPolicy = Arc<dyn Fn(&str) -> SwitchStrategy + Send + Sync>;
 /// Hears the account list after every change (`subscribe`)
 pub type AccountsListener = Arc<dyn Fn(Vec<AccountInfo>) + Send + Sync>;
+/// Asks a plugin to let go of an account it lists: (plugin, its own id, agent) → the plugin's `account.remove`
+pub type PluginRemover = Arc<dyn Fn(String, String, String) -> BoxFuture<Result<()>> + Send + Sync>;
+/// Hears the ids of plugin accounts whose launch variables changed or that went away (`on_rotated`)
+pub type RotationListener = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 
 
 pub struct AccountManager {
@@ -88,6 +93,12 @@ pub struct AccountManager {
   /// Agents whose credential store the last check found locked (`AccountProvider::credentials_locked`)
   locked: parking_lot::Mutex<HashSet<String>>,
   lock_listeners: parking_lot::Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
+  /// Accounts plugins list (`accounts/set`), by plugin in id order; memory only
+  plugin_accounts: parking_lot::Mutex<BTreeMap<String, Vec<PluginAccount>>>,
+  /// When a plugin account was last picked, this engine only: what makes it an agent's default like a saved one
+  plugin_used: parking_lot::Mutex<HashMap<String, String>>,
+  plugin_remover: parking_lot::RwLock<Option<PluginRemover>>,
+  rotation_listeners: parking_lot::Mutex<Vec<RotationListener>>,
 }
 
 impl AccountManager {
@@ -116,6 +127,10 @@ impl AccountManager {
       syncing: tokio::sync::Mutex::new(()),
       locked: Default::default(),
       lock_listeners: Default::default(),
+      plugin_accounts: Default::default(),
+      plugin_used: Default::default(),
+      plugin_remover: Default::default(),
+      rotation_listeners: Default::default(),
     })
   }
 
@@ -192,16 +207,105 @@ impl AccountManager {
     self.providers.get(agent).is_some_and(|p| p.accepts_keys())
   }
 
+  /// The saved accounts, then the ones plugins list
   pub fn list(&self) -> Vec<AccountInfo> {
-    self.store.list(None).into_iter().map(|a| self.with_quota(a)).collect()
+    let mut list: Vec<AccountInfo> = self.store.list(None).into_iter().map(|a| self.with_quota(a)).collect();
+    list.extend(self.plugin_infos(None));
+    list
   }
 
   pub fn get(&self, id: &str) -> Option<AccountInfo> {
+    if plugin_accounts::split_id(id).is_some() {
+      return self.plugin_account(id).map(|a| a.info(self.plugin_used.lock().get(id).cloned()));
+    }
     self.store.get(id).map(|a| self.with_quota(a))
   }
 
+  /// The account picked last, saved or listed by a plugin
   pub fn default_for(&self, agent: &str) -> Option<AccountInfo> {
-    self.store.default_for(agent)
+    let stored = self.store.default_for(agent);
+    let listed = self.plugin_infos(Some(agent)).into_iter().filter(|a| a.last_used_at.is_some()).max_by(|a, b| a.last_used_at.cmp(&b.last_used_at));
+    match (stored, listed) {
+      (Some(s), Some(l)) if l.last_used_at > s.last_used_at => Some(l),
+      (None, Some(l)) => Some(l),
+      (s, _) => s,
+    }
+  }
+
+  fn plugin_account(&self, id: &str) -> Option<PluginAccount> {
+    let (plugin, local) = plugin_accounts::split_id(id)?;
+    self.plugin_accounts.lock().get(plugin)?.iter().find(|a| a.local == local).cloned()
+  }
+
+  fn plugin_infos(&self, agent: Option<&str>) -> Vec<AccountInfo> {
+    let used = self.plugin_used.lock().clone();
+    self
+      .plugin_accounts
+      .lock()
+      .values()
+      .flatten()
+      .filter(|a| agent.is_none_or(|ag| a.agent == ag))
+      .map(|a| a.info(used.get(&a.id()).cloned()))
+      .collect()
+  }
+
+  /// Replace what `plugin` lists (`accounts/set`; empty: none). Each entry is checked whole before any lands; an
+  /// account keeps the time it was first listed. The pages hear of a change in what they show, the sessions of
+  /// changed or vanished launch variables. `removable`: the plugin answers `account.remove`
+  pub fn set_plugin_accounts(&self, plugin: &str, name: &str, raw: &[serde_json::Value], removable: bool) -> Result<usize, String> {
+    if raw.len() > plugin_accounts::MAX_ACCOUNTS {
+      return Err(format!("a plugin lists at most {} accounts", plugin_accounts::MAX_ACCOUNTS));
+    }
+    let mut next = raw.iter().map(|r| plugin_accounts::parse(plugin, name, r, removable, &|a| self.supports(a))).collect::<Result<Vec<_>, _>>()?;
+    let mut seen = HashSet::new();
+    if let Some(dup) = next.iter().find(|a| !seen.insert(a.local.clone())) {
+      return Err(format!("account id `{}` is listed twice", dup.local));
+    }
+    let (listing_changed, rotated) = {
+      let mut all = self.plugin_accounts.lock();
+      let old = all.get(plugin).cloned().unwrap_or_default();
+      for a in &mut next {
+        a.added_at = old.iter().find(|o| o.local == a.local).map_or_else(now_iso, |o| o.added_at.clone());
+      }
+      let listing_changed = old.len() != next.len() || old.iter().zip(&next).any(|(o, n)| o.local != n.local || !o.same_listing(n));
+      let rotated: Vec<String> = old
+        .iter()
+        .filter(|o| next.iter().find(|n| n.local == o.local).is_none_or(|n| n.env != o.env || n.agent != o.agent))
+        .map(PluginAccount::id)
+        .collect();
+      if next.is_empty() {
+        all.remove(plugin);
+      } else {
+        all.insert(plugin.to_owned(), next.clone());
+      }
+      (listing_changed, rotated)
+    };
+    if listing_changed {
+      self.emit();
+    }
+    if !rotated.is_empty() {
+      (self.log)(&format!("plugin {plugin}: accounts changed how they start: {}", rotated.len()));
+      for f in self.rotation_listeners.lock().clone() {
+        f(rotated.clone());
+      }
+    }
+    Ok(next.len())
+  }
+
+  /// Drop what plugins no longer in effect listed
+  pub fn retain_plugin_accounts(&self, keep: &dyn Fn(&str) -> bool) {
+    let gone: Vec<String> = self.plugin_accounts.lock().keys().filter(|p| !keep(p)).cloned().collect();
+    for plugin in gone {
+      let _ = self.set_plugin_accounts(&plugin, "", &[], false);
+    }
+  }
+
+  pub fn set_plugin_remover(&self, f: PluginRemover) {
+    *self.plugin_remover.write() = Some(f);
+  }
+
+  pub fn on_rotated(&self, f: RotationListener) {
+    self.rotation_listeners.lock().push(f);
   }
 
   /// Pick up accounts another host added or removed; viewers are told only when the list changed
@@ -583,6 +687,9 @@ impl AccountManager {
   }
 
   pub async fn remove(&self, id: &str) -> Result<()> {
+    if let Some((plugin, local)) = plugin_accounts::split_id(id) {
+      return self.remove_listed(id, plugin, local).await;
+    }
     let owner = self.store.get(id).and_then(|a| self.providers.get(&a.agent).cloned());
     let cred = self.store.credential(id).await.ok().flatten();
     let info = self.store.get(id);
@@ -607,17 +714,64 @@ impl AccountManager {
     Ok(())
   }
 
+  /// A plugin account goes only through its plugin: the plugin lets go of it and lists the rest. Gone from the list at
+  /// once, so the menu never shows it again while the plugin answers
+  async fn remove_listed(&self, id: &str, plugin: &str, local: &str) -> Result<()> {
+    let Some(a) = self.plugin_account(id) else { return Ok(()) };
+    if !a.removable {
+      return Err(anyhow!("{} is listed by plugin {plugin}, which takes no removal", a.label));
+    }
+    let Some(f) = self.plugin_remover.read().clone() else { return Err(anyhow!("plugin {plugin} is not running")) };
+    f(plugin.to_owned(), local.to_owned(), a.agent.clone()).await?;
+    let rest: Option<Vec<PluginAccount>> = {
+      let mut all = self.plugin_accounts.lock();
+      all.get_mut(plugin).map(|list| {
+        list.retain(|x| x.local != local);
+        list.clone()
+      })
+    };
+    if rest.is_some() {
+      self.emit();
+      for f in self.rotation_listeners.lock().clone() {
+        f(vec![id.to_owned()]);
+      }
+    }
+    Ok(())
+  }
+
   pub async fn touch(&self, id: &str) -> Result<()> {
+    if plugin_accounts::split_id(id).is_some() {
+      self.plugin_used.lock().insert(id.to_owned(), now_iso());
+      return Ok(());
+    }
     self.store.touch(id).await
   }
 
   pub async fn spawn_env_for(&self, agent: &str, account: &str) -> Option<StrMap> {
+    if plugin_accounts::split_id(account).is_some() {
+      let mut env = self.plugin_account(account).filter(|a| a.agent == agent)?.env;
+      if let Some(p) = self.providers.get(agent) {
+        p.complete_plugin_env(&mut env);
+      }
+      return Some(env);
+    }
     let p = self.providers.get(agent)?;
     let cred = self.store.credential(account).await.ok()??;
     p.spawn_env(&cred)
   }
 
   pub async fn authenticate_for(self: &Arc<Self>, agent: &str, account: &str, proc: Arc<AgentProcess>) -> Result<()> {
+    // A plugin account carries its whole sign-in in the variables it started with. One its plugin no longer lists (not
+    // started yet, switched off, let go) stops the session here: it never quietly runs on the CLI's own login
+    if let Some((plugin, _)) = plugin_accounts::split_id(account) {
+      return match self.plugin_account(account).filter(|a| a.agent == agent) {
+        Some(_) => {
+          self.touch(account).await?;
+          Ok(())
+        }
+        None => Err(anyhow!(tp("host.pluginAccountGone", &[("plugin", plugin)]))),
+      };
+    }
     let Some(p) = self.providers.get(agent).cloned() else { return Ok(()) };
     // A CLI that reads its own store (Claude) only fails later, at the first prompt: learn now whether that store is locked
     if p.credentials_locked().is_some() {
@@ -700,5 +854,88 @@ mod quota_failure_tests {
       assert_eq!(quota_failure(&e, None, 0).issue, AccountQuotaIssue::Expired);
     }
     assert_eq!(quota_failure(&anyhow::anyhow!("no Claude login"), None, 0).issue, AccountQuotaIssue::Unavailable);
+  }
+}
+
+#[cfg(test)]
+mod plugin_account_tests {
+  use super::*;
+  use crate::accounts::account_store::{AccountDraft, FileVault};
+  use crate::accounts::provider::LoginFlow;
+  use serde_json::json;
+
+  struct Saved;
+  impl AccountProvider for Saved {
+    fn agent(&self) -> &str {
+      "codex"
+    }
+    fn import_local(&self) -> BoxFuture<Option<AccountDraft>> {
+      Box::pin(async { None })
+    }
+    fn login(&self) -> BoxFuture<Result<LoginFlow>> {
+      Box::pin(async { Err(anyhow!("no login here")) })
+    }
+  }
+
+  async fn manager(dir: &std::path::Path) -> Arc<AccountManager> {
+    let log: LogFn = Arc::new(|_| {});
+    let vault = Arc::new(FileVault::new(dir.join("secrets.json"), log.clone()));
+    let store = Arc::new(AccountStore::new(dir.join("accounts.json"), vault, log.clone()));
+    store.load().await.unwrap();
+    AccountManager::new(store, vec![Arc::new(Saved)], log, Arc::new(|_, _, _, _| {}), Arc::new(|_, _| {}))
+  }
+
+  fn rented(env: &str) -> serde_json::Value {
+    json!({ "id": "r1", "agent": "codex", "label": "team", "badge": "Rented", "env": { "CODEX_HOME": env } })
+  }
+
+  #[tokio::test]
+  async fn a_plugin_lists_starts_and_lets_go_of_its_accounts() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path()).await;
+    let lists = Arc::new(parking_lot::Mutex::new(0));
+    let rotated = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+    let (l, r) = (lists.clone(), rotated.clone());
+    m.subscribe(Arc::new(move |_| *l.lock() += 1));
+    m.on_rotated(Arc::new(move |ids| r.lock().extend(ids)));
+
+    assert_eq!(m.set_plugin_accounts("demo", "Demo", &[rented("/a")], false), Ok(1));
+    assert!(m.set_plugin_accounts("demo", "Demo", &[json!({ "id": "x", "agent": "grok", "label": "y" })], false).is_err());
+    let id = "plugin:demo:r1";
+    let listed = m.list().into_iter().find(|a| a.id == id).unwrap();
+    assert_eq!((listed.badge.as_deref(), listed.plugin.as_deref(), listed.removable), (Some("Rented"), Some("Demo"), Some(false)));
+    assert_eq!(m.spawn_env_for("codex", id).await.unwrap().get("CODEX_HOME").map(String::as_str), Some("/a"));
+    assert_eq!(m.spawn_env_for("claude", id).await, None);
+    assert!(m.default_for("codex").is_none());
+    m.touch(id).await.unwrap();
+    assert_eq!(m.default_for("codex").map(|a| a.id).as_deref(), Some(id));
+    // The same list again tells nobody; a renewed credential tells the sessions, not the pages
+    assert_eq!((*lists.lock(), rotated.lock().len()), (1, 0));
+    m.set_plugin_accounts("demo", "Demo", &[rented("/a")], false).unwrap();
+    assert_eq!((*lists.lock(), rotated.lock().len()), (1, 0));
+    m.set_plugin_accounts("demo", "Demo", &[rented("/b")], false).unwrap();
+    assert_eq!((*lists.lock(), rotated.lock().as_slice()), (1, [id.to_owned()].as_slice()));
+    // Not removable without the plugin's say; a plugin leaving takes its accounts along
+    assert!(m.remove(id).await.is_err());
+    m.retain_plugin_accounts(&|p| p != "demo");
+    assert!(m.get(id).is_none());
+    assert_eq!((*lists.lock(), rotated.lock().len()), (2, 2));
+  }
+
+  #[tokio::test]
+  async fn removal_goes_through_the_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path()).await;
+    let asked = Arc::new(parking_lot::Mutex::new(None));
+    let a = asked.clone();
+    m.set_plugin_remover(Arc::new(move |plugin, id, agent| {
+      *a.lock() = Some((plugin, id, agent));
+      Box::pin(async { Ok(()) })
+    }));
+    m.set_plugin_accounts("demo", "Demo", &[rented("/a")], true).unwrap();
+    assert_eq!(m.get("plugin:demo:r1").unwrap().removable, None);
+    m.remove("plugin:demo:r1").await.unwrap();
+    assert_eq!(asked.lock().clone(), Some(("demo".into(), "r1".into(), "codex".into())));
+    assert!(m.get("plugin:demo:r1").is_none());
   }
 }

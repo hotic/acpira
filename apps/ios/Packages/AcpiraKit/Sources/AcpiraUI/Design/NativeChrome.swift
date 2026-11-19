@@ -379,12 +379,15 @@ struct NativeAccountSheet: View {
                 onSelect(a.id)
                 dismiss()
               } label: {
-                NativeAccountRow(title: a.label, caption: a.detail, checked: a.id == accountId, checkSlot: true, quota: a.quota)
+                // A plugin's account carries its tag in the plan's place and names the plugin below
+                NativeAccountRow(title: a.label, source: a.badge, caption: a.badge == nil ? a.detail : a.plugin, checked: a.id == accountId, checkSlot: true, quota: a.quota)
                   .contentShape(Rectangle())
               }
               .buttonStyle(.plain)
               .swipeActions {
-                Button(role: .destructive) { onRemove(a.id) } label: { Label(t("common.delete"), systemImage: "trash") }
+                if a.removable != false {
+                  Button(role: .destructive) { onRemove(a.id) } label: { Label(t("common.delete"), systemImage: "trash") }
+                }
               }
             }
           } footer: {
@@ -416,6 +419,8 @@ struct NativeAccountSheet: View {
 struct NativeAccountRow: View {
   var title: String
   var plan: String?
+  /// The tag of an account a plugin lists, in the colour all of them share (--account-source)
+  var source: String?
   var caption: String?
   var checked = false
   var checkSlot = false
@@ -444,6 +449,16 @@ struct NativeAccountRow: View {
                 .padding(.horizontal, Metrics.s2)
                 .padding(.vertical, Metrics.s0_5)
                 .background(Capsule().fill(Palette.popActive))
+                .fixedSize()
+            }
+            if let source {
+              Text(web: source, paragraph: false)
+                .textStyle(TypeScale.text4, weight: .medium)
+                .foregroundStyle(Palette.accountSource)
+                .padding(.horizontal, Metrics.s2)
+                .padding(.vertical, Metrics.s0_5)
+                .background(Capsule().fill(Palette.accountSource.opacity(0.1)))
+                .overlay(Capsule().strokeBorder(Palette.accountSource.opacity(0.25)))
                 .fixedSize()
             }
           }

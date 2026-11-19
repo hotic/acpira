@@ -1,6 +1,7 @@
 package cc.hotic.acpira.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -130,11 +131,13 @@ fun AccountSheet(
             if (accounts.isEmpty()) AccountRow(t("settings.agent.accounts.none"), caption = t("composer.noAccounts"), now = now)
             accounts.forEachIndexed { i, a ->
               if (i > 0) Box(Modifier.fillMaxWidth().padding(start = Metrics.pad + Metrics.avatar + Metrics.s3).height(Metrics.hairline).background(Palette.line))
-              SwipeToRemove(onRemove = { onRemove(a.id) }) {
+              // A plugin's account carries its tag, with the plugin named under it; one it cannot take back has no swipe
+              val row = @Composable {
                 Box(Modifier.background(Palette.formRow).clickable { onSelect(a.id); onDismiss() }.testTag("account:${a.id}")) {
-                  AccountRow(a.label, caption = a.detail, checked = a.id == accountId, checkSlot = true, quota = a.quota, now = now)
+                  AccountRow(a.label, source = a.badge, caption = if (a.badge == null) a.detail else a.plugin, checked = a.id == accountId, checkSlot = true, quota = a.quota, now = now)
                 }
               }
+              if (a.removable == false) row() else SwipeToRemove(onRemove = { onRemove(a.id) }, content = row)
             }
           }
           if (agent.credentialsLocked == true) Footnote(t("notice.locked.short"))
@@ -169,13 +172,14 @@ private fun Footnote(text: String) {
 }
 
 /**
- * One login (NativeAccountRow): an avatar, the name with its plan as a tag over a caption, then the quota windows. The
- * tick keeps its slot in a list of logins, so picking one moves nothing
+ * One login (NativeAccountRow): an avatar, the name with its plan (or the listing plugin's [source] tag) over a caption,
+ * then the quota windows. The tick keeps its slot in a list of logins, so picking one moves nothing
  */
 @Composable
 private fun AccountRow(
   title: String,
   plan: String? = null,
+  source: String? = null,
   caption: String? = null,
   checked: Boolean = false,
   checkSlot: Boolean = false,
@@ -195,6 +199,14 @@ private fun AccountRow(
             Text(
               it, color = Palette.fg1, fontSize = Type.text4, fontWeight = FontWeight.Medium, maxLines = 1,
               modifier = Modifier.background(Palette.popActive, CircleShape).padding(horizontal = Metrics.s2, vertical = Metrics.s0_5),
+            )
+          }
+          source?.let {
+            Text(
+              it, color = Palette.accountSource, fontSize = Type.text4, maxLines = 1, overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.background(Palette.accountSource.copy(alpha = 0.1f), CircleShape)
+                .border(Metrics.hairline, Palette.accountSource.copy(alpha = 0.25f), CircleShape)
+                .padding(horizontal = Metrics.s2, vertical = Metrics.s0_5),
             )
           }
         }

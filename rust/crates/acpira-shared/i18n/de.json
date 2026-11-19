@@ -837,6 +837,7 @@
   "host.keyRejected": "Der Key wurde abgelehnt (HTTP {status}). Prüfen und erneut einfügen.",
   "host.keyCheckFailed": "Der Key ließ sich nicht prüfen: {error}",
   "host.credentialGone": "Die Zugangsdaten für {label} sind weg – bitte erneut anmelden",
+  "host.pluginAccountGone": "Dieses Konto stammt aus dem Plugin {plugin}, das es nicht mehr anbietet. Wähle ein anderes Konto",
   "host.accountSwitched": "{from} hatte kein Kontingent mehr; zu {to} gewechselt und fortgesetzt",
   "host.autoContinuePrompt": "Der vorige Durchlauf wurde abgebrochen, weil das Kontingent des Kontos aufgebraucht war, und diese Sitzung ist zu einem anderen Konto gewechselt. Setze die unvollendete Aufgabe dort fort, wo sie aufgehört hat; wiederhole keine bereits erledigten Schritte.",
   "host.hooksInvalid": "Workspace-Hooks wurden nicht geladen: {error}",

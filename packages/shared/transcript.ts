@@ -83,6 +83,12 @@ export interface AccountInfo {
   quotaIssue?: AccountQuotaIssue;
   // The credential is a pasted API key: no sign-in renews it, so an expired one reads as a rejected key to paste again
   keyAuth?: boolean;
+  // The name of the plugin that lists this account (`accounts/set`): it lives while that plugin runs, never stored
+  plugin?: string;
+  // The plugin's tag beside the label, shown in place of a plan
+  badge?: string;
+  // False: no remove button (a plugin account whose plugin answers no `account.remove`)
+  removable?: boolean;
 }
 
 export type AccountQuotaIssue = 'rate_limited' | 'expired' | 'unavailable';

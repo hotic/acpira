@@ -1220,3 +1220,77 @@ async fn the_local_login_is_listed_by_itself_follows_a_relogin_and_stays_removed
   accounts2.sync_local(None).await;
   assert!(accounts2.list().is_empty());
 }
+
+/// Lists one account for the fake agent at start, and lets go of it when Acpira passes on the user's removal
+#[cfg(unix)]
+const LISTER: &str = r#"
+import { createInterface } from 'node:readline';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+const list = accounts => send({ jsonrpc: '2.0', id: 'list-' + accounts.length, method: 'accounts/set', params: { accounts } });
+let removing;
+createInterface({ input: process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+    return list([{ id: 'r1', agent: 'fake', label: 'team', badge: 'Rented', env: { FAKE_INIT_LOG: '@LOG@' },
+      quota: { windows: [{ id: 'weekly', remaining: 0.25 }] } }]);
+  }
+  // A removal answers only once the host took the shorter list, as a plugin awaiting `ctx.accounts.set` does
+  if (m.method === 'rpc/account.remove') { removing = m; return list([]); }
+  if (m.id === 'list-0' && removing) return send({ jsonrpc: '2.0', id: removing.id, result: { removed: removing.params.params.id } });
+  if (m.method && m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, result: null });
+}).on('close', () => process.exit(0));
+"#;
+
+// A plugin's account sits beside the saved ones, starts the agent with the plugin's variables, and a removal goes back
+// to the plugin; a session left on an account its plugin no longer lists stops instead of running on the CLI's login
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_account_is_picked_started_and_handed_back_through_its_plugin() {
+  let fake = fake_or_skip!();
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let dir = tempfile::tempdir().unwrap();
+  let init_log = dir.path().join("init.log");
+  let store = Arc::new(store_in(dir.path()));
+  store.load().await.unwrap();
+  let accounts = AccountManager::new(store, vec![FakeProvider::new()], log(), Arc::new(|_, _, _, _| {}), Arc::new(|_: &str, _: &str| {}));
+  // The plugin, with `account.remove` among its methods
+  let plugins = dir.path().join("plugins");
+  let pdir = plugins.join("lister");
+  std::fs::create_dir_all(&pdir).unwrap();
+  std::fs::write(pdir.join("plugin.mjs"), LISTER.replace("@LOG@", init_log.to_str().unwrap())).unwrap();
+  let m = json!({ "schema": 1, "id": "lister", "version": "1.0.0", "description": "d",
+    "contributes": { "runtime": { "command": ["node", "plugin.mjs"], "methods": ["account.remove"] } } });
+  let (manifest, _) = acpira_host::plugins::manifest::parse(m.to_string().as_bytes()).unwrap();
+  let rt = acpira_host::plugins::runtime::Runtimes::new(plugins.join(".data"), log());
+  rt.set_accounts(accounts.clone());
+  rt.enable(None);
+  rt.sync(&[Arc::new(acpira_host::plugins::host::Active { id: "lister".into(), hash: "h".into(), dir: pdir, manifest })]).await;
+  let id = "plugin:lister:r1";
+  until(|| accounts.get(id).is_some(), 10_000).await;
+  expect_match(serde_json::to_value(accounts.get(id).unwrap()).unwrap(), json!({ "label": "team", "badge": "Rented", "plugin": "lister", "quota": { "windows": [{ "remaining": 0.25 }] } }));
+  assert!(accounts.get(id).unwrap().removable.is_none());
+
+  let cwd = dir.path().join("work");
+  std::fs::create_dir(&cwd).unwrap();
+  let mut opts = Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": dir.path() } })), "fake").cwd(cwd.to_str().unwrap());
+  opts.accounts = Some(accounts.clone());
+  let mgr = Mgr::new(&dir.path().join("sessions"), opts);
+  mgr.init().await;
+  mgr.new_session(None).await;
+  until(|| mgr.active().is_some_and(|a| a["status"] == "ready"), 5000).await;
+  assert!(!init_log.exists(), "the CLI's own login starts without the plugin's variables");
+  mgr.handle(json!({ "type": "selectAccount", "id": id })).await;
+  until(|| mgr.active().is_some_and(|a| a["status"] == "ready" && a["accountId"] == id) && init_log.exists(), 10_000).await;
+  assert_eq!(accounts.default_for("fake").map(|a| a.id).as_deref(), Some(id));
+
+  // Removed by the user: the plugin hears it and lists nothing, and the session on it stops with the reason
+  mgr.handle(json!({ "type": "removeAccount", "id": id })).await;
+  until(|| accounts.get(id).is_none(), 5000).await;
+  until(|| mgr.active().is_some_and(|a| a.to_string().contains("lister")), 10_000).await;
+  assert_ne!(mgr.active().unwrap()["status"], "ready");
+  mgr.dispose().await;
+  rt.stop_all().await;
+}

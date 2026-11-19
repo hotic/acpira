@@ -842,6 +842,7 @@
   "host.keyRejected": "The key was rejected (HTTP {status}). Check it and paste it again.",
   "host.keyCheckFailed": "Could not check the key: {error}",
   "host.credentialGone": "The credential for {label} is gone — sign in again",
+  "host.pluginAccountGone": "This account comes from plugin {plugin}, which no longer lists it. Pick another account",
   "host.accountSwitched": "Switched to {to} and continued after {from} ran out of quota",
   "host.autoContinuePrompt": "The previous turn was cut off because the account ran out of quota, and this session has moved to another account. Continue the unfinished task from where it stopped, without repeating steps that are already done.",
   "host.hooksInvalid": "Workspace hooks were not loaded: {error}",

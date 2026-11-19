@@ -135,6 +135,9 @@ impl StoredAccount {
       quota: self.quota.clone(),
       quota_issue: None,
       key_auth: self.meta.as_ref().is_some_and(|m| m.get(META_AUTH).is_some_and(|a| a == AUTH_API_KEY)).then_some(true),
+      plugin: None,
+      badge: None,
+      removable: None,
     }
   }
 }

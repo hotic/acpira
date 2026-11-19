@@ -150,6 +150,8 @@ impl HostRuntime {
       terminal.clone(),
       toast.clone(),
     );
+    // Plugins list accounts of their own beside the saved ones (`accounts/set`)
+    plugins.runtimes().set_accounts(accounts.clone());
     let policy = platform.clone();
     // One strategy for every agent; the setting is read at each switch, so an edit applies to the next exhausted turn
     accounts.set_switch_policy(Arc::new(move |_agent: &str| {
