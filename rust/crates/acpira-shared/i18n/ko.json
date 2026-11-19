@@ -834,6 +834,7 @@
   "host.keyRejected": "키가 거부되었습니다(HTTP {status}). 확인한 뒤 다시 붙여 넣으세요.",
   "host.keyCheckFailed": "키를 확인하지 못했습니다: {error}",
   "host.credentialGone": "{label}의 자격 증명이 없어졌습니다 — 다시 로그인하세요",
+  "host.pluginAccountGone": "이 계정은 플러그인 {plugin}에서 제공하던 것으로, 지금은 제공되지 않습니다. 다른 계정을 고르세요",
   "host.accountSwitched": "{from}의 사용량이 소진되어 {to}(으)로 전환하고 계속했습니다",
   "host.autoContinuePrompt": "계정 사용량이 소진되어 이전 턴이 중단되었고, 이 세션은 다른 계정으로 옮겨졌습니다. 멈춘 지점부터 끝나지 않은 작업을 이어서 하세요. 이미 끝난 단계는 반복하지 마세요.",
   "host.hooksInvalid": "워크스페이스 hooks를 불러오지 못했습니다: {error}",

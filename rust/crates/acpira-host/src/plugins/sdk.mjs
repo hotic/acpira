@@ -197,6 +197,10 @@ export function plugin(options = {}) {
     providers: {
       set: providers => request('providers/set', { providers }),
     },
+    // Accounts this plugin lists beside the user's own; each call replaces the last list
+    accounts: {
+      set: accounts => request('accounts/set', { accounts }),
+    },
     // Another plugin's method
     call: (plugin, method, params) => request('plugin/call', { plugin, method, params }),
   };
@@ -324,6 +328,7 @@ function context(p, info, signal) {
     ui: p.ui,
     model: p.model,
     providers: p.providers,
+    accounts: p.accounts,
     request: p.request,
     plugins: {
       // A plugin of `optionalDependencies` (or `dependencies`): undefined when it is not in effect

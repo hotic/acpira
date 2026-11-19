@@ -123,6 +123,8 @@ public enum Swatches {
   public static let brand = Swatch(RGBA(hex: 0xe6a63e), RGBA(hex: 0xb7791f))
   public static let brandFg = Swatch(RGBA(hex: 0x1b1300), RGBA(hex: 0xffffff))
   public static let command = Swatch(RGBA(hex: 0x6ea8fe), RGBA(hex: 0x2f6fe0))
+  /// --account-source: the tag of an account a plugin lists
+  public static let accountSource = Swatch(RGBA(hex: 0x99c9ff), RGBA(hex: 0x245c99))
   public static let summon = Swatch(RGBA(hex: 0xd2a8ff), RGBA(hex: 0x8250df))
   public static let agentDevin = Swatch(RGBA(hex: 0x6ea8fe), RGBA(hex: 0x2f6fe0))
   public static let agentGrok = Swatch(RGBA(hex: 0xe8e8e8), RGBA(hex: 0x1a1a1a))
@@ -207,6 +209,7 @@ public enum Palette {
   public static var rail: Color { Swatches.railColor.color }
   public static var railAction: Color { Swatches.railAction.color }
   public static var quotaOk: Color { Swatches.quotaOk.color }
+  public static var accountSource: Color { Swatches.accountSource.color }
   public static var quotaWarn: Color { Swatches.quotaWarn.color }
   public static var quotaDanger: Color { Swatches.quotaDanger.color }
   public static var menuBg: Color { Swatches.menuBg.color }

@@ -134,6 +134,15 @@ pub struct AccountInfo {
   /// The credential is a pasted API key: no sign-in renews it, so a rejected one is pasted again
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub key_auth: Option<bool>,
+  /// The name of the plugin that lists this account (`accounts/set`): it lives as long as that plugin runs, never stored
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub plugin: Option<String>,
+  /// The plugin's tag beside the label, shown in place of a plan
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub badge: Option<String>,
+  /// False: the account has no remove button (a plugin account whose plugin answers no `account.remove`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub removable: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -52,6 +52,8 @@ pub type HostCall = Arc<dyn Fn(String, String, Value) -> BoxFuture<Result<Value,
 #[derive(Clone)]
 struct Want {
   id: String,
+  /// The name the user knows it by (`Manifest::display_name`)
+  name: String,
   version: String,
   hash: String,
   dir: PathBuf,
@@ -75,6 +77,7 @@ impl Want {
     let menus_hooked = def.main.is_some() && m.contributes.commands.iter().any(|c| !c.menu.is_empty());
     Some(Want {
       id: id.to_owned(),
+      name: m.display_name().to_owned(),
       version: m.version.clone(),
       hash: hash.to_owned(),
       dir: dir.to_path_buf(),
@@ -246,6 +249,9 @@ pub struct HookReply {
   pub result: Result<Value, String>,
 }
 
+/// The runtime method a plugin answers to let go of an account it lists
+pub const ACCOUNT_REMOVE: &str = "account.remove";
+
 pub struct Runtimes {
   /// By id: calls go out in id order
   workers: parking_lot::RwLock<BTreeMap<String, Arc<Worker>>>,
@@ -258,6 +264,8 @@ pub struct Runtimes {
   contributed: parking_lot::RwLock<Arc<Contributed>>,
   /// Model sources a process set with `providers/set`, by plugin; dropped when the plugin leaves
   live_providers: parking_lot::RwLock<BTreeMap<String, Vec<acpira_shared::providers::Provider>>>,
+  /// Where `accounts/set` lands: the engine's account layer, once the composition root hands it over
+  accounts: parking_lot::RwLock<Option<Arc<crate::accounts::account_manager::AccountManager>>>,
   /// The pages that hear what a process sends them (`ui/post`, `ui/composer`): every bridge of this engine
   pages: parking_lot::RwLock<Vec<(u64, PageFn)>>,
   kvs: parking_lot::Mutex<HashMap<String, Arc<Kv>>>,
@@ -291,6 +299,7 @@ impl Runtimes {
       redirect: Default::default(),
       contributed: Default::default(),
       live_providers: Default::default(),
+      accounts: Default::default(),
       providers_write: Default::default(),
       pages: Default::default(),
       kvs: Default::default(),
@@ -356,6 +365,36 @@ impl Runtimes {
     drop(wanted);
     self.write_providers();
     Ok(n)
+  }
+
+  /// The account layer `accounts/set` reaches. A plugin account the user removes goes back to its plugin's
+  /// `account.remove` (`{ agent, id }`, the plugin's own id), which lets go of it
+  pub fn set_accounts(self: &Arc<Self>, accounts: Arc<crate::accounts::account_manager::AccountManager>) {
+    let me = Arc::downgrade(self);
+    accounts.set_plugin_remover(Arc::new(move |plugin: String, id: String, agent: String| {
+      let me = me.clone();
+      Box::pin(async move {
+        let rt = me.upgrade().ok_or_else(|| anyhow::anyhow!("the engine is closing"))?;
+        rt.rpc(&plugin, ACCOUNT_REMOVE, json!({ "agent": agent, "id": id }), "acpira").await.map(|_| ()).map_err(anyhow::Error::msg)
+      })
+    }));
+    *self.accounts.write() = Some(accounts);
+  }
+
+  pub fn has_accounts(&self) -> bool {
+    self.accounts.read().is_some()
+  }
+
+  /// Replace the accounts `plugin`'s process lists (`accounts/set`)
+  pub fn set_live_accounts(&self, plugin: &str, raw: &[Value], removable: bool) -> Result<usize, String> {
+    let accounts = self.accounts.read().clone().ok_or("this engine keeps no accounts")?;
+    // Held through the change, as for model sources: a plugin leaving meanwhile cannot have its accounts land after
+    // its departure dropped them
+    let wanted = self.wanted.lock();
+    let Some(want) = wanted.iter().find(|w| w.id == plugin) else {
+      return Err(format!("plugin {plugin} is not in effect"));
+    };
+    accounts.set_plugin_accounts(plugin, &want.name, raw, removable)
   }
 
   /// `plugins/providers.json` beside the plugin folders: the manifests' sources, then the processes', first id wins.

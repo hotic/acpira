@@ -63,6 +63,8 @@ object Swatches {
   val danger = Swatch(hex(0xf85149), hex(0xcf222e))
   val brand = Swatch(hex(0xe6a63e), hex(0xb7791f))
   val command = Swatch(hex(0x6ea8fe), hex(0x2f6fe0))
+  /** The tag of an account a plugin lists (--account-source) */
+  val accountSource = Swatch(hex(0x99c9ff), hex(0x245c99))
   /** A summoned persona's mark in a prompt (--summon) */
   val summon = Swatch(hex(0xd2a8ff), hex(0x8250df))
   val shimmerBase = Swatch(hex(0x9a9a9a), hex(0x707070))
@@ -119,6 +121,7 @@ object Palette {
   val danger @Composable @ReadOnlyComposable get() = of(Swatches.danger)
   val brand @Composable @ReadOnlyComposable get() = of(Swatches.brand)
   val command @Composable @ReadOnlyComposable get() = of(Swatches.command)
+  val accountSource @Composable @ReadOnlyComposable get() = of(Swatches.accountSource)
   val summon @Composable @ReadOnlyComposable get() = of(Swatches.summon)
   val shimmerBase @Composable @ReadOnlyComposable get() = of(Swatches.shimmerBase)
   val diffAdd @Composable @ReadOnlyComposable get() = of(Swatches.diffAdd)

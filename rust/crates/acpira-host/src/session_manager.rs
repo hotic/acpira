@@ -491,6 +491,21 @@ impl SessionManager {
           m.emit(HostMsg::Accounts { accounts });
         }
       }));
+      // A plugin account now starts differently (a renewed credential) or is gone: a session on it reopens when nothing
+      // is in flight, the way it does on an updated adapter, so the agent reads the new sign-in. Warm processes made
+      // with the old variables go too
+      let me = mgr.me.clone();
+      a.on_rotated(Arc::new(move |ids| {
+        let Some(m) = me.upgrade() else { return };
+        let mut agents = HashSet::new();
+        for s in m.live_sessions().into_iter().filter(|s| s.account_id().is_some_and(|a| ids.contains(&a))) {
+          agents.insert(s.agent.clone());
+          s.adapter_updated();
+        }
+        for agent in agents {
+          m.pool.invalidate(Some(&agent));
+        }
+      }));
       let me = mgr.me.clone();
       a.on_lock_change(Arc::new(move || {
         if let Some(m) = me.upgrade() {

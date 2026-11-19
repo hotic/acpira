@@ -70,6 +70,9 @@ impl Runtimes {
       }
     }
     let gone: Vec<String> = self.workers.read().keys().filter(|id| !wanted.iter().any(|w| &w.id == *id)).cloned().collect();
+    if let Some(accounts) = self.accounts.read().clone() {
+      accounts.retain_plugin_accounts(&|p| wanted.iter().any(|w| w.id == p));
+    }
     let dropped = {
       let mut live = self.live_providers.write();
       let before = live.len();

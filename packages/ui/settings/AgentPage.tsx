@@ -185,11 +185,12 @@ function AccountsTab({ agent, accounts, action, on }: { agent: AgentInfo; accoun
         {accounts.map(a => (
           <ItemRow
             key={a.id}
-            title={<AccountLabel label={a.label} detail={a.detail} />}
+            title={<AccountLabel label={a.label} detail={a.detail} badge={a.badge} source={a.plugin} />}
             extra={(a.quota || a.quotaIssue) && <SavedAccountQuota account={a} />}
             // The bars run to the card's content edge; the hover-only remove stands on the title line above them
             extraWide
-            trailing={
+            // An account its plugin keeps (`removable: false`) has no remove button
+            trailing={a.removable !== false &&
               <IconButton title={t('common.remove')} aria-label={t('common.removeNamed', { name: a.label })} onClick={() => on.removeAccount(a.id)} className="-mr-ctl-bleed text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
                 <X strokeWidth={1.5} />
               </IconButton>

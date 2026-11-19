@@ -128,6 +128,9 @@ mod tests {
       }),
       quota_issue: None,
       key_auth: None,
+      plugin: None,
+      badge: None,
+      removable: None,
     }
   }
 

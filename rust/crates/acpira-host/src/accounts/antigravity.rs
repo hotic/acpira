@@ -198,6 +198,16 @@ impl AccountProvider for AntigravityAccountProvider {
     Some(env)
   }
 
+  /// A gemini dir a plugin names (`STORE_ENV`) is shared like a saved account's, and `agy` reads its login from there
+  /// only inside an SSH session, so outside one it is told it runs in one
+  fn complete_plugin_env(&self, env: &mut StrMap) {
+    let Some(store) = env.get(STORE_ENV).filter(|d| !d.is_empty()).map(PathBuf::from) else { return };
+    link_store(&store, &default_home());
+    if !in_ssh() {
+      env.entry(SSH_ENV[0].to_owned()).or_insert_with(|| SSH_STAND_IN.to_owned());
+    }
+  }
+
   /// Every read starts `agy` for a few seconds
   fn quota_min_interval(&self) -> Duration {
     Duration::from_secs(60)

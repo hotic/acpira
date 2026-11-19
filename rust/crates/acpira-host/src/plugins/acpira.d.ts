@@ -25,6 +25,18 @@ declare module '@acpira/plugin' {
     list(prefix?: string): Promise<string[]>;
   }
 
+  // An account `accounts.set` lists: picked in the agent's account menu like the user's own, the agent then starts with
+  // `env` on top of its definition's (for Antigravity, ACPIRA_ANTIGRAVITY_GEMINI_DIR names the gemini dir holding the login).
+  // `id` is the plugin's own; `badge` is the tag beside the label; `quota` the bars, `remaining` a share from 0 to 1
+  export interface PluginAccount {
+    id: string;
+    agent: string;
+    label: string;
+    badge?: string;
+    env?: Record<string, string>;
+    quota?: { windows: { id: string; remaining: number; resetsAt?: string }[] };
+  }
+
   // Another plugin's methods: `client.rate({ from: 'EUR' })` calls its `rate` method
   export type Client = Record<string, <T = any>(params?: unknown) => Promise<T>>;
 
@@ -53,6 +65,8 @@ declare module '@acpira/plugin' {
     // answered `{ text, model, usage }`
     model: { generate(params: string | Record<string, unknown>): Promise<any> };
     providers: { set(providers: unknown[]): Promise<unknown> };
+    // Accounts this plugin lists beside the user's own, for agents Acpira keeps accounts for; each call replaces the last list
+    accounts: { set(accounts: PluginAccount[]): Promise<{ accounts: number }> };
     request<T = any>(method: string, params?: Record<string, unknown>): Promise<T>;
     plugins: {
       // A plugin of `optionalDependencies`: undefined when it is not in effect

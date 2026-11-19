@@ -25,7 +25,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Manifest
 
-- Fields: `plugins/manifest.rs`, with the parser and static check in `plugins/manifest/validate.rs`; `acpira-shared/src/plugins.rs`, `packages/shared/plugins.ts`. A `package.json` is read only for dependencies.
+- Fields: `plugins/manifest.rs` (parser and static check in `manifest/validate.rs`). A `package.json` is read only for dependencies.
 - `id` = folder name, at most 24 chars so `mcp__acpira__<id>_<tool>` fits providers' 64-char tool-name limit; no `_`, so `<id>_<name>` is unique.
 - An unknown `schema` skips the plugin; unknown keys elsewhere are reported and ignored.
 
@@ -47,7 +47,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - After the agent's own (the agent's wins a clash), expanded before the `prompt` hook.
 - `button` is a native composer chip (`plugins/CommandButtons.tsx`), working in every host unlike a frame. A button that takes no draft (`CommandDef::takes_draft`) sends `/name` alone and leaves the draft, so a fixed prompt never swallows half-typed text.
 - A `menu` button is a setting: picks live per session in the record (`PluginState::menus`), so the menu never waits on a process; hooks read them as `menus`, stored before the `menu` hook hears a pick.
-- `draft` + `menu` is a split chip (body runs, caret opens the menu). A draft button's `command` (with the draft's attachments) and a page's method call get `CLICK_TIMEOUT` (`runtime.rs`): the user waits on the button; a typed `/name` keeps the hook limit.
+- `draft` + `menu` is a split chip. A draft button's `command` (with the draft's attachments) and a page's method call get `CLICK_TIMEOUT` (`runtime.rs`): the user waits on the button; a typed `/name` keeps the hook limit.
 - A `draft` result is dropped if the draft changed meanwhile; if the composer went, it is parked as the session's draft. Steering a queued plugin `/name` falls back to send-now, since a steer would carry the raw text (`queue.rs`).
 
 ## Script tools
@@ -81,7 +81,6 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - Run inside an engine with runtimes enabled, never an OS scheduler.
 - `schedules.json` under its lock makes one run per occurrence across engines; a claim holds `running_until` and a token, so a dead engine's run is not retried early and outcomes are written only under the claim (`plugins/schedule.rs`).
 - A run cut short by its plugin stopping or changing version is no failure. A new schedule starts from now (enabling never replays the past); a missed occurrence catches up once.
-- Cron is local time: a skipped DST minute runs at the next existing one, a repeated one at the earlier.
 
 ## Events
 
@@ -92,6 +91,12 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - `plugins/host_api.rs`: a pending `ui/ask` holds no other request.
 - `session/act` uses the plugin's own viewer, never moving a window's selection. Permission answers, plugin / account / settings messages and full-access modes are refused: a plugin never approves. `answer` reaches any open question card; a settled one errors.
 - `ui/ask` cards are headed with the plugin's name and never seen by the agent.
+
+## Accounts
+
+- `accounts/set` (`accounts/plugin_accounts.rs`): memory only, replaced whole, gone with the plugin; agents with an account layer only. Ids `plugin:<plugin>:<id>` never meet saved uuids.
+- A session on one its plugin no longer lists fails in `authenticate_for` rather than run on the CLI's login: records keep the id and plugins list late.
+- Its `env` gets `AccountProvider::complete_plugin_env` (store links). A changed `env` reopens idle sessions on it (updated-adapter path) and drops warm processes. Removal goes to `account.remove`, else no remove button. The automatic switch never picks one.
 
 ## Hooks
 
@@ -113,7 +118,6 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - The host-message handler (`App.tsx`) ignores child frames, so a piece cannot forge `pluginUi` and borrow another plugin's methods. The bridge accepts only registered frames whose origin reads `null`; a frame calls only its own plugin's methods. The outline sent to frames carries counts, never text, paths or commands.
 - Page-held documents (backdrop, thumbnails) may be unconfirmed versions, so they neither call methods nor hear `ui/post`. Thumbnails run 2D: a page has few WebGL contexts.
 - The sandbox keeps page state and sessions out of a piece's reach, not the plugin out of anything.
-- A `message.actions` click opens a popover (`MessageActions.tsx`) a `{ note }` answer fills; any other answer closes it. Nothing is recorded: each opening calls again.
 - `composer.above` takes no clicks, never covering a control; its height joins the dock's clearance so reply actions stay clear. `BUTTON_SLOTS` are native buttons: a frame per message costs too much, and no frame sees the selection.
 - Theme `css` and `style` reach the page only through `STYLE_HOOKS`; `test/pluginStyleHooks.test.ts` fails when the page drops one. Renaming a hook or a `data-state` value breaks plugins.
 
@@ -123,7 +127,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - Confirmation happens only in the host's own UI (plugin page, or the card `plugin_activate` adds). `acpira plugin propose` only files a proposal: nothing on the command line enables a plugin, so a model with a shell cannot skip the card.
 - The card is `AgentTurn.pluginCards`, not a block kind: old engines and the iOS decoder ignore an unknown field, a new block kind breaks their records. Its state is read from the plugins view so every window agrees; undo restores only what applying replaced (`PluginHost::undo_card`).
 - Cards show after the reply once the turn has ended (`Turns.tsx`): the agent keeps working after offering one, so a card placed mid-turn read as a stop in the work. `PluginCard.after` names the offering row (`offering_call`).
-- Slotless contributions land (`plugins/landings.ts`) once the card reads applied. Flights take `--land-ink`: the skin's colour when its tokens set `--brand` (the engine adds `--skin-ink`), else the foreground.
+- Slotless contributions land (`plugins/landings.ts`) once the card reads applied.
 - The skin reveal runs only for a click on this page (`plugins/skin.ts`) and waits for the backdrop's first frame. On WebKitGTK only the backdrop layer is uncovered: View Transitions can crash its UI process.
 - `plugin_activate` returns as soon as its card is shown, like `show_image`: an agent's turn never waits on a click, and the click is the hand-off. The dynamic check runs plugin code, so it stays after the click and never moves before the card.
 - A failed check returns its output verbatim so a model can retry: the static one as the call's answer, the dynamic one as a queued message to the offering session with the runtime's stderr tail (a module that throws on load says why only there). A successful apply sends nothing.
@@ -138,8 +142,8 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 - `safeMode` in `state.json`: every engine unloads the user's plugins at once, surviving restarts. Built-in plugins are unaffected.
 - A stored switch, not a flag, so the persistent engine's socket does not depend on it and a shell reconnects to the engine it had. `--safe-mode` / `ACPIRA_SAFE_MODE=1` serve an engine whose plugin host cannot start.
-- Every way in sits outside the plugin page (a broken theme may cover it) and runs the shell's `acpira safe-mode`, so it works while the engine is stuck (`safeMode.ts`, `safe_mode.rs`, `SafeMode.kt`).
+- Every way in sits outside the plugin page (a broken theme may cover it) and runs the shell's `acpira safe-mode`, so it works while the engine is stuck.
 
 ## Telling the model
 
-- The MCP server instructions name the plugins folder from `HubOp::Features`. How to write a plugin reaches every agent only through them and `plugin_guide`. The built-in agent alone gets the engine's `skill-creator`, safe mode included: Codex and Claude Code ship their own, so other CLIs are never sent a second.
+- The MCP server instructions name the plugins folder from `HubOp::Features`. How to write a plugin reaches every agent only through them and `plugin_guide`. Only the built-in agent gets the engine's `skill-creator` (safe mode too): other CLIs ship their own.

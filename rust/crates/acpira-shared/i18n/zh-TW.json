@@ -836,6 +836,7 @@
   "host.keyRejected": "Key 遭到拒絕（HTTP {status}），請核對後重新貼上。",
   "host.keyCheckFailed": "無法驗證 Key：{error}",
   "host.credentialGone": "帳號 {label} 的憑據不在了，請重新登入",
+  "host.pluginAccountGone": "這個帳號來自外掛 {plugin}，外掛現在沒有提供它，請換一個帳號",
   "host.accountSwitched": "{from} 的額度已用完，已自動切換到 {to} 並繼續",
   "host.autoContinuePrompt": "上一輪因帳號額度用完被中斷，目前工作階段已切換到另一個帳號。請從中斷處繼續完成未完成的任務，不要重複已經完成的步驟。",
   "host.hooksInvalid": "工作區 hooks 未載入：{error}",
