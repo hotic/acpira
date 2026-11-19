@@ -12,6 +12,7 @@ import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible }
 import { Button, IconButton } from '../ui/Button';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota, SavedAccountQuota } from '../ui/LocalAccountQuota';
+import { KeyBox } from '../ui/KeyBox';
 import { Shimmer } from '../ui/Shimmer';
 import { StableText } from '../ui/StableText';
 import { cn } from '../ui/cn';
@@ -164,8 +165,8 @@ export function AgentSettings({ agent, accounts, install, inventory, controls, p
       <SshHostSection agent={agent} settings={settings} on={on} />
       <ConfigSection agent={agent} files={inventory?.config} env={env} on={on} />
     </>;
-    case 'models': return <ModelsSection agent={agent} controls={modelControlsOf(controls)} settings={settings} on={on} />;
-    case 'accounts': return <AccountsTab agent={agent} accounts={accounts} on={on} />;
+    case 'models': return <ModelsSection agent={agent} controls={modelControlsOf(controls)} probing={busy} settings={settings} on={on} />;
+    case 'accounts': return <AccountsTab agent={agent} accounts={accounts} action={accountAction} on={on} />;
     case 'prompts': return <PromptsTab {...sources} />;
     case 'skills': return <SkillsTab {...sources} />;
     case 'mcp': return <McpTab {...sources} />;
@@ -702,7 +703,8 @@ function ModelsSection({ agent, controls, probing, settings, on }: { agent: Agen
     const parts = [fusion, levels.length > 0 && `${t('settings.providers.model.thinking')} ${levels.join(' / ')}`, f.hasFast && 'Fast', f.hasLong && t('settings.providers.model.ctx', { n: '1M' })].filter(Boolean);
     return parts.join(sep);
   };
-  if (controls === undefined) return <Section desc={t('settings.models.desc')}><Note shimmer>{t('settings.loading')}</Note></Section>;
+  // An empty list under a probe in flight (the first one an unused agent gets on opening) loads rather than says none
+  if (controls === undefined || (probing && !controls.length)) return <Section desc={t('settings.models.desc')}><Note shimmer>{t('settings.loading')}</Note></Section>;
   if (!controls.length) return <Section desc={t('settings.models.desc')}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
   // One block per group
   const groups = visible.flatMap(({ control: c, all, families, found }) => {

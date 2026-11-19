@@ -169,6 +169,31 @@ async fn known_controls_come_from_the_agents_latest_session_even_after_the_proce
   m2.dispose().await;
 }
 
+// The built-in agent's model list follows its settings file on every read, never a list an older session or probe read,
+// and a settings save pushes the new list to the viewers (the persona page's model select)
+#[tokio::test(flavor = "multi_thread")]
+async fn the_builtin_agents_known_controls_follow_its_settings_and_a_save_pushes_them() {
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::with_agents(Value::Null, "fake"));
+  let home = dir.path().join("lease-home");
+  std::fs::create_dir_all(&home).unwrap();
+  let write = |models: &[&str]| {
+    let models: Vec<Value> = models.iter().map(|id| json!({ "id": id, "name": id })).collect();
+    let file = json!({ "version": 1, "providers": [{ "id": "p", "name": "P", "baseUrl": "http://127.0.0.1:9", "models": models }] });
+    std::fs::write(home.join("providers.json"), file.to_string()).unwrap();
+  };
+  write(&["a"]);
+  assert_eq!(model_ids(&m.m.known_controls("acpira").await), ["p/a"]);
+  write(&["a", "b"]);
+  assert_eq!(model_ids(&m.m.known_controls("acpira").await), ["p/a", "p/b"]);
+  m.m.builtin_settings_saved();
+  let pushed = |e: &Value| {
+    e["type"] == "controls" && e["agent"] == "acpira" && e["controls"].as_array().is_some_and(|cs| cs.iter().any(|c| c["id"] == "model" && c["options"].as_array().is_some_and(|o| o.len() == 2)))
+  };
+  until(|| m.events.lock().unwrap().iter().any(pushed), 5000).await;
+  m.dispose().await;
+}
+
 // The refresh button: a throwaway spawn runs initialize + session/new so a CLI config change (FAKE_MODELS here) shows up without a
 // real session; knownControls prefers the probed list until the next real session reads its own
 #[tokio::test(flavor = "multi_thread")]

@@ -15,7 +15,7 @@ use acpira_shared::turn_settings::capture_turn_settings;
 use super::{LOGIN_PATH_REFRESH, PROBE_INTERVAL, SessionManager};
 use crate::acp::agents::login_path;
 use crate::acp::agents::probe_controls::probe_agent_controls;
-use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::agents::registry::{AgentRegistry, SELF_AGENT_ID};
 use crate::acp::session::AcpSession;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::util::now_iso;
@@ -340,11 +340,11 @@ impl SessionManager {
     self.emit(HostMsg::Hidden { hidden: self.hidden() });
   }
 
-  /// The configOptions an agent offered most recently
   /// The built-in agent's settings were saved here: its processes push their sessions' changed controls at once
-  /// (`acpira_agent::acp::SETTINGS_CHANGED`), each process told once
+  /// (`acpira_agent::acp::SETTINGS_CHANGED`), each process told once, and every page holding its model list (the
+  /// persona page, the agent page, the summon menu) gets the new one
   pub fn builtin_settings_saved(&self) {
-    let live: Vec<_> = self.state.lock().live.values().filter(|s| s.agent == crate::acp::agents::registry::SELF_AGENT_ID).cloned().collect();
+    let live: Vec<_> = self.state.lock().live.values().filter(|s| s.agent == SELF_AGENT_ID).cloned().collect();
     let mut told: Vec<Arc<crate::acp::transport::process::AgentProcess>> = vec![];
     for s in live {
       let proc = s.core.lock().proc.clone();
@@ -353,9 +353,33 @@ impl SessionManager {
         told.push(p);
       }
     }
+    let Some(me) = self.me.upgrade() else { return };
+    tokio::spawn(async move {
+      let agent = SELF_AGENT_ID.to_owned();
+      let commands = me.known_commands(&agent).await;
+      me.emit(HostMsg::Controls { controls: me.builtin_controls(), shapes: me.model_shapes(&agent), commands, agent, cwd: None });
+    });
   }
 
+  /// The built-in agent's configOptions as a new session of it gets them. They follow from its settings
+  /// (`providers.json`), so they are worked out from the file rather than remembered from a session or probe that read
+  /// an older one: a model added or switched off shows everywhere at once
+  fn builtin_controls(&self) -> Vec<ConfigControl> {
+    use acpira_agent::acp::{Offers, SessionState, config_options};
+    let config = acpira_agent::config::ConfigCache::new(self.data_root()).get();
+    let st = SessionState { approval: config.approval(), ..Default::default() };
+    // The capabilities the engine's initialize declares (`transport/process.rs`), so the preview has the live shape
+    let options = config_options(&config, &crate::model_catalog::current(), &st, Offers { booleans: true, sidekick: true });
+    let mut controls = SessionControls::default();
+    crate::acp::transcript::normalize::apply_config_options(&mut controls, &options);
+    controls.options
+  }
+
+  /// The configOptions an agent offered most recently
   pub async fn known_controls(&self, agent: &str) -> Vec<ConfigControl> {
+    if agent == SELF_AGENT_ID {
+      return self.builtin_controls();
+    }
     if let Some(p) = self.state.lock().probed.get(agent).filter(|p| !p.options.is_empty()) {
       return p.options.clone();
     }
@@ -383,8 +407,14 @@ impl SessionManager {
       if a.disabled == Some(true) || a.available == Some(false) {
         continue;
       }
-      let mut options = self.state.lock().probed.get(&a.id).map(|p| p.options.clone()).unwrap_or_default();
-      for s in index.iter().filter(|s| s.agent == a.id).take(RECORDS) {
+      // The built-in agent's list comes from its settings, never from an older record
+      let builtin = a.id == SELF_AGENT_ID;
+      let mut options = if builtin {
+        self.builtin_controls()
+      } else {
+        self.state.lock().probed.get(&a.id).map(|p| p.options.clone()).unwrap_or_default()
+      };
+      for s in index.iter().filter(|s| s.agent == a.id && !builtin).take(RECORDS) {
         if options.iter().any(is_model_control) {
           break;
         }
@@ -424,10 +454,14 @@ impl SessionManager {
     self.state.lock().prefs.model_memory.get(agent).cloned()
   }
 
-  /// What a new session of this agent paints before session/new: the probe's or a stored session's options, and the modes
-  /// a stored session showed (protocol modes are never probed)
+  /// What a new session of this agent paints before session/new: the probe's or a stored session's options (the built-in
+  /// agent's from its settings), and the modes a stored session showed (protocol modes are never probed)
   pub(super) async fn known_start_controls(&self, agent: &str) -> SessionControls {
-    let probed = self.state.lock().probed.get(agent).filter(|p| !p.options.is_empty()).map(|p| p.options.clone());
+    let probed = if agent == SELF_AGENT_ID {
+      Some(self.builtin_controls())
+    } else {
+      self.state.lock().probed.get(agent).filter(|p| !p.options.is_empty()).map(|p| p.options.clone())
+    };
     let index = self.state.lock().index.clone();
     let mut out = SessionControls::default();
     for s in index.iter().filter(|s| s.agent == agent) {

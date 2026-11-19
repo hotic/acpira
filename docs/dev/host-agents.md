@@ -15,6 +15,7 @@ The engine side of agent CLIs: registry, launching, installs, cross-harness suba
 - Login PATH (`login_path.rs`) adds what the login shell sets, because IDE and VS Code Server environments miss rc-file directories (Remote-SSH, `~/.npm-global` set in `~/.bashrc`). `helloOk` does not wait for it; lookups do.
 - Availability is live: until the first probe `available` is unknown and pages treat it as available.
 - `probeControls`: model lists come only over ACP, so a hand-edited CLI config is invisible until a fresh `session/new`; the probe invalidates the warm slot so the next session never borrows a pre-change process.
+- The built-in agent is the exception: its configOptions follow from `providers.json`, so the engine works them out with the agent's own `config_options` (`builtin_controls` in `session_manager/agents.rs`) for the persona / agent pages, a new session's preview and sidekick candidates, and pushes them on every provider save. A remembered list is an older file's; its `Offers` must match what `transport/process.rs` declares.
 
 ## Installs
 
