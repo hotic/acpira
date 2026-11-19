@@ -43,6 +43,8 @@ const RETRY_MAX: Duration = Duration::from_secs(30);
 const LIST_VIEW: &str = "list";
 /// How long a new session in a host folder waits for the host's engine to be reached
 const NEW_WAIT: Duration = Duration::from_secs(60);
+/// How long a page opening a host session waits for the host's engine before it is told why no view comes
+const OPEN_WAIT: Duration = Duration::from_secs(30);
 /// What this engine serves for the host's engine (the requests its views cause come back here).
 /// Terminal commands run on the host through `ssh -t`; a fresh SSH login still has its own security session and
 /// cannot unlock a background engine's macOS keychain.

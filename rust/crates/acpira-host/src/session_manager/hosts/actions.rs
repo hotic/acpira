@@ -9,7 +9,7 @@ use acpira_shared::protocol::{EditTurnRequest, HostMsg, SessionHit, WebviewMsg};
 use acpira_shared::remote::parse_remote_folder;
 use acpira_shared::transcript::SessionSummary;
 
-use super::{HostControls, HostRun, LIST_VIEW, NEW_WAIT, SessionManager, Shown, local_folder};
+use super::{HostControls, HostRun, LIST_VIEW, NEW_WAIT, OPEN_WAIT, SessionManager, Shown, local_folder};
 use crate::session_manager::{Viewer, is_forwarded, session_id_of};
 use crate::store::record::SessionRecord;
 
@@ -265,7 +265,41 @@ impl SessionManager {
     self.set_active(v, Some(id.to_owned()));
     self.show_host_session(&run, id, v);
     self.emit_sessions();
+    if !*run.up.borrow() {
+      self.reach_for_view(run, id, v);
+    }
     true
+  }
+
+  /// A host that is not connected brings no view, and the page would wait for one forever. The host is reached now, as
+  /// opening a folder does (the background driver never retries a host the user disconnected, nor a failure only the
+  /// user can settle), and a page still waiting when that fails is told why; once connected, the driver reopens the view
+  fn reach_for_view(&self, run: Arc<HostRun>, id: &str, v: &Arc<Viewer>) {
+    let Some(connections) = self.deps.remote.clone() else { return };
+    let (id, viewer) = (id.to_owned(), Arc::downgrade(v));
+    tokio::spawn(async move {
+      let mut up = run.up.subscribe();
+      let reached = tokio::time::timeout(OPEN_WAIT, async {
+        connections.ensure(&run.alias, OPEN_WAIT).await?;
+        // The helper channel is up: the driver links to the host's engine next
+        let _ = up.wait_for(|u| *u).await;
+        anyhow::Ok(())
+      })
+      .await;
+      let detail = match reached {
+        Ok(Ok(())) => return,
+        Ok(Err(e)) => Some(format!("{e:#}")),
+        Err(_) => None,
+      };
+      let Some(v) = viewer.upgrade() else { return };
+      let waiting = v.active_id().as_deref() == Some(id.as_str()) && run.shown.lock().get(&id).is_some_and(|s| s.msg.is_none());
+      if !waiting || *run.up.borrow() {
+        return;
+      }
+      let unreachable = crate::i18n::tp("host.remoteUnreachable", &[("host", &run.alias)]);
+      let reason = detail.map_or_else(|| unreachable.clone(), |d| format!("{unreachable}\n{d}"));
+      v.emit(HostMsg::SessionUnavailable { id, reason });
+    });
   }
 
   /// A viewer lands on a host session: its view there is opened once, and a view already pushed goes out at once
