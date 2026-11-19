@@ -166,8 +166,8 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       requires: list(&["node"]),
       install: install(
-        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.1.1",
-        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.1.1",
+        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.7.0",
+        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.7.0",
         "https://github.com/agentclientprotocol/codex-acp",
       ),
       login: login("codex-acp", &["cli", "login"]),
@@ -186,8 +186,8 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       requires: list(&["node"]),
       login: login("claude-agent-acp", &["--cli", "auth", "login"]),
       install: install(
-        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
-        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
+        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.108.0",
+        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.108.0",
         "https://github.com/agentclientprotocol/claude-agent-acp",
       ),
       access: access(&[("ask", "default", false), ("auto-edit", "acceptEdits", false), ("auto", "auto", false), ("full", "bypassPermissions", false)]),
