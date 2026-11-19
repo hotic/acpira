@@ -430,11 +430,18 @@ impl AcpSession {
     let levels = self.access_levels().filter(|_| !access.offered.is_empty());
     let mut level_mode = None;
     if let Some(levels) = &levels {
-      if let Some(l) = settings.config.get(access::APPROVAL).filter(|l| access::offers(access, l)) {
+      let has_approval = if let Some(l) = settings.config.get(access::APPROVAL).filter(|l| access::offers(access, l)) {
         access.level = Some(l.clone());
-      }
+        true
+      } else {
+        false
+      };
       let asked = settings.mode_id.clone().or_else(|| controls.mode_id.clone()).unwrap_or_else(|| access::REST.to_owned());
-      level_mode = Some(access::shown_mode(levels, access, &asked));
+      level_mode = Some(if has_approval && access::is_level_mode(levels, &asked) {
+        access::REST.to_owned()
+      } else {
+        access::shown_mode(levels, access, &asked)
+      });
     }
     // A session without modes has none to restore; turns recorded while pi-acp's mirrored modes leaked still carry one
     let mode_id = settings.mode_id.clone().filter(|_| !controls.modes.is_empty() && levels.is_none());

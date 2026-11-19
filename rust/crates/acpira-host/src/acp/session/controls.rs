@@ -560,10 +560,16 @@ impl AcpSession {
     }
     self.core.lock().picks.adopting = adopting;
     if let Some(mode) = settings.mode_id.clone().filter(|m| !m.is_empty() && !skip(MODE_PICK)) {
+      // `skip` may lock `core` (`superseded`), so check it before locking
+      let has_approval = settings.config.get(crate::acp::session::access::APPROVAL).is_some_and(|v| !v.is_empty())
+        || skip(crate::acp::session::access::APPROVAL);
       let differs = {
         let c = self.core.lock();
-        // A split agent's level remembered as its mode before the split (`access.rs`) is a level pick
-        let level = !c.access.offered.is_empty() && self.access_levels().is_some_and(|l| crate::acp::session::access::is_level_mode(&l, &mode));
+        // A split agent's level remembered as its mode before the split (`access.rs`) is a level pick,
+        // unless the settings already name an approval level (the post-split pick wins over a stale modeId)
+        let level = !has_approval
+          && !c.access.offered.is_empty()
+          && self.access_levels().is_some_and(|l| crate::acp::session::access::is_level_mode(&l, &mode));
         level || (c.state.controls.mode_id.as_ref() != Some(&mode) && c.state.controls.modes.iter().any(|m| m.id == mode))
       };
       if differs && let Err(e) = self.set_mode(mode.clone()).await {
