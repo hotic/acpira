@@ -32,6 +32,8 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
   const copyState = useCopied(reply);
   const [statsOpen, setStatsOpen] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
+  // A plugin button's popover (plugins/MessageActions.tsx) keeps the row shown like the stats card does
+  const [pluginOpen, setPluginOpen] = useState(false);
   // A failed reply with nothing in it offers the fork alone: there is nothing to copy or measure. A stopped one keeps
   // its stats even when nothing streamed (`hasTurnStats`)
   const stats = hasTurnStats(turn);
@@ -40,11 +42,11 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
   if (!stats && !ctx?.fork && !canShare) return null;
   return (
     <div
-      data-open={statsOpen || forkOpen || undefined}
+      data-open={statsOpen || forkOpen || pluginOpen || undefined}
       data-turn-actions
       className="-mt-gap box-content flex h-ctl-sm items-center justify-end gap-0.5 py-1 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/turn:opacity-100 group-focus-within/turn:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none data-[open]:opacity-100 data-[landing]:opacity-100"
     >
-      {ctx && reply && <PluginActions session={ctx.sessionId} turn={turnIndex} text={reply} />}
+      {ctx && reply && <PluginActions session={ctx.sessionId} turn={turnIndex} text={reply} onOpenChange={setPluginOpen} />}
       {reply && (
         <>
           <IconButton size="sm" data-part="turn-copy" title={copyLabel} aria-label={copyLabel} onClick={copyState.copy}>
