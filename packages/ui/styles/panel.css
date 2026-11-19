@@ -167,10 +167,11 @@
   [data-viewer] .code-block { content-visibility: auto; contain-intrinsic-size: auto calc(var(--code-block-lines) * var(--code-output-line-height)); }
   /* A block whose rows are not rendered yet (panel/nearBlocks.ts) holds the same estimate in sight */
   [data-viewer] .code-block[data-pending] { height: calc(var(--code-block-lines) * var(--code-output-line-height)); }
-  /* A long Markdown preview's parts (FileViewer's PreviewPart): laid out once, one out of sight skips style, layout and
-     paint at its last size. Without it every relayout of the panel in WebView2 went through the whole document */
-  [data-markdown-preview] [data-preview-part] { contain-intrinsic-block-size: auto var(--row); }
-  [data-markdown-preview] [data-preview-part][data-seen] { content-visibility: auto; }
+  /* A long document's parts (FileViewer's StagedParts: the Markdown preview, TextPeek): laid out once, one out of sight
+     skips style, layout and paint at its last size. Without it every relayout of the panel in WebView2 went through the
+     whole document */
+  [data-preview-part] { contain-intrinsic-block-size: auto var(--row); }
+  [data-preview-part][data-seen] { content-visibility: auto; }
   /* The review's diffs show whole (DiffBlock `whole`), the panel scrolls them. A card not yet near the visible part holds
      about the height its diff will take (diff-scroll's padding included); out of sight a card skips layout and paint,
      keeping its last laid-out size (`auto`), else that estimate plus its header */
