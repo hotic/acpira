@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import type { DiffLine } from '@acpira/shared/transcript';
 import type { ProjectBase, ProjectChange, ProjectHunk } from '@acpira/shared/protocol';
@@ -205,8 +205,10 @@ function previewText(text: string): string {
   return front ? `\`\`\`yaml\n${front[1]}\n\`\`\`\n\n${text.slice(front[0].length)}` : text;
 }
 
-const PreviewPart = memo(function PreviewPart({ markdown, part }: { markdown: string; part?: boolean }) {
-  const block = useMemo<TextBlock>(() => ({ type: 'text', markdown }), [markdown]);
+// `render` must be a stable function (module level): a part renders again only when its text changes
+const StagedPart = memo(function StagedPart({ text, render, part }: { text: string; render: (text: string) => ReactNode; part?: boolean }) {
+  // Memoized so the `seen` flip below does not render (and parse) the content again
+  const content = useMemo(() => render(text), [render, text]);
   const ref = useRef<HTMLDivElement>(null);
   // Once laid out at its real height, a part out of sight skips style, layout and paint (panel.css) and keeps that
   // height, so the document's stays exact. Skipped from the start, it would stand at an estimate until scrolled to
@@ -220,28 +222,38 @@ const PreviewPart = memo(function PreviewPart({ markdown, part }: { markdown: st
     return () => observer.disconnect();
   }, [part, seen]);
   // prose.css gives a heading that opens a later part the gap it has in the whole
-  return part ? <div ref={ref} data-preview-part data-seen={seen || undefined}><Prose block={block} /></div> : <Prose block={block} />;
+  return part ? <div ref={ref} data-preview-part data-seen={seen || undefined}>{content}</div> : content;
 });
 
-// The file rendered the way a reply is; links go through `onOpenLink`, relative ones from the file's folder
-function MarkdownPreview({ text, onOpenLink }: { text: string; onOpenLink?: (path: string, line?: number) => void }) {
-  const parts = useMemo(() => previewParts(previewText(text)), [text]);
-  // A new text of the same file keeps the parts already shown, so a live edit neither shrinks the preview under its
-  // scroll nor renders it all in one frame; an unchanged part does not render again
+// A long document shown in parts mounted a frame apart from the top (the Markdown preview here, TextPeek's raw and
+// rendered text), so the first screen shows at once and no frame lays out the whole. A new text keeps the parts already
+// shown, so a live edit neither shrinks the document under its scroll nor renders it all in one frame; an unchanged
+// part does not render again. `className` is the multi-part column's
+export function StagedParts({ parts, render, className }: { parts: string[]; render: (text: string) => ReactNode; className?: string }) {
   const [shown, setShown] = useState(1);
   useEffect(() => {
     if (shown >= parts.length) return;
     const frame = requestAnimationFrame(() => setShown(shown + 1));
     return () => cancelAnimationFrame(frame);
   }, [shown, parts.length]);
+  if (parts.length === 1) return <StagedPart text={parts[0]!} render={render} />;
+  return <div className={className}>{parts.slice(0, shown).map((text, i) => <StagedPart key={i} text={text} render={render} part />)}</div>;
+}
+
+const proseOf = (markdown: string) => <Prose block={{ type: 'text', markdown } satisfies TextBlock} />;
+
+// Markdown rendered the way a reply is, in parts (previewParts.ts) for a long document
+export function MarkdownParts({ text }: { text: string }) {
+  const parts = useMemo(() => previewParts(previewText(text)), [text]);
+  return <StagedParts parts={parts} render={proseOf} className="flex min-w-0 flex-col gap-gap" />;
+}
+
+// The file rendered the way a reply is; links go through `onOpenLink`, relative ones from the file's folder
+function MarkdownPreview({ text, onOpenLink }: { text: string; onOpenLink?: (path: string, line?: number) => void }) {
   return (
     <OpenToolFileContext.Provider value={onOpenLink}>
       <div className="scroll-thin absolute inset-0 overflow-auto px-pad py-pad" data-markdown-preview>
-        {parts.length === 1 ? <PreviewPart markdown={parts[0]!} /> : (
-          <div className="flex min-w-0 flex-col gap-gap">
-            {parts.slice(0, shown).map((markdown, i) => <PreviewPart key={i} markdown={markdown} part />)}
-          </div>
-        )}
+        <MarkdownParts text={text} />
       </div>
     </OpenToolFileContext.Provider>
   );
