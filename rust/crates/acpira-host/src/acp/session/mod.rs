@@ -733,9 +733,10 @@ impl AcpSession {
     c.state.commands.iter().any(|x| x.name == "compact")
   }
 
-  /// A queued prompt can join the running turn over `_session/steering` (see `vendors::steering::supported`)
+  /// A queued prompt can join the running turn: over `_session/steering` (`vendors::steering::supported`), or as a
+  /// `session/prompt` of its own on an agent that takes one as a steer (`Vendor::steers_by_prompt`)
   pub(crate) fn can_steer_of(&self, c: &Core) -> bool {
-    c.proc.as_ref().is_some_and(|p| crate::acp::vendors::steering::supported(&p.init))
+    c.proc.as_ref().is_some_and(|p| crate::acp::vendors::steering::supported(&p.init) || self.vendor.steers_by_prompt(&p.init))
   }
 
   /// A running command row can be stopped on its own (`stop_command`): stand-in sessions' project tools on an SSH host

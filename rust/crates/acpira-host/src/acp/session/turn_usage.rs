@@ -93,3 +93,22 @@ pub fn turn_usage_of(r: &Value) -> Option<TurnUsage> {
   out.fold_cache_into_input();
   (out != TurnUsage::default()).then_some(out)
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  #[test]
+  fn usage_of_every_part_of_a_steered_turn_adds_up() {
+    let mut earlier = Value::Null;
+    add_wire_usage(&mut earlier, &json!({ "stopReason": "end_turn", "usage": { "inputTokens": 100, "outputTokens": 10 } }));
+    let mut last = json!({ "stopReason": "end_turn", "usage": { "inputTokens": 50, "outputTokens": 5, "cachedReadTokens": 7 } });
+    add_wire_usage(&mut last, &earlier);
+    assert_eq!(last["usage"], json!({ "inputTokens": 150, "outputTokens": 15, "cachedReadTokens": 7 }));
+    // A cancelled steer answers without usage: the earlier parts still count
+    let mut cancelled = json!({ "stopReason": "cancelled" });
+    add_wire_usage(&mut cancelled, &earlier);
+    assert_eq!(cancelled["usage"], json!({ "inputTokens": 100, "outputTokens": 10 }));
+  }
+}

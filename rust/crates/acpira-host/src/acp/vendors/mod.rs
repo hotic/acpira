@@ -169,6 +169,12 @@ impl Vendor {
     self == Vendor::Antigravity
   }
 
+  /// A steer is a `session/prompt` of its own sent while the turn runs, which takes the turn over from the running one
+  /// (`antigravity::steers_by_prompt`); the session follows the turn through every such prompt (`send_prompt`)
+  pub fn steers_by_prompt(self, init: &serde_json::Value) -> bool {
+    self == Vendor::Antigravity && antigravity::steers_by_prompt(init)
+  }
+
   /// A failed turn arrives as the reply's last text with `end_turn` (`antigravity::reply_error`)
   pub fn reply_error(self, text: &str) -> Option<(usize, antigravity::ReplyError)> {
     if self == Vendor::Antigravity { antigravity::reply_error(text) } else { None }

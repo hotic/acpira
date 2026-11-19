@@ -374,3 +374,115 @@ async fn a_stop_leaves_an_answered_steer_in_the_turn() {
   assert!(vw["queued"].is_null());
   assert_eq!(user_texts(&vw), [json!("slow")]);
 }
+
+/// agy acp 1.5.x: no `_session/steering`, a prompt sent mid-turn is the steer (`FAKE_STEERING=agy`)
+fn agy(fake: &FakeAgent) -> Harness {
+  Harness::for_agent(fake, "antigravity", json!({ "env": { "FAKE_STEERING": "agy", "FAKE_AGENT_VERSION": "1.5.12" } }))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agy_steer_goes_out_as_a_prompt_and_the_turn_follows_it_to_its_answer() {
+  let fake = fake_or_skip!();
+  let h = agy(&fake);
+  let s = started(&h, "/tmp").await;
+  assert_eq!(view(&s)["canSteer"], true);
+  let running = spawn_prompt(&s, "slow");
+  until(|| agent_text(&view(&s)["turns"][1]).contains("2 "), 5000).await;
+  prompt(&s, "first").await;
+  prompt(&s, "steer me").await;
+  let id = view(&s)["queued"][1]["id"].as_str().unwrap().to_owned();
+  s.steer_queued(&id).await.unwrap();
+  // Landed once the running prompt answered: out of the queue, a steer block on the running turn
+  let vw = view(&s);
+  assert_eq!(vw["running"], true);
+  expect_match(&vw["queued"], json!([{ "text": "first" }]));
+  assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().any(|b| b["type"] == "steer" && b["text"] == "steer me"));
+  // That answer did not end the turn: the steer's prompt carries it on and the queue waits for its answer
+  until(|| agent_text(&view(&s)["turns"][1]).contains("steered:steer me"), 5000).await;
+  running.await.unwrap();
+  assert!(s.is_running());
+  until(|| !s.is_running() && view(&s)["queued"].is_null(), 8000).await;
+  let vw = view(&s);
+  assert_eq!(user_prompts(&vw), [json!("slow"), json!("first")]);
+  let turn = &vw["turns"][1];
+  expect_match(turn, json!({ "stop": "end_turn" }));
+  expect_absent(turn, "error");
+  let blocks = turn["blocks"].as_array().unwrap();
+  let at = blocks.iter().position(|b| b["type"] == "steer").unwrap();
+  assert!(blocks[at + 1..].iter().any(|b| b["markdown"].as_str().is_some_and(|m| m.starts_with("steered:steer me") && m.contains("49 "))));
+  // Both parts' usage counts toward the turn
+  expect_match(&turn["usage"], json!({ "input": 150, "output": 15 }));
+  expect_match(&vw["turns"][3], json!({ "role": "agent", "stop": "end_turn" }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_after_an_agy_steer_ends_the_turn_and_keeps_the_steer() {
+  let fake = fake_or_skip!();
+  let h = agy(&fake);
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow");
+  until(|| agent_text(&view(&s)["turns"][1]).contains("2 "), 5000).await;
+  // A composer steer: decided before it returns, so it never shows as a queued row
+  s.steer_prompt("steer me".into(), vec![]).await.unwrap();
+  let vw = view(&s);
+  assert!(vw["queued"].is_null());
+  assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().any(|b| b["type"] == "steer"));
+  until(|| agent_text(&view(&s)["turns"][1]).contains("steered:steer me"), 5000).await;
+  s.cancel().await;
+  running.await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  // The agent keeps a stopped steer in its conversation, so it stays where the transcript has it, never queued again
+  let vw = view(&s);
+  expect_match(&vw["turns"][1], json!({ "stop": "cancelled" }));
+  assert!(vw["queued"].is_null());
+  assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().any(|b| b["type"] == "steer"));
+  prompt(&s, "after").await;
+  until(|| !s.is_running(), 5000).await;
+  expect_match(&view(&s)["turns"][3], json!({ "role": "agent", "stop": "end_turn" }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agy_steer_waits_for_an_open_card_and_goes_in_once_it_is_answered() {
+  let fake = fake_or_skip!();
+  let h = agy(&fake);
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow perm");
+  let perm = wait_block(&s, "permission").await;
+  // agy would refuse the prompt while the card waits: the steer is held as a queued entry
+  s.steer_prompt("steer me".into(), vec![]).await.unwrap();
+  let vw = view(&s);
+  expect_match(&vw["queued"], json!([{ "text": "steer me" }]));
+  assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().all(|b| b["type"] != "steer"));
+  s.resolve_permission(perm["id"].as_str().unwrap(), "allow");
+  until(|| agent_text(&view(&s)["turns"][1]).contains("steered:steer me"), 5000).await;
+  running.await.unwrap();
+  until(|| !s.is_running(), 8000).await;
+  let vw = view(&s);
+  assert!(vw["queued"].is_null());
+  assert_eq!(user_prompts(&vw), [json!("slow perm")]);
+  expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
+  assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().any(|b| b["type"] == "steer"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agy_steer_that_crosses_a_card_on_the_wire_is_held_not_failed() {
+  let fake = fake_or_skip!();
+  let h = agy(&fake);
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow perm bounce");
+  until(|| view(&s)["turns"][1]["blocks"].as_array().is_some_and(|b| b.iter().any(|b| b["id"] == "agy-perm")), 5000).await;
+  // The card has not reached the engine yet: the steer goes out and bounces, and waits in the queue
+  s.steer_prompt("steer me".into(), vec![]).await.unwrap();
+  let vw = view(&s);
+  expect_match(&vw["queued"], json!([{ "text": "steer me" }]));
+  expect_absent(&vw["queued"][0], "sending");
+  let perm = wait_block(&s, "permission").await;
+  s.resolve_permission(perm["id"].as_str().unwrap(), "allow");
+  until(|| agent_text(&view(&s)["turns"][1]).contains("steered:steer me"), 5000).await;
+  running.await.unwrap();
+  until(|| !s.is_running(), 8000).await;
+  let vw = view(&s);
+  assert!(vw["queued"].is_null());
+  assert_eq!(user_prompts(&vw), [json!("slow perm bounce")]);
+  expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
+}

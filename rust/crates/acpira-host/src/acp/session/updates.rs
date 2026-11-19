@@ -8,6 +8,7 @@ use serde_json::Value;
 use acpira_shared::models::fusion_sidekick;
 use acpira_shared::transcript::*;
 
+use crate::acp::session::compaction::CompactionCompletion;
 use crate::acp::session::failure::failure_of;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_task, apply_goal, apply_update, find_tool, mark_responded};
@@ -153,18 +154,20 @@ impl AcpSession {
     {
       c.turn_failure = Some(f);
     }
-    let mut compaction_over = false;
     if !c.replaying
       && let Some(comp) = c.compaction.completion.as_mut()
     {
-      let was = comp.running();
       comp.update(&u);
-      compaction_over = was && !comp.running();
     }
-    // The agent's own mid-turn compaction ended: the steers it held back go in now
-    if compaction_over && c.phase.running && !c.queue.steer_after_compaction.is_empty() {
+    // Nothing holds steers back any more (the agent's own mid-turn compaction ended, the card agy waited on was answered,
+    // which its next update follows): the held ones go in now
+    if c.phase.running
+      && !c.queue.held_steers.is_empty()
+      && !c.compaction.completion.as_ref().is_some_and(CompactionCompletion::running)
+      && !self.card_holds_steer(&c)
+    {
       let me = self.clone();
-      tokio::spawn(async move { me.steer_after_compaction().await });
+      tokio::spawn(async move { me.steer_held().await });
     }
     // A user_message_chunk echoed mid-turn is the one just sent
     if c.phase.running && kind == "user_message_chunk" {

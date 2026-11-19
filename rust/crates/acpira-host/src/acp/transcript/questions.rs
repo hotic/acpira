@@ -111,11 +111,35 @@ fn titled(entries: &[Value], rq: Option<&RawQuestion>) -> Vec<QuestionOption> {
 const CODEX_OTHER_OPTION: &str = "None of the above";
 
 /// Adapter boilerplate in `message` that only says "a form follows": claude-agent-acp 0.81.0 for
-/// several questions, codex-acp 1.13.0 for every request
-const GENERIC_MESSAGES: [&str; 2] = ["Please answer the following questions.", "Codex needs your input to continue."];
+/// several questions, codex-acp 1.13.0 for every request, agy acp 1.5.12 ("The agent has a question."
+/// / "The agent has N questions.")
+const GENERIC_MESSAGES: [&str; 3] = [
+  "Please answer the following questions.",
+  "Codex needs your input to continue.",
+  "The agent has a question.",
+];
+
+/// Prefix `agy acp` 1.5.12 puts on the free-text companion (`q<n>_other`) beside each choice question
+const AGY_OTHER_DESC_PREFIX: &str = "Optional free-form answer to: ";
+
+fn is_generic_message(m: &str) -> bool {
+  if GENERIC_MESSAGES.contains(&m) {
+    return true;
+  }
+  m.strip_prefix("The agent has ")
+    .and_then(|s| s.strip_suffix(" questions."))
+    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn is_choice_prop(prop: &Value) -> bool {
+  prop.get("oneOf").is_some_and(Value::is_array)
+    || prop.get("enum").is_some_and(Value::is_array)
+    || prop.get("type").and_then(Value::as_str) == Some("array")
+}
 
 /// A free-text property an adapter puts beside a choice question: Claude's per-question "Other" box
-/// (`_meta._askUserQuestionCustomAnswer`, or `_meta.jetbrains.air.customAnswer`), Codex's note field (`_meta.codex.role = user_note`)
+/// (`_meta._askUserQuestionCustomAnswer`, or `_meta.jetbrains.air.customAnswer`), Codex's note field
+/// (`_meta.codex.role = user_note`), or Antigravity's `q<n>_other` (`agy acp` 1.5.12, no `_meta`)
 struct Companion {
   key: String,
   /// The choice the parent must carry when the typed text is the answer
@@ -126,20 +150,33 @@ struct Companion {
 fn companions(props: &Map<String, Value>) -> HashMap<String, Companion> {
   let mut out = HashMap::new();
   for (key, prop) in props {
-    let Some(meta) = prop.get("_meta") else { continue };
-    // claude-agent-acp 0.81.0 marks it at the top of `_meta`; 0.83.0 marks it only for AIR clients
-    // (which Acpira advertises), under `_meta.jetbrains.air.customAnswer`
-    let air = meta.get("jetbrains").and_then(|j| j.get("air")).and_then(|a| a.get("customAnswer"));
-    let claude =
-      meta.get("_askUserQuestionCustomAnswer").or(air).filter(|m| m.get("isCustomAnswer") == Some(&Value::Bool(true)));
-    let codex = meta.get("codex").filter(|m| m.get("role").and_then(Value::as_str) == Some("user_note"));
-    let (parent, sentinel) = match (claude, codex) {
-      (Some(m), _) => (m.get("questionId"), None),
-      (None, Some(m)) => (m.get("questionId"), Some(CODEX_OTHER_OPTION)),
-      _ => continue,
-    };
-    let Some(parent) = parent.and_then(Value::as_str).filter(|p| *p != key && props.contains_key(*p)) else { continue };
-    out.insert(parent.to_owned(), Companion { key: key.clone(), sentinel });
+    if let Some(meta) = prop.get("_meta") {
+      // claude-agent-acp 0.81.0 marks it at the top of `_meta`; 0.83.0 marks it only for AIR clients
+      // (which Acpira advertises), under `_meta.jetbrains.air.customAnswer`
+      let air = meta.get("jetbrains").and_then(|j| j.get("air")).and_then(|a| a.get("customAnswer"));
+      let claude =
+        meta.get("_askUserQuestionCustomAnswer").or(air).filter(|m| m.get("isCustomAnswer") == Some(&Value::Bool(true)));
+      let codex = meta.get("codex").filter(|m| m.get("role").and_then(Value::as_str) == Some("user_note"));
+      let (parent, sentinel) = match (claude, codex) {
+        (Some(m), _) => (m.get("questionId"), None),
+        (None, Some(m)) => (m.get("questionId"), Some(CODEX_OTHER_OPTION)),
+        _ => (None, None),
+      };
+      if let Some(parent) = parent.and_then(Value::as_str).filter(|p| *p != key && props.contains_key(*p)) {
+        out.insert(parent.to_owned(), Companion { key: key.clone(), sentinel });
+        continue;
+      }
+    }
+    // agy acp 1.5.12 emits `q<n>_other` with no `_meta` beside each choice `q<n>`; option-less
+    // questions emit only `q<n>_other` (no parent key), so they stay standalone text questions
+    if let Some(parent) = key.strip_suffix("_other").filter(|p| !p.is_empty())
+      && props.get(parent).is_some_and(is_choice_prop)
+      && prop.get("type").and_then(Value::as_str) == Some("string")
+      && !is_choice_prop(prop)
+      && prop.get("description").and_then(Value::as_str).is_some_and(|d| d.starts_with(AGY_OTHER_DESC_PREFIX))
+    {
+      out.insert(parent.to_owned(), Companion { key: key.clone(), sentinel: None });
+    }
   }
   // A companion never has a companion of its own
   let keys: Vec<String> = out.values().map(|c| c.key.clone()).collect();
@@ -274,7 +311,7 @@ pub fn grok_questions(req: &Value) -> Vec<Question> {
 /// The form's message earns a line of its own only when it says something the questions don't
 pub fn spare_message(message: &str, questions: &[Question]) -> Option<String> {
   let m = message.trim();
-  if m.is_empty() || GENERIC_MESSAGES.contains(&m) {
+  if m.is_empty() || is_generic_message(m) {
     return None;
   }
   let texts: Vec<&str> = questions.iter().map(|q| q.text.trim()).collect();

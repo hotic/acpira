@@ -66,9 +66,10 @@ fn fusion_pair(options: &[ConfigControl], held: impl Fn(&str) -> Option<String>)
   model.options.iter().find(|o| o.id == value).is_some_and(|o| parse_fusion_name(&o.name).is_some())
 }
 
-/// A model a sidekick can run on: not a Devin Fusion pair, which is a lead and a sidekick of its own
-fn candidate(o: &SessionOption) -> bool {
-  parse_fusion_name(&o.name).is_none()
+/// A model a sidekick can run on: not one that runs helpers of its own, a Devin Fusion pair (a lead and a sidekick) or
+/// one of Antigravity's orchestrators (a planner over its own workers)
+fn candidate(agent: &str, o: &SessionOption) -> bool {
+  parse_fusion_name(&o.name).is_none() && !(agent == "antigravity" && o.id.contains("orchestrator"))
 }
 
 /// The CLI and the model id of a pick
@@ -103,7 +104,7 @@ pub(crate) fn build(own: &str, sources: &[SidekickSource], pick: Option<&str>, e
   let mut options = vec![SessionOption { id: NO_SIDEKICK.into(), name: "None".into(), ..Default::default() }];
   let ordered = sources.iter().filter(|s| s.agent == own).chain(sources.iter().filter(|s| s.agent != own));
   for s in ordered {
-    options.extend(s.model.options.iter().filter(|o| candidate(o)).map(|o| SessionOption {
+    options.extend(s.model.options.iter().filter(|o| candidate(&s.agent, o)).map(|o| SessionOption {
       id: format!("{}/{}", s.agent, o.id),
       name: o.name.clone(),
       description: Some(s.name.clone()),
@@ -163,7 +164,7 @@ fn levels_in(shape: &[ConfigControl]) -> Option<&ConfigControl> {
 pub(crate) fn option_shapes(sources: &[SidekickSource], effort: Option<&str>) -> ModelShapes {
   let mut out = ModelShapes::new();
   for s in sources {
-    for o in s.model.options.iter().filter(|o| candidate(o)) {
+    for o in s.model.options.iter().filter(|o| candidate(&s.agent, o)) {
       if let Some(levels) = shape_for(s.shapes.as_ref(), &s.model, &o.id).and_then(|shape| levels_in(shape)) {
         out.insert(format!("{}/{}", s.agent, o.id), vec![effort_select(SIDEKICK_EFFORT_CONFIG, levels, effort)]);
       }
@@ -411,6 +412,13 @@ mod tests {
     let sources = [source("devin", "Devin", &[("swe-2-high", "SWE-2 High"), ("fusion-x", "Fusion (Claude Fable 5.2 Medium + SWE-2 Medium)")], None)];
     let ids: Vec<String> = build("claude", &sources, None, None)[0].options.iter().map(|o| o.id.clone()).collect();
     assert_eq!(ids, ["none", "devin/swe-2-high"]);
+  }
+
+  #[test]
+  fn antigravity_orchestrators_are_no_sidekick() {
+    let sources = [source("antigravity", "Antigravity", &[("gemini-4-carbon", "Gemini 4 Carbon"), ("gemini-pro-orchestrator", "Orchestrator (Carbon)"), ("gemini-pro-orchestrator-argon", "Orchestrator (Argon)")], None)];
+    let ids: Vec<String> = build("claude", &sources, None, None)[0].options.iter().map(|o| o.id.clone()).collect();
+    assert_eq!(ids, ["none", "antigravity/gemini-4-carbon"]);
   }
 
   #[test]
