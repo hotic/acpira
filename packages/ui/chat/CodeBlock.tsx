@@ -216,6 +216,8 @@ function ensureScrollTracker() {
   window.addEventListener('scroll', () => { lastScrollTime = performance.now(); }, { capture: true, passive: true });
 }
 
+// A slow or failed worker must not keep a review unreadable. Normally the first rows arrive already coloured.
+const REVIEW_PLAIN_AFTER_MS = 400;
 const DIFF_BLOCK = 40;
 function chunkDiffRows(rows: CodeDiffRow[]): CodeDiffRow[][] {
   const out: CodeDiffRow[][] = [];
@@ -238,6 +240,7 @@ export const DiffBlock = memo(function DiffBlock({ lines, source, path = '', loc
   const plain = useMemo(() => plainDiffRows(lines), [lines]);
   const [colored, setColored] = useState<{ lines: DiffLine[]; source?: DiffSource; path: string; theme: Theme; rows: CodeDiffRow[] }>();
   const isColored = colored?.lines === lines && colored.source === source && colored.path === path && colored.theme === theme;
+  const [fallback, setFallback] = useState<DiffLine[]>();
   const rows = isColored ? colored.rows : plain;
   const blocks = useMemo(() => (whole ? chunkDiffRows(rows) : undefined), [whole, rows]);
   const copyText = useMemo(() => diffCopyText(lines, source), [lines, source]);
@@ -251,6 +254,17 @@ export const DiffBlock = memo(function DiffBlock({ lines, source, path = '', loc
   useEffect(() => {
     const element = root.current;
     if (!element || !language || isColored) return;
+    // ReviewFile already gates each read by proximity. Start as soon as its lines arrive: the chat scrolling
+    // beside the opening panel has no bearing on them. Keep the card's reserved height until the worker answers.
+    if (whole) {
+      const ctrl = new AbortController();
+      const showPlain = () => { if (!ctrl.signal.aborted) setFallback(lines); };
+      const timer = setTimeout(showPlain, REVIEW_PLAIN_AFTER_MS);
+      void requestDiffHighlight(lines, source, path, theme, ctrl.signal).then(rows => {
+        if (!ctrl.signal.aborted) setColored({ lines, source, path, theme, rows });
+      }, showPlain).finally(() => clearTimeout(timer));
+      return () => { ctrl.abort(); clearTimeout(timer); };
+    }
     ensureScrollTracker();
     let current = true;
     let visible = false;
@@ -294,7 +308,9 @@ export const DiffBlock = memo(function DiffBlock({ lines, source, path = '', loc
       stop();
       observer.disconnect();
     };
-  }, [lines, source, path, language, isColored, theme]);
+  }, [lines, source, path, language, isColored, theme, whole]);
+
+  if (whole && language && !isColored && fallback !== lines) return <div ref={root} className="review-pending" aria-busy="true" />;
 
   const renderRow = (row: CodeDiffRow, index: number) => row.kind === 'hunk' && (index === 0 || index === rows.length - 1) ? null : row.kind === 'hunk'
     ? <div className="diff-hunk relative h-diff-hunk border-y border-line my-gap-half text-fg-3 select-none" key={index} title={row.text} aria-label={row.text}>

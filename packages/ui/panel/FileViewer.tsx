@@ -806,7 +806,7 @@ export function ReviewView({ sessionId, changes, refresh, onOpen, treeOpen, onTo
         {onClose && <CloseView onClose={onClose} />}
       </div>
       <div ref={scroller} className="scroll-thin flex min-h-0 flex-1 flex-col gap-pad overflow-auto p-pad">
-        {changes.map(c => <ReviewFile key={c.path} sessionId={sessionId} change={c} refresh={refresh} onOpen={onOpen} scroller={scroller} />)}
+        {changes.map(c => <ReviewFile key={`${sessionId}\n${c.path}`} sessionId={sessionId} change={c} refresh={refresh} onOpen={onOpen} scroller={scroller} />)}
       </div>
     </div>
   );
@@ -824,7 +824,6 @@ const REVIEW_AHEAD = '600px 0px';
 // them to their headers
 function ReviewFile({ sessionId, change, refresh, onOpen, scroller }: { sessionId: string; change: ProjectChange; refresh: number; onOpen: (path: string) => void; scroller: RefObject<HTMLDivElement | null> }) {
   const [read, setRead] = useState<FileRead>();
-  const near = useRef(false);
   const card = useRef<HTMLElement>(null);
   // A file that is gone has nothing to read; its card names it only
   const readable = !change.gone;
@@ -832,17 +831,15 @@ function ReviewFile({ sessionId, change, refresh, onOpen, scroller }: { sessionI
     if (!readable) return;
     let live = true;
     const fetchFile = () => {
-      void project.file(sessionId, change.path, 'session').then(r => { if (live) setRead(r); });
+      void project.file(sessionId, change.path, 'session').then(r => {
+        // Reopening refreshes from disk. An unchanged answer must not discard the highlighted rows.
+        if (live) setRead(prev => prev && prev.text === r.text && prev.error === r.error && sameRead(prev.hunks, r.hunks) ? prev : r);
+      });
     };
-    if (near.current) {
-      fetchFile();
-      return () => { live = false; };
-    }
     const el = card.current;
     if (!el) return;
     const observer = new IntersectionObserver(entries => {
       if (entries.some(e => e.isIntersecting)) {
-        near.current = true;
         observer.disconnect();
         fetchFile();
       }
@@ -850,7 +847,7 @@ function ReviewFile({ sessionId, change, refresh, onOpen, scroller }: { sessionI
     observer.observe(el);
     return () => { live = false; observer.disconnect(); };
   }, [readable, sessionId, change.path, change.add, change.del, refresh]);
-  const sliced = useMemo(() => (read?.text !== undefined && read.hunks.length ? reviewDiffSlice(read.text, read.hunks, REVIEW_LINES) : undefined), [read]);
+  const sliced = useMemo(() => (readable && read?.text !== undefined && read.hunks.length ? reviewDiffSlice(read.text, read.hunks, REVIEW_LINES) : undefined), [readable, read]);
   const lines = sliced?.lines;
   const rest = sliced?.rest ?? 0;
   // Until the diff is there: its changed lines plus a hunk header, capped like a shown diff (at least one line)
@@ -876,7 +873,7 @@ function ReviewFile({ sessionId, change, refresh, onOpen, scroller }: { sessionI
           {t('panel.reviewMore', { n: rest })}
         </button>
       )}
-      {read?.error !== undefined && <div className="px-gap py-gap-half text-3 text-fg-3">{readError(read.error)}</div>}
+      {readable && read?.error !== undefined && <div className="px-gap py-gap-half text-3 text-fg-3">{readError(read.error)}</div>}
     </section>
   );
 }
