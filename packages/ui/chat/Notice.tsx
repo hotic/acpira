@@ -10,6 +10,11 @@ import { Orb } from '../effects/Orb';
 import { CopyDetail, DOCK_BUTTON, DockCard } from './Alert';
 import { t, tOr } from '../i18n';
 import { planName } from '../ui/AccountLabel';
+import { KeyBox } from '../ui/KeyBox';
+
+// ACP sign-in methods that only read a key from the CLI's own environment (droid's FACTORY_API_KEY), with nowhere to
+// type one: where the account layer takes a pasted key (AgentInfo.accountKeys), that way stands in for them
+const ENV_KEY_METHODS: Record<string, string> = { droid: 'factory-api-key' };
 
 export interface NoticeProps {
   status: SessionStatus;
@@ -25,6 +30,9 @@ export interface NoticeProps {
   onNewSession: () => void;
   onSelectAccount: (id: string) => void;
   onAddAccount: (via: AddAccountVia) => void;
+  // AgentInfo.accountKeys: check a pasted API key with the vendor and store it as an account; the engine binds this
+  // session to it once stored
+  onAddAccountKey?: (key: string) => void;
   // AgentInfo.credentialsLocked: unlock the credential store in a terminal (the sessions then reconnect by themselves)
   onUnlock?: () => void;
   // SessionView.canTakeOver: an error from a session lock held by another Acpira instance's agent (taking over ends it), or a
@@ -109,7 +117,11 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
 // Once an import found no local login, signing in in the terminal becomes the primary and import stays greyed out in the menu.
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
-export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock, onTakeOver, onRunHere, remoteAuth, install, onInstall, onCancelInstall, onInstallInTerminal }: NoticeProps) {
+export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onAddAccountKey, onUnlock, onTakeOver, onRunHere, remoteAuth, install, onInstall, onCancelInstall, onInstallInTerminal }: NoticeProps) {
+  // The pasted-key way open: the box takes the actions' place until the key is sent or the way is cancelled
+  const [keying, setKeying] = useState(false);
+  // Another session or a state change closes it: the box belongs to the sign-in it was opened for
+  useEffect(() => setKeying(false), [status, agent.id]);
   if (status === 'ready' || status === 'starting') return null;
   const withAccounts = !!agent.accounts;
   const locked = status === 'auth_required' && withAccounts && !!agent.credentialsLocked;
@@ -125,7 +137,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       // Success needs no line: the sessions reconnect and this bar goes away
       : a.status === 'success' ? undefined : t('notice.unlock.cancelled');
   const feedback = action && (action.via === 'unlock' ? unlockFeedback(action)
-    : action.status === 'pending' ? t(action.via === 'import' ? 'notice.importing' : 'notice.loginWaiting')
+    : action.status === 'pending' ? t(action.via === 'import' ? 'notice.importing' : action.via === 'key' ? 'settings.agent.accountKey.checking' : 'notice.loginWaiting')
       : action.status === 'error' ? t('notice.accountFailed', { error: action.error ?? t('notice.error.unknown') })
         : t(`notice.account.${action.status}`));
   // The protocol names sign-in methods in English; known ones get a localized name, the rest keep what the agent sent
@@ -148,11 +160,15 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     const importWay: Way = { key: 'import', label: t(importing ? 'notice.importingShort' : 'notice.importCli'), icon: rowIcon(Download), run: () => onAddAccount('import'),
       ...noLocal && { disabled: true, hint: t('notice.importNone') } };
     const terminalWay: Way = { key: 'terminal', label: t('notice.terminalLogin'), icon: rowIcon(SquareTerminal), run: () => onAddAccount('login') };
+    // The key reaches this engine's account layer only: a session on an SSH host signs in on the host
+    const keyWay: Way | undefined = agent.accountKeys && onAddAccountKey && !remoteAuth
+      ? { key: 'apiKey', label: t('settings.agent.accountKey'), icon: rowIcon(KeyRound), run: () => setKeying(true) }
+      : undefined;
     primary = noLocal ? terminalWay : importWay;
     groups = [
       (accounts ?? []).filter(a => a.id !== accountId).map(a => ({ key: `account:${a.id}`, label: a.label, icon: rowIcon(UserRound), hint: a.detail && planName(a.detail), title: a.detail, run: () => onSelectAccount(a.id) })),
-      [noLocal ? importWay : terminalWay],
-      (authMethods ?? []).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(m.terminal ? SquareTerminal : KeyRound), hint: t('notice.cliLoginTag'), title: [m.description, t('notice.cliLoginHint')].filter(Boolean).join('\n'), run: () => onLogin(m.id) })),
+      [noLocal ? importWay : terminalWay, ...keyWay ? [keyWay] : []],
+      (authMethods ?? []).filter(m => !(keyWay && ENV_KEY_METHODS[agent.id] === m.id)).map(m => ({ key: `method:${m.id}`, label: methodName(m), icon: rowIcon(m.terminal ? SquareTerminal : KeyRound), hint: t('notice.cliLoginTag'), title: [m.description, t('notice.cliLoginHint')].filter(Boolean).join('\n'), run: () => onLogin(m.id) })),
       runHere,
     ];
     showRetry = true;
@@ -218,6 +234,18 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   // No vertical padding: a one-line label must stay exactly ctl-sm tall, level with the "other ways" trigger beside it;
   // only a wrapped label grows the button.
   const methodButton = `${DOCK_BUTTON} h-auto min-h-ctl-sm min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere]`;
+  if (keying && status === 'auth_required' && withAccounts && onAddAccountKey) {
+    const close = () => setKeying(false);
+    return (
+      <DockCard
+        title={body.title}
+        text={t('notice.pasteKey.text')}
+        alt={<Button className={DOCK_BUTTON} onClick={close}>{t('common.cancel')}</Button>}
+        actions={<KeyBox label={t('settings.agent.accountKey')} placeholder={t('settings.agent.accountKey.placeholder')} size="sm" autoFocus sendOnPaste
+          onSave={key => { onAddAccountKey(key); close(); }} onCancel={close} />}
+      />
+    );
+  }
   return (
     <DockCard
       title={body.title}

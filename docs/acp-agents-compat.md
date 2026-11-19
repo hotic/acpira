@@ -219,6 +219,7 @@ Both speak ACP natively. Droid runs as `droid exec --output-format acp`, the com
 | own MCP config | `~/.factory/mcp.json`, `.factory/mcp.json` (`mcpServers`) | `config.yaml` `mcp_servers` (YAML, not read by the inventory) | source |
 | permission options | `proceed_once` (allow_once), `proceed_always` (allow_always), `cancel` (reject_once) | `allow_once` and a deny only | verified |
 | plan review | `spec` ends with a permission request whose `plan_document` the card links; rejecting it settles the turn | none | verified |
+| login and allowance | not over ACP (droid 1.12.1 / 1.14.0). The login is `.factory/auth.v2.*` under `FACTORY_HOME_OVERRIDE` (else `~`), which moves every droid path; on macOS it is sealed with a login-keychain key, elsewhere with a keytar keyring key. No login subcommand: the interactive `droid` signs in. Allowance: `GET /api/billing/limits` (Standard 5-hour / weekly / monthly windows); plan: `factoryTier` of `GET /api/organization/managed-settings` | none | source; verified on macOS with the local login |
 | usage | `usage_update` with a 250000 window | `usage_update` with input / output / cached read | verified |
 | images | `image` content is accepted, but its Read tool hands the model the text `[Image: image/png]` only | the vision tool gets no image bytes, so answers about the picture are guesses | verified |
 | reply shape | plain message chunks | with `display.show_reasoning` (default) one extra chunk repeats the last reasoning in a `💭` fence plus the whole reply; tool titles are `<tool>: <preview>`, terminal results a Markdown list. `vendors/hermes.rs` drops the repeat and tidies the rows | verified |
@@ -228,6 +229,7 @@ Both speak ACP natively. Droid runs as `droid exec --output-format acp`, the com
 Open:
 
 - Droid `device-pairing` and Hermes `custom` on a signed-out machine.
+- A second Droid account signed in through the "+" terminal, and an EU-region login's API host.
 - How a consult round behaves in Droid's `spec` mode.
 - Whether Hermes's `accept_edits` / `dont_ask` skip its permission requests.
 - Hermes `/steer` as a stand-in for `_session/steering`, which Hermes does not advertise.

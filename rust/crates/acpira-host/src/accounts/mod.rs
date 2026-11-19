@@ -5,6 +5,7 @@ pub mod claude;
 pub mod cli_home;
 pub mod codex;
 pub mod devin;
+pub mod droid;
 pub mod keychain;
 pub mod local;
 pub mod provider;

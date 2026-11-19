@@ -149,6 +149,8 @@ export interface ShellHandlers {
   // Account layer: selecting an account rebinds the current session; adding an account goes through import / terminal login; removing only deletes the locally saved credential
   selectAccount: (id: string) => void;
   addAccount: (agent: AgentInfo['id'], via: AddAccountVia) => void;
+  // AgentInfo.accountKeys: a pasted API key as an account, from the sign-in notice
+  addAccountKey?: (agent: AgentInfo['id'], key: string) => void;
   removeAccount: (id: string) => void;
   // An account list opened: re-read the quotas of that agent's accounts
   refreshQuota?: (agent: AgentInfo['id']) => void;
@@ -1555,6 +1557,7 @@ export function Shell(p: ShellProps) {
                     accountAction={p.accountAction} remoteAuth={p.remoteAuth} install={p.agentInstall}
                     onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(folderAgent(p.cwd))}
                     onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
+                    onAddAccountKey={on.addAccountKey ? key => on.addAccountKey!(p.agent.id, key) : undefined}
                     onUnlock={canUnlock && on.unlockCredentials ? () => on.unlockCredentials?.(p.agent.id) : undefined}
                     onTakeOver={p.canTakeOver ? on.takeOver : undefined}
                     onRunHere={runHere}

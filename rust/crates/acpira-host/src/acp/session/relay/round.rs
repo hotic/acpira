@@ -15,12 +15,13 @@ use super::controls::{current_mode, relay_approval, relay_controls, relay_mode, 
 use super::texts::{change_note, compose_brief, round_edits, short, wake_text};
 use super::{MAX_WAKES, NOTE_FILES, Owed, PACK_NAME, RelayHandlers, RelayProc, Round, Starting, route_key};
 use crate::acp::session::attachments::{prepare_prompt, prompt_caps_of};
-use crate::acp::session::turn_usage::turn_usage_of;
+use crate::acp::session::turn_usage::prompt_usage_of;
 use crate::acp::session::updates::current_turn_index;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::runtime_info_of;
 use crate::acp::transcript::subagent_tree::RouteCtx;
 use crate::acp::transport::process::{AgentProcess, ClientHandlers};
+use crate::acp::vendors::droid_usage;
 use crate::handoff::{self, Level};
 
 impl AcpSession {
@@ -101,10 +102,22 @@ impl AcpSession {
     let mut params = json!({ "sessionId": sid, "prompt": blocks });
     // A child reads the settings its caller reads now
     self.with_client_settings(&mut params, &r.persona.agent);
+    let baseline = match &proc.droid_sessions {
+      Some(dir) => {
+        let baseline = droid_usage::Baseline::capture(dir.clone(), sid.to_owned()).await;
+        let c = self.core.lock();
+        if c.relays.closed || c.tree.relay_cancel_requested(&r.node) {
+          return Ok("cancelled".into());
+        }
+        baseline
+      }
+      None => None,
+    };
     let answer = proc.request("session/prompt", params).await.map_err(anyhow::Error::new)?;
+    let usage = prompt_usage_of(&answer, baseline).await;
     {
       let mut c = self.core.lock();
-      c.tree.relay_turn_usage(&r.node, turn_usage_of(&answer));
+      c.tree.relay_turn_usage(&r.node, usage);
       self.touch(&mut c);
     }
     Ok(answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned())

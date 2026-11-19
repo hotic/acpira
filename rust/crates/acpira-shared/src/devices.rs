@@ -134,6 +134,7 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     W::SetSetting { key, .. } => DEVICE_SETTINGS.contains(&key.as_str()),
     // Changes the machine: credentials need its keychain or browser, the rest is its configuration
     W::AddAccount { .. }
+    | W::AddAccountKey { .. }
     | W::RemoveAccount { .. }
     | W::UnlockCredentials { .. }
     | W::Login { .. }
@@ -405,6 +406,7 @@ mod tests {
     assert!(allowed(json!({ "type": "imageBlob", "sessionId": "s", "path": "/srv/app/shot.png", "seq": 1, "shown": true })));
     assert!(allowed(json!({ "type": "stageFile", "sessionId": "s", "path": "promo/film.mp4", "seq": 1 })));
     assert!(!allowed(json!({ "type": "removeAccount", "id": "a" })));
+    assert!(!allowed(json!({ "type": "addAccountKey", "agent": "droid", "key": "fk-x" })));
     assert!(allowed(json!({ "type": "connections" })));
     assert!(!allowed(json!({ "type": "connectionOp", "op": { "op": "remove", "alias": "h" } })));
     assert!(!allowed(json!({ "type": "remoteDir", "alias": "h", "path": "/", "seq": 1 })));

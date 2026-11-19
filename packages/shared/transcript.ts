@@ -13,6 +13,8 @@ export interface AgentInfo {
   name: string;
   // Goes through the account layer (multiple logins can be stored and switched); agents without it rely on their own CLI's login
   accounts?: boolean;
+  // Its account layer also takes a pasted API key as an account (addAccountKey), beside the terminal login
+  accountKeys?: boolean;
   // The store holding the CLI's logins (the macOS keychain) is locked for this host's session, e.g. a remote workspace over SSH:
   // the logins exist but neither the CLI nor Acpira can read them until it is unlocked (unlockCredentials)
   credentialsLocked?: boolean;
@@ -79,6 +81,8 @@ export interface AccountInfo {
   quota?: AccountQuota;
   // Why there are no bars: the last quota read failed and the next one waits (a 429 pauses reads for minutes). Absent while quota is set
   quotaIssue?: AccountQuotaIssue;
+  // The credential is a pasted API key: no sign-in renews it, so an expired one reads as a rejected key to paste again
+  keyAuth?: boolean;
 }
 
 export type AccountQuotaIssue = 'rate_limited' | 'expired' | 'unavailable';

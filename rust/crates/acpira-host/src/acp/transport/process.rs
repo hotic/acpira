@@ -1,6 +1,7 @@
 //! One agent subprocess = one long-lived ACP connection. Handlers are
 //! rebindable so a warm (initialize-only) process can be handed to a session without a second spawn
 
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +17,7 @@ use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::legacy_models::LegacyModels;
 use crate::acp::transport::rpc::{BoxFuture, Connection, Inbound, RpcError};
 use crate::acp::vendors::grok::{GROK_ASK_QUESTION, GROK_EXIT_PLAN};
-use crate::acp::vendors::{Vendor, claude_auth, claude_workflow};
+use crate::acp::vendors::{Vendor, claude_auth, claude_workflow, droid_usage};
 use crate::i18n::tp;
 
 pub const CLIENT_NAME: &str = "acpira";
@@ -143,6 +144,8 @@ pub struct AgentProcess {
   /// The initialize response as the agent sent it
   pub init: Value,
   pub pid: Option<u32>,
+  /// Droid's actual session store, after the launch env and account overrides have been applied.
+  pub(crate) droid_sessions: Option<PathBuf>,
   signals: Option<Signals>,
   box_: HandlerBox,
   life: watch::Receiver<Life>,
@@ -234,6 +237,7 @@ impl AgentProcess {
     for (k, v) in extra_env.into_iter().flatten() {
       cmd.env(k, v);
     }
+    let droid_sessions = (Vendor::of(&def.id) == Vendor::Droid).then(|| droid_usage::sessions_dir(cmd.as_std(), cwd));
     #[cfg(windows)]
     let (mut child, job) = crate::platform::windows_process::spawn(&mut cmd).await.map_err(|e| anyhow::Error::new(AgentSpawnError::new(e, cwd)))?;
     #[cfg(not(windows))]
@@ -315,6 +319,7 @@ impl AgentProcess {
         conn,
         init,
         pid,
+        droid_sessions,
         signals,
         box_,
         life: life_rx,

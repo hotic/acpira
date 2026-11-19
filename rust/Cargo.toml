@@ -28,6 +28,8 @@ allow_attributes_without_reason = "warn"
 acpira-shared = { path = "crates/acpira-shared" }
 acpira-rpc = { path = "crates/acpira-rpc" }
 acpira-agent = { path = "crates/acpira-agent" }
+# Droid's stored login (accounts/droid.rs, 16-byte IV); already in the tree through iroh
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 anyhow = "1.0.100"
 base64 = "0.22"
 # Row hashes of the session store (store/db/body.rs); already in the tree through iroh

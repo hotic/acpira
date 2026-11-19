@@ -58,6 +58,16 @@ pub trait AccountProvider: Send + Sync {
     false
   }
   fn login(&self) -> BoxFuture<Result<LoginFlow>>;
+  /// Whether a pasted API key can stand for an account (`key_account`), beside the terminal login
+  fn accepts_keys(&self) -> bool {
+    false
+  }
+  /// Check a pasted API key with the vendor and describe the account it signs in as; the draft's secret is the key. A
+  /// key the vendor refuses, or that cannot be checked, is an error and leaves nothing behind
+  fn key_account(&self, _key: String) -> BoxFuture<Result<AccountDraft>> {
+    let agent = self.agent().to_owned();
+    Box::pin(async move { Err(anyhow::anyhow!(crate::i18n::tp("host.noKeyAccounts", &[("agent", &agent)]))) })
+  }
   fn spawn_env(&self, _cred: &AccountCredential) -> Option<BTreeMap<String, String>> {
     None
   }

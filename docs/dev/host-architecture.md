@@ -87,7 +87,7 @@ What the engine (`rust/`) and its shells cannot give back from a quick look. Age
 
 ## Accounts and quota
 
-- Codex, Claude and (macOS) Antigravity logins live in private CLI homes `~/.acpira/accounts/<agent>/<uuid>`. Stores re-read inside the lock before each change, so an id another host removed stays gone; a removed local account goes to `accounts-dismissed.json`.
+- Codex, Claude and (macOS) Antigravity and Droid logins live in private CLI homes `~/.acpira/accounts/<agent>/<uuid>`. Stores re-read inside the lock before each change, so an id another host removed stays gone; a removed local account goes to `accounts-dismissed.json`.
 - Quota: a 429 pauses that account even against forced reads, shared by every host via `quota-cache.json`; Claude Code 2.1.284 pauses the same endpoint. The plan re-reads each time: Claude Code 2.1.292 keeps its login-time `subscriptionType` across token refreshes.
 - Keychain unlock runs in a host terminal: the password never passes through Acpira (`keychain.rs`).
 

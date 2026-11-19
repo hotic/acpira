@@ -24,6 +24,9 @@ pub struct AgentInfo {
   pub name: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub accounts: Option<bool>,
+  /// Its account layer also takes a pasted API key as an account (`addAccountKey`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub account_keys: Option<bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub credentials_locked: Option<bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,6 +131,9 @@ pub struct AccountInfo {
   /// Set only while `quota` is absent and the last read failed
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub quota_issue: Option<AccountQuotaIssue>,
+  /// The credential is a pasted API key: no sign-in renews it, so a rejected one is pasted again
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub key_auth: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

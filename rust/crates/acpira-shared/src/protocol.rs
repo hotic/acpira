@@ -179,7 +179,8 @@ pub enum AddAccountVia {
   Auto,
 }
 
-/// What an `AccountAction` is doing: adding an account, or unlocking the credential store that holds them
+/// What an `AccountAction` is doing: adding an account (`Key`: from a pasted API key, `addAccountKey`), or unlocking the
+/// credential store that holds them
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountActionVia {
@@ -187,6 +188,7 @@ pub enum AccountActionVia {
   Login,
   Auto,
   Unlock,
+  Key,
 }
 
 impl From<AddAccountVia> for AccountActionVia {
@@ -1110,6 +1112,12 @@ pub enum WebviewMsg {
     session_id: Option<String>,
     agent: AgentId,
     via: AddAccountVia,
+  },
+  /// An account from a pasted API key (`AgentInfo::account_keys`), checked with the vendor before it is stored. The
+  /// settings page sends it to its own engine only, so it carries no session
+  AddAccountKey {
+    agent: AgentId,
+    key: String,
   },
   RemoveAccount {
     #[serde(default, skip_serializing_if = "Option::is_none")]

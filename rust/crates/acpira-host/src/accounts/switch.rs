@@ -127,6 +127,7 @@ mod tests {
         fetched_at: String::new(),
       }),
       quota_issue: None,
+      key_auth: None,
     }
   }
 

@@ -21,7 +21,7 @@ use crate::acp::transcript::normalize::{activity_of, apply_goal, apply_session_f
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::acp::vendors::antigravity::ReplyError;
-use crate::acp::vendors::{FailureLog, Vendor, claude_window, goal, kimi_failure, logged_failure, pi_failure, pi_usage};
+use crate::acp::vendors::{FailureLog, Vendor, claude_window, droid_usage, goal, kimi_failure, logged_failure, pi_failure, pi_usage};
 use crate::i18n::{t, tp};
 use crate::limits::TITLE_MAX;
 use crate::util::{js_num, now_ms, random_uuid};
@@ -196,6 +196,20 @@ impl AcpSession {
     }
     staging.prepared.blocks.splice(0..0, context.lead);
     staging.prepared.blocks.extend(context.tail);
+    // Read before the turn clock or wire starts, while cancellation can still drop the staged prompt. A pre-send
+    // compaction can change the counters, so a baseline taken before it would not belong to this turn.
+    let droid_baseline = if self.vendor == Vendor::Droid && !compact_first && !auto && !is_compact_command(&text) {
+      let source = {
+        let c = self.core.lock();
+        c.proc.as_ref().and_then(|p| p.droid_sessions.clone()).zip(c.acp_session_id.clone())
+      };
+      match source {
+        Some((dir, id)) => droid_usage::Baseline::capture(dir, id).await,
+        None => None,
+      }
+    } else {
+      None
+    };
     let Some(mut accepted) = self.accept(&text, origin, plan_id.as_deref(), staging) else { return };
     if compact_first && !self.compact_before(&accepted.user_turn).await {
       return;
@@ -224,7 +238,7 @@ impl AcpSession {
       None => Err(RpcError::internal("no process")),
     };
     let settled = match result {
-      Ok(r) => self.prompt_answered(r, &turn, &accepted, auto).await,
+      Ok(r) => self.prompt_answered(r, &turn, &accepted, auto, droid_baseline).await,
       Err(e) => self.prompt_failed(e, &turn).await,
     };
     if accepted.forked {
@@ -549,7 +563,14 @@ impl AcpSession {
 
   /// session/prompt answered: usage, a structured session failure, the compaction and usage waits, the empty-answer
   /// check. None = the session moved on meanwhile (replaced, closed, no longer Ready) and the turn is not settled here
-  async fn prompt_answered(self: &Arc<Self>, r: Value, turn: &OpenTurn, accepted: &Accepted, auto: bool) -> Option<Settled> {
+  async fn prompt_answered(
+    self: &Arc<Self>,
+    r: Value,
+    turn: &OpenTurn,
+    accepted: &Accepted,
+    auto: bool,
+    droid_baseline: Option<droid_usage::Baseline>,
+  ) -> Option<Settled> {
     let (agent_idx, started_at) = (turn.agent_idx, turn.started_at);
     if !turn.live(&self.core.lock()) {
       return None;
@@ -558,11 +579,14 @@ impl AcpSession {
     self.log(&format!("prompt done: {reason}"));
     let mut stop = TurnStop::parse(&reason).unwrap_or(TurnStop::EndTurn);
     let mut exhausted = false;
-    let usage = turn_usage_of(&r);
+    let usage = prompt_usage_of(&r, droid_baseline).await;
     let log = |line: &str| self.log(line);
     let failure = failure_of(r.get("_meta"), Some(&log));
     {
       let mut c = self.core.lock();
+      if !turn.live(&c) || (self.vendor == Vendor::Droid && c.status != SessionStatus::Ready) {
+        return None;
+      }
       if let Some(u) = usage
         && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
       {

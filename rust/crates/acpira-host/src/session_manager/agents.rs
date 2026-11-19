@@ -296,6 +296,7 @@ impl SessionManager {
       .map(|mut a| {
         if let Some(m) = self.deps.accounts.as_ref().filter(|m| m.supports(&a.id)) {
           a.accounts = Some(true);
+          a.account_keys = m.accepts_keys(&a.id).then_some(true);
           a.credentials_locked = m.credentials_locked(&a.id).then_some(true);
         } else {
           a.local_account = self.deps.local_accounts.as_ref().and_then(|l| l.get(&a.id));

@@ -104,6 +104,7 @@ dependencies = [
  "acpira-gateway",
  "acpira-rpc",
  "acpira-shared",
+ "aes-gcm",
  "anyhow",
  "base64 0.22.1",
  "blake3",

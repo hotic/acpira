@@ -12,6 +12,7 @@ pub mod claude_wakeup;
 pub mod claude_workflow;
 pub mod claude_workflow_log;
 pub mod claude_window;
+pub(crate) mod droid_usage;
 pub mod goal;
 pub mod grok;
 pub mod hermes;
@@ -27,6 +28,7 @@ pub enum Vendor {
   Antigravity,
   Claude,
   Codex,
+  Droid,
   Grok,
   Hermes,
   Kimi,
@@ -66,6 +68,7 @@ impl Vendor {
       "antigravity" => Vendor::Antigravity,
       "claude" => Vendor::Claude,
       "codex" => Vendor::Codex,
+      "droid" => Vendor::Droid,
       "grok" => Vendor::Grok,
       "hermes" => Vendor::Hermes,
       "kimi" => Vendor::Kimi,

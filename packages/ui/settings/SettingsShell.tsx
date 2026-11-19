@@ -3,7 +3,7 @@ import { RefreshCw, RotateCcw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { AgentInventory } from '@acpira/shared/inventory';
-import type { AgentInstallProgress } from '@acpira/shared/protocol';
+import type { AccountAction, AgentInstallProgress } from '@acpira/shared/protocol';
 import type { SettingKey, SettingsView } from '@acpira/shared/settings';
 import type { SubagentGroup, SubagentPersona } from '@acpira/shared/subagents';
 import type { Locale } from '@acpira/shared/i18n/core';
@@ -52,6 +52,8 @@ export interface SettingsHandlers {
   refreshAgent: (agent: AgentId) => void;
   selectAccount: (id: string) => void;
   addAccount: (agent: AgentId) => void;
+  // AgentInfo.accountKeys: check a pasted API key with the vendor and store it as an account
+  addAccountKey?: (agent: AgentId, key: string) => void;
   removeAccount: (id: string) => void;
   // An agent page with accounts opened: re-read their quotas
   refreshQuota?: (agent: AgentId) => void;
@@ -100,6 +102,8 @@ export interface SettingsShellProps {
   accounts: AccountInfo[];
   // Every agent's latest in-app install (host-owned)
   installs?: AgentInstallProgress[];
+  // Every agent's latest account action (host-owned): the API key field follows its check
+  accountActions?: AccountAction[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
   // The Shared tab's last view; undefined until the page asked for it
   shared?: SharedState;
@@ -248,6 +252,7 @@ export function SettingsShell(p: SettingsShellProps) {
                       initialTab={page.kind === 'agent' ? page.tab : undefined}
                       accounts={p.accounts.filter(a => a.agent === agent.id)}
                       install={p.installs?.find(i => i.agent === agent.id)}
+                      accountAction={p.accountActions?.find(a => a.agent === agent.id)}
                       inventory={p.inventories[agent.id]}
                       controls={p.controls[agent.id]}
                       providers={p.providers}
