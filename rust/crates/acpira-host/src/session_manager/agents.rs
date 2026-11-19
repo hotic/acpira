@@ -112,10 +112,20 @@ impl SessionManager {
 
   pub(super) fn remember(&self, s: &AcpSession) {
     let config = capture_turn_settings(&s.agent_controls()).config;
+    // Once a split-access agent remembers its approval select, drop any stale pre-split level mode (`auto`, `bypassPermissions`, …)
+    let levels = config
+      .contains_key(crate::acp::session::access::APPROVAL)
+      .then(|| self.registry().get(&s.agent).ok().and_then(|d| d.access.clone()))
+      .flatten();
     {
       let mut st = self.state.lock();
       let cur = st.prefs.last_settings.entry(s.agent.clone()).or_default();
       cur.config = config;
+      if let Some(levels) = levels.as_deref()
+        && cur.mode_id.as_deref().is_some_and(|m| crate::acp::session::access::is_level_mode(levels, m))
+      {
+        cur.mode_id = None;
+      }
     }
     self.remember_model(s);
     self.save_prefs(&s.agent);

@@ -433,3 +433,24 @@ async fn antigravity_full_access_is_host_approval_on_accept_edits() {
   p.await.unwrap();
   assert_eq!(wire_modes(&log), ["accept-edits", "plan", "accept-edits"]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_adopt_keeps_remembered_full_access_over_stale_pre_split_mode_id() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let log = dir.path().join("modes.log");
+  let h = Harness::for_agent(&fake, "antigravity", json!({ "env": { "FAKE_MIXED_MODES": "agy", "FAKE_MODE_LOG": log.to_string_lossy() } }));
+  let s = started(&h, "/tmp").await;
+  // Prefs saved before the access split still carry `modeId: "auto"` beside the post-split `approval: "full"`
+  s.adopt_controls(serde_json::from_value(json!({ "modeId": "auto", "config": { "approval": "full" } })).unwrap()).await;
+  assert_eq!(mode_view(&s), (vec!["default".into(), "plan".into()], json!("default"), json!("full")));
+  assert_eq!(wire_modes(&log), ["accept-edits"]);
+  // Host auto-approval stays active on the replayed session
+  prompt(&s, "use tool").await;
+  assert!(!agent_blocks(&view(&s)).iter().any(|b| b["type"] == "permission"));
+
+  // Legacy prefs with only the pre-split modeId and no `approval` still migrate to that level
+  let s2 = started(&h, "/tmp").await;
+  s2.adopt_controls(serde_json::from_value(json!({ "modeId": "auto", "config": {} })).unwrap()).await;
+  assert_eq!(mode_view(&s2), (vec!["default".into(), "plan".into()], json!("default"), json!("auto")));
+}
