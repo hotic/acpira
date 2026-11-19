@@ -5,7 +5,7 @@ import { RadioGroup } from '@base-ui/react/radio-group';
 import { cn } from '../ui/cn';
 import { useRoving } from '../ui/roving';
 import { Card } from '../ui/Card';
-import { IconButton } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
 import { Command, SEARCH_FROM } from '../ui/Command';
 import { DropdownMenu, optionClass } from '../ui/DropdownMenu';
@@ -338,13 +338,14 @@ export function DialogBody({ children, className }: { children: ReactNode; class
   return <div className={cn('scroll-thin flex min-h-0 flex-1 flex-col gap-gap overflow-y-auto p-pad [&>*]:shrink-0', scrolls && 'scroll-stable pr-dialog-gutter', className)}>{children}</div>;
 }
 
-// A dialog footer's destructive action, on the left: quiet until hovered, its words on the body's text edge
+// An edit dialog footer's destructive action, on the left away from Save: the same secondary button as the footer's
+// Cancel, hover included, with the trash glyph saying what it does. Bare text that only filled on hover read as a label
+// beside outlined buttons, and a red one outshouted Save
 export function DangerAction({ onClick, children, disabled, title, icon = <Trash2 strokeWidth={1.75} /> }: { onClick: () => void; children: ReactNode; disabled?: boolean; title?: string; icon?: ReactNode }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} title={title}
-      className="-ml-2 flex h-ctl shrink-0 items-center gap-1.5 rounded-md px-2 text-2 text-fg-2 transition-colors enabled:hover:bg-hover enabled:hover:text-danger focus-visible:bg-hover focus-visible:text-danger disabled:opacity-50 [&_svg]:size-icon">
+    <Button onClick={onClick} disabled={disabled} title={title} className="shrink-0 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-icon">
       {icon}{children}
-    </button>
+    </Button>
   );
 }
 
@@ -603,6 +604,9 @@ export interface ItemRowProps {
   desc?: ReactNode;
   // A line under title / desc spanning the text column (quota bars); not truncated
   extra?: ReactNode;
+  // `extra` runs the row's full width, under a trailing control that then stands on the title line: quota bars end on
+  // the card's content edge with the rules between rows, not short of a hover-only remove button
+  extraWide?: boolean;
   trailing?: ReactNode;
   // The row opens something outside the settings (a file, a folder, a page): a click anywhere on it but its own controls
   // opens, and a ↗ glyph stays at the right edge as the cue and the keyboard stop
@@ -629,7 +633,7 @@ export const rowHover = 'relative isolate before:absolute before:inset-y-(--hove
 const divHover = 'relative isolate cursor-pointer before:absolute before:inset-y-(--hover-y) before:inset-x-(--hover-out) before:rounded-(--hover-r) before:-z-10 before:transition-colors hover:before:bg-hover has-[[data-row-key]:focus-visible]:before:bg-hover';
 const OWN_CONTROL = 'button:not([data-row-key]), a, input, textarea, select, label, [role="switch"], [role="checkbox"], [role="menu"]';
 
-export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onEdit, editLabel, onClick, dim, className }: ItemRowProps) {
+export function ItemRow({ lead, title, desc, extra, extraWide, trailing, onOpen, reserveOpen, onEdit, editLabel, onClick, dim, className }: ItemRowProps) {
   const Tag = onClick ? 'button' : 'div';
   const press = !onClick ? onEdit ?? onOpen : undefined;
   // A click on one of the row's own controls (a switch, remove, …) stays theirs; anywhere else on the row opens
@@ -637,12 +641,35 @@ export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpe
     const hit = (e.target as Element).closest(OWN_CONTROL);
     if (!hit || !e.currentTarget.contains(hit)) press();
   } : undefined;
+  // Lead, text, trailing and the open cue: the row itself, or with a wide extra the title line above it
+  const head = <>
+    {lead !== undefined && <span className={cn('flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]', dim && 'opacity-60')}>{lead}</span>}
+    <span className={cn(stack, 'flex-1')}>
+      <span className={cn('truncate text-2', dim ? 'text-fg-3' : 'text-fg-1')}>{title}</span>
+      {desc && <span className={cn(second, 'truncate')}>{desc}</span>}
+      {!extraWide && extra}
+    </span>
+    {/* At most half the row, so a long marker (a skill's conflict) truncates instead of squeezing the title away. Over a
+        wide extra it has no height of its own (centred on the title line, like the open slot), so that line stays one
+        text line tall */}
+    {trailing && <span className={cn('relative flex min-w-0 max-w-1/2 shrink-0 items-center gap-2', extraWide && 'h-0')}>{trailing}</span>}
+    {(onOpen || reserveOpen) && (
+      // Zero height: the button overflows the slot evenly, so reserving it never makes the row taller than its neighbours
+      <span className="-mr-ctl-bleed flex h-0 w-ctl shrink-0 items-center justify-center" aria-hidden={!onOpen || undefined}>
+        {/* Always shown as the row's cue; the pointer goes through to the row, the keyboard still stops here */}
+        {onOpen && <IconButton title={t('common.open')} aria-label={t('common.open')} onClick={onOpen}
+          className={!onEdit ? 'pointer-events-none text-fg-3 group-hover/row:text-fg-2' : 'text-fg-3 hover:text-fg-1'}>
+          <ArrowUpRight strokeWidth={1.75} />
+        </IconButton>}
+      </span>
+    )}
+  </>;
   return (
     <Tag
       {...(onClick ? { type: 'button' as const, onClick } : { onClick: pressFrom })}
       data-detail={!!desc || undefined}
       className={cn(
-        useSettingRow(), 'group/row flex w-full items-center gap-gap text-left',
+        useSettingRow(), 'group/row flex w-full gap-gap text-left', extraWide ? 'flex-col gap-y-(--stack-gap)' : 'items-center',
         onClick && rowHover,
         press && divHover,
         className,
@@ -650,24 +677,7 @@ export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpe
     >
       {/* The row's own key stop when the row opens a dialog: a zero-size button over the title */}
       {onEdit && !onClick && <button type="button" data-row-key onClick={onEdit} aria-label={editLabel} aria-haspopup="dialog" className="sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:inset-0 focus-visible:outline-none" />}
-      {lead !== undefined && <span className={cn('flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]', dim && 'opacity-60')}>{lead}</span>}
-      <span className={cn(stack, 'flex-1')}>
-        <span className={cn('truncate text-2', dim ? 'text-fg-3' : 'text-fg-1')}>{title}</span>
-        {desc && <span className={cn(second, 'truncate')}>{desc}</span>}
-        {extra}
-      </span>
-      {/* At most half the row, so a long marker (a skill's conflict) truncates instead of squeezing the title away */}
-      {trailing && <span className="relative flex min-w-0 max-w-1/2 shrink-0 items-center gap-2">{trailing}</span>}
-      {(onOpen || reserveOpen) && (
-        // Zero height: the button overflows the slot evenly, so reserving it never makes the row taller than its neighbours
-        <span className="-mr-ctl-bleed flex h-0 w-ctl shrink-0 items-center justify-center" aria-hidden={!onOpen || undefined}>
-          {/* Always shown as the row's cue; the pointer goes through to the row, the keyboard still stops here */}
-          {onOpen && <IconButton title={t('common.open')} aria-label={t('common.open')} onClick={onOpen}
-            className={!onEdit ? 'pointer-events-none text-fg-3 group-hover/row:text-fg-2' : 'text-fg-3 hover:text-fg-1'}>
-            <ArrowUpRight strokeWidth={1.75} />
-          </IconButton>}
-        </span>
-      )}
+      {extraWide ? <><span className="flex w-full min-w-0 items-center gap-gap">{head}</span>{extra}</> : head}
     </Tag>
   );
 }

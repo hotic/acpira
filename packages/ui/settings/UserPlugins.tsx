@@ -11,7 +11,7 @@ import { usePluginPieces } from '../pluginSlots';
 import { DefaultLookThumb, SkinThumb } from '../plugins/PluginCard';
 import { SandboxFrame } from '../plugins/SandboxFrame';
 import { backdropsShown, expectReveal, useSkin } from '../plugins/skin';
-import { DangerAction, DialogBody, Note, SettingsDialog } from './controls';
+import { DialogBody, Note, SettingsDialog } from './controls';
 
 // Settings → Plugins, the user's plugins (docs/dev/plugins.md): the skin picker heading the Appearance filter, and a tile
 // per plugin. Read from the plugins view (plugins/skin.ts), so the page, every
@@ -145,9 +145,10 @@ export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; sa
         // Uninstalling moves the folder aside and keeps the data; the storage page clears both
         <SettingsDialog icon={<Mark />} title={t('settings.plugins.uninstallTitle', { name: p.name })} onClose={() => setRemoving(false)}
           footer={<>
-            <DangerAction onClick={() => { act({ op: 'remove', id: p.id }); setRemoving(false); }}>{uninstall}</DangerAction>
+            {/* The confirm's closing action: the primary after Cancel, on the right */}
             <span className="flex-1" />
             <Button onClick={() => setRemoving(false)}>{t('common.cancel')}</Button>
+            <Button variant="primary" onClick={() => { act({ op: 'remove', id: p.id }); setRemoving(false); }}>{uninstall}</Button>
           </>}>
           <DialogBody><Note>{t('settings.plugins.uninstallNote')}</Note></DialogBody>
         </SettingsDialog>
