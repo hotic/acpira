@@ -545,6 +545,10 @@ export function Shell(p: ShellProps) {
   // sidekick holds the baton right now
   const summoned = useMemo(() => p.subagents?.filter(s => !isSidekick(s)) ?? [], [p.subagents]);
   const helpers = summoned.length;
+  // Rounds Acpira summoned work on after the lead's turn ended; the user's stop still cancels them (`cancel_turn`),
+  // so the composer keeps its stop while one runs. Native children are left out: their CLI may not take a stop
+  const relayLive = !!p.subagents?.some(s => s.harness && s.state === 'running' && !s.cancelRequested);
+  const stoppable = p.running || relayLive;
   const sidekickLive = !!p.subagents?.some(s => isSidekick(s) && s.state === 'running');
   const sidekickModels = useSidekickModels(p.controls.options, p.agent.id);
   // Desktop docking follows the window tier, not the room left after opening another pane.
@@ -842,11 +846,11 @@ export function Shell(p: ShellProps) {
   const openSettings = p.onOpenSettings;
   // Cross-shell shortcuts: session cycling (⌃Tab / ⌘⇧[ / ] / ⌘⌥A), find in chat (⌘F), permission quick approval (Enter / Esc), and Esc to stop
   const escStopArmed = useRef(0);
-  useEffect(() => { escStopArmed.current = 0; dropToast('esc-stop'); }, [p.running, p.activeSessionId, dropToast]);
+  useEffect(() => { escStopArmed.current = 0; dropToast('esc-stop'); }, [stoppable, p.activeSessionId, dropToast]);
   const shellKeys = useRef({
     sessions: p.sessions, categories: p.categories, activeSessionId: p.activeSessionId, pendingSessionId: p.pendingSessionId,
     workspace: p.workspace, sessionScope: p.sessionScope, chats: p.chats,
-    running: p.running, turns: p.turns, subagents: p.subagents, hasQuestion: !!question,
+    running: p.running, stoppable, turns: p.turns, subagents: p.subagents, hasQuestion: !!question,
     overlayInspect, chatFindOpen: !!chatFind,
     selectSession: (id: string) => { on.selectSession(id); closeDrawer(); },
     stop: on.stop, permission: on.permission, openChatFind, focusSearch, openSettings,
@@ -855,7 +859,7 @@ export function Shell(p: ShellProps) {
   shellKeys.current = {
     sessions: p.sessions, categories: p.categories, activeSessionId: p.activeSessionId, pendingSessionId: p.pendingSessionId,
     workspace: p.workspace, sessionScope: p.sessionScope, chats: p.chats,
-    running: p.running, turns: p.turns, subagents: p.subagents, hasQuestion: !!question,
+    running: p.running, stoppable, turns: p.turns, subagents: p.subagents, hasQuestion: !!question,
     overlayInspect, chatFindOpen: !!chatFind,
     selectSession: (id: string) => { on.selectSession(id); closeDrawer(); },
     stop: on.stop, permission: on.permission, openChatFind, focusSearch, openSettings,
@@ -937,7 +941,7 @@ export function Shell(p: ShellProps) {
         return;
       }
 
-      // Escape: close chat find -> close overlay inspector -> reject pending permission (empty composer) -> stop running turn
+      // Escape: close chat find -> close overlay inspector -> reject pending permission (empty composer) -> stop the turn and its summoned rounds
       if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat) {
         if (target?.matches('input, select, [contenteditable="true"]') || (target?.tagName === 'TEXTAREA' && !target.hasAttribute('data-main-composer'))) return;
         if (cur.chatFindOpen) { e.preventDefault(); setChatFind(undefined); focusMainComposer(); return; }
@@ -950,7 +954,7 @@ export function Shell(p: ShellProps) {
             return;
           }
         }
-        if (cur.running) {
+        if (cur.stoppable) {
           e.preventDefault();
           if (mainComposerEmpty() || Date.now() - escStopArmed.current < 1500) {
             escStopArmed.current = 0;
@@ -1116,7 +1120,7 @@ export function Shell(p: ShellProps) {
   const summons = useMemo(() => p.personas?.map(x => x.name), [p.personas]);
   const recalledPrompts = useStableList(useMemo(() => promptHistory(p.turns, p.queued), [p.turns, p.queued]));
   const composerProps: ComposerProps = useMemo(() => ({
-    running: p.running, steer: steering, revisePlan: !!reviseChoice, disabled: p.status !== 'ready' && p.status !== 'starting',
+    running: p.running, stoppable, steer: steering, revisePlan: !!reviseChoice, disabled: p.status !== 'ready' && p.status !== 'starting',
     controlsLocked: p.status !== 'ready',
     theme: p.theme, turnCount, compacting: isCompacting, controls: p.controls, hidden: p.hidden?.[p.agent.id],
     usage: p.usage, commands: p.commands, compactAt: p.compactAt, cwd: p.cwd ?? '',
@@ -1130,7 +1134,7 @@ export function Shell(p: ShellProps) {
     }, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
     onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas, modelMemory: p.modelMemory, modelShapes: p.modelShapes, sidekickShapes: p.sidekickShapes,
     onAddModel: p.onOpenSettings ? () => p.onOpenSettings!({ kind: 'agent', id: p.agent.id, tab: p.agent.id === BUILTIN_AGENT_ID ? 'sources' : 'models' }) : undefined,
-  }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings, p.modelMemory, p.modelShapes, p.sidekickShapes]);
+  }), [p.running, stoppable, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings, p.modelMemory, p.modelShapes, p.sidekickShapes]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const plans = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PlanDocumentBlock => b.type === 'plan_document') : []), [p.turns]));

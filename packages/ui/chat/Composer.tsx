@@ -38,6 +38,8 @@ const REWRITE_WIPE_MS = 600;
 
 export interface ComposerProps {
   running: boolean;
+  // Something the stop reaches is still working, the turn or a summoned round it left running (defaults to `running`)
+  stoppable?: boolean;
   // The built-in agent's sidekick is working a round: the model chip lights its half
   sidekickLive?: boolean;
   // Text + send locked for login / error / read-only. Starting still accepts a first prompt into the queue
@@ -188,7 +190,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   const hasContent = text.trim().length > 0 || drafts.length > 0 || !!p.edit?.hasAttachments;
   const canSend = !p.disabled && !sending && reading === 0 && hasContent;
   // A follow-up uses the same send path as Enter; pending attachment reads / sends keep it from becoming a stop action.
-  const showStop = p.running && !hasContent && reading === 0 && !sending;
+  const showStop = (p.stoppable ?? p.running) && !hasContent && reading === 0 && !sending;
   const sendingRef = useRef(false);
   // A plugin's draft command at work on the draft, then its text wiping in (motion.css composer-field[data-rewriting])
   const [rewrite, setRewrite] = useState<'busy' | 'done'>();
