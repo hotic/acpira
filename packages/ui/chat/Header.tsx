@@ -30,6 +30,7 @@ export interface HeaderProps {
   accounts?: AccountInfo[];
   accountId?: string;
   activeSessionId?: string;
+  remoteAuth?: boolean;
   // This window's workspace folder and the list scope, handed on to the session list (see SessionListProps)
   workspace?: string;
   sessionScope?: SessionScope;
@@ -64,7 +65,7 @@ export interface HeaderProps {
 // A narrow session panel gets a drawer toggle; collapsed navigation uses the history popover.
 // The person icon is the account layer's home (login state, switching, adding) for the current agent only; agents without accounts have no person icon.
 // The plus menu lists the enabled agents in the configured order (acpira.agentOrder / acpira.disabledAgents)
-export const Header = memo(function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false, sessionNav = false, gearDocked = sessionNav, cwd, placeName, projectPick, onNewIn, narrow }: HeaderProps) {
+export const Header = memo(function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, remoteAuth, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false, sessionNav = false, gearDocked = sessionNav, cwd, placeName, projectPick, onNewIn, narrow }: HeaderProps) {
   useLocale();
   const desktop = useDesktop();
   const narrowDesk = desktop && !!narrow;
@@ -89,7 +90,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
     <Popover.Root open={accountOpen} onOpenChange={setAccountOpen}>
       <Popover.Trigger render={<IconButton data-part="header-account" title={accountTitle} aria-label={t('common.account')}><UserRound strokeWidth={1.5} /></IconButton>} />
       <Popover.Portal><Popover.Positioner side="bottom" align="end" width="md"><Popover.Popup>
-        <AccountPanel agent={agent} accounts={accounts?.filter(a => a.agent === agent.id) ?? []} accountId={accountId} close={() => setAccountOpen(false)}
+        <AccountPanel agent={agent} session={activeSessionId} remoteAuth={remoteAuth} accounts={accounts?.filter(a => a.agent === agent.id) ?? []} accountId={accountId} close={() => setAccountOpen(false)}
           onSelectAccount={on.selectAccount} onAddAccount={on.addAccount} onRemoveAccount={on.removeAccount} onRefreshQuota={on.refreshQuota} onUnlockCredentials={on.unlockCredentials} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
