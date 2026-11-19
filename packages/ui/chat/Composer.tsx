@@ -4,6 +4,7 @@ import type { ConfigControl, Draft, SessionControls, SessionOption, SlashCommand
 import type { EditorSelection, FileHit } from '@acpira/shared/protocol';
 import type { HiddenMap } from '@acpira/shared/settings';
 import { composerControls } from '@acpira/shared/composerControls';
+import { visibleOptions } from '@acpira/shared/models';
 import { MAX_TEXT_BYTES, lineRangeLabel } from '@acpira/shared/attachments';
 import { collectPastedText } from '@acpira/shared/pastedText';
 import { useAppearance } from '../appearance';
@@ -178,7 +179,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   const beamActive = focused || openMenus > 0;
   useLayoutEffect(() => { onBeam(beamActive); }, [onBeam, beamActive]);
   const dim = p.running || p.disabled;
-  const { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, sidekickFast, other } = composerControls(p.controls.options);
+  const { models, reasoning, modelConfig, collaboration, permission, agent, sidekick, sidekickEffort, sidekickFast, other } = composerControls(p.controls.options);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
   // Permission as a control of its own beside the modes (the built-in agent's approval): the permission chip is the one
   // solid chip, and a working mode is a pill picked from the / list
@@ -545,6 +546,11 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
             {permission.map(c => (
               <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)} modes={c.options}
                 labelOf={accessLabel} iconOf={accessIcon} />
+            ))}
+            {/* Main-thread agent persona (e.g. Claude `.claude/agents`): same single-line ModeMenu as Codex's working mode beside permissions */}
+            {agent.map(c => (
+              <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)}
+                modes={visibleOptions(c.options, p.hidden?.[c.id], c.value)} labelOf={o => o.name} />
             ))}
             {pill && <ModePill mode={pill} onExit={() => p.onSetMode(p.controls.modes[0]!.id)} />}
           </div>

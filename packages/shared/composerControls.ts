@@ -235,14 +235,15 @@ export function levelShort(label: string): string {
 // ACP capabilities choose the contents of one composer, never its layout.
 // Recognize native reasoning and model parameters before applying model-name decomposition.
 // Codex's `collaboration_mode` (default / plan) is a working mode next to the permission modes, so it sits on the left,
-// and so does a permission level offered as a config option (custom category `_permission_mode`, the built-in agent's
-// approval level): the composer folds it into the mode chip's menu when the agent has modes. The right side is the model's
+// and so do a permission level offered as a config option (custom category `_permission_mode`, the built-in agent's and
+// split CLI approval levels) and a main-thread agent persona select (`agent`). The right side is the model's
 export function composerControls(options: ConfigControl[]) {
-  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], sidekick: ConfigControl[] = [], sidekickEffort: ConfigControl[] = [], sidekickFast: ConfigControl[] = [], other: ConfigControl[] = [];
+  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], agent: ConfigControl[] = [], sidekick: ConfigControl[] = [], sidekickEffort: ConfigControl[] = [], sidekickFast: ConfigControl[] = [], other: ConfigControl[] = [];
   for (const c of options) {
     if (isReasoningControl(c)) reasoning.push(c);
     else if (c.category === 'collaboration_mode' && c.type !== 'boolean') collaboration.push(c);
     else if (c.category === '_permission_mode' && c.type !== 'boolean') permission.push(c);
+    else if (c.type !== 'boolean' && (c.category === 'agent' || (!c.category && c.id === 'agent'))) agent.push(c);
     else if (c.category === SIDEKICK_CATEGORY && c.type !== 'boolean') sidekick.push(c);
     else if (c.category === SIDEKICK_EFFORT_CATEGORY && c.type !== 'boolean') sidekickEffort.push(c);
     else if (c.category === SIDEKICK_FAST_CATEGORY) sidekickFast.push(c);
@@ -251,5 +252,5 @@ export function composerControls(options: ConfigControl[]) {
     else if (c.type !== 'boolean' && (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length)))) models.push(c);
     else other.push(c);
   }
-  return { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, sidekickFast, other };
+  return { models, reasoning, modelConfig, collaboration, permission, agent, sidekick, sidekickEffort, sidekickFast, other };
 }
