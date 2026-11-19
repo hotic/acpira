@@ -43,8 +43,8 @@ Regression check (2026-09-23, initialize only, vs. without `auth.terminal`): gro
 
 | Agent | CLI | ACP layer | Client SDK |
 |---|---|---|---|
-| Codex | bundled `@openai/codex` 0.155.1 (`CODEX_PATH` overrides); 0.159.3 under 2.1.1 | `codex-acp` 1.13.0 (`@agentclientprotocol/codex-acp`); the install line pins 2.1.1 since 2026-10-08 | `@agentclientprotocol/sdk` 1.4.0 |
-| Claude | bundled `@anthropic-ai/claude-agent-sdk` 0.3.280 + native `claude` binary (`CLAUDE_CODE_EXECUTABLE` overrides); 0.3.287 under 0.87.0 | `claude-agent-acp` 0.81.0 (`@agentclientprotocol/claude-agent-acp`); the install line pins 0.87.0 since 2026-10-08 | same |
+| Codex | bundled `@openai/codex` 0.155.1 (`CODEX_PATH` overrides); 0.159.3 under 2.1.1 | `codex-acp` 1.13.0 (`@agentclientprotocol/codex-acp`); the install line pins 2.7.0 since 2026-11-18 | `@agentclientprotocol/sdk` 1.4.0 |
+| Claude | bundled `@anthropic-ai/claude-agent-sdk` 0.3.280 + native `claude` binary (`CLAUDE_CODE_EXECUTABLE` overrides); 0.3.287 under 0.87.0 | `claude-agent-acp` 0.81.0 (`@agentclientprotocol/claude-agent-acp`); the install line pins 0.108.0 since 2026-11-18 | same |
 | OpenCode | `opencode` 1.18.15 (Homebrew); 1.18.35 (npm, Windows) handshakes the same | built in (`opencode acp`), `agentInfo` `OpenCode 1.18.15` | same |
 | DeepSeek Harness | `dsh` 0.1.5-rc.2 (`@deepseek-ai/dsh`) | `dsh --profile acp`, `agentInfo` `deepseek-harness-acp 0.0.1` (the ACP package version, not the CLI's) | same |
 | Pi | `pi` 0.86.0 (`@earendil-works/pi-coding-agent`) | `pi-acp` 0.0.33 (svkozak/pi-acp; spawns `pi --mode rpc`) | same |
