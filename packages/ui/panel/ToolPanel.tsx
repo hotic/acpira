@@ -251,8 +251,10 @@ export const tabTitle = (tab: PanelTab) => (tab.kind === 'terminal' ? `${tabLabe
 
 // As tall as the hover fill of the icon buttons on its line (the new-tab plus, the chat header's actions), with its corner
 // An end that holds a glyph (the icon, the close button) is padded so the glyph sits in a square cap (pl-tab-cap): the
-// close button's hover box is then as far from the tab's side as from its top and bottom
-const TAB = 'group/tab inline-flex h-ctl-fill max-w-[min(var(--panel-tab-max),100%)] shrink items-center gap-1.5 rounded-ctl-fill pl-tab-cap text-2 transition-colors';
+// close button's hover box is then as far from the tab's side as from its top and bottom. The width cap is a plain length:
+// a percentage in it (min(cap, 100%)) is dropped when the tab list sizes itself to its tabs, so a long title widened the
+// list to the whole name while the tab stopped at the cap, leaving a gap before "+". A narrow list still shrinks the tab
+const TAB = 'group/tab inline-flex h-ctl-fill max-w-(--panel-tab-max) shrink items-center gap-1.5 rounded-ctl-fill pl-tab-cap text-2 transition-colors';
 
 // Both desktop layouts shrink tab titles before scrolling. Keep the selected tab whole when
 // its container resizes, without scrollIntoView moving any of the shell's ancestor scrollports.
