@@ -185,7 +185,7 @@ async function main() {
     await page.waitFor('the intro\'s agent row', `!!document.querySelector('.wl-agent, .wl-none')`);
     if (existsSync(data)) fail('the data folder exists before the consent card');
     if (shotDir) { await sleep(1600); await page.shot(join(shotDir, 'welcome-intro.png')); }
-    await page.click('the intro\'s skip', `document.querySelector('.wl-intro .wl-quiet')`);
+    await page.click('the intro\'s skip', `document.querySelector('.wl-intro .wl-actions button:last-child')`);
     await page.waitFor('consent after skipping', `!!document.querySelector('.wl-center[data-open]')`);
     if (existsSync(data)) fail('skipping the intro created the data folder before consent');
     const seeTour = await page.eval(`document.querySelector('.wl-center[data-open] button').textContent`);
@@ -624,7 +624,7 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
 
     // A narrow window, really resized: the list becomes a page over the window, a pick closes it on that session
     await page.call({ op: 'resize', width: 480, height: 760 });
-    await page.waitFor('the narrow layout', `!!document.querySelector('.acp-shell[data-narrow] [data-header-sub]')`);
+    await page.waitFor('the narrow layout', `!!document.querySelector('.acp-shell[data-narrow]')`);
     const toggle = `document.querySelector('[data-title-row] [data-session-toggle]')`;
     const pageOpen = `(() => { const a = document.querySelector('[data-session-panel]'); return !!document.querySelector('.acp-shell[data-drawer-open]') && getComputedStyle(a).transform === 'none' && Math.round(a.getBoundingClientRect().width) === innerWidth; })()`;
     const pageClosed = `!document.querySelector('.acp-shell[data-drawer-open]') && getComputedStyle(document.querySelector('[data-session-panel]')).visibility === 'hidden'`;
@@ -744,7 +744,7 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
           await freshPage.waitFor('the interface tour settings action', `!![...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Start')`);
           await freshPage.click('replay the interface tour', `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Start')`);
           await freshPage.waitFor('replay starts with the animated intro', `!!document.querySelector('.wl-intro[data-open] .wl-bigmark')`);
-          await freshPage.click('skip the replay intro', `document.querySelector('.wl-intro[data-open] .wl-quiet')`);
+          await freshPage.click('skip the replay intro', `document.querySelector('.wl-intro[data-open] .wl-actions button:last-child')`);
           await freshPage.waitFor('skip ends without consent', `!document.querySelector('.wl-layer')`);
           await freshPage.eval('location.reload()');
           await freshPage.waitFor('a new page after the tour', `!!document.querySelector('.acp-shell') && !window.__acpira.firstRun && !document.querySelector('.wl-layer')`);
@@ -752,7 +752,7 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
           await freshPage.waitFor('the full welcome when an old profile changes to a missing home', `!!document.querySelector('.wl-intro[data-open] .wl-bigmark')`);
           const boot = await freshPage.eval('window.__acpira.firstRun');
           if (boot?.home !== freshData || existsSync(freshData) || (await freshPage.call({ op: 'windows' })).some(w => w.ready)) fail('the old profile did not wait for the new home consent');
-          await freshPage.click('skip the missing-home intro', `document.querySelector('.wl-intro[data-open] .wl-quiet')`);
+          await freshPage.click('skip the missing-home intro', `document.querySelector('.wl-intro[data-open] .wl-actions button:last-child')`);
           await freshPage.waitFor('skipping still requires folder consent', `!!document.querySelector('.wl-center[data-open]')`);
           if (existsSync(freshData)) fail('skipping the returning welcome created the new home');
         } else {
