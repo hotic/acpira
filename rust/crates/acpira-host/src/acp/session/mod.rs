@@ -35,8 +35,8 @@ pub mod prompt;
 pub mod queue;
 pub mod relay;
 pub mod remote;
-pub mod remote_claude;
 pub mod restore_turns;
+pub mod stand;
 pub mod tasks;
 pub mod turn_usage;
 pub mod ultracode;
@@ -338,9 +338,11 @@ pub struct AcpSession {
   /// The project stdio MCP servers on the folder's SSH host this session's agent was given, by name: the only commands
   /// an `acpira mcp-host` shim holding its grant can start there (`HubOp::HostStdio`)
   pub(crate) host_stdio: parking_lot::Mutex<std::collections::HashMap<String, remote::HostStdio>>,
-  /// A Claude Code session's calls of the project tools on its SSH host, by the model's call id, until their rows
-  /// complete (`remote_claude.rs`)
-  pub(crate) remote_calls: parking_lot::Mutex<std::collections::HashMap<String, remote_claude::RemoteCall>>,
+  /// A stand-in CLI's calls of the project tools on its SSH host, by the model's call id, until their rows complete
+  /// (`stand.rs`)
+  pub(crate) remote_calls: parking_lot::Mutex<std::collections::HashMap<String, stand::RemoteCall>>,
+  /// Those that came with no row to bind to (an MCP call ahead of its ACP `tool_call`), so a stop still reaches them
+  pub(crate) loose_calls: parking_lot::Mutex<std::collections::HashMap<String, crate::acp::transport::cancel::Cancel>>,
   /// Codex in a folder on an SSH host: the way to its exec-server there, as long as its CLI runs (`remote_exec_env`)
   pub(crate) exec_tunnel: parking_lot::Mutex<Option<crate::remote::codex_exec::ExecTunnel>>,
   /// The `clientId`s of the actions the session ran, newest last (`claim_client_id`); saved with the record
@@ -523,6 +525,7 @@ impl AcpSession {
         epoch,
         host_stdio: Default::default(),
         remote_calls: Default::default(),
+        loose_calls: Default::default(),
         exec_tunnel: Default::default(),
         client_ids: parking_lot::Mutex::new(record.client_ids.iter().cloned().collect()),
         plugin_offers: Default::default(),
@@ -739,7 +742,7 @@ impl AcpSession {
   /// are the engine's own calls, any other command is found under the agent's process, which needs a Unix process table
   pub(crate) fn can_stop_commands_of(&self, c: &Core) -> bool {
     if self.remote_folder().is_some() {
-      return self.vendor.remote_stand().is_some();
+      return self.local_run().is_some_and(|l| l.stand().is_some());
     }
     // A live process to search below: the session's own agent, or a summoned child's while its round runs
     cfg!(unix) && (c.proc.as_ref().is_some_and(|p| p.pid.is_some()) || c.relays.procs.values().any(|rp| rp.proc.pid.is_some()))

@@ -119,6 +119,17 @@ impl AcpSession {
         }
         (proc, c.acp_session_id.clone(), c.state.controls.mode_config_id.clone(), c.state.controls.mode_id.clone())
       };
+      if me.remote_stand().is_some_and(|s| s.profile.gates.is_empty()) {
+        let mut c = me.core.lock();
+        let full = is_full_access(&c.state.controls, &id);
+        c.perms.auto_approve = full;
+        if full {
+          c.state.controls.mode_id = Some(id);
+          me.flush_permissions(&mut c);
+          me.touch(&mut c);
+          return Ok(());
+        }
+      }
       let levels = me.access_levels().filter(|_| !me.core.lock().access.offered.is_empty());
       if let Some(levels) = levels {
         // A split agent: the resting mode runs at the picked level, a working mode as itself (`access.rs`)

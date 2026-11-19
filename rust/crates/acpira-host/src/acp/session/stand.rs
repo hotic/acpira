@@ -1,6 +1,6 @@
-//! A Claude Code or Antigravity session in a folder on an SSH host under local run (`vendors::claude_remote`,
-//! docs/dev/remote.md): its stand-in folder, the session request that routes project work through `acpira mcp`
-//! (`HubOp::RemoteTool`), and its rows shown as native tools
+//! A stand-in CLI's session in a folder on an SSH host under local run (`acp::local_run`, docs/dev/remote.md): its
+//! stand-in folder, the session request that routes project work through `acpira mcp` (`HubOp::RemoteTool`), its rows
+//! shown as native tools, and the permission requests its gates settle
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 use crate::acp::session::AcpSession;
 use crate::acp::session::remote::Notify;
 use crate::acp::transport::cancel::Cancel;
-use crate::acp::vendors::claude_remote::{self, Stand};
+use crate::acp::local_run::stand::{self as stand_in, Stand};
+use crate::acp::local_run::{LocalRun, brief, tools};
 use crate::store::data_dir::{acpira_home, home_dir};
 
 /// How much of one instructions file goes into the system prompt
@@ -58,7 +59,8 @@ pub(crate) enum RemotePerm {
   HostEdit,
   /// The CLI's own local plan or artifact file here (`~/.claude/plans`, `~/.gemini/.../brain`)
   AgentOwnFile,
-  /// A built-in local workspace or shell tool outside `~/.gemini` in an Antigravity stand-in session: always denied
+  /// A native tool that would write, read or run on this machine instead of the host (`stand::blocked_native`): always
+  /// denied, full access included
   BlockedLocalTool,
 }
 
@@ -69,14 +71,28 @@ impl AcpSession {
   }
 
   fn here_roots(&self, stand: &Stand) -> Vec<PathBuf> {
-    claude_remote::here_roots(stand.dialect, &home_dir(), &self.data_root())
+    stand_in::here_roots(&stand.profile, &home_dir(), &self.data_root())
   }
 
-  /// The stand-in of a Claude Code or Antigravity session in a folder on an SSH host; None for any other session
+  /// How the session's agent runs here for a folder on an SSH host (`AgentDef::local_run`); None runs it in the host's
+  /// engine. The built-in agent's id keeps its own way even under an agents.json entry of that id
+  pub(crate) fn local_run(&self) -> Option<LocalRun> {
+    let def = self.deps.registry.try_get(&self.agent).and_then(|d| d.local_run.clone());
+    def.or_else(|| (self.agent == crate::acp::agents::registry::SELF_AGENT_ID).then_some(LocalRun::Native))
+  }
+
+  /// The stand-in of a stand-in CLI's session in a folder on an SSH host; None for any other session
   pub(crate) fn remote_stand(&self) -> Option<Stand> {
-    let dialect = self.vendor.remote_stand()?;
     let f = self.remote_folder()?;
-    Some(Stand::for_dialect(dialect, &f.alias, &f.path, &self.data_root()))
+    let profile = self.local_run()?.stand()?.clone();
+    Some(Stand::new(profile, &f.alias, &f.path, &self.data_root()))
+  }
+
+  /// Whether picking mode `id` stays off the wire, the engine approving instead: in a gateless stand-in (the generic
+  /// profile) the CLI's own full access would run its native tools here without asking, past the engine's refusal of
+  /// native writes and commands. `set_mode` and an edit's fresh process keep the CLI in its asking mode
+  pub(crate) fn hosts_full_access(&self, controls: &acpira_shared::transcript::SessionControls, id: &str) -> bool {
+    crate::acp::session::controls::is_full_access(controls, id) && self.remote_stand().is_some_and(|s| s.profile.gates.is_empty())
   }
 
   /// Makes the stand-in folder if it is missing (`Stand::make`). A failure is only logged: the process that then cannot
@@ -87,8 +103,8 @@ impl AcpSession {
     }
   }
 
-  /// The session request of such a session (`claude_remote::with_stand`), with the host's instructions read now; the
-  /// stand-in folder is made if it is missing
+  /// The session request of such a session (`local_run::brief`), with the host's instructions read now; the stand-in
+  /// folder is made if it is missing, and a note the CLI reads from the stand-in is written there before it is asked
   pub(crate) async fn with_remote_stand(&self, req: Value) -> Value {
     let Some(stand) = self.remote_stand() else { return req };
     self.make_remote_stand(&stand);
@@ -97,12 +113,19 @@ impl AcpSession {
     let files: Vec<String> = instructions.iter().map(|(p, t)| format!("{p} ({} bytes)", t.len())).collect();
     self.log(&format!(
       "remote: {} runs in {} for {}; instructions: {}",
-      stand.dialect.label(),
+      stand.profile.label,
       stand.local.display(),
       stand.alias,
       if files.is_empty() { "none".into() } else { files.join(", ") }
     ));
-    claude_remote::with_stand(req, &stand, places.as_ref(), &instructions)
+    let note = brief::note(&stand, places.as_ref(), &instructions);
+    if let Some((path, text)) = brief::stand_file(&stand, &note)
+      && std::fs::read(&path).ok().as_deref() != Some(text.as_bytes())
+      && let Err(e) = crate::store::file_lock::write_atomic(&path, text.as_bytes(), None).await
+    {
+      self.log(&format!("remote: the note {} could not be written: {e}", path.display()));
+    }
+    brief::with_stand(req, &stand, &note)
   }
 
   /// The project's instructions on the host as the CLI would read them there (`CLAUDE.md` / `GEMINI.md` of the project
@@ -121,7 +144,7 @@ impl AcpSession {
     for dir in dirs {
       let dir = dir.trim_end_matches('/').to_owned();
       let mut found = None;
-      for name in stand.dialect.instruction_files() {
+      for name in &stand.profile.instructions {
         let path = format!("{dir}/{name}");
         if let Some(text) = read(path.clone()).await {
           found = Some((path, text));
@@ -157,10 +180,10 @@ impl AcpSession {
     let stand = self.remote_stand().ok_or("This session's agent has no project tools on an SSH host.")?;
     let data_root = self.data_root();
     let roots = self.here_roots(&stand);
-    let here = claude_remote::runs_here(name, &args, &stand, &data_root, &roots);
-    let (tool, call_args) = match claude_remote::builtin_call(name, &args, &stand, here) {
+    let here = stand_in::runs_here(name, &args, &stand, &data_root, &roots);
+    let (tool, call_args) = match tools::builtin_call(name, &args, &stand, here) {
       Ok(x) => x,
-      Err(e) => return Ok(claude_remote::mcp_result(&Output::error(e))),
+      Err(e) => return Ok(tools::mcp_result(&Output::error(e))),
     };
     let mut stop = Cancel::new();
     let mut bound_id = tool_use_id;
@@ -171,14 +194,15 @@ impl AcpSession {
         entry.claimed = true;
         stop = entry.stop.clone();
       } else {
-        // Antigravity sends ACP `tool_call` before MCP `tools/call` without a call id in `_meta`: bind to the earliest
+        // A CLI other than claude-agent-acp (Antigravity) sends ACP `tool_call` before MCP `tools/call` without a call id in
+        // `_meta`: bind to the earliest
         // unclaimed row of the same tool, preferring an exact canonical-argument match when calls run in parallel
         let exact = calls
           .iter()
           .filter(|(_, c)| !c.claimed && c.card.is_none() && c.name == static_name)
           .filter(|(_, c)| {
-            let entry_here = claude_remote::runs_here(static_name, &c.input, &stand, &data_root, &roots);
-            claude_remote::builtin_call(static_name, &c.input, &stand, entry_here).ok().as_ref() == Some(&(tool, call_args.clone()))
+            let entry_here = stand_in::runs_here(static_name, &c.input, &stand, &data_root, &roots);
+            tools::builtin_call(static_name, &c.input, &stand, entry_here).ok().as_ref() == Some(&(tool, call_args.clone()))
           })
           .min_by_key(|(_, c)| c.seq)
           .map(|(id, _)| id.clone());
@@ -199,16 +223,23 @@ impl AcpSession {
       }
     }
     let call = bound_id.clone().unwrap_or_else(crate::util::random_uuid);
+    let loose = bound_id.is_none() && !here;
+    if loose {
+      self.loose_calls.lock().insert(call.clone(), stop.clone());
+    }
     let mut out = if here { self.run_here(tool, call_args, &call).await } else { self.run_on_host(tool, call_args, &call, stop).await };
+    if loose {
+      self.loose_calls.lock().remove(&call);
+    }
     if name == "Bash" {
-      claude_remote::name_job_tools(&mut out, stand.dialect);
+      tools::name_job_tools(&mut out, &stand.profile.prefix);
     }
     if let Some(id) = &bound_id
       && let Some(c) = self.remote_calls.lock().get_mut(id)
     {
       c.card = Some((out.content.clone(), out.raw_output.clone()));
     }
-    Ok(claude_remote::mcp_result(&out))
+    Ok(tools::mcp_result(&out))
   }
 
   /// Prepare and run a call on the host's helper (`on_remote_tool`, the built-in agent's path): the edit gate asks
@@ -306,7 +337,7 @@ impl AcpSession {
     let data_root = self.data_root();
     let roots = self.here_roots(&stand);
     let mut calls = self.remote_calls.lock();
-    let name = match claude_remote::remote_name(u) {
+    let name = match tools::remote_name(&stand.profile, u) {
       Some(n) => n,
       None => match calls.get(&id) {
         Some(c) => c.name,
@@ -315,12 +346,12 @@ impl AcpSession {
     };
     let entry = calls.entry(id.clone()).or_insert_with(|| RemoteCall::new(name));
     if let Some(raw) = u.get("rawInput").or_else(|| u.get("args")).filter(|r| r.as_object().is_some_and(|o| !o.is_empty())) {
-      entry.input = claude_remote::clean_input(raw);
+      entry.input = tools::clean_input(raw);
     }
     if let Some(p) = u.pointer("/_meta/claudeCode/parentToolUseId") {
       entry.parent = Some(p.clone());
     }
-    let view = claude_remote::view(name, &entry.input, &stand, &data_root, &roots);
+    let view = tools::view(name, &entry.input, &stand, &data_root, &roots);
     let first = kind == "tool_call";
     u["kind"] = json!(view.kind);
     if first || u.get("title").is_some() {
@@ -390,6 +421,9 @@ impl AcpSession {
     for c in self.remote_calls.lock().values() {
       c.stop.cancel();
     }
+    for stop in self.loose_calls.lock().values() {
+      stop.cancel();
+    }
   }
 
   /// The user's stop of one remote call's row; false when the call is not one of them
@@ -397,11 +431,16 @@ impl AcpSession {
     self.remote_calls.lock().get(tool_call_id).map(|c| c.stop.cancel()).is_some()
   }
 
+  /// Whether a permission request's toolCall is one of the remote tools: a call the engine already holds, or one named so
+  fn is_remote_call(&self, stand: &Stand, tc: &Value) -> bool {
+    tc.get("toolCallId").and_then(Value::as_str).is_some_and(|id| self.remote_calls.lock().contains_key(id)) || tools::remote_name(&stand.profile, tc).is_some()
+  }
+
   /// A permission request's toolCall of a remote tool, rewritten like its row
   pub(crate) fn nativize_permission(&self, req: &mut Value) {
+    let Some(stand) = self.remote_stand() else { return };
     let Some(tc) = req.get_mut("toolCall") else { return };
-    let remote = tc.get("toolCallId").and_then(Value::as_str).is_some_and(|id| self.remote_calls.lock().contains_key(id)) || claude_remote::remote_name(tc).is_some();
-    if !remote {
+    if !self.is_remote_call(&stand, tc) {
       return;
     }
     self.nativize_remote("tool_call_update", tc);
@@ -415,28 +454,28 @@ impl AcpSession {
   }
 
   /// Classifies a permission request in a stand-in session so `decide_permission` approves read-only remote tools and
-  /// the CLI's own plan / artifact writes without a card, approves host edits in accept-edits mode, and blocks local
-  /// workspace/shell tools outside `~/.gemini`
+  /// the CLI's own plan / artifact writes without a card, approves host edits in accept-edits mode, and refuses a native
+  /// tool that would work on this machine (`stand::blocked_native`)
   pub(crate) fn remote_perm(&self, tool_call_id: &str, tool_call: &Value) -> RemotePerm {
     let Some(stand) = self.remote_stand() else { return RemotePerm::None };
     let home = home_dir();
     let data_root = self.data_root();
-    if claude_remote::is_blocked_local_tool(&stand, tool_call, &home, &data_root) {
-      return RemotePerm::BlockedLocalTool;
+    if !self.is_remote_call(&stand, tool_call) {
+      return if stand_in::blocked_native(&stand, tool_call, &home, &data_root) { RemotePerm::BlockedLocalTool } else { RemotePerm::None };
     }
     let calls = self.remote_calls.lock();
     let Some(c) = calls.get(tool_call_id) else { return RemotePerm::None };
-    if claude_remote::READ_ONLY.contains(&c.name) {
+    if tools::READ_ONLY.contains(&c.name) {
       return RemotePerm::ReadOnly;
     }
     if !matches!(c.name, "Write" | "Edit" | "MultiEdit") {
       return RemotePerm::None;
     }
-    let roots = claude_remote::here_roots(stand.dialect, &home, &data_root);
-    if !claude_remote::runs_here(c.name, &c.input, &stand, &data_root, &roots) {
+    let roots = stand_in::here_roots(&stand.profile, &home, &data_root);
+    if !stand_in::runs_here(c.name, &c.input, &stand, &data_root, &roots) {
       return RemotePerm::HostEdit;
     }
     let path = c.input.get("file_path").or_else(|| c.input.get("path")).and_then(Value::as_str).unwrap_or("");
-    if claude_remote::is_agent_own_write(stand.dialect, path, &home, &roots) { RemotePerm::AgentOwnFile } else { RemotePerm::None }
+    if stand_in::is_quiet_write(&stand.profile, path, &home) { RemotePerm::AgentOwnFile } else { RemotePerm::None }
   }
 }

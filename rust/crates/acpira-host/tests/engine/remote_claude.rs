@@ -1,8 +1,8 @@
 #![cfg(unix)]
 
-//! Claude Code in a folder on an SSH host under local run (`vendors/claude_remote.rs`): the fake agent plays
-//! claude-agent-acp (`claude-remote-call:`), the lab's fake ssh plays the host, and Acpira's own MCP server carries the
-//! project tools to it through a live hub
+//! Stand-in CLIs in a folder on an SSH host under local run (`acp/local_run`): the fake agent plays claude-agent-acp
+//! (`claude-remote-call:`), `agy acp` (`agy-remote-call:`) or any CLI a custom agent declares `localRun` for, the lab's
+//! fake ssh plays the host, and Acpira's own MCP server carries the project tools to it through a live hub
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -44,8 +44,17 @@ impl Remote {
   }
 
   async fn for_agent(fake: &FakeAgent, agent: &str) -> Remote {
+    Self::with(fake, agent, json!({})).await
+  }
+
+  /// `extra`: more of the agent's agents.json entry
+  async fn with(fake: &FakeAgent, agent: &str, extra: Value) -> Remote {
     let logs = tempfile::tempdir().unwrap();
-    let mut h = Harness::for_agent(fake, agent, json!({ "env": { "FAKE_META_LOG": logs.path().join("meta.log") } }));
+    let mut setting = json!({ "env": { "FAKE_META_LOG": logs.path().join("meta.log") } });
+    if let (Some(s), Some(e)) = (setting.as_object_mut(), extra.as_object()) {
+      s.extend(e.clone());
+    }
+    let mut h = Harness::for_agent(fake, agent, setting);
     let lab = Lab::new();
     let real = lab.path().join("hostfs");
     std::fs::create_dir_all(real.join("work")).unwrap();
@@ -128,7 +137,7 @@ async fn claude_code_opens_in_a_stand_in_with_its_own_tools_off() {
   }
   assert_eq!(options["toolAliases"]["Bash"], "mcp__acpira__Bash");
   assert!(req["meta"].get("acpira/remote").is_none(), "the built-in agent's host meta is not Claude's");
-  // The system prompt section itself is checked in `claude_remote`'s unit tests: the fake's ACP SDK drops the field.
+  // The system prompt section itself is checked in `local_run::brief`'s unit tests: the fake's ACP SDK drops the field.
   // CLAUDE.md is read, with its `@AGENTS.md` line as that file's text
   let logs = r.h.logs();
   let line = logs.iter().find(|l| l.contains("Claude Code runs in")).expect("the stand-in is logged");
@@ -319,4 +328,70 @@ async fn antigravity_runs_in_its_stand_in_and_routes_mcp_tools_to_the_host() {
   let (cards, reply) = turn(&s, "agy-local-tool:read_file /etc/hosts", "allow_once").await;
   assert!(cards.is_empty(), "blocked local tool never opens a permission card: {cards:?}");
   assert_eq!(reply["rejected"], true, "{reply}");
+}
+
+/// Any ACP CLI a custom agent declares `localRun` for (`local_run::generic`): it starts in a stand-in of its own with the
+/// remote note and the host's instructions as the stand-in's `AGENTS.md`, Acpira's project tools reach the host however
+/// the CLI names and binds its calls, and a native write is refused without a card
+#[tokio::test(flavor = "multi_thread")]
+async fn a_custom_agent_runs_in_a_stand_in_of_its_own() {
+  let fake = crate::fake_or_skip!();
+  let r = Remote::with(&fake, "mine", json!({ "localRun": true })).await;
+  std::fs::write(r.real.join("work/AGENTS.md"), "Build with make.\n").unwrap();
+  let s = r.session().await;
+  assert!(view(&s)["error"].is_null(), "{} {:?}", view(&s)["error"], r.h.logs());
+
+  let stand = r.stand_in_under("remote/stand/mine");
+  let req = r.requests().into_iter().find(|q| q["method"] == "new").expect("a session/new");
+  assert_eq!(req["cwd"], json!(stand));
+  for key in ["claudeCode", "antigravity", "acpira/remote"] {
+    assert!(req["meta"].get(key).is_none(), "{key} is not this CLI's: {}", req["meta"]);
+  }
+  let note = std::fs::read_to_string(stand.join("AGENTS.md")).expect("the note is in the stand-in");
+  assert!(note.contains(&format!("{VIRT}/work")) && note.contains("mcp__acpira__Bash") && note.contains("Build with make."), "{note}");
+
+  // A call without an id of its own binds to its row by its input
+  let (cards, _) = turn(&s, r#"agy-remote-call:Write {"file_path":"hello.txt","content":"hi from mine\n"}"#, "allow_once").await;
+  assert_eq!(cards.len(), 1, "the write asks");
+  assert_eq!(std::fs::read_to_string(r.real.join("work/hello.txt")).unwrap(), "hi from mine\n");
+  assert!(!stand.join("hello.txt").exists(), "nothing lands in the stand-in");
+  let vw = view(&s);
+  let row = agent_blocks(&vw).into_iter().find(|b| b["type"] == "tool_call").unwrap();
+  expect_match(&row, json!({ "kind": "edit", "status": "completed", "diffStat": { "add": 1 } }));
+
+  let (_, reply) = turn(&s, r#"claude-remote-call:Bash {"command":"pwd"}"#, "allow_once").await;
+  assert!(result_text(&reply).contains(&format!("{VIRT}/work")), "it ran in the host's folder: {reply}");
+
+  // The CLI's own write tool would write on this machine: refused before any card
+  let elsewhere = tempfile::tempdir().unwrap();
+  let target = elsewhere.path().join("native.txt");
+  let (cards, reply) = turn(&s, &format!("hook-perm-write:{}", target.display()), "allow_once").await;
+  assert!(cards.is_empty(), "a refused native write shows no card: {cards:?}");
+  assert_eq!(reply, json!("rejected"));
+  assert!(!target.exists());
+}
+
+/// A custom agent's own full-access mode would run its native tools here unasked: picking it stays the engine's, the
+/// CLI keeps its asking mode, and a native write is still refused
+#[tokio::test(flavor = "multi_thread")]
+async fn a_gateless_stand_in_keeps_full_access_with_the_engine() {
+  let fake = crate::fake_or_skip!();
+  let logs = tempfile::tempdir().unwrap();
+  let sent = logs.path().join("modes.log");
+  let r = Remote::with(&fake, "mine", json!({ "localRun": true, "env": { "FAKE_MIXED_MODES": "claude", "FAKE_MODE_LOG": sent } })).await;
+  let s = r.session().await;
+  assert!(view(&s)["error"].is_null(), "{} {:?}", view(&s)["error"], r.h.logs());
+
+  s.select_mode("bypassPermissions".into()).await.unwrap();
+  assert_eq!(view(&s)["controls"]["modeId"], "bypassPermissions");
+  let elsewhere = tempfile::tempdir().unwrap();
+  let target = elsewhere.path().join("native.txt");
+  let (cards, reply) = turn(&s, &format!("hook-perm-write:{}", target.display()), "allow_once").await;
+  assert!(cards.is_empty(), "a refused native write shows no card: {cards:?}");
+  assert_eq!(reply, json!("rejected"));
+  assert!(!target.exists());
+
+  s.select_mode("acceptEdits".into()).await.unwrap();
+  let wire = std::fs::read_to_string(&sent).unwrap_or_default();
+  assert!(!wire.contains("bypassPermissions") && wire.contains("acceptEdits"), "modes on the wire: {wire}");
 }

@@ -35,6 +35,8 @@ export interface AgentInfo {
   vendor?: string;
   // The agent's mark as SVG path data on a 24 x 24 box, for an agent the page has no mark of its own for
   mark?: string[];
+  // It can run on this machine in a folder on an SSH host, only its tools there (`canRunHere`); absent from older engines
+  sshLocal?: boolean;
 }
 
 export interface AgentInstall {

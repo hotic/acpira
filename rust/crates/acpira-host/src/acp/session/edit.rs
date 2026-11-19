@@ -494,7 +494,14 @@ impl AcpSession {
       }
     }
     if let Some(mode) = &mode_id {
-      if let Some(mode_config) = controls.mode_config_id.clone() {
+      // A gateless stand-in's full access stays the engine's (`set_mode`): the CLI keeps its asking mode
+      let hosted = self.hosts_full_access(controls, mode);
+      if live && self.remote_stand().is_some_and(|s| s.profile.gates.is_empty()) {
+        self.core.lock().perms.auto_approve = hosted;
+      }
+      if hosted {
+        // Nothing reaches the CLI
+      } else if let Some(mode_config) = controls.mode_config_id.clone() {
         if controls.mode_id.as_ref() != Some(mode) {
           self.check_edit_active()?;
           let r =

@@ -25,7 +25,7 @@ impl BridgeCore {
       let root = manager.data_root();
       let host_path = named
         .filter(|p| !reveal && *p != "~" && !p.starts_with("~/"))
-        .and_then(|p| normalize_remote_path(&crate::acp::vendors::claude_remote::resolve_host_path(&f.alias, &f.path, &root, &p)));
+        .and_then(|p| normalize_remote_path(&crate::acp::local_run::stand::resolve_host_path(&f.alias, &f.path, &root, &p)));
       let Some(host_path) = host_path else {
         platform.toast("info", &tp("host.remoteFile", &[("path", &path), ("host", &f.alias)]));
         return Ok(());
@@ -230,7 +230,7 @@ impl BridgeCore {
         if named == "~" || named.starts_with("~/") {
           return None;
         }
-        let resolved = crate::acp::vendors::claude_remote::resolve_host_path(&f.alias, &f.path, &self.manager.data_root(), &named);
+        let resolved = crate::acp::local_run::stand::resolve_host_path(&f.alias, &f.path, &self.manager.data_root(), &named);
         Some(std::path::PathBuf::from(normalize_remote_path(&resolved)?))
       }
       None => Some(normalize(&resolve_open_path(cwd, &named))),

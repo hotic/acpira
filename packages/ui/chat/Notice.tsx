@@ -30,7 +30,7 @@ export interface NoticeProps {
   // SessionView.canTakeOver: an error from a session lock held by another Acpira instance's agent (taking over ends it), or a
   // read-only copy of a session another Acpira engine has open (taking over asks that engine to hand it over)
   onTakeOver?: () => void;
-  // A session on an SSH host's engine whose agent could run on this machine instead (`SSH_LOCAL_AGENTS`): offered beside
+  // A session on an SSH host's engine whose agent could run on this machine instead (`canRunHere`): offered beside
   // a failure or a sign-in, since the host may lack the CLI, its login or a route to the vendor
   onRunHere?: () => void;
   // Session runs on an SSH host's engine: terminal auth methods lead browser OAuth, which cannot open on a headless host

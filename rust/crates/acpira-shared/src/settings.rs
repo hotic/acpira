@@ -96,8 +96,9 @@ pub struct SettingsView {
   /// Agents whose plan mode answers tool permission requests itself (plan approvals still ask)
   #[serde(default)]
   pub plan_auto_approve: Vec<AgentId>,
-  /// Agents that run on this machine in a folder on an SSH host, only their tools on the host (`remote::SSH_LOCAL_AGENTS`);
-  /// the rest run in the host's own engine. None by default: a session run here is only a read-only copy on the host
+  /// Agents that run on this machine in a folder on an SSH host, only their tools on the host; which agents can is each
+  /// definition's (`AgentInfo::ssh_local`), so a name of one that cannot is ignored where it is read. The rest run in the
+  /// host's own engine. None by default: a session run here is only a read-only copy on the host
   #[serde(default = "default_ssh_local_agents")]
   pub ssh_local_agents: Vec<AgentId>,
   /// Cross-harness subagents (`~/.acpira/subagents.json`, not a host setting: every window and IDE shares the file)
@@ -137,12 +138,12 @@ fn default_ssh_local_agents() -> Vec<AgentId> {
   vec![]
 }
 
-/// The `sshLocalAgents` setting: the agents of `remote::SSH_LOCAL_AGENTS` it names, none when it is unset
+/// The `sshLocalAgents` setting: the agents it names, none when it is unset
 pub fn ssh_local_agents(value: &Value) -> Vec<AgentId> {
   if !value.is_array() {
     return default_ssh_local_agents();
   }
-  id_list(value).into_iter().filter(|a| crate::remote::SSH_LOCAL_AGENTS.contains(&a.as_str())).collect()
+  id_list(value)
 }
 
 fn default_agent_cpu_cap() -> i64 {

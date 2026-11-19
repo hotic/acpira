@@ -80,6 +80,8 @@ pub struct AgentDef {
   /// Who makes the CLI and its mark (SVG path data, 24 x 24), for an agent the page knows neither of
   pub vendor: Option<String>,
   pub mark: Option<Vec<String>>,
+  /// How it runs on this machine for a folder on an SSH host (`acp::local_run`); None runs it in the host's engine
+  pub local_run: Option<crate::acp::local_run::LocalRun>,
 }
 
 /// One permission level of a CLI whose modes mix levels and working modes: the CLI mode it runs on, and whether the host
@@ -148,6 +150,7 @@ fn base(id: &str, name: &str, command: &str, args: &[&str], candidates: &[&str])
     candidates: list(candidates),
     subagents: true,
     terminal_auth: true,
+    local_run: crate::acp::local_run::builtin(id),
     ..Default::default()
   }
 }
@@ -424,6 +427,8 @@ pub struct CustomAgentSetting {
   pub vendor: Option<String>,
   /// Checked by `mark_paths`; an invalid mark is dropped, the agent kept
   pub mark: Option<Value>,
+  /// Whether and how it runs on this machine for a folder on an SSH host (`local_run::from_setting`)
+  pub local_run: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -512,6 +517,9 @@ fn overlay(mut b: AgentDef, c: CustomAgentSetting, login: Vec<String>, install: 
   if let Some(m) = c.mark.as_ref().and_then(|m| mark_paths(m).ok()) {
     b.mark = Some(m);
   }
+  if c.local_run.is_some() {
+    b.local_run = crate::acp::local_run::from_setting(&b.id, &b.name, c.local_run.as_ref(), b.local_run.take());
+  }
   b
 }
 
@@ -543,9 +551,12 @@ impl AgentRegistry {
         defs.insert(id.clone(), def);
         continue;
       }
+      let name = c.name.unwrap_or_else(|| id.clone());
+      // A custom entry under a built-in id runs that CLI: its way to an SSH host stays unless the entry says otherwise
+      let local_run = crate::acp::local_run::from_setting(id, &name, c.local_run.as_ref(), defs.get(id).and_then(|b| b.local_run.clone()));
       let def = AgentDef {
         id: id.clone(),
-        name: c.name.unwrap_or_else(|| id.clone()),
+        name,
         command: c.command,
         args: c.args.unwrap_or_default(),
         candidates: vec![],
@@ -563,6 +574,7 @@ impl AgentRegistry {
         adapter: None,
         vendor: c.vendor.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()),
         mark: c.mark.as_ref().and_then(|m| mark_paths(m).ok()),
+        local_run,
       };
       if !defs.contains_key(id) {
         order.push(id.clone());
@@ -623,6 +635,7 @@ impl AgentRegistry {
           update: if found { updates.get(id).cloned() } else { None },
           vendor: d.vendor.clone(),
           mark: d.mark.clone(),
+          ssh_local: Some(d.local_run.is_some()),
           ..Default::default()
         }
       })

@@ -89,8 +89,9 @@ impl SessionManager {
         _ => {}
       }
     }
-    // The next session's process, warmed where this one's runs (an SSH host's folder is no folder here)
-    if s.status() == SessionStatus::Ready {
+    // The next session's process, warmed where this one's runs (an SSH host's folder is no folder here, its stand-in
+    // is), unless a stand-in's own launch arguments mean no warm process would ever be taken (`lifecycle.rs`)
+    if s.status() == SessionStatus::Ready && !s.remote_stand().is_some_and(|st| st.profile.launches()) {
       self.pool.ensure(&s.agent, &s.process_cwd(), s.account_id().as_deref());
     }
   }

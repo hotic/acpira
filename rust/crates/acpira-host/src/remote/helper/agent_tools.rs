@@ -33,7 +33,7 @@ fn safe_name(s: &str) -> String {
 /// diff) and marks the files this host's guard protects; `run` carries it out. Output over the budget is written to a
 /// folder of the call and sent back as `spill:<name>` chunks, since the session's own files stay on the engine's
 /// machine; progress (a command's output so far) goes out as `progress` chunks, one JSON value per line. With `keep`
-/// (Claude Code's calls, `claude_remote.rs`) the spilled outputs stay in that folder for the model to read on this host
+/// (a stand-in CLI's calls, `acp/local_run`) the spilled outputs stay in that folder for the model to read on this host
 /// instead. `close` stops a session's background jobs and drops its kept outputs
 pub(super) async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireError> {
   use acpira_agent::tools::{self, Action, Ctx};

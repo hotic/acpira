@@ -48,6 +48,10 @@ pub struct AgentInfo {
   /// The agent's mark as SVG path data on a 24 x 24 box, for an agent the page has no mark of its own for
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub mark: Option<Vec<String>>,
+  /// It can run on this machine in a folder on an SSH host, only its tools there (`sshLocalAgents`); absent from an
+  /// engine before this field
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub ssh_local: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

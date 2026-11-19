@@ -5,7 +5,7 @@ import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventoryScope, InventorySkill } from '@acpira/shared/inventory';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
-import { SSH_LOCAL_AGENTS } from '@acpira/shared/remote';
+import { canRunHere } from '@acpira/shared/remote';
 import { familyLabel, isReasoningControl, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_FAST_CATEGORY } from '@acpira/shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
@@ -399,23 +399,19 @@ function PermissionsSection({ agent, settings, on }: { agent: AgentInfo; setting
   );
 }
 
-// Where the agent runs in a folder on an SSH host (`sshLocalAgents`), for the agents that can run on this machine there:
-// off, the host's own engine runs it like every other agent. Only where SSH hosts are offered (the desktop app)
-const SSH_LOCAL_DESC: Record<string, MsgKey> = {
-  acpira: 'settings.agent.sshLocal.descBuiltin',
-  claude: 'settings.agent.sshLocal.descClaude',
-  antigravity: 'settings.agent.sshLocal.descClaude',
-  codex: 'settings.agent.sshLocal.descClaude',
-};
+// Where the agent runs in a folder on an SSH host (`sshLocalAgents`), for the agents that can run on this machine there
+// (`canRunHere`): off, the host's own engine runs it like every other agent. Only where SSH hosts are offered (the
+// desktop app). Every CLI keeps its sign-in here; only the built-in agent stops with this machine
+const SSH_LOCAL_DESC: Record<string, MsgKey> = { acpira: 'settings.agent.sshLocal.descBuiltin' };
 function SshHostSection({ agent, settings, on }: { agent: AgentInfo; settings: SettingsView; on: SettingsHandlers }) {
-  if (!SSH_LOCAL_AGENTS.includes(agent.id) || !remoteOffered()) return null;
+  if (!canRunHere(agent) || !remoteOffered()) return null;
   const enabled = settings.sshLocalAgents.includes(agent.id);
   const toggle = (v: boolean) => on.setSetting('sshLocalAgents', v
     ? [...settings.sshLocalAgents, agent.id]
     : settings.sshLocalAgents.filter(id => id !== agent.id));
   return (
     <Section title={t('settings.agent.sshHosts')} desc={t('settings.agent.sshHosts.desc')}>
-      <Field label={t('settings.agent.sshLocal')} desc={t(SSH_LOCAL_DESC[agent.id]!)}>
+      <Field label={t('settings.agent.sshLocal')} desc={t(SSH_LOCAL_DESC[agent.id] ?? 'settings.agent.sshLocal.descClaude')}>
         <Switch checked={enabled} onChange={toggle} label={t('settings.agent.sshLocal')} />
       </Field>
     </Section>
