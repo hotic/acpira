@@ -36,7 +36,8 @@ use acpira_shared::transcript::{AccountQuota, QuotaWindow};
 
 use super::account_store::{AUTH_API_KEY, AccountCredential, AccountDraft, META_AUTH};
 use super::cli_home::{
-  LOCAL_LOGIN, account_home, create_private_dir, home_meta, json_file, jwt_claims, link_shared, poll_until, remove_home, sha8,
+  LOCAL_LOGIN, account_home, create_private_dir, ensure_private_dir, home_meta, json_file, jwt_claims, link_shared, poll_until, private_store_error,
+  remove_home, sha8,
 };
 use super::devin::BinaryFn;
 use super::keychain;
@@ -309,8 +310,18 @@ impl AccountProvider for DroidAccountProvider {
   fn complete_plugin_env(&self, env: &mut BTreeMap<String, String>) {
     let Some(home) = env.get(HOME_ENV).filter(|h| !h.is_empty()).map(PathBuf::from) else { return };
     let dir = factory_dir(&home);
-    if std::fs::create_dir_all(&dir).is_ok() {
-      link_shared(&dir, &factory_dir(&default_home()), if env.contains_key(KEY_ENV) { &KEY_OWN[..] } else { &OWN[..] });
+    match ensure_private_dir(&dir) {
+      Ok(()) => link_shared(&dir, &factory_dir(&default_home()), if env.contains_key(KEY_ENV) { &KEY_OWN[..] } else { &OWN[..] }),
+      Err(e) => eprintln!("Could not make the plugin account's droid home {}: {e}", dir.display()),
+    }
+  }
+
+  /// A key needs a private home: on the user's own, droid writes the key organization's identity files over the login's
+  fn plugin_env_error(&self, env: &BTreeMap<String, String>) -> Option<String> {
+    match env.get(HOME_ENV).filter(|h| !h.is_empty()) {
+      Some(home) => private_store_error(&factory_dir(Path::new(home)), &factory_dir(&default_home())),
+      None if env.contains_key(KEY_ENV) => Some(format!("{KEY_ENV} needs {HOME_ENV} naming a private home")),
+      None => None,
     }
   }
 
@@ -528,6 +539,16 @@ mod tests {
     assert_eq!(api_base(&json!({ "whoami": { "inferenceRegion": "global" } })), API);
     assert_eq!(api_base(&json!({ "whoami": { "region": "eu" } })), API_EU);
     assert_eq!(api_base(&json!({})), API);
+  }
+
+  #[test]
+  fn a_plugin_key_needs_a_private_home() {
+    let p = DroidAccountProvider::new(PathBuf::from("/x"), std::sync::Arc::new(|| Box::pin(async { None })));
+    let env = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> { pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect() };
+    assert_eq!(p.plugin_env_error(&env(&[(HOME_ENV, "/data/factory-homes/L"), (KEY_ENV, "fk-x")])), None);
+    assert!(p.plugin_env_error(&env(&[(KEY_ENV, "fk-x")])).is_some());
+    assert!(p.plugin_env_error(&env(&[(HOME_ENV, "homes/L"), (KEY_ENV, "fk-x")])).is_some());
+    assert!(p.plugin_env_error(&env(&[(HOME_ENV, &default_home().to_string_lossy()), (KEY_ENV, "fk-x")])).is_some());
   }
 
   fn key_cred(home: &str) -> AccountCredential {

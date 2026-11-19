@@ -402,9 +402,11 @@ impl SessionManager {
         Some(Arc::new(move |agent: String, account: String| {
           let me = env_me.clone();
           Box::pin(async move {
-            let m = me.upgrade()?;
-            let accounts = m.deps.accounts.clone()?;
-            accounts.spawn_env_for(&agent, &account).await
+            let Some(accounts) = me.upgrade().and_then(|m| m.deps.accounts.clone()) else { return Ok(None) };
+            if let Some(why) = accounts.unavailable(&agent, &account) {
+              return Err(why);
+            }
+            Ok(accounts.spawn_env_for(&agent, &account).await)
           }) as BoxFuture<_>
         })),
       );
@@ -495,15 +497,14 @@ impl SessionManager {
       // is in flight, the way it does on an updated adapter, so the agent reads the new sign-in. Warm processes made
       // with the old variables go too
       let me = mgr.me.clone();
-      a.on_rotated(Arc::new(move |ids| {
+      a.on_rotated(Arc::new(move |changed| {
         let Some(m) = me.upgrade() else { return };
-        let mut agents = HashSet::new();
-        for s in m.live_sessions().into_iter().filter(|s| s.account_id().is_some_and(|a| ids.contains(&a))) {
-          agents.insert(s.agent.clone());
+        for s in m.live_sessions().into_iter().filter(|s| s.account_id().is_some_and(|a| changed.iter().any(|(_, id)| *id == a))) {
           s.adapter_updated();
         }
-        for agent in agents {
-          m.pool.invalidate(Some(&agent));
+        // Warm processes are dropped whether or not a session runs on the account now
+        for agent in changed.iter().map(|(agent, _)| agent).collect::<HashSet<_>>() {
+          m.pool.invalidate(Some(agent));
         }
       }));
       let me = mgr.me.clone();

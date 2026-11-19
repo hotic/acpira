@@ -1291,6 +1291,12 @@ async fn a_plugin_account_is_picked_started_and_handed_back_through_its_plugin()
   until(|| accounts.get(id).is_none(), 5000).await;
   until(|| mgr.active().is_some_and(|a| a.to_string().contains("lister")), 10_000).await;
   assert_ne!(mgr.active().unwrap()["status"], "ready");
+  // Retry does not fall back to the CLI's own login either
+  mgr.handle(json!({ "type": "retry" })).await;
+  tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+  let after = mgr.active().unwrap();
+  assert_ne!(after["status"], "ready", "{after}");
+  assert!(after.to_string().contains("lister"), "{after}");
   mgr.dispose().await;
   rt.stop_all().await;
 }

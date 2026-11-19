@@ -125,7 +125,8 @@ export function AccountPanel(p: AccountPanelProps) {
 // under it when there are any. A login in order carries no mark. A state never adds a line of its own: it takes the plan
 // tag's place, with the reason as the tooltip, the bars it left stale turn grey, and its fix is the header's one action
 function savedState(agent: AgentInfo, a: AccountInfo): AccountState | undefined {
-  if (agent.credentialsLocked) return { text: t('quota.short.locked'), warn: true, title: t('notice.locked.short') };
+  // A plugin's account signs in with what the plugin gives, never through the locked store
+  if (agent.credentialsLocked && !a.plugin) return { text: t('quota.short.locked'), warn: true, title: t('notice.locked.short') };
   if (!a.quotaIssue) return undefined;
   return { text: savedIssueText(a, 'short')!, warn: a.quotaIssue === 'expired', title: savedIssueText(a, 'status') };
 }

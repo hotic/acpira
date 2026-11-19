@@ -288,6 +288,12 @@ impl AcpSession {
     self.load_host_sidekick().await;
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
+    // An account its source does not offer now has no variables to start with: no process, warm or new, runs without them
+    if let (Some(a), Some(h)) = (&account, &self.deps.accounts)
+      && let Some(why) = h.unavailable(self.agent.clone(), a.clone())
+    {
+      return Err(anyhow::Error::new(AccountAuthError(why)));
+    }
     // Codex in a folder on an SSH host takes its exec-server's address at start, and a stand-in CLI may start with
     // arguments of its own there, which no warm process was given
     let on_host = (self.local_run() == Some(crate::acp::local_run::LocalRun::Exec) && self.remote_folder().is_some())
@@ -626,7 +632,8 @@ impl AcpSession {
   pub async fn retry(self: &Arc<Self>) -> Result<()> {
     let stuck = {
       let mut c = self.core.lock();
-      let stuck = c.proc.as_ref().is_some_and(|p| p.alive()) && c.status == SessionStatus::AuthRequired;
+      // A process started with variables its account no longer has (`adapter_updated`) is started again instead
+      let stuck = c.proc.as_ref().is_some_and(|p| p.alive()) && c.status == SessionStatus::AuthRequired && !c.adapter_stale;
       if stuck {
         c.status = SessionStatus::Starting;
         c.error = None;
@@ -790,6 +797,11 @@ impl AcpSession {
     {
       let mut c = self.core.lock();
       if !Self::restorable(&c) {
+        // A process still starting may have read the old variables: it reopens once it is up. One stuck on sign-in
+        // starts afresh at its retry
+        if matches!(c.status, SessionStatus::Starting | SessionStatus::AuthRequired) {
+          c.adapter_stale = true;
+        }
         return true;
       }
       c.adapter_stale = true;

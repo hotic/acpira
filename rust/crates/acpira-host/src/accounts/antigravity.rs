@@ -25,7 +25,9 @@ use acpira_shared::num::Num;
 use acpira_shared::transcript::{AccountQuota, QuotaWindow, StrMap};
 
 use super::account_store::{AccountCredential, AccountDraft};
-use super::cli_home::{LOCAL_LOGIN, account_home, create_private_dir, home_meta, json_file, link_shared, poll_until, remove_home};
+use super::cli_home::{
+  LOCAL_LOGIN, account_home, create_private_dir, ensure_private_dir, home_meta, json_file, link_shared, poll_until, private_store_error, remove_home,
+};
 use super::devin::BinaryFn;
 use super::provider::{AccountProvider, LoginFlow, QuotaRead, QuotaTokenExpired};
 use crate::acp::transport::rpc::BoxFuture;
@@ -202,10 +204,17 @@ impl AccountProvider for AntigravityAccountProvider {
   /// only inside an SSH session, so outside one it is told it runs in one
   fn complete_plugin_env(&self, env: &mut StrMap) {
     let Some(store) = env.get(STORE_ENV).filter(|d| !d.is_empty()).map(PathBuf::from) else { return };
+    if let Err(e) = ensure_private_dir(&store) {
+      eprintln!("Could not make the plugin account's gemini dir {}: {e}", store.display());
+    }
     link_store(&store, &default_home());
     if !in_ssh() {
       env.entry(SSH_ENV[0].to_owned()).or_insert_with(|| SSH_STAND_IN.to_owned());
     }
+  }
+
+  fn plugin_env_error(&self, env: &StrMap) -> Option<String> {
+    private_store_error(Path::new(env.get(STORE_ENV)?), &default_home())
   }
 
   /// Every read starts `agy` for a few seconds
@@ -353,6 +362,14 @@ mod tests {
   fn only_a_saved_antigravity_account_adds_the_store_flag() {
     let env: StrMap = [(STORE_ENV.to_owned(), "/x/acc".to_owned())].into();
     assert_eq!(spawn_args("antigravity", Some(&env)), ["--gemini-dir", "/x/acc"]);
+    // A plugin's store is its own absolute dir, never the regular one or a place inside it
+    let p = AntigravityAccountProvider::new(PathBuf::from("/x"), std::sync::Arc::new(|| Box::pin(async { None })));
+    let store = |d: &str| -> StrMap { [(STORE_ENV.to_owned(), d.to_owned())].into() };
+    assert_eq!(p.plugin_env_error(&store("/x/acc")), None);
+    assert_eq!(p.plugin_env_error(&StrMap::new()), None);
+    for bad in ["acc/.gemini", "/x/../acc", &default_home().to_string_lossy(), &default_home().join("sub").to_string_lossy()] {
+      assert!(p.plugin_env_error(&store(bad)).is_some(), "{bad} accepted");
+    }
     assert!(spawn_args("claude", Some(&env)).is_empty());
     assert!(spawn_args("antigravity", Some(&StrMap::new())).is_empty());
     assert!(spawn_args("antigravity", None).is_empty());

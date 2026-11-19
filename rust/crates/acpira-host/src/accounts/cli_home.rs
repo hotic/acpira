@@ -36,6 +36,44 @@ pub async fn create_private_dir(dir: &Path) -> Result<()> {
   Ok(())
 }
 
+/// A plugin account's own store (`AccountProvider::complete_plugin_env`), made private when missing
+pub fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
+  let mut b = std::fs::DirBuilder::new();
+  b.recursive(true);
+  #[cfg(unix)]
+  std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+  b.create(dir)
+}
+
+/// Why `store` cannot be an account's own copy of the CLI store `shared` (`AccountProvider::plugin_env_error`): a
+/// relative path (the engine and the agent would read it from different folders), one that climbs with `..`, or one
+/// that is, or sits inside, the regular store, whose entries would be linked into themselves
+pub fn private_store_error(store: &Path, shared: &Path) -> Option<String> {
+  if !store.is_absolute() || store.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    return Some(format!("{} is not a plain absolute path", store.display()));
+  }
+  let (store, shared) = (real_path(store), real_path(shared));
+  store.starts_with(&shared).then(|| format!("{} is the CLI's own store", store.display()))
+}
+
+/// `path` with its links resolved, through the nearest folder that exists for one not made yet
+fn real_path(path: &Path) -> PathBuf {
+  let mut rest = vec![];
+  let mut at = path;
+  loop {
+    if let Ok(real) = std::fs::canonicalize(at) {
+      return rest.iter().rev().fold(real, |p, part| p.join(part));
+    }
+    match (at.parent(), at.file_name()) {
+      (Some(parent), Some(name)) => {
+        rest.push(name.to_owned());
+        at = parent;
+      }
+      _ => return path.to_path_buf(),
+    }
+  }
+}
+
 /// Link every entry of the CLI's regular home into an account home, except the files that make up the login, so
 /// sessions, config, skills and history stay one store whichever account runs. Entries already present are left alone
 /// (a file the CLI replaced by rename stays the account's own copy). Windows falls back to junctions / hard links.

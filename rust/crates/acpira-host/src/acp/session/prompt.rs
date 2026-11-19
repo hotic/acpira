@@ -390,6 +390,10 @@ impl AcpSession {
         || (!auto && c.pending_prompt.is_some()))
     {
       Gate::Queue
+    } else if !origin.reserved() && AcpSession::reserve_reopen(&mut c) {
+      // The process started with what its adapter or account no longer is: the turn waits for the new one
+      self.arc().spawn_reopen();
+      Gate::Queue
     } else if let Err(reason) = self.lease_turn(&mut c) {
       // A reservation that cannot start must not hold the queue (and its turn's lease) for good
       if origin.reserved() {

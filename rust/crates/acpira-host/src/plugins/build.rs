@@ -1,7 +1,7 @@
 //! Plugins written in TypeScript, TSX or modern JavaScript (docs/dev/plugins.md, Building). A frozen copy is compiled
 //! after the freeze, during the static check, so nothing of the plugin runs before the user confirms: oxc parses each
-//! module, strips its types and lowers JSX, and the output goes to `.build/<id>/<hash>-<BUILD_VERSION>/`, never into the
-//! read-only copy. The output is derived from the copy alone, so it is rebuilt whenever it is missing.
+//! module, strips its types and lowers JSX, and the output goes to `.build/<id>/<hash>-<BUILD_VERSION>-<SDK digest>/`,
+//! never into the read-only copy. The output is derived from the copy alone, so it is rebuilt whenever it is missing.
 //!
 //! - `runtime.main`: every module of the plugin becomes an ES module file Node runs as it is; packages under
 //!   `node_modules` are left to Node, addressed by the absolute path the resolver found in the frozen copy, so CommonJS,
@@ -56,9 +56,16 @@ const ASSET_TYPES: &[(&str, &str)] = &[
   ("woff2", "font/woff2"),
 ];
 
-/// Where the compiled output of snapshot `hash` of `id` lives under the plugins root
+/// Where the compiled output of snapshot `hash` of `id` lives under the plugins root. The output carries the SDK
+/// (`runtime/__acpira/plugin.mjs`), and engines of one version number may ship different ones, so its digest is part
+/// of the name too
 pub fn output_dir(root: &Path, id: &str, hash: &str) -> PathBuf {
-  root.join(BUILD).join(id).join(format!("{hash}-{BUILD_VERSION}"))
+  static SDK_DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  let sdk = SDK_DIGEST.get_or_init(|| {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(crate::plugins::sdk::SDK.as_bytes()).iter().take(4).map(|b| format!("{b:02x}")).collect()
+  });
+  root.join(BUILD).join(id).join(format!("{hash}-{BUILD_VERSION}-{sdk}"))
 }
 
 /// Whether a manifest path names a source the engine compiles (`.ts`, `.tsx`, `.jsx`, …): such a `runtime.main` or
