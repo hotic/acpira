@@ -5,6 +5,37 @@ import Foundation
 // chat/commandDuration.ts, chat/turnOutcome.ts and the label helpers in ToolCall.tsx / ToolGroup.tsx.
 // Function names and rules follow the TypeScript one to one, so a behaviour change there maps onto one place here.
 
+// MARK: - Step kinds
+
+/// The kinds of process step the reader can leave out of a turn (folding.ts `StepKind`, the settings' Process group).
+/// Everything else always shows: plans, questions, notices, steered prompts, delegations, and a call whose result is
+/// a picture or a widget
+public enum StepKind: String, CaseIterable, Sendable {
+  case thought, commentary, read, command, edit, other
+}
+
+/// stepKind: `text` counts as commentary, since callers pass process blocks only, never the reply
+func stepKind(_ block: AgentBlock) -> StepKind? {
+  switch block {
+  case .thought: return .thought
+  case .text: return .commentary
+  case .toolCall(let call):
+    guard call.subagentId == nil, !isImageResult(call) else { return nil }
+    if call.kind == .think { return .thought }
+    if call.kind == .read || call.kind == .search || call.kind == .fetch || SessionLinks.isTool(call) { return .read }
+    if call.kind == .execute || call.verbKey == "verb.wait" { return .command }
+    if call.kind == .edit || call.kind == .delete || call.kind == .move { return .edit }
+    return .other
+  default: return nil
+  }
+}
+
+/// visibleSteps: the process blocks left once the hidden kinds are out; the same array when nothing is hidden
+func visibleSteps(_ blocks: [AgentBlock], hiding hidden: Set<StepKind>) -> [AgentBlock] {
+  guard !hidden.isEmpty else { return blocks }
+  return blocks.filter { block in stepKind(block).map { !hidden.contains($0) } ?? true }
+}
+
 // MARK: - Codex split
 
 /// isAdvisory: a notice that only informs, with nothing to act on and no known transient cause

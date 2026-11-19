@@ -28,6 +28,9 @@ extension EnvironmentValues {
   @Entry var quietEntrance: Bool = false
   /// Whether the reader is moving the thread (`Thread`); outside a scrolling thread it never is
   @Entry var scrollGesture = ScrollGesture()
+  /// RowLeadsContext: false inside a turn's process with the step icons off, where a row's lead icon gives way to the
+  /// bead a rail's end already draws, so an open step runs from one bead to the next
+  @Entry var rowLeads: Bool = true
 }
 
 /// The reader is dragging the thread or it is still coasting from a fling. A lazy stack builds a row that arrived off
@@ -186,6 +189,7 @@ public struct Row<Lead: View, Content: View, Trailing: View>: View {
   @Environment(\.rowHeight) private var rowHeight
   @Environment(\.rowDenseHeight) private var rowDenseHeight
   @Environment(\.rowEnterDelay) private var enterDelay
+  @Environment(\.rowLeads) private var leads
   var tone: RowTone
   var dense: Bool
   var leadTop: Bool
@@ -204,7 +208,16 @@ public struct Row<Lead: View, Content: View, Trailing: View>: View {
       // Group(subviews:) drops a slot whose view renders nothing, so an empty lead / trailing takes no gap
       Group(subviews: lead) { parts in
         if !parts.isEmpty {
-          ZStack { parts }
+          ZStack {
+            if leads {
+              parts
+            } else {
+              Circle().fill(tone == .action ? Palette.railAction : Palette.rail)
+                .frame(width: Metrics.railDot, height: Metrics.railDot)
+                // The bead stands where the icon stood for a connected rail too: its line runs bead to bead
+                .anchorPreference(key: IconAnchorKey.self, value: .bounds) { [RailLead(icon: $0, top: 0, bottom: 1)] }
+            }
+          }
             .frame(width: WebMetrics.lead, height: WebMetrics.lead)
             // The slot's contents centre on an icon-wide column at the row's start, so an icon's ink stands on the
             // text edge above and below it rather than three points in; smaller marks centre on that column and

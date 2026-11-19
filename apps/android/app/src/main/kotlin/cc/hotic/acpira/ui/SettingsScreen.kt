@@ -93,6 +93,7 @@ fun SettingsScreen(model: AppModel) {
           Switch(checked = model.motion, onCheckedChange = model::pickMotion, colors = SwitchDefaults.colors())
         }
       }
+      ProcessSection(model)
       // The engine's own settings, shared with the computer (AgentSettings.kt)
       AgentsSections(model)
       SessionsSection(model)
@@ -194,6 +195,44 @@ fun DeveloperSettingsScreen(model: AppModel) {
       SwitchRow(t("mobile.dev.hitches"), hitches, tag = "developer.hitches") {
         hitches = it
         PerfHud.set(prefs, PerfHud.HITCHES, it)
+      }
+    }
+  }
+}
+
+/**
+ * How a turn's work reads, the desktop's Process group (Appearance.tsx, apps/ios ProcessSettingsSection): which step
+ * kinds it lists, a page of its own, then the two switches, titles alone like the other switches here
+ */
+@Composable
+private fun ProcessSection(model: AppModel) {
+  val prefs = model.process
+  val all = cc.hotic.acpira.logic.StepKind.entries.size
+  val shown = all - prefs.hidden.size
+  FormSection(t("settings.group.process")) {
+    FormRow(t("settings.steps"), Modifier.clickable { model.push(cc.hotic.acpira.store.Screen.Steps) }.testTag("settings.steps")) {
+      // A value, not a phrase: every kind, none, or the bare count between
+      Text(if (shown == all) t("settings.steps.all") else if (shown == 0) t("settings.steps.none") else "$shown", color = Palette.fg2, fontSize = Type.text1)
+      Lucide("chevronRight", Palette.fg3, size = Metrics.chevron)
+    }
+    RowRule()
+    SwitchRow(t("settings.stepIcons"), prefs.stepIcons, tag = "settings.stepIcons") { model.pickProcess(prefs.copy(stepIcons = it)) }
+    RowRule()
+    SwitchRow(t("settings.keepProcess"), prefs.keepProcess, tag = "settings.keepProcess") { model.pickProcess(prefs.copy(keepProcess = it)) }
+  }
+}
+
+/** The step kinds a turn's process lists, one switch each in reading order; the reply itself always shows */
+@Composable
+fun StepsSettingsScreen(model: AppModel) {
+  FormPage(model, t("settings.steps")) {
+    FormSection(null, footer = t("settings.steps.desc")) {
+      cc.hotic.acpira.logic.StepKind.entries.forEachIndexed { i, kind ->
+        if (i > 0) RowRule()
+        val hidden = model.process.hidden
+        SwitchRow(t("settings.steps.${kind.name}"), kind !in hidden, tag = "steps.${kind.name}") { on ->
+          model.pickProcess(model.process.copy(hidden = if (on) hidden - kind else hidden + kind))
+        }
       }
     }
   }

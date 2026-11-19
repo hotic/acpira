@@ -4,7 +4,8 @@ import { AgentInfo } from '../wire/Wire';
 import { FormMetrics, ListMetrics, Metrics, Type } from '../design/Tokens';
 import { AppModel, Connection } from '../store/AppModel';
 import { LOCALES, t } from '../store/L10n';
-import { PrefKey, prefs } from '../store/Prefs';
+import { PrefKey, prefs, processLook } from '../store/Prefs';
+import { STEP_KINDS } from '../logic/Folding';
 import { AgentMark, Lucide } from '../components/Glyphs';
 import { Lead, LeadButton } from '../components/ChatBar';
 import { MenuCard, MenuRow, menuOptions } from '../components/Menu';
@@ -21,6 +22,8 @@ import { PairedComputer } from '../remote/Stores';
 export class SettingsRoutes {
   agent: (id: string) => void = () => {};
   developer: () => void = () => {};
+  /** The step kinds a turn's process lists (StepsPage) */
+  steps: () => void = () => {};
   coming: (title: string) => void = () => {};
   /** A paired computer's page (pages/Pairing.ets ComputerPage) */
   computer: (id: string) => void = () => {};
@@ -351,6 +354,21 @@ export struct SettingsPage {
         rowRule(false)
         SwitchRow({ label: t('settings.motion'), on: this.model.motion, tag: 'settings.motion', onChange: (on: boolean) => this.model.pickMotion(on) })
       }
+      // How a turn's work reads, the desktop's Process group: which step kinds it lists (a page of its own), then the
+      // two switches, titles alone like the other switches here
+      FormSection({ title: t('settings.group.process') }) {
+        ValueRow({ label: t('settings.steps'), value: stepsValue(), chevron: true, tag: 'settings.steps', onTap: () => this.routes.steps() })
+        rowRule(false)
+        SwitchRow({
+          label: t('settings.stepIcons'), on: processLook.stepIcons, tag: 'settings.stepIcons',
+          onChange: (on: boolean) => processLook.setStepIcons(on)
+        })
+        rowRule(false)
+        SwitchRow({
+          label: t('settings.keepProcess'), on: processLook.keepProcess, tag: 'settings.keepProcess',
+          onChange: (on: boolean) => processLook.setKeepProcess(on)
+        })
+      }
       // The engine's own settings, shared with the computer
       FormSection({ title: t('mobile.settings.agents') }) {
         PickRow({
@@ -540,6 +558,37 @@ export struct AgentSettingsPage {
       }
       FormSection({ footer: t('settings.models.desc') }) {
         ValueRow({ label: t('settings.models.selection'), chevron: true, tag: 'agent.models', onTap: () => this.routes.coming('settings.models.selection') })
+      }
+    }
+  }
+}
+
+/** The steps row's value: every kind, none, or the bare count between */
+function stepsValue(): string {
+  const shown = STEP_KINDS.length - processLook.hidden.length;
+  return shown === STEP_KINDS.length ? t('settings.steps.all') : shown === 0 ? t('settings.steps.none') : `${shown}`;
+}
+
+/** The step kinds a turn's process lists, one switch each in reading order; the reply itself always shows */
+@ComponentV2
+export struct StepsPage {
+  @Event onBack: () => void = () => {};
+
+  build() {
+    FormPage({ title: t('settings.steps'), onBack: () => this.onBack() }) {
+      FormSection({ footer: t('settings.steps.desc') }) {
+        ForEach(STEP_KINDS, (kind: string, i: number) => {
+          Column() {
+            if (i > 0) {
+              rowRule(false)
+            }
+            SwitchRow({
+              label: t(`settings.steps.${kind}`), on: !processLook.hidden.includes(kind), tag: `steps.${kind}`,
+              onChange: (on: boolean) => processLook.show(kind, on)
+            })
+          }
+          .width('100%')
+        }, (kind: string) => kind)
       }
     }
   }

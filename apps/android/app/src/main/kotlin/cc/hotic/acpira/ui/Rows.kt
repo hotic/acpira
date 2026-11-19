@@ -13,6 +13,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -187,6 +189,11 @@ val LocalRowEnterDelay = compositionLocalOf { 0 }
 val LocalEntranceScope = compositionLocalOf { EntranceScope(live = false, scope = "") }
 /** The block a turn's process opened on when it was first shown (`runId`): runs holding it keep its name */
 val LocalProcessHead = compositionLocalOf<String?> { null }
+/**
+ * RowLeadsContext: false inside a turn's process with the step icons off, where a row's lead gives way to the bead a
+ * rail's end already draws, so an open step runs from one bead to the next
+ */
+val LocalRowLeads = compositionLocalOf { true }
 /** The rail root the rows under it report their lead icons to; null stops them (a body rail's inner rows) */
 internal val LocalRailRoot = compositionLocalOf<RailRoot?> { null }
 
@@ -333,11 +340,13 @@ fun AcpRow(
   val root = LocalRailRoot.current
   val context = LocalContext.current
   val density = LocalDensity.current
-  val anchor = if (root != null && icon != null) {
+  // With the step icons off any lead becomes a bead, and the bead is the rail's lead: its line runs bead to bead
+  val bead = !LocalRowLeads.current && (icon != null || lead != null)
+  val anchor = if (root != null && (icon != null || bead)) {
     val key = remember { Any() }
-    val span = remember(icon, iconStroke) { RailSpans.of(context, icon, iconStroke) }
+    val span = remember(icon, iconStroke, bead) { if (bead || icon == null) 0f to 1f else RailSpans.of(context, icon, iconStroke) }
     DisposableEffect(root, key) { onDispose { root.leads.remove(key) } }
-    val iconPx = with(density) { iconSize.toPx() }
+    val iconPx = with(density) { (if (bead) WebMetrics.railDot else iconSize).toPx() }
     val centreX = with(density) { (WebMetrics.icon / 2).toPx() }
     val topCentre = with(density) { ((WebType.text2.lineHeight.toDp() - WebMetrics.lead) / 2 + WebMetrics.lead / 2).toPx() }
     Modifier.onGloballyPositioned { c ->
@@ -364,7 +373,9 @@ fun AcpRow(
               .enterFade(plays, delay),
             contentAlignment = Alignment.Center,
           ) {
-            CompositionLocalProvider(LocalContentColor provides leadInk) {
+            if (bead) {
+              Box(Modifier.size(WebMetrics.railDot).background(if (action) RailInk.forAction else RailInk.plain, CircleShape))
+            } else CompositionLocalProvider(LocalContentColor provides leadInk) {
               if (icon != null) Glyph(icon, iconTint ?: leadInk, iconSize, iconStroke) else lead?.invoke()
               iconOverlay?.invoke()
             }

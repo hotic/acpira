@@ -4,7 +4,7 @@ import { t } from '../store/L10n';
 import { SessionList } from './SessionList';
 import { ChatPage } from './ChatPage';
 import { NewArgs, NewSession } from './NewSession';
-import { AgentSettingsPage, ComingPage, DeveloperPage, SettingsPage, SettingsRoutes } from './Settings';
+import { AgentSettingsPage, ComingPage, DeveloperPage, SettingsPage, SettingsRoutes, StepsPage } from './Settings';
 import { WelcomeFlow } from './Welcome';
 import { ChatBarActions, Lead } from '../components/ChatBar';
 import { ToastLayer, toastHitTest } from '../components/Chrome';
@@ -179,6 +179,7 @@ export struct Root {
     const r = new SettingsRoutes();
     r.agent = (id: string) => this.push('agent', id);
     r.developer = () => this.push('developer', '');
+    r.steps = () => this.push('steps', '');
     r.coming = (title: string) => this.push('coming', title);
     r.computer = (id: string) => this.push('computer', id);
     return r;
@@ -234,6 +235,12 @@ export struct Root {
     } else if (name === 'developer') {
       NavDestination() {
         DeveloperPage({ onBack: () => this.stack.pop() })
+      }
+      .hideTitleBar(true)
+      .backgroundColor($r('app.color.form_page'))
+    } else if (name === 'steps') {
+      NavDestination() {
+        StepsPage({ onBack: () => this.stack.pop() })
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.form_page'))

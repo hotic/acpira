@@ -114,6 +114,9 @@ public struct RootView: View {
   @AppStorage(Prefs.theme) private var theme = "system"
   @AppStorage(Prefs.locale) private var locale = "auto"
   @AppStorage(Prefs.motion) private var motion = true
+  @AppStorage(Prefs.hiddenSteps) private var hiddenSteps = ""
+  @AppStorage(Prefs.stepIcons) private var stepIcons = true
+  @AppStorage(Prefs.keepProcess) private var keepProcess = false
   /// The first-run flow is over (or was never due): it does not come back, even with every computer removed
   @AppStorage(Prefs.welcomed) private var welcomed = false
   /// The first-run flow is on screen over the screens
@@ -335,6 +338,8 @@ public struct RootView: View {
     .onOpenURL { url in _ = model.openLink(url) }
     .preferredColorScheme(scheme)
     .environment(\.motionEnabled, options.motion && motion)
+    .environment(\.processPrefs, ProcessPrefs(hidden: ProcessPrefs.hidden(hiddenSteps), stepIcons: stepIcons,
+                                               keepProcess: keepProcess))
     .environment(\.initialPopup, options.popup)
     .environment(\.initialDraft, options.draft)
     .environment(\.preOpen, PreOpen.folds(options.open))
