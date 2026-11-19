@@ -230,6 +230,13 @@ impl AgentProcess {
         cmd.env_remove(key);
       }
     }
+    // A saved or plugin Antigravity account names its own store: a host-level Google credential or endpoint would sign
+    // the request in as someone else
+    if def.id == "antigravity" && extra_env.is_some_and(|e| e.contains_key(crate::accounts::antigravity::STORE_ENV)) {
+      for key in ["AGY_ADC_AUTH", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_CLOUD_QUOTA_PROJECT"] {
+        cmd.env_remove(key);
+      }
+    }
     // The definition and account may override the refreshed environment for this child only.
     for (k, v) in def.env.iter().flatten() {
       cmd.env(k, v);

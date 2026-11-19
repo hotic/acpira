@@ -66,7 +66,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Building
 
-- `plugins/build.rs` compiles TypeScript with oxc after the freeze and before the card: transforms only, types stripped not checked, no plugin code runs. Output is keyed by snapshot and engine version, so an upgrade recompiles.
+- `plugins/build.rs` compiles TypeScript with oxc after the freeze and before the card: transforms only, types stripped not checked, no plugin code runs. Output is keyed by snapshot, engine and SDK, so an upgrade recompiles.
 - No bundler for the runtime: one `.mjs` per module, Node's own resolution; resolution never leaves the plugin folder.
 - An interface piece becomes one self-contained HTML document; React and `@acpira/plugin-ui` are sent in by the page (`dist/webview/plugin-ui.js`), so plugin code still never runs in the page.
 
@@ -94,9 +94,9 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Accounts
 
-- `accounts/set` (`accounts/plugin_accounts.rs`): memory only, replaced whole, gone with the plugin; agents with an account layer only. Ids `plugin:<plugin>:<id>` never meet saved uuids.
-- A session on one its plugin no longer lists fails in `authenticate_for` rather than run on the CLI's login: records keep the id and plugins list late.
-- Its `env` gets `AccountProvider::complete_plugin_env` (store links). A changed `env` reopens idle sessions on it (updated-adapter path) and drops warm processes. Removal goes to `account.remove`, else no remove button. The automatic switch never picks one.
+- `accounts/set` (`accounts/plugin_accounts.rs`): memory only, replaced whole; agents with an account layer only. Ids `plugin:<plugin>:<id>` never meet saved uuids. Gone with its process; a superseded one is refused (`set_live_accounts`).
+- `env`: no loader variables (`PATH`, `LD_*`, …); `AccountProvider::plugin_env_error` refuses a relative or shared store (a Droid key needs a home), `complete_plugin_env` links it. A changed `env` reopens its idle sessions and warm processes.
+- An unlisted one never runs on the CLI's login: `AccountManager::unavailable` gates connect, relays, warm spawns, `authenticate_for` (records keep the id; plugins list late). Removal: `account.remove`, else no button. The automatic switch never picks or leaves one.
 
 ## Hooks
 
@@ -109,13 +109,13 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 - `acpira-agent/src/plugin_hooks.rs`, asked once per turn which are declared. Answer fields replace the payload's, `block` stops the chain; nothing goes to the session log.
 - A tool left out by `tools` does not run even if called. `context` changes defeat the prompt cache from the changed point, and a rebuilt item loses signed thinking and images.
-- The MCP server's `tool.before` / `tool.after` skip built-in agent sessions (their own hooks see those calls).
+- The MCP server's `tool.before` / `tool.after` skip built-in agent sessions (their hooks see those calls).
 
 ## Interface
 
 - Pieces go to `UI_SLOTS` (`acpira-shared`); an empty push and safe mode remove them. Desktop only, where the frame document is served.
 - A piece runs in `<iframe sandbox="allow-scripts">` without `allow-same-origin`, loading `/plugin-frame.html`, not `srcdoc`: a srcdoc frame inherits the page's nonce-only script policy, so inline code never runs. `document.open` keeps the no-network policy and the `acpira` object in WKWebView.
-- The host-message handler (`App.tsx`) ignores child frames, so a piece cannot forge `pluginUi` and borrow another plugin's methods. The bridge accepts only registered frames whose origin reads `null`; a frame calls only its own plugin's methods. The outline sent to frames carries counts, never text, paths or commands.
+- The host-message handler (`App.tsx`) ignores child frames, so a piece cannot forge `pluginUi` and borrow another plugin's methods. The bridge accepts only registered frames whose origin reads `null`. The outline sent to frames carries counts, never text, paths or commands.
 - Page-held documents (backdrop, thumbnails) may be unconfirmed versions, so they neither call methods nor hear `ui/post`. Thumbnails run 2D: a page has few WebGL contexts.
 - The sandbox keeps page state and sessions out of a piece's reach, not the plugin out of anything.
 - `composer.above` takes no clicks, never covering a control; its height joins the dock's clearance so reply actions stay clear. `BUTTON_SLOTS` are native buttons: a frame per message costs too much, and no frame sees the selection.
@@ -126,12 +126,12 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - `source → freeze → static check → user confirms → dynamic check → commit`, every step bound to one hash; an edit after the freeze is a new activation. The freeze refuses symlinks and is re-verified against its hash on load.
 - Confirmation happens only in the host's own UI (plugin page, or the card `plugin_activate` adds). `acpira plugin propose` only files a proposal: nothing on the command line enables a plugin, so a model with a shell cannot skip the card.
 - The card is `AgentTurn.pluginCards`, not a block kind: old engines and the iOS decoder ignore an unknown field, a new block kind breaks their records. Its state is read from the plugins view so every window agrees; undo restores only what applying replaced (`PluginHost::undo_card`).
-- Cards show after the reply once the turn has ended (`Turns.tsx`): the agent keeps working after offering one, so a card placed mid-turn read as a stop in the work. `PluginCard.after` names the offering row (`offering_call`).
+- Cards show after the reply once the turn ends (`Turns.tsx`): a card mid-turn read as a stop while the agent kept working. `PluginCard.after` names the offering row (`offering_call`).
 - Slotless contributions land (`plugins/landings.ts`) once the card reads applied.
 - The skin reveal runs only for a click on this page (`plugins/skin.ts`) and waits for the backdrop's first frame. On WebKitGTK only the backdrop layer is uncovered: View Transitions can crash its UI process.
-- `plugin_activate` returns as soon as its card is shown, like `show_image`: an agent's turn never waits on a click, and the click is the hand-off. The dynamic check runs plugin code, so it stays after the click and never moves before the card.
+- `plugin_activate` returns once its card is shown, like `show_image`: a turn never waits on a click; the click is the hand-off. The dynamic check runs plugin code, so it never moves before the click.
 - A failed check returns its output verbatim so a model can retry: the static one as the call's answer, the dynamic one as a queued message to the offering session with the runtime's stderr tail (a module that throws on load says why only there). A successful apply sends nothing.
-- Removal keeps snapshots and data; leftovers (`store::leftovers`) under a day old stay so a pending card's freeze survives; age is the folder's own time, since a frozen copy keeps file times. Removal and commit both check under the state lock; activation re-freezes once if its copy was cleaned meanwhile.
+- Removal keeps snapshots and data; leftovers (`store::leftovers`) under a day old stay so a pending card's freeze survives; age is the folder's own time (a frozen copy keeps file times). Removal and commit both check under the state lock; activation re-freezes once if its copy was cleaned meanwhile.
 
 ## Provenance
 

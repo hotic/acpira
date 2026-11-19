@@ -57,9 +57,15 @@ impl PluginAccount {
     }
   }
 
-  /// The same account as the user sees it: what a new list must differ in to be told to the pages
+  /// The same account as the user sees it: what a new list must differ in to be told to the pages. A quota is the same
+  /// when its windows are, whenever it was read
   pub fn same_listing(&self, other: &PluginAccount) -> bool {
-    self.agent == other.agent && self.label == other.label && self.badge == other.badge && self.quota == other.quota && self.removable == other.removable
+    let bars = |q: &Option<AccountQuota>| q.as_ref().map(|q| (q.windows.clone(), q.on_demand_balance_usd));
+    self.agent == other.agent
+      && self.label == other.label
+      && self.badge == other.badge
+      && bars(&self.quota) == bars(&other.quota)
+      && self.removable == other.removable
   }
 }
 
@@ -82,8 +88,17 @@ fn text(v: &Value, key: &str, max: usize) -> Result<Option<String>, String> {
   }
 }
 
+/// A variable an account may set: not one that loads code into the agent or changes which programs it runs, whatever
+/// the account
 fn env_name(k: &str) -> bool {
-  !k.is_empty() && k.len() <= 128 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !k.starts_with(|c: char| c.is_ascii_digit())
+  const LOADERS: [&str; 5] = ["PATH", "NODE_OPTIONS", "BASH_ENV", "ENV", "PYTHONPATH"];
+  !k.is_empty()
+    && k.len() <= 128
+    && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    && !k.starts_with(|c: char| c.is_ascii_digit())
+    && !LOADERS.contains(&k)
+    && !k.starts_with("LD_")
+    && !k.starts_with("DYLD_")
 }
 
 /// One entry of `accounts/set`: `{ id, agent, label, badge?, env?, quota?: { windows: [{ id, remaining, resetsAt? }] } }`.
@@ -170,7 +185,15 @@ mod tests {
   fn bad_entries_are_refused_with_the_reason() {
     let base = json!({ "id": "a", "agent": "codex", "label": "x" });
     assert!(parse("demo", "Demo", &base, false, &|a| a == "claude").unwrap_err().contains("no accounts for agent `codex`"));
-    for (key, value) in [("id", json!("a b")), ("label", json!("")), ("env", json!({ "1X": "v" })), ("env", json!({ "X": 1 })), ("quota", json!({ "windows": [{ "id": "w", "remaining": 2 }] }))] {
+    for (key, value) in [
+      ("id", json!("a b")),
+      ("label", json!("")),
+      ("env", json!({ "1X": "v" })),
+      ("env", json!({ "X": 1 })),
+      ("env", json!({ "DYLD_INSERT_LIBRARIES": "/x.dylib" })),
+      ("env", json!({ "NODE_OPTIONS": "--require /x.js" })),
+      ("quota", json!({ "windows": [{ "id": "w", "remaining": 2 }] })),
+    ] {
       let mut raw = base.clone();
       raw[key] = value;
       assert!(parse("demo", "Demo", &raw, false, &any).is_err(), "{key} accepted");

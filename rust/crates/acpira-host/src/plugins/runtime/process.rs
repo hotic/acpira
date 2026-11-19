@@ -53,6 +53,8 @@ impl Runtimes {
           if let Some(old) = self.workers.write().insert(want.id.clone(), worker) {
             stopped.push(old);
           }
+          // The previous version's accounts go unless this one listed its own while starting
+          self.drop_live_accounts(&want.id, Some(&want.hash));
         }
         // A new version that does not start leaves the running one in place; with none running, it is tried again
         Err(e) if current.as_ref().is_some_and(|w| !w.conn.is_closed()) => {
@@ -65,6 +67,7 @@ impl Runtimes {
           if let Some(old) = self.workers.write().remove(&want.id) {
             stopped.push(old);
           }
+          self.drop_live_accounts(&want.id, None);
           self.schedule_restart(&want.id);
         }
       }
@@ -73,6 +76,7 @@ impl Runtimes {
     if let Some(accounts) = self.accounts.read().clone() {
       accounts.retain_plugin_accounts(&|p| wanted.iter().any(|w| w.id == p));
     }
+    self.account_lists.lock().retain(|id, _| wanted.iter().any(|w| &w.id == id));
     let dropped = {
       let mut live = self.live_providers.write();
       let before = live.len();
@@ -247,6 +251,7 @@ impl Runtimes {
       // The reason goes in before the worker leaves, so nobody sees it stopped without one
       me.errors.write().insert(id.clone(), "the runtime exited; starting it again".into());
       me.workers.write().remove(&id);
+      me.drop_live_accounts(&id, None);
       w.proc.stop().await;
       (me.log)(&format!("plugin {id}: the runtime exited"));
       me.schedule_restart(&id);

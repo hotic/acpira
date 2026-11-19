@@ -50,7 +50,8 @@ impl ClientHandlers for IdleHandlers {
 
 /// The processes a dispose found, for a hard kill once waiting runs out
 pub type DisposedProcs = Arc<parking_lot::Mutex<Vec<Arc<AgentProcess>>>>;
-pub type SpawnEnv = Arc<dyn Fn(String, String) -> BoxFuture<Option<acpira_shared::transcript::StrMap>> + Send + Sync>;
+/// The variables a warm process of (agent, account) starts with; Err when the account cannot start one now
+pub type SpawnEnv = Arc<dyn Fn(String, String) -> BoxFuture<Result<Option<acpira_shared::transcript::StrMap>, String>> + Send + Sync>;
 
 enum Slot {
   Warming(u64, tokio::sync::watch::Receiver<Option<Option<Arc<AgentProcess>>>>),
@@ -105,7 +106,7 @@ impl AgentPool {
       let def = registry.get(agent)?.clone();
       let bin = registry.resolve_binary(agent).await.ok_or_else(|| anyhow::anyhow!("no binary for {agent}"))?;
       let env = match (account, &self.spawn_env) {
-        (Some(a), Some(f)) => f(agent.to_owned(), a.to_owned()).await,
+        (Some(a), Some(f)) => f(agent.to_owned(), a.to_owned()).await.map_err(anyhow::Error::msg)?,
         _ => None,
       };
       AgentProcess::spawn(&def, &bin, cwd, self.warm_handlers(key, gen_id), env.as_ref(), None).await

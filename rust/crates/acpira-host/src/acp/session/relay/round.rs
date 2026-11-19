@@ -290,6 +290,11 @@ impl AcpSession {
       let same = (r.persona.agent == self.agent).then(|| self.core.lock().account_id.clone()).flatten();
       same.or_else(|| h.default_account(r.persona.agent.clone()))
     });
+    if let (Some(a), Some(h)) = (&account, &self.deps.accounts)
+      && let Some(why) = h.unavailable(r.persona.agent.clone(), a.clone())
+    {
+      return Err(anyhow!(why));
+    }
     let env = match (&account, &self.deps.accounts) {
       (Some(a), Some(h)) => h.spawn_env(r.persona.agent.clone(), a.clone()).await,
       _ => None,

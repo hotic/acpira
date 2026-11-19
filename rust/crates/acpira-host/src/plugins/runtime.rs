@@ -255,6 +255,8 @@ pub const ACCOUNT_REMOVE: &str = "account.remove";
 pub struct Runtimes {
   /// By id: calls go out in id order
   workers: parking_lot::RwLock<BTreeMap<String, Arc<Worker>>>,
+  /// By plugin: the version whose `accounts/set` list is in effect
+  account_lists: parking_lot::Mutex<HashMap<String, String>>,
   /// What should be running, kept for restarts
   wanted: parking_lot::Mutex<Vec<Want>>,
   /// Why a plugin's process is not running or paused, for the plugin page
@@ -292,6 +294,7 @@ impl Runtimes {
   pub fn new(data_root: PathBuf, log: LogFn) -> Arc<Runtimes> {
     Arc::new(Runtimes {
       workers: Default::default(),
+      account_lists: Default::default(),
       wanted: Default::default(),
       errors: Default::default(),
       restarts: Default::default(),
@@ -385,8 +388,9 @@ impl Runtimes {
     self.accounts.read().is_some()
   }
 
-  /// Replace the accounts `plugin`'s process lists (`accounts/set`)
-  pub fn set_live_accounts(&self, plugin: &str, raw: &[Value], removable: bool) -> Result<usize, String> {
+  /// Replace the accounts `plugin`'s process of version `hash` lists (`accounts/set`). Only the version in effect
+  /// lists: a process being replaced cannot overwrite what its successor said
+  pub fn set_live_accounts(&self, plugin: &str, hash: &str, raw: &[Value], removable: bool) -> Result<usize, String> {
     let accounts = self.accounts.read().clone().ok_or("this engine keeps no accounts")?;
     // Held through the change, as for model sources: a plugin leaving meanwhile cannot have its accounts land after
     // its departure dropped them
@@ -394,7 +398,26 @@ impl Runtimes {
     let Some(want) = wanted.iter().find(|w| w.id == plugin) else {
       return Err(format!("plugin {plugin} is not in effect"));
     };
-    accounts.set_plugin_accounts(plugin, &want.name, raw, removable)
+    if want.hash != hash {
+      return Err(format!("plugin {plugin}: this version is being replaced"));
+    }
+    let n = accounts.set_plugin_accounts(plugin, &want.name, raw, removable)?;
+    self.account_lists.lock().insert(plugin.to_owned(), hash.to_owned());
+    Ok(n)
+  }
+
+  /// Drop what `plugin` listed: its process exited, or a new version runs that has not listed its own yet. Nothing a
+  /// plugin lists outlives the process that vouches for it
+  fn drop_live_accounts(&self, plugin: &str, unless_from: Option<&str>) {
+    let mut lists = self.account_lists.lock();
+    if lists.get(plugin).is_none_or(|h| unless_from.is_some_and(|keep| h == keep)) {
+      return;
+    }
+    lists.remove(plugin);
+    drop(lists);
+    if let Some(accounts) = self.accounts.read().clone() {
+      let _ = accounts.set_plugin_accounts(plugin, "", &[], false);
+    }
   }
 
   /// `plugins/providers.json` beside the plugin folders: the manifests' sources, then the processes', first id wins.
@@ -505,7 +528,8 @@ impl Runtimes {
     if !w.want.def.methods.iter().any(|m| m == method) {
       return Err(format!("plugin {plugin} offers no method `{method}`"));
     }
-    let limit = if from == "page" { CLICK_TIMEOUT } else { w.want.def.timeout() };
+    // A removal in the account menu is the user's click too: the plugin may let go of the account over the network
+    let limit = if from == "page" || method == ACCOUNT_REMOVE { CLICK_TIMEOUT } else { w.want.def.timeout() };
     w.call_for(&format!("rpc/{method}"), json!({ "params": params, "from": from }), limit).await
   }
 
