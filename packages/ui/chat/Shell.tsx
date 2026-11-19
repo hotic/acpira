@@ -533,8 +533,6 @@ export function Shell(p: ShellProps) {
   const resetChat = useCallback(() => { setDraggedChat(undefined); panel.setChatW(undefined); }, []);
   // Files layout: the title row's toggle folds the explorer, the pinned one at the top-right corner (⌥⌘B) the session column
   const explorerHidden = usePanelValue(s => s.explorerHidden);
-  // Conversation layout: the tool panel docked open beside the chat (ToolPanelDock's own condition, wide window)
-  const panelDocked = usePanelValue(s => s.open && (s.files || s.terminal || s.browser)) && desktop && canDock && !files && !p.noProject && !p.sample && !!p.cwd && !!p.activeSessionId;
   const toggleSessions = useCallback(() => hideColumn(!columnHidden), [hideColumn, columnHidden]);
   const [inspect, setInspect] = useState<{ id: string }>();
   const [graphOpen, setGraphOpen] = useState(false);
@@ -1442,8 +1440,8 @@ export function Shell(p: ShellProps) {
           {/* Desktop, narrow: out of reach while the list page covers it */}
           <div ref={mainColumn} data-sheet={desktop || undefined} data-switching={p.pendingSessionId !== undefined || undefined} inert={(desktop && !canDock && drawerOpen) || undefined}
             // Files layout: the chat lies on the canvas right of the stage (desktop.css), as wide as the user made it. Beside
-            // the docked tool panel its basis is what it keeps there: the panel shrinks first, to its narrowest (panel.css)
-            className={cn('relative flex flex-col', desktop && dockedInspect ? 'min-w-(--chat-fit-min)' : files ? 'min-w-(--files-chat-min)' : 'min-w-0', files ? 'order-3 shrink' : cn('flex-1', (panelDocked || dockedInspect) && 'basis-(--tool-main-min)'))}
+            // the docked tool panel, panel.css sets its basis without re-rendering Shell on each toggle.
+            className={cn('relative flex flex-col', desktop && dockedInspect ? 'min-w-(--chat-fit-min)' : files ? 'min-w-(--files-chat-min)' : 'min-w-0', files ? 'order-3 shrink' : cn(desktop ? 'grow' : 'flex-1', dockedInspect && 'basis-(--tool-main-min)'))}
             style={files ? { width: chatWidth !== undefined ? `clamp(var(--files-chat-min), ${chatWidth}px, var(--files-chat-max))` : 'var(--files-chat-w)' } : undefined}>
             {files && <InspectorSplitter side="right" width={chatWidth} bounds={chatBounds} onDrag={setDraggedChat} onCommit={commitChat} onReset={resetChat} />}
             {/* Covered by the overlay inspector: out of the tab order and the accessibility tree meanwhile */}

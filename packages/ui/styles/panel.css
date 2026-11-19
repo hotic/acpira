@@ -79,7 +79,7 @@
 @layer components {
   /* The panel lies on the canvas: sticky rows and the line numbers paint that, not the sheet's colour */
   [data-tool-panel-wrap] { --panel-bg: var(--canvas, var(--bg-0)); background: var(--panel-bg); flex-shrink: 0; }
-  [data-tool-panel-wrap]:not([data-moving]) > [data-tool-panel] { contain: layout style paint; }
+  [data-tool-panel-wrap] > [data-tool-panel] { contain: layout style paint; }
   /* Docked open it shrinks before the chat, whose basis beside it is --tool-main-min (Shell.tsx): without that the panel
      kept its default width and a window just under the files layout's tier left the chat a sliver. A ratio, since a
      factor under one on the chat would leave the overflow unshared once the panel stops at its narrowest (flex scales the
@@ -88,14 +88,17 @@
   .acp-shell[data-desktop]:not([data-narrow]) > [data-tool-panel-wrap][data-shown]:not([data-moving]) { min-width: var(--tool-fit-min, var(--tool-panel-min)); }
   /* Open, the chat sheet runs to the panel's edge, and its rim and shadow fall on the panel as on the column */
   .acp-shell[data-desktop]:not([data-narrow]):has(> [data-tool-panel-wrap]:is([data-shown], [data-moving])) [data-sheet] { z-index: 1; }
-  .acp-shell[data-desktop]:not([data-narrow]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet] { margin-right: 0; }
+  .acp-shell[data-desktop]:not([data-layout="files"]) > [data-sheet] { flex-basis: 0%; }
+  .acp-shell[data-desktop]:not([data-narrow]):has(> [data-tool-panel-wrap][data-shown]) > [data-sheet] { flex-basis: var(--tool-main-min); margin-right: 0; }
   /* Opening and closing ease the panel's width and the sheet's margin; meanwhile the panel's content keeps its open width
      (--tool-panel-open, written by ToolPanelDock), clipped instead of re-wrapped */
   [data-tool-panel-wrap]:not([data-shown]) { opacity: 0; }
   [data-tool-panel-wrap][data-moving] { overflow: hidden; transition: width var(--sidebar-duration) var(--sidebar-ease), opacity var(--sidebar-fade-duration) var(--sidebar-ease); }
   /* Animate to the fitted width, not a larger flex basis that reaches the available room early. */
   [data-tool-panel-wrap][data-moving][data-shown] { width: var(--tool-panel-open) !important; }
-  [data-tool-panel-wrap][data-moving] > [data-tool-panel] { min-width: var(--tool-panel-open, auto); }
+  /* The hidden panel stays mounted. Keep its content at the same width after the close too, so reopening doesn't
+     lay all its tabs out again from zero. While fully open flex layout stays free to resize it. */
+  [data-tool-panel-wrap]:is([data-moving], :not([data-shown])) > [data-tool-panel] { width: var(--tool-panel-open, auto); }
   .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet] { transition: margin var(--sidebar-duration) var(--sidebar-ease); }
   .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet-header] { transition: padding var(--sidebar-duration) var(--sidebar-ease); }
   /* A narrow window: the panel is a page over the window, its tabs after the traffic lights */
