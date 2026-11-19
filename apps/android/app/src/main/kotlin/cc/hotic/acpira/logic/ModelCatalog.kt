@@ -106,9 +106,14 @@ object ModelCatalog {
     // Fast and 1M may both trail, in either order
     fun stripTrailingFlags() {
       while (t.size > 1) {
-        when (t.last().lowercase()) {
-          "fast" -> { fast = true; t.removeAt(t.lastIndex) }
-          "1m" -> { long = true; t.removeAt(t.lastIndex) }
+        val last = t.last().lowercase()
+        when {
+          last == "fast" -> { fast = true; t.removeAt(t.lastIndex) }
+          // Droid / Factory spells it "Opus 5.5 Fast Mode"
+          t.size > 2 && last == "mode" && t[t.size - 2].lowercase() == "fast" -> {
+            fast = true; t.removeAt(t.lastIndex); t.removeAt(t.lastIndex)
+          }
+          last == "1m" -> { long = true; t.removeAt(t.lastIndex) }
           else -> return
         }
       }
@@ -302,6 +307,54 @@ object ComposerControls {
   fun sidekickChannel(o: SessionOption): String? = o.source?.name ?: if (o.group == null) o.description else null
 
   /**
+   * composerControls.ts `sidekickFamilies`: group sidekick options into the same ModelFamily shape the lead's list
+   * uses (collapsing embedded effort / Fast / 1M variants such as Factory's "Opus 5.5 Fast Mode" or Devin's "SWE-2 High Fast").
+   */
+  fun sidekickFamilies(options: List<SessionOption>, brandOf: (SessionOption) -> String?, cliId: String? = null): List<ModelFamily> {
+    val real = options.filter { it.id != noSidekick }
+    val normalized = if (cliId != null) {
+      real.map { it.copy(group = null, description = null) }
+    } else {
+      real.map { o ->
+        if (o.source != null || o.group != null || o.description.isNullOrEmpty()) o
+        else o.copy(source = SessionOption.Source(o.description!!, o.description!!, "custom"), description = null)
+      }
+    }
+    val families = ModelCatalog.group(normalized, brandOf)
+    return if (cliId == null) families else families.map { it.copy(key = "$cliId\u0000${it.key}") }
+  }
+
+  data class PickedSidekick(val family: ModelFamily, val variant: ModelVariant, val cli: SidekickCli?)
+
+  /** Resolve the currently picked sidekick's family and variant across either a host-sidekick CLI list or a native select */
+  fun findSidekickFamily(options: List<SessionOption>, value: String?, brandOf: (SessionOption) -> String?): PickedSidekick? {
+    if (value.isNullOrEmpty() || value == noSidekick) return null
+    val clis = sidekickClis(options)
+    if (clis.isNotEmpty()) {
+      for (cli in clis) {
+        val f = sidekickFamilies(cli.options, brandOf, cli.id).firstOrNull { fam -> fam.variants.any { it.id == value } }
+        if (f != null) return PickedSidekick(f, f.variants.first { it.id == value }, cli)
+      }
+      return null
+    }
+    val f = sidekickFamilies(options, brandOf).firstOrNull { fam -> fam.variants.any { it.id == value } } ?: return null
+    return PickedSidekick(f, f.variants.first { it.id == value }, null)
+  }
+
+  /**
+   * Families filed under their channel in first-seen order, those without one first unlabelled; null with fewer than two
+   * channels, where the list stays flat (ModelPicker.tsx `bySource`)
+   */
+  fun byChannelFamilies(families: List<ModelFamily>): List<Pair<String, List<ModelFamily>>>? {
+    val groups = families.groupBy { f ->
+      val src = f.source
+      if (src != null && f.variants.none { it.id == src }) src else ""
+    }.toList()
+    if (groups.count { it.first.isNotEmpty() } < 2) return null
+    return groups.filter { it.first.isEmpty() } + groups.filter { it.first.isNotEmpty() }
+  }
+
+  /**
    * Rows filed under their channel in first-seen order, those without one first unlabelled; null with fewer than two
    * channels, where the list stays flat (ModelPicker.tsx `bySource`)
    */
@@ -436,7 +489,10 @@ class ModelChoices(
   val access: ConfigControl?
   /** The sidekick select, its level and its Fast (the last bean opens them as beans of their own) */
   val sidekick: ConfigControl?
+  val sidekickCur: ModelFamily?
+  val sidekickCurVar: ModelVariant?
   val sidekickEffort: ConfigControl?
+  val sidekickEffortScale: Effort?
   val sidekickFast: Toggle?
   private val nativeFast: Toggle?
 
@@ -455,8 +511,13 @@ class ModelChoices(
     collaboration = split.collaboration.firstOrNull { it.options.size > 1 }
     access = split.permission.firstOrNull { it.options.size > 1 }
     sidekick = split.sidekick.firstOrNull()
+    val skPicked = sidekick?.let { ComposerControls.findSidekickFamily(it.options, it.value, brandOf) }
+    sidekickCur = skPicked?.family
+    sidekickCurVar = skPicked?.variant
     sidekickEffort = split.sidekickEffort.firstOrNull()
-    sidekickFast = split.sidekickFast.firstOrNull()?.let { nativeToggle(it) }
+    val nativeSkFast = split.sidekickFast.firstOrNull()?.let { nativeToggle(it) }
+    sidekickEffortScale = sidekickEffortOf(sidekick, sidekickCur, sidekickCurVar, sidekickEffort, nativeSkFast, standard)
+    sidekickFast = (sidekickEffortScale?.fast ?: nativeSkFast)?.takeUnless { it.disabled && !it.on }
   }
 
   /** Devin's Standard / Fast select or an adapter boolean as one switch */
@@ -466,10 +527,18 @@ class ModelChoices(
     return Toggle(on, c.options.isNotEmpty() && c.options.none { it.id == next }) { onSetConfig(c.id, next) }
   }
 
+  private fun variantFast(f: ModelFamily, v: ModelVariant, controlId: String): Toggle? {
+    if (f.fusion != null || !f.hasFast) return null
+    fun at(long: Boolean) = f.variants.firstOrNull { it.effort == v.effort && it.fast == !v.fast && it.long == long }
+    val hit = at(false) ?: at(v.long)
+    return Toggle(v.fast, hit == null) { hit?.let { onSetConfig(controlId, it.id) } }
+  }
+
   private fun effortOf(split: ComposerControls.Split, standard: String): Effort? {
     val f = cur
     val v = curVar
     val id = modelId
+    val embeddedFast = if (f != null && v != null && id != null) variantFast(f, v, id) else null
     var fusionFast: Toggle? = null
     if (f?.fusion != null && v != null && id != null) {
       // A pair's level and Fast are the pair's own: each pick writes the offered pair nearest to it
@@ -484,21 +553,17 @@ class ModelChoices(
       val levels = ModelCatalog.fusionEfforts(f, v)
       if (levels.size > 1) return Effort(levels.map { it to it.ifEmpty { standard } }, v.effort, { pick(it, v.fast) }, fusionFast ?: nativeFast, null)
     }
+    val resolvedFast = fusionFast ?: embeddedFast ?: nativeFast
     if (f != null && v != null && id != null && f.fusion == null && (ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f))) {
-      val fast = if (f.hasFast) {
-        fun at(long: Boolean) = f.variants.firstOrNull { it.effort == v.effort && it.fast == !v.fast && it.long == long }
-        val hit = at(false) ?: at(v.long)
-        Toggle(v.fast, hit == null) { hit?.let { onSetConfig(id, it.id) } }
-      } else nativeFast
       val pick = { e: String -> ModelCatalog.findVariant(f, e, v.fast, false)?.let { onSetConfig(id, it.id) }; Unit }
       if (ModelCatalog.thinkingOnly(f)) {
         val on = v.effort == "Thinking"
         val thinking = Toggle(on, ModelCatalog.findVariant(f, if (on) "" else "Thinking", v.fast, false) == null) {
           pick(if (it) "Thinking" else "")
         }
-        return Effort(emptyList(), v.effort, pick, fast, thinking)
+        return Effort(emptyList(), v.effort, pick, resolvedFast, thinking)
       }
-      return Effort(f.efforts.map { it to it.ifEmpty { standard } }, v.effort, pick, fast, null)
+      return Effort(f.efforts.map { it to it.ifEmpty { standard } }, v.effort, pick, resolvedFast, null)
     }
     val c = split.reasoning.firstOrNull { ComposerControls.reasoningVisible(it) }
     if (c != null) {
@@ -506,11 +571,39 @@ class ModelChoices(
       // Turned back on at High, else the first level, else the agent's own "on"
       val turnOn = p.efforts.firstOrNull { it.id == "high" }?.id ?: p.efforts.firstOrNull()?.id ?: p.onId
       val thinking = p.offId?.let { off -> Toggle(!p.off, false) { on -> if (!on) onSetConfig(c.id, off) else turnOn?.let { onSetConfig(c.id, it) } } }
-      if (p.efforts.size <= 1 && thinking == null) return null
-      return Effort(p.efforts.map { it.id to it.name }, if (p.off) "" else p.value.orEmpty(), { onSetConfig(c.id, it) }, fusionFast ?: nativeFast, thinking)
+      if (p.efforts.size <= 1 && thinking == null) return (fusionFast ?: embeddedFast)?.let { Effort(emptyList(), v?.effort.orEmpty(), {}, it, null) }
+      return Effort(p.efforts.map { it.id to it.name }, if (p.off) "" else p.value.orEmpty(), { onSetConfig(c.id, it) }, resolvedFast, thinking)
     }
-    // A fixed lead level can still have pair-level Fast, without a reasoning bean to own it
-    return fusionFast?.let { Effort(emptyList(), v?.effort.orEmpty(), {}, it, null) }
+    // A model with embedded Fast (Factory "Opus 5.5 Fast Mode") or pair-level Fast can have Fast without a reasoning bean
+    return (fusionFast ?: embeddedFast)?.let { Effort(emptyList(), v?.effort.orEmpty(), {}, it, null) }
+  }
+
+  private fun sidekickEffortOf(
+    select: ConfigControl?, f: ModelFamily?, v: ModelVariant?, nativeEffort: ConfigControl?, nativeFast: Toggle?, standard: String,
+  ): Effort? {
+    if (select == null || f == null || v == null) return null
+    val embeddedFast = variantFast(f, v, select.id)
+    val resolvedFast = embeddedFast ?: nativeFast
+    if (f.fusion == null && (ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f))) {
+      val pick = { e: String -> ModelCatalog.findVariant(f, e, v.fast, false)?.let { onSetConfig(select.id, it.id) }; Unit }
+      if (ModelCatalog.thinkingOnly(f)) {
+        val on = v.effort == "Thinking"
+        val thinking = Toggle(on, ModelCatalog.findVariant(f, if (on) "" else "Thinking", v.fast, false) == null) {
+          pick(if (it) "Thinking" else "")
+        }
+        return Effort(emptyList(), v.effort, pick, resolvedFast, thinking)
+      }
+      return Effort(f.efforts.map { it to it.ifEmpty { standard } }, v.effort, pick, resolvedFast, null)
+    }
+    if (nativeEffort != null && ComposerControls.reasoningVisible(nativeEffort)) {
+      val p = ComposerControls.presentReasoning(nativeEffort)
+      val turnOn = p.efforts.firstOrNull { it.id == "high" }?.id ?: p.efforts.firstOrNull()?.id ?: p.onId
+      val thinking = p.offId?.let { off -> Toggle(!p.off, false) { on -> if (!on) onSetConfig(nativeEffort.id, off) else turnOn?.let { onSetConfig(nativeEffort.id, it) } } }
+      if (p.efforts.size > 1 || thinking != null) {
+        return Effort(p.efforts.map { it.id to it.name }, if (p.off) "" else p.value.orEmpty(), { onSetConfig(nativeEffort.id, it) }, resolvedFast, thinking)
+      }
+    }
+    return embeddedFast?.let { Effort(emptyList(), v.effort, {}, it, null) }
   }
 
   val hasModel get() = cur != null && modelId != null

@@ -422,8 +422,33 @@ private let fusionOptions: [SessionOption] = [
     #expect(ModelCatalog.parse("GPT-5.3-Codex X-High") == parsed("GPT-5.3-Codex", "XHigh"))
     #expect(ModelCatalog.parse("SWE-1.7 Lightning Medium") == parsed("SWE-1.7 Lightning", "Medium"))
     #expect(ModelCatalog.parse("SWE-1.6 Fast") == parsed("SWE-1.6", fast: true))
+    #expect(ModelCatalog.parse("Opus 5.5 Fast Mode") == parsed("Opus 5.5", fast: true))
     #expect(ModelCatalog.parse("Adaptive") == parsed("Adaptive"))
     #expect(ModelCatalog.parse("Max") == parsed("Max"))
+  }
+
+  @Test func sidekickFamiliesMergeFastModeAndExposeFastToggle() throws {
+    let raw = #"{"id":"host_sidekick","name":"Sidekick","category":"_sidekick","type":"select","value":"droid/opus-5-5-fast","options":[{"id":"none","name":"None"},{"id":"droid/opus-5-5","name":"Opus 5.5","description":"Factory","group":{"id":"droid","name":"Factory"}},{"id":"droid/opus-5-5-fast","name":"Opus 5.5 Fast Mode","description":"Factory","group":{"id":"droid","name":"Factory"}}]}"#
+    let sk = try JSONDecoder().decode(ConfigControl.self, from: Data(raw.utf8))
+    let fams = ComposerControls.sidekickFamilies(sk.options, cliId: "droid")
+    #expect(fams.map { $0.name } == ["Opus 5.5"])
+    #expect(fams[0].hasFast)
+    let picked = ComposerControls.findSidekickFamily(sk.options, value: "droid/opus-5-5-fast")
+    #expect(picked?.family.name == "Opus 5.5" && picked?.variant.fast == true)
+    // Lead and sidekick both expose embedded Fast even without embedded effort levels
+    let lead = ConfigControl(
+      id: "model", name: "Model", category: "model", type: "select",
+      options: [SessionOption(id: "opus-5-5", name: "Opus 5.5"), SessionOption(id: "opus-5-5-fast", name: "Opus 5.5 Fast Mode")],
+      value: "opus-5-5"
+    )
+    var sent: [(String, String)] = []
+    let choices = ModelChoices(controls: SessionControls(modes: [], options: [lead, sk])) { sent.append(($0, $1)) }
+    #expect(choices.families.map { $0.name } == ["Opus 5.5"])
+    #expect(choices.fast?.on == false)
+    choices.fast?.set(true)
+    #expect(choices.sidekickCur?.name == "Opus 5.5" && choices.sidekickFast?.on == true)
+    choices.sidekickFast?.set(false)
+    #expect(sent.map { "\($0.0)=\($0.1)" } == ["model=opus-5-5-fast", "host_sidekick=droid/opus-5-5"])
   }
 
   @Test func groupsByFamilyInFirstSeenOrder() {

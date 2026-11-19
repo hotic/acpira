@@ -188,6 +188,11 @@ export class ModelCatalog {
         if (last === 'fast') {
           fast = true;
           tk.pop();
+        } else if (tk.length > 2 && last === 'mode' && tk[tk.length - 2].toLowerCase() === 'fast') {
+          // Droid / Factory spells it "Opus 5.5 Fast Mode"
+          fast = true;
+          tk.pop();
+          tk.pop();
         } else if (last === '1m') {
           long = true;
           tk.pop();
@@ -433,6 +438,19 @@ export interface SidekickCli {
   options: SessionOption[];
 }
 
+/** A run of sidekick model families under one channel ('' for those without one) */
+export interface FamilyChannelGroup {
+  channel: string;
+  families: ModelFamily[];
+}
+
+/** A resolved sidekick pick: its model family, active variant and CLI when cross-CLI */
+export interface PickedSidekick {
+  family: ModelFamily;
+  variant: ModelVariant;
+  cli?: SidekickCli;
+}
+
 /** A run of sidekick models under one channel ('' for those without one) */
 export interface ChannelGroup {
   channel: string;
@@ -498,6 +516,93 @@ export class ComposerControls {
       return o.source.name;
     }
     return o.group === undefined ? o.description : undefined;
+  }
+
+  /**
+   * composerControls.ts `sidekickFamilies`: group sidekick options into the same ModelFamily shape the lead's list
+   * uses (collapsing embedded effort / Fast / 1M variants such as Factory's "Opus 5.5 Fast Mode" or Devin's "SWE-2 High Fast").
+   */
+  static sidekickFamilies(options: SessionOption[], cliId?: string): ModelFamily[] {
+    const real = options.filter((o: SessionOption) => o.id !== ComposerControls.noSidekick);
+    const normalized: SessionOption[] = [];
+    for (const o of real) {
+      if (cliId !== undefined) {
+        const copy: SessionOption = { id: o.id, name: o.name, source: o.source, kind: o.kind };
+        normalized.push(copy);
+      } else if (o.source === undefined && o.group === undefined && o.description !== undefined && o.description.length > 0) {
+        const copy: SessionOption = {
+          id: o.id, name: o.name, source: { id: o.description, name: o.description, kind: 'custom' }, kind: o.kind
+        };
+        normalized.push(copy);
+      } else {
+        normalized.push(o);
+      }
+    }
+    const families = ModelCatalog.group(normalized);
+    if (cliId === undefined) {
+      return families;
+    }
+    return families.map((f: ModelFamily) => {
+      const copy: ModelFamily = {
+        key: `${cliId}\0${f.key}`, name: f.name, brand: f.brand, source: f.source,
+        sourceKind: f.sourceKind, variants: f.variants, efforts: f.efforts, hasFast: f.hasFast, hasLong: f.hasLong,
+        fusion: f.fusion
+      };
+      return copy;
+    });
+  }
+
+  /** Resolve the currently picked sidekick's family and variant across either a host-sidekick CLI list or a native select */
+  static findSidekickFamily(options: SessionOption[], value: string | undefined): PickedSidekick | undefined {
+    if (value === undefined || value.length === 0 || value === ComposerControls.noSidekick) {
+      return undefined;
+    }
+    const clis = ComposerControls.sidekickClis(options);
+    if (clis.length > 0) {
+      for (const cli of clis) {
+        const f = ComposerControls.sidekickFamilies(cli.options, cli.id)
+          .find((fam: ModelFamily) => fam.variants.some((v: ModelVariant) => v.id === value));
+        if (f !== undefined) {
+          const v = f.variants.find((item: ModelVariant) => item.id === value);
+          if (v !== undefined) {
+            const hit: PickedSidekick = { family: f, variant: v, cli: cli };
+            return hit;
+          }
+        }
+      }
+      return undefined;
+    }
+    const f = ComposerControls.sidekickFamilies(options)
+      .find((fam: ModelFamily) => fam.variants.some((v: ModelVariant) => v.id === value));
+    const v = f?.variants.find((item: ModelVariant) => item.id === value);
+    if (f === undefined || v === undefined) {
+      return undefined;
+    }
+    const hit: PickedSidekick = { family: f, variant: v };
+    return hit;
+  }
+
+  /**
+   * Families filed under their channel in first-seen order, those without one first unlabelled; undefined with fewer than
+   * two channels, where the list stays flat (ModelPicker.tsx `bySource`)
+   */
+  static byChannelFamilies(families: ModelFamily[]): FamilyChannelGroup[] | undefined {
+    const groups: FamilyChannelGroup[] = [];
+    for (const f of families) {
+      const channel = f.source !== undefined && !f.variants.some((v: ModelVariant) => v.id === f.source) ? f.source : '';
+      const group = groups.find((g: FamilyChannelGroup) => g.channel === channel);
+      if (group !== undefined) {
+        group.families.push(f);
+      } else {
+        const added: FamilyChannelGroup = { channel: channel, families: [f] };
+        groups.push(added);
+      }
+    }
+    if (groups.filter((g: FamilyChannelGroup) => g.channel.length > 0).length < 2) {
+      return undefined;
+    }
+    return groups.filter((g: FamilyChannelGroup) => g.channel.length === 0)
+      .concat(groups.filter((g: FamilyChannelGroup) => g.channel.length > 0));
   }
 
   /**
@@ -702,7 +807,10 @@ export class ModelChoices {
   collaboration: ConfigControl | undefined = undefined;
   access: ConfigControl | undefined = undefined;
   sidekick: ConfigControl | undefined = undefined;
+  sidekickCur: ModelFamily | undefined = undefined;
+  sidekickCurVar: ModelVariant | undefined = undefined;
   sidekickEffort: ConfigControl | undefined = undefined;
+  sidekickEffortScale: Effort | undefined = undefined;
   sidekickFast: Toggle | undefined = undefined;
   private nativeFast: Toggle | undefined = undefined;
   private onSetConfig: (id: string, value: string) => void;
@@ -735,8 +843,14 @@ export class ModelChoices {
     this.sidekick = split.sidekick.length > 0
       ? (ComposerControls.sidekickClis(split.sidekick[0].options).length > 0 ? split.sidekick[0] : ModelChoices.visible(split.sidekick[0], off))
       : undefined;
+    const skPicked = this.sidekick !== undefined ? ComposerControls.findSidekickFamily(this.sidekick.options, this.sidekick.value) : undefined;
+    this.sidekickCur = skPicked?.family;
+    this.sidekickCurVar = skPicked?.variant;
     this.sidekickEffort = split.sidekickEffort[0];
-    this.sidekickFast = split.sidekickFast.length > 0 ? nativeToggle(split.sidekickFast[0], onSetConfig) : undefined;
+    const nativeSkFast = split.sidekickFast.length > 0 ? nativeToggle(split.sidekickFast[0], onSetConfig) : undefined;
+    this.sidekickEffortScale = this.sidekickEffortOf(this.sidekick, this.sidekickCur, this.sidekickCurVar, this.sidekickEffort, nativeSkFast);
+    const skFast = this.sidekickEffortScale?.fast ?? nativeSkFast;
+    this.sidekickFast = skFast !== undefined && skFast.disabled && !skFast.on ? undefined : skFast;
   }
 
   /** The models the settings left visible (ModelPicker.tsx visibleOptions) */
@@ -811,12 +925,28 @@ export class ModelChoices {
     }
   }
 
+  private variantFast(f: ModelFamily, v: ModelVariant, controlId: string): Toggle | undefined {
+    if (f.fusion !== undefined || !f.hasFast) {
+      return undefined;
+    }
+    const at = (long: boolean): ModelVariant | undefined =>
+      f.variants.find((x: ModelVariant) => x.effort === v.effort && x.fast === !v.fast && x.long === long);
+    const hit = at(false) ?? at(v.long);
+    const set = this.onSetConfig;
+    return new Toggle(v.fast, hit === undefined, () => {
+      if (hit !== undefined) {
+        set(controlId, hit.id);
+      }
+    });
+  }
+
   private effortOf(split: ControlSplit): Effort | undefined {
     const f = this.cur;
     const v = this.curVar;
     const id = this.modelId;
     const set = this.onSetConfig;
     const nativeFast = this.nativeFast;
+    const embeddedFast = f !== undefined && v !== undefined && id !== undefined ? this.variantFast(f, v, id) : undefined;
     let fusionFast: Toggle | undefined = undefined;
     if (f !== undefined && f.fusion !== undefined && v !== undefined && id !== undefined) {
       const pick = (e: string, fast: boolean): void => {
@@ -836,19 +966,9 @@ export class ModelChoices {
           (e: string) => pick(e, v.fast), fusionFast ?? nativeFast, undefined);
       }
     }
+    const resolvedFast = fusionFast ?? embeddedFast ?? nativeFast;
     if (f !== undefined && v !== undefined && id !== undefined && f.fusion === undefined &&
       (ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f))) {
-      let fast: Toggle | undefined = nativeFast;
-      if (f.hasFast) {
-        const at = (long: boolean): ModelVariant | undefined =>
-          f.variants.find((x: ModelVariant) => x.effort === v.effort && x.fast === !v.fast && x.long === long);
-        const hit = at(false) ?? at(v.long);
-        fast = new Toggle(v.fast, hit === undefined, () => {
-          if (hit !== undefined) {
-            set(id, hit.id);
-          }
-        });
-      }
       const pick = (e: string): void => {
         const hit = ModelCatalog.findVariant(f, e, v.fast, false);
         if (hit !== undefined) {
@@ -860,10 +980,10 @@ export class ModelChoices {
         const on = v.effort === 'Thinking';
         const thinking = new Toggle(on, ModelCatalog.findVariant(f, on ? '' : 'Thinking', v.fast, false) === undefined,
           (next: boolean) => pick(next ? 'Thinking' : ''));
-        return new Effort([], v.effort, pick, fast, thinking);
+        return new Effort([], v.effort, pick, resolvedFast, thinking);
       }
       return new Effort(f.efforts.map((e: string) => level(e, e.length === 0 ? t('composer.standard') : e)), v.effort, pick,
-        fast, undefined);
+        resolvedFast, undefined);
     }
     const c = split.reasoning.find((r: ConfigControl) => ComposerControls.reasoningVisible(r));
     if (c !== undefined) {
@@ -879,13 +999,58 @@ export class ModelChoices {
         }
       });
       if (p.efforts.length <= 1 && thinking === undefined) {
-        return undefined;
+        const fallbackFast = fusionFast ?? embeddedFast;
+        return fallbackFast !== undefined ? new Effort([], v?.effort ?? '', (e: string) => {}, fallbackFast, undefined) : undefined;
       }
       return new Effort(p.efforts.map((o: SessionOption) => level(o.id, o.name)), p.off ? '' : p.value ?? '',
-        (e: string) => set(c.id, e), fusionFast ?? nativeFast, thinking);
+        (e: string) => set(c.id, e), resolvedFast, thinking);
     }
-    // A fixed lead level can still have pair-level Fast, without a reasoning bean to own it
-    return fusionFast !== undefined ? new Effort([], v?.effort ?? '', (e: string) => {}, fusionFast, undefined) : undefined;
+    // A model with embedded Fast (Factory "Opus 5.5 Fast Mode") or pair-level Fast can have Fast without a reasoning bean
+    const fallbackFast = fusionFast ?? embeddedFast;
+    return fallbackFast !== undefined ? new Effort([], v?.effort ?? '', (e: string) => {}, fallbackFast, undefined) : undefined;
+  }
+
+  private sidekickEffortOf(select: ConfigControl | undefined, f: ModelFamily | undefined, v: ModelVariant | undefined,
+    nativeEffort: ConfigControl | undefined, nativeFast: Toggle | undefined): Effort | undefined {
+    if (select === undefined || f === undefined || v === undefined) {
+      return undefined;
+    }
+    const set = this.onSetConfig;
+    const embeddedFast = this.variantFast(f, v, select.id);
+    const resolvedFast = embeddedFast ?? nativeFast;
+    if (f.fusion === undefined && (ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f))) {
+      const pick = (e: string): void => {
+        const hit = ModelCatalog.findVariant(f, e, v.fast, false);
+        if (hit !== undefined) {
+          set(select.id, hit.id);
+        }
+      };
+      if (ModelCatalog.thinkingOnly(f)) {
+        const on = v.effort === 'Thinking';
+        const thinking = new Toggle(on, ModelCatalog.findVariant(f, on ? '' : 'Thinking', v.fast, false) === undefined,
+          (next: boolean) => pick(next ? 'Thinking' : ''));
+        return new Effort([], v.effort, pick, resolvedFast, thinking);
+      }
+      return new Effort(f.efforts.map((e: string) => level(e, e.length === 0 ? t('composer.standard') : e)), v.effort, pick,
+        resolvedFast, undefined);
+    }
+    if (nativeEffort !== undefined && ComposerControls.reasoningVisible(nativeEffort)) {
+      const p = ComposerControls.presentReasoning(nativeEffort);
+      const turnOn = p.efforts.find((o: SessionOption) => o.id === 'high')?.id ?? p.efforts[0]?.id ?? p.onId;
+      const offId = p.offId;
+      const thinking = offId === undefined ? undefined : new Toggle(!p.off, false, (on: boolean) => {
+        if (!on) {
+          set(nativeEffort.id, offId);
+        } else if (turnOn !== undefined) {
+          set(nativeEffort.id, turnOn);
+        }
+      });
+      if (p.efforts.length > 1 || thinking !== undefined) {
+        return new Effort(p.efforts.map((o: SessionOption) => level(o.id, o.name)), p.off ? '' : p.value ?? '',
+          (e: string) => set(nativeEffort.id, e), resolvedFast, thinking);
+      }
+    }
+    return embeddedFast !== undefined ? new Effort([], v.effort, (e: string) => {}, embeddedFast, undefined) : undefined;
   }
 }
 

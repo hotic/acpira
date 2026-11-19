@@ -1,6 +1,6 @@
 import { SessionOption } from '../../wire/Wire';
 import {
-  accessIcon, accessLabel, ChannelGroup, ComposerControls, ModelChoices, SidekickCli, ModelFamily, modeIcon, modeLabel, optionBrand, Toggle, vendorBrand,
+  accessIcon, accessLabel, ComposerControls, EffortLevel, FamilyChannelGroup, ModelChoices, SidekickCli, ModelFamily, ModelVariant, modeIcon, modeLabel, optionBrand, Toggle, vendorBrand,
   workLabel
 } from '../../logic/ModelCatalog';
 import { MentionPersona } from '../../logic/SlashCommands';
@@ -196,7 +196,7 @@ export function modelBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[]
     out.push(b);
   } else if (c.sidekick !== undefined) {
     const picked = pickedSidekick(c);
-    const b = bean('sidekick', t('composer.sidekick'), picked?.name ?? t('composer.sidekickNone'), sidekickGlyph(picked), [],
+    const b = bean('sidekick', t('composer.sidekick'), c.sidekickCur?.name ?? picked?.name ?? t('composer.sidekickNone'), sidekickGlyph(picked), [],
       -1);
     b.note = t('composer.sidekickHint');
     b.tap = enter;
@@ -278,9 +278,10 @@ function sidekickBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[] {
   };
   const current = sk.value ?? ComposerControls.noSidekick;
   const picked = pickedSidekick(c);
+  const pickedFamily = c.sidekickCur;
   const clis = ComposerControls.sidekickClis(sk.options);
   const out: Bean[] = [];
-  let listed: SessionOption[] | undefined = sk.options;
+  let activeCli: SidekickCli | undefined = clis.length === 1 ? clis[0] : undefined;
   if (clis.length > 1) {
     const mine = clis.find((cli: SidekickCli) => cli.id === picked?.group?.id);
     out.push(agentBean(clis, mine, goo, () => {
@@ -288,38 +289,69 @@ function sidekickBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[] {
       goo.browse = undefined;
       fold();
     }));
-    listed = (clis.find((cli: SidekickCli) => cli.id === goo.browse) ?? mine)?.options;
+    activeCli = clis.find((cli: SidekickCli) => cli.id === goo.browse) ?? mine;
   }
+  const listed: SessionOption[] | undefined = clis.length > 1 ? activeCli?.options : sk.options;
+  const cliId = activeCli?.id;
   if (listed !== undefined) {
-    const groups = ComposerControls.byChannel(listed);
-    const ordered = groups !== undefined ? groups.reduce((all: SessionOption[], g: ChannelGroup) => all.concat(g.options), [] as SessionOption[]) : listed;
-    const rows = ordered.map((o: SessionOption) => {
-      const none = o.id === ComposerControls.noSidekick;
-      const glyph = none ? lucideGlyph('circleFadingPlus', 'fg3') : markGlyph(optionBrand(o), o.name);
-      const row = choice(o.id, none ? t('composer.sidekickNone') : o.name, o.id === current, glyph, () => {
-        act.setConfig(sk.id, o.id);
+    const showNone = clis.length <= 1;
+    const families = ComposerControls.sidekickFamilies(listed, cliId);
+    const groups = ComposerControls.byChannelFamilies(families);
+    const ordered = groups !== undefined
+      ? groups.reduce((all: ModelFamily[], g: FamilyChannelGroup) => all.concat(g.families), [] as ModelFamily[])
+      : families;
+    const rows: GooChoice[] = [];
+    if (showNone) {
+      rows.push(choice(ComposerControls.noSidekick, t('composer.sidekickNone'), picked === undefined,
+        lucideGlyph('circleFadingPlus', 'fg3'), () => {
+          act.setConfig(sk.id, ComposerControls.noSidekick);
+          fold();
+        }));
+    }
+    ordered.forEach((f: ModelFamily) => {
+      const checked = f.variants.some((v: ModelVariant) => v.id === current);
+      const target = f.variants[0]?.id ?? f.key;
+      const row = choice(f.key, f.name, checked, markGlyph(f.brand, f.name), () => {
+        act.setConfig(sk.id, target);
         fold();
       });
-      // The first row of each named channel carries its label
-      const g = groups?.find((group: ChannelGroup) => group.options[0]?.id === o.id);
+      const g = groups?.find((group: FamilyChannelGroup) => group.families[0]?.key === f.key);
       row.section = g !== undefined && g.channel.length > 0 ? g.channel : undefined;
-      return row;
+      rows.push(row);
     });
-    out.push(bean('sidekick.model', t('stats.model'), picked?.name ?? t('composer.sidekickNone'), sidekickGlyph(picked), rows,
-      ordered.findIndex((o: SessionOption) => o.id === current)));
+    const activeIndex = picked === undefined ? 0
+      : ordered.findIndex((f: ModelFamily) => f.variants.some((v: ModelVariant) => v.id === current)) + (showNone ? 1 : 0);
+    out.push(bean('sidekick.model', t('stats.model'), pickedFamily?.name ?? picked?.name ?? t('composer.sidekickNone'),
+      sidekickGlyph(picked), rows, activeIndex));
   }
-  const effort = c.sidekickEffort;
-  if (picked !== undefined && effort !== undefined && ComposerControls.reasoningVisible(effort)) {
-    const scale = ComposerControls.presentReasoning(effort);
-    if (scale.efforts.length > 1) {
-      const level = scale.off ? t('mobile.thinking.off') :
-        scale.efforts.find((o: SessionOption) => o.id === scale.value)?.name ?? t('composer.effort');
-      out.push(bean('sidekick.effort', t('composer.effort'), level, lucideGlyph('brain'),
-        scale.efforts.map((o: SessionOption) => choice(o.id, o.name, !scale.off && o.id === scale.value, undefined, () => {
-          act.setConfig(effort.id, o.id);
+  const e = picked !== undefined ? c.sidekickEffortScale : undefined;
+  if (e !== undefined && (e.levels.length > 1 || e.thinking !== undefined)) {
+    const levels = e.levels.length > 1 ? e.levels : [];
+    const thinking = e.thinking;
+    const label = thinking !== undefined && !thinking.on ? t('mobile.thinking.off')
+      : levels.find((l: EffortLevel) => l.id === e.value)?.name ?? (thinking !== undefined ? 'Thinking' : t('composer.effort'));
+    const rows: GooChoice[] = [];
+    if (thinking !== undefined) {
+      rows.push(choice('off', t('mobile.thinking.off'), !thinking.on, undefined, () => {
+        thinking.set(false);
+        fold();
+      }));
+      if (levels.length === 0) {
+        rows.push(choice('on', 'Thinking', thinking.on, undefined, () => {
+          thinking.set(true);
           fold();
-        })), scale.efforts.findIndex((o: SessionOption) => o.id === scale.value)));
+        }));
+      }
     }
+    levels.forEach((l: EffortLevel) => {
+      rows.push(choice(l.id, l.name, (thinking === undefined || thinking.on) && l.id === e.value, undefined, () => {
+        e.pick(l.id);
+        fold();
+      }));
+    });
+    const active = thinking !== undefined && !thinking.on ? 0
+      : levels.findIndex((l: EffortLevel) => l.id === e.value) + (thinking !== undefined ? 1 : 0);
+    out.push(bean('sidekick.effort', t('composer.effort'), label, lucideGlyph('brain'), rows, active));
   }
   const fast = c.sidekickFast;
   if (picked !== undefined && fast !== undefined) {
