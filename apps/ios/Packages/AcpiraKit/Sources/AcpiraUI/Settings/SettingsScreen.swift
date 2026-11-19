@@ -5,7 +5,7 @@ import UIKit
 #endif
 
 // The phone's settings: the webview's appearance and language preferences that make sense on a phone (theme, motion,
-// the interface language), the engine's settings a phone may change (EngineSettings.swift), the engine connection and
+// the interface language, how a turn's process reads), the engine's settings a phone may change (EngineSettings.swift), the engine connection and
 // the app's version, as a system form in a sheet. Preferences
 // persist in UserDefaults (`Prefs`); launch arguments for screenshots override them.
 
@@ -16,6 +16,11 @@ enum Prefs {
   /// `auto` or one of L10n.locales
   static let locale = "acpira.locale"
   static let motion = "acpira.motion"
+  /// The process group (`ProcessPrefs`): the step kinds left out (raw names, comma-separated), whether steps keep their
+  /// icons, whether a finished turn's process stays open
+  static let hiddenSteps = "acpira.process.hidden"
+  static let stepIcons = "acpira.process.stepIcons"
+  static let keepProcess = "acpira.process.keepOpen"
   /// The session list's view: `time` (day captions) or `project` (folding project groups)
   static let listView = "acpira.listView"
   /// Where pinned sessions sit by project: `top` or `project` (PinPlace)
@@ -80,6 +85,7 @@ struct SettingsScreen: View {
         // --ok) so "on" reads as on, as in every system app
         Toggle(t("settings.motion"), isOn: $motion).tint(.green)
       }
+      ProcessSettingsSection()
       // The engine's own settings, shared with the computer
       EngineSettingsSections()
       if let pairing {
@@ -121,6 +127,7 @@ struct SettingsScreen: View {
         case .agent(let id): AgentSettingsPage(id: id)
         case .models(let id): ModelsSettingsPage(id: id)
         case .providers: ProvidersPage()
+        case .steps: StepsSettingsPage()
         case .developer: DeveloperSettingsPage()
         }
       }
@@ -133,6 +140,58 @@ struct SettingsScreen: View {
   private var version: String {
     let info = Bundle.main.infoDictionary
     return "\(info?["CFBundleShortVersionString"] as? String ?? "0") (\(info?["CFBundleVersion"] as? String ?? "0"))"
+  }
+}
+
+/// How a turn's work reads, the desktop's Process group (Appearance.tsx): which step kinds it lists, a page of its own
+/// as the system's multi-choice rows are, then the two switches, titles alone like the other switches in the sheet
+struct ProcessSettingsSection: View {
+  @AppStorage(Prefs.hiddenSteps) private var hiddenSteps = ""
+  @AppStorage(Prefs.stepIcons) private var stepIcons = true
+  @AppStorage(Prefs.keepProcess) private var keepProcess = false
+
+  var body: some View {
+    let shown = StepKind.allCases.count - ProcessPrefs.hidden(hiddenSteps).count
+    Section {
+      NavigationLink(value: SettingsRoute.steps) {
+        // A value, not a phrase: every kind, none, or the bare count between
+        LabeledContent(t("settings.steps")) {
+          Text(verbatim: shown == StepKind.allCases.count ? t("settings.steps.all") : shown == 0 ? t("settings.steps.none") : "\(shown)")
+        }
+      }
+      Toggle(t("settings.stepIcons"), isOn: $stepIcons).tint(.green)
+      Toggle(t("settings.keepProcess"), isOn: $keepProcess).tint(.green)
+    } header: {
+      Text(web: t("settings.group.process"))
+    }
+  }
+}
+
+/// The step kinds a turn's process lists, one switch each in reading order; the reply itself always shows
+struct StepsSettingsPage: View {
+  @AppStorage(Prefs.hiddenSteps) private var hiddenSteps = ""
+
+  var body: some View {
+    let hidden = ProcessPrefs.hidden(hiddenSteps)
+    Form {
+      Section {
+        ForEach(StepKind.allCases, id: \.self) { kind in
+          Toggle(isOn: Binding(get: { !hidden.contains(kind) }, set: { on in
+            var next = ProcessPrefs.hidden(hiddenSteps)
+            if on { next.remove(kind) } else { next.insert(kind) }
+            hiddenSteps = ProcessPrefs.stored(next)
+          })) {
+            Text(web: t("settings.steps.\(kind.rawValue)"), paragraph: false)
+          }
+          .tint(.green)
+        }
+      } footer: {
+        Text(web: t("settings.steps.desc"))
+      }
+    }
+    .formPage()
+    .navigationTitle(t("settings.steps"))
+    .navigationBarTitleDisplayModeInline()
   }
 }
 

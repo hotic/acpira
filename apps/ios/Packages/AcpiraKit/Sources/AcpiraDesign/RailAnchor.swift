@@ -13,6 +13,10 @@ public struct RailLead {
   public var top: CGFloat
   public var bottom: CGFloat
   public var row: Anchor<CGRect>?
+
+  public init(icon: Anchor<CGRect>, top: CGFloat, bottom: CGFloat, row: Anchor<CGRect>? = nil) {
+    self.icon = icon; self.top = top; self.bottom = bottom; self.row = row
+  }
 }
 
 public struct RailLeadKey: PreferenceKey {

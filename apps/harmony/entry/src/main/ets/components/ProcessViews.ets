@@ -30,6 +30,8 @@ export function itemSig(item: ProcessItem): string {
  */
 @ComponentV2
 export struct ProcessHistory {
+  /** Rows under here are a process's steps (AcpRow's bead with the step icons off, RowLeadsContext) */
+  @Provider('processRows') processRows: boolean = true;
   @Param items: ProcessItem[] = [];
   @Param scope: string = '';
   @Param now: () => number = () => Date.now();

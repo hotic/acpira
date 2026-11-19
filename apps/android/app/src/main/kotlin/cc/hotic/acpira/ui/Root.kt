@@ -71,6 +71,8 @@ fun Root(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel? = null) {
     LocalHiddenModels provides model.settings.hiddenOptions,
     // The transcript's folds, rails and entrances read the motion switch (the webview's motion axis)
     cc.hotic.acpira.design.LocalMotion provides model.motion,
+    // Which steps a turn's process lists, their icons, a finished process left open (the settings' process group)
+    LocalProcessPrefs provides model.process,
     // The list's live marks hold still while what they show may be stale (StateMark)
     LocalSyncing provides !model.current,
     // Session links in replies open their chat in the app (ui/Links.kt)
@@ -169,6 +171,7 @@ private fun Page(model: AppModel, pairing: cc.hotic.acpira.store.PairingModel?, 
     is Screen.AgentSettings -> AgentSettingsScreen(model, screen.id)
     is Screen.ModelSettings -> ModelsSettingsScreen(model, screen.id)
     Screen.Developer -> DeveloperSettingsScreen(model)
+    Screen.Steps -> StepsSettingsScreen(model)
     Screen.Providers -> ProvidersScreen(model)
     is Screen.ProviderForm -> ProviderFormScreen(model, screen.id, screen.error)
     is Screen.AddModels -> AddModelsScreen(model, screen.id)
@@ -314,6 +317,7 @@ private fun key(screen: Screen): String = when (screen) {
   is Screen.AgentSettings -> "agent:${screen.id}"
   is Screen.ModelSettings -> "models:${screen.id}"
   Screen.Developer -> "developer"
+  Screen.Steps -> "steps"
   Screen.Providers -> "providers"
   is Screen.ProviderForm -> "provider:${screen.id}"
   is Screen.AddModels -> "addModels:${screen.id}"

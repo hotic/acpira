@@ -13,6 +13,8 @@ enum SettingsRoute: Hashable {
   case models(AgentId)
   /// The built-in agent's model sources
   case providers
+  /// The step kinds a turn's process lists (`ProcessPrefs`)
+  case steps
   case developer
 
   /// The pages down to a launch argument's page
@@ -24,6 +26,7 @@ enum SettingsRoute: Hashable {
     case ("models", let id?): [.agent(id), .models(id)]
     case ("providers", _): [.agent(AppModel.builtinAgent), .providers]
     case ("developer", _): [.developer]
+    case ("steps", _): [.steps]
     default: []
     }
     return NavigationPath(routes)

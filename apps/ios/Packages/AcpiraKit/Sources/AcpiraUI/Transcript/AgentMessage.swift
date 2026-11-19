@@ -7,6 +7,27 @@ import SwiftUI
 // plan cuts the turn: its card stands between the stretch before it and the continuation after it (planSections.ts).
 // The children the turn delegated to sit at their delegation rows inside the process; those without one follow it.
 
+/// How a turn's process reads, the desktop's Appearance Process group kept on the phone (`Prefs`): the step kinds left
+/// out, whether the steps keep their icons (off: the rail's bead stands in), and whether a finished turn's fold stays open
+struct ProcessPrefs: Equatable, Sendable {
+  var hidden: Set<StepKind> = []
+  var stepIcons = true
+  var keepProcess = false
+
+  /// The stored hidden kinds (`Prefs.hiddenSteps`): raw names, comma-separated; unknown names are dropped
+  static func hidden(_ stored: String) -> Set<StepKind> {
+    Set(stored.split(separator: ",").compactMap { StepKind(rawValue: String($0)) })
+  }
+
+  static func stored(_ hidden: Set<StepKind>) -> String {
+    StepKind.allCases.filter(hidden.contains).map(\.rawValue).joined(separator: ",")
+  }
+}
+
+extension EnvironmentValues {
+  @Entry var processPrefs = ProcessPrefs()
+}
+
 /// One agent turn: --pad sides, a --gap column, rows at --chat-row
 struct AgentMessage: View {
   let turn: AgentTurn
@@ -51,7 +72,7 @@ struct AgentMessage: View {
         if visible || (lastSection && ((running && !planWait) || outcome || !placement.rest.isEmpty)) {
           CodexMessage(turn: sectionTurn(shown, section, last: lastSection, split: sections.count > 1),
                        running: lastSection && running, onPermission: sessionActions.permission,
-                       subagents: lastSection ? placement.rest : [])
+                       subagents: lastSection ? placement.rest : [], stretch: i == 0 ? nil : section.key)
         }
         if let plan = section.plan {
           PlanDocumentCard(block: plan, permission: shown.blocks.lazy.compactMap { block -> PermissionBlock? in
@@ -97,17 +118,22 @@ struct CodexMessage: View {
   var onPermission: (String, String) -> Void
   /// The turn's children with no delegation row to sit at: they follow the process, before the reply
   var subagents: [SubagentSummary] = []
+  /// The stretch after the first (`PlanSection.key`): its process fold keeps its own memory (`CodexFold.stretch`)
+  var stretch: String?
   @Environment(\.sessionActions) private var actions
   @Environment(\.subagentTranscript) private var readOnly
+  @Environment(\.processPrefs) private var prefs
 
   var body: some View {
     // A call whose observation was lost reads as settled before anything groups or draws it
     let split = splitCodexBlocks(turn.blocks.map(observedBlock))
     let hasTools = turn.blocks.contains { $0.toolCall != nil }
+    // The kinds of step the reader left out drop before grouping (Turns.tsx); the head still names them live
+    let process = visibleSteps(split.process, hiding: prefs.hidden)
     VStack(alignment: .leading, spacing: Metrics.gap) {
       // Goal milestones before anything else (a `/goal` prompt's own "Goal set") open the turn above the fold
       ForEach(Array(split.goalsLead.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
-      CodexFold(turn: turn, blocks: split.process, running: running, hasTools: hasTools)
+      CodexFold(turn: turn, blocks: process, running: running, hasTools: hasTools, stretch: stretch)
       ForEach(split.notices, id: \.id) { NoticeRow(block: $0) }
       if !subagents.isEmpty {
         SubagentGroup(nodes: subagents)
@@ -139,11 +165,17 @@ struct CodexFold: View {
   let blocks: [AgentBlock]
   var running: Bool
   var hasTools: Bool
+  /// A later stretch of the turn (after a plan card or a final reply the turn went on from): nil for the first
+  var stretch: String?
   @State private var manual: Bool?
   @Environment(\.foldMemory) private var folds
   @Environment(\.entranceScope) private var entrance
+  /// The fold's key in the thread's memory, one per stretch as on the desktop (Turns.tsx `after-plan`). A key per turn
+  /// let a tap on one stretch's head open every other stretch's fold at its next redraw: a long process unfolding
+  /// above the reader threw the thread thousands of points away
+  private var memoryKey: String { stretch.map { "\(entrance.scope):process:after-plan:\($0)" } ?? "\(entrance.scope):process" }
   /// The hand-set state, kept by the thread too so a reused cell builds the fold as the reader left it
-  private var fold: Binding<Bool?> { rememberedFold($manual, folds, "\(entrance.scope):process") }
+  private var fold: Binding<Bool?> { rememberedFold($manual, folds, memoryKey) }
   @State private var hold = FoldHold()
   @State private var window = ProcessWindowHold()
   /// Pages of older steps the reader asked for, kept by the thread too (`FoldMemory.pages`)
@@ -152,6 +184,7 @@ struct CodexFold: View {
   @Environment(\.motionEnabled) private var motion
   @Environment(\.holdScroll) private var holdScroll
   @Environment(\.preOpen) private var preOpen
+  @Environment(\.processPrefs) private var prefs
   @Environment(\.snapshot) private var snapshot
   /// The view came from a wire that ended: the head's motion rests until the engine's own state is back
   @Environment(\.syncing) private var syncing
@@ -161,7 +194,9 @@ struct CodexFold: View {
   var body: some View {
     // A turn with no process worth a head (a plain reply, or only a compaction status) shows no head
     let retired = !running && !hasTools && !blocks.contains { if case .compaction = $0 { false } else { true } }
-    let auto = hold.next(running: running, following: following?.value ?? true) || preOpen.contains(.fold)
+    // `keepProcess` never closes the fold on its own; the hold still tracks the run under it
+    let held = hold.next(running: running, following: following?.value ?? true)
+    let auto = held || prefs.keepProcess || preOpen.contains(.fold)
     let open = retired || (fold.wrappedValue ?? auto)
     let items = groupProcess(blocks)
     let all = processParts(items)
@@ -187,6 +222,8 @@ struct CodexFold: View {
                 .reveal(open)
                 .animation(foldAnimation(opening: open, motion: motion), value: open)
             }
+            // The head keeps its status mark either way; the steps under it trade their icons for the rail's bead
+            // with the step icons off (the earlier-steps row above is a control and keeps its chevron)
             ForEach(Array(parts.enumerated()), id: \.element.id) { i, part in
               switch part {
               case .steer(_, let block):
@@ -217,6 +254,7 @@ struct CodexFold: View {
                   .geometryGroup()
               }
             }
+            .environment(\.rowLeads, prefs.stepIcons)
           }
           .environment(\.imageInFold, false)
         }
@@ -231,8 +269,7 @@ struct CodexFold: View {
     withAnimation(foldAnimation(opening: next, motion: motion)) { fold.wrappedValue = next }
   }
 
-  private var pagesKey: String { "\(entrance.scope):process" }
-  private var loadedPages: Int { pages ?? folds?.pages[pagesKey] ?? 1 }
+  private var loadedPages: Int { pages ?? folds?.pages[memoryKey] ?? 1 }
 
   /// One more page of older steps above the rows shown. The thread lets go of its end first, so the tapped row stays
   /// where it is and the page opens below it
@@ -240,7 +277,7 @@ struct CodexFold: View {
     holdScroll()
     let next = loadedPages + 1
     pages = next
-    folds?.pages[pagesKey] = next
+    folds?.pages[memoryKey] = next
   }
 
   @ViewBuilder

@@ -59,6 +59,8 @@ sealed interface Screen {
   data class ModelSettings(val id: String) : Screen
   /** Settings → Developer: the frame-rate and hitch overlay's switches */
   data object Developer : Screen
+  /** Settings → Steps: the step kinds a turn's process lists */
+  data object Steps : Screen
   /** The built-in agent's model sources, a source's form (id null: a new one; error: why it opened) and its add-model page */
   data object Providers : Screen
   data class ProviderForm(val id: String?, val error: String? = null) : Screen
@@ -231,6 +233,25 @@ class AppModel(
   fun pickMotion(on: Boolean) {
     motion = on
     prefs.edit().putBoolean("motion", on).apply()
+  }
+
+  /** How a turn's process reads (the settings' process group), stored with the rest of the look */
+  var process by mutableStateOf(
+    cc.hotic.acpira.logic.ProcessPrefs(
+      hidden = cc.hotic.acpira.logic.ProcessPrefs.hidden(prefs.getString("process.hidden", null).orEmpty()),
+      stepIcons = prefs.getBoolean("process.stepIcons", true),
+      keepProcess = prefs.getBoolean("process.keepOpen", false),
+    ),
+  )
+    private set
+
+  fun pickProcess(next: cc.hotic.acpira.logic.ProcessPrefs) {
+    process = next
+    prefs.edit()
+      .putString("process.hidden", cc.hotic.acpira.logic.ProcessPrefs.stored(next.hidden))
+      .putBoolean("process.stepIcons", next.stepIcons)
+      .putBoolean("process.keepOpen", next.keepProcess)
+      .apply()
   }
 
   /** An engine setting shared with the computer: applied here at once, the engine's `settings` push confirms it */

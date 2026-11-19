@@ -25,6 +25,43 @@ import kotlin.math.roundToInt
 // chat/turnOutcome.ts), following apps/ios AcpiraUI/Logic/Folding.swift one to one, so a behaviour change there maps
 // onto one place here.
 
+/** The step kinds the settings' process group shows or leaves out (folding.ts StepKind), in reading order */
+enum class StepKind { thought, commentary, read, command, edit, other }
+
+/**
+ * folding.ts stepKind: what a process block counts as for those switches. Delegations and shown images are no step
+ * (their rows always show); null leaves the block in
+ */
+fun stepKind(block: AgentBlock): StepKind? = when (block) {
+  is ThoughtBlock -> StepKind.thought
+  is TextBlock -> StepKind.commentary
+  is ToolCallBlock -> when {
+    block.subagentId != null || cc.hotic.acpira.store.isImageResult(block) -> null
+    block.kind == ToolKind.think -> StepKind.thought
+    block.kind == ToolKind.read || block.kind == ToolKind.search || block.kind == ToolKind.fetch || SessionLinks.isTool(block) -> StepKind.read
+    block.kind == ToolKind.execute || block.verbKey == "verb.wait" -> StepKind.command
+    block.kind == ToolKind.edit || block.kind == ToolKind.delete || block.kind == ToolKind.move -> StepKind.edit
+    else -> StepKind.other
+  }
+  else -> null
+}
+
+/** folding.ts visibleSteps: the process without the step kinds switched off; the same list when none is */
+fun visibleSteps(blocks: List<AgentBlock>, hidden: Set<StepKind>): List<AgentBlock> =
+  if (hidden.isEmpty()) blocks else blocks.filter { b -> stepKind(b)?.let { it !in hidden } ?: true }
+
+/**
+ * The settings' process group (Appearance.tsx, apps/ios ProcessPrefs): the step kinds left out, whether steps keep
+ * their lead icons, whether a finished turn's process stays open
+ */
+data class ProcessPrefs(val hidden: Set<StepKind> = emptySet(), val stepIcons: Boolean = true, val keepProcess: Boolean = false) {
+  companion object {
+    /** The stored list: raw names, comma-separated; unknown names drop out */
+    fun hidden(stored: String): Set<StepKind> = stored.split(',').mapNotNull { n -> StepKind.entries.firstOrNull { it.name == n } }.toSet()
+    fun stored(hidden: Set<StepKind>): String = StepKind.entries.filter { it in hidden }.joinToString(",") { it.name }
+  }
+}
+
 /** A turn's blocks split the way CodexMessage renders them */
 data class CodexSplit(
   val process: List<AgentBlock>,

@@ -3,10 +3,11 @@ import { AgentBlock, Turn } from '../wire/Wire';
 import { asTurn, Attachment, Block, SubagentSummary, TurnX } from '../wire/Blocks';
 import {
   clockStart, CodexSplit, elapsedLabel, FoldPart, groupProcess, LiveActivity, liveActivity, observed, PlanSection,
-  processParts, splitCodexBlocks, splitPlanSections, turnOutcome
+  processParts, splitCodexBlocks, splitPlanSections, turnOutcome, visibleSteps
 } from '../logic/Folding';
 import { delegatedIds, Placement, placeNodes } from '../logic/Subagents';
 import { t } from '../store/L10n';
+import { processLook } from '../store/Prefs';
 import { ThreadContext } from '../store/Thread';
 import { Bubble } from './Bubble';
 import { PermissionCard, PlanDocumentCard, showsTurnActions, TurnActions } from './Cards';
@@ -245,8 +246,9 @@ struct CodexMessage {
       ForEach(this.split.goalsLead, (b: Block) => {
         GoalMilestone({ block: b })
       }, (b: Block) => blockSig(b))
+      // The step kinds switched off leave the fold; the head still counts the whole turn
       CodexFold({
-        turn: this.turn, blocks: this.split.process, running: this.running, hasTools: this.hasTools(), scopeKey: this.scopeKey,
+        turn: this.turn, blocks: visibleSteps(this.split.process, processLook.hidden), running: this.running, hasTools: this.hasTools(), scopeKey: this.scopeKey,
         now: this.now, delegations: this.delegations, all: this.all, onPermission: this.onPermission
       })
       ForEach(this.split.notices, (b: Block) => {
@@ -306,8 +308,13 @@ struct CodexFold {
     return !this.running && !this.hasTools && this.blocks.every((b: Block) => b.type === 'compaction');
   }
 
+  /** Open while the turn works, or for good with the process kept open; a tap on the head still wins */
+  auto(): boolean {
+    return this.running || processLook.keepProcess;
+  }
+
   open(): boolean {
-    return this.retired() || folds.isOpen(`${this.scopeKey}:fold`, this.running);
+    return this.retired() || folds.isOpen(`${this.scopeKey}:fold`, this.auto());
   }
 
   @Computed
@@ -367,7 +374,7 @@ struct CodexFold {
           TapRow({
             spec: this.head(), onTap: () => {
               if (this.foldable()) {
-                folds.toggle(this.getUIContext(), `${this.scopeKey}:fold`, this.running);
+                folds.toggle(this.getUIContext(), `${this.scopeKey}:fold`, this.auto());
               }
             }
           })

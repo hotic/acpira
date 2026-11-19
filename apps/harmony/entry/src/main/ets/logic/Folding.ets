@@ -253,6 +253,56 @@ export function groupProcess(blocks: Block[]): ProcessItem[] {
   return out;
 }
 
+/** The step kinds the settings' process group shows or leaves out (folding.ts StepKind), in reading order */
+export const STEP_KINDS: string[] = ['thought', 'commentary', 'read', 'command', 'edit', 'other'];
+
+/**
+ * folding.ts stepKind: what a process block counts as for those switches. Delegations and shown images are no step
+ * (their rows always show); '' leaves the block in
+ */
+export function stepKind(b: Block): string {
+  if (b.type === 'thought') {
+    return 'thought';
+  }
+  if (b.type === 'text') {
+    return 'commentary';
+  }
+  if (b.type !== 'tool_call' || b.subagentId !== undefined || isImageResult(b)) {
+    return '';
+  }
+  if (b.kind === 'think') {
+    return 'thought';
+  }
+  if (b.kind === 'read' || b.kind === 'search' || b.kind === 'fetch' || b.verbKey === 'verb.readSession' ||
+    b.verbKey === 'verb.searchSessions') {
+    return 'read';
+  }
+  if (b.kind === 'execute' || b.verbKey === 'verb.wait') {
+    return 'command';
+  }
+  if (b.kind === 'edit' || b.kind === 'delete' || b.kind === 'move') {
+    return 'edit';
+  }
+  return 'other';
+}
+
+/** folding.ts visibleSteps: the process without the step kinds switched off; the same list when none is */
+export function visibleSteps(blocks: Block[], hidden: string[]): Block[] {
+  if (hidden.length === 0) {
+    return blocks;
+  }
+  return blocks.filter((b: Block) => {
+    const kind = stepKind(b);
+    return kind.length === 0 || !hidden.includes(kind);
+  });
+}
+
+/** The stored list of hidden kinds (raw names, comma-separated) read back in reading order; unknown names drop out */
+export function hiddenSteps(stored: string): string[] {
+  const names = stored.split(',');
+  return STEP_KINDS.filter((k: string) => names.includes(k));
+}
+
 /** imageTools.ts isImageResultBlock: generated and shown images, and widgets, are results for the reader */
 export function isImageResult(b: Block): boolean {
   return b.verbKey === 'verb.imagegen' || b.verbKey === 'verb.showImage' || b.verbKey === 'verb.showVideo' ||

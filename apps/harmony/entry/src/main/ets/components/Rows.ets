@@ -1,6 +1,7 @@
 import { Metrics, WebMetrics, WebType } from '../design/Tokens';
 import { Lucide } from './Glyphs';
 import { t } from '../store/L10n';
+import { processLook } from '../store/Prefs';
 
 // ui/Row.tsx, ui/Disclosure.tsx and ui/ConnectedRail.tsx as the iOS app ports them (Components/Row.swift,
 // Disclosure.swift, Rail.swift; apps/android ui/Rows.kt): the one row every thought / plan / tool / status grows on, the
@@ -363,6 +364,8 @@ export struct OutcomeMark {
 @ComponentV2
 export struct AcpRow {
   @Param spec: RowSpec = new RowSpec();
+  /** Inside a turn's process (ProcessHistory provides it): with the step icons off the lead gives way to a bead */
+  @Consumer('processRows') processRows: boolean = false;
 
   aboutToAppear(): void {
     // A live label (ui/Shimmer) breathes between the base and strong inks on the shared tick: ArkUI text takes no
@@ -376,10 +379,21 @@ export struct AcpRow {
     return this.spec.action ? $r('app.color.action_fg') : $r('app.color.fg2');
   }
 
+  /** RowLeadsContext off: any lead becomes the bead a rail's end draws, so an open step runs from one bead to the next */
+  bead(): boolean {
+    return this.processRows && !processLook.stepIcons && (this.spec.lead !== 'icon' || this.spec.icon.length > 0);
+  }
+
   @Builder
   leadSlot() {
     Stack() {
-      if (this.spec.lead === 'orb') {
+      if (this.bead()) {
+        Column()
+          .width(WebMetrics.railDot)
+          .height(WebMetrics.railDot)
+          .borderRadius(WebMetrics.railDot / 2)
+          .backgroundColor(this.spec.action ? $r('app.color.rail_action') : $r('app.color.rail_color'))
+      } else if (this.spec.lead === 'orb') {
         Orb()
       } else if (this.spec.lead === 'plan') {
         PlanDot({ status: this.spec.planStatus })

@@ -196,6 +196,18 @@ private let command = block(#"{"type":"tool_call","id":"x","kind":"execute","ver
     }
   }
 
+  @Test func hiddenStepKindsLeaveTheFoldButDelegationsAndNonStepsStay() {
+    let thought = block(#"{"type":"thought","text":"hm"}"#)
+    let note = block(#"{"type":"text","markdown":"Looking at the tests first."}"#)
+    let delegated = block(#"{"type":"tool_call","id":"task","kind":"other","verb":"Task","status":"completed","subagentId":"sub-1"}"#)
+    let steer = block(#"{"type":"steer","id":"steer","text":"also the docs"}"#)
+    let blocks = [thought, note, read, run, delegated, steer]
+    #expect(visibleSteps(blocks, hiding: []) == blocks)
+    #expect(visibleSteps(blocks, hiding: [.thought, .read, .other]) == [note, run, delegated, steer])
+    #expect(visibleSteps(blocks, hiding: [.commentary, .command]) == [thought, read, delegated, steer])
+    #expect(ProcessPrefs.hidden(ProcessPrefs.stored([.read, .thought])) == [.thought, .read])
+  }
+
   @Test func explicitPhasesWin() {
     let progress = block(#"{"type":"text","phase":"commentary","markdown":"Checking."}"#)
     let final = block(#"{"type":"text","phase":"final","markdown":"Done."}"#)

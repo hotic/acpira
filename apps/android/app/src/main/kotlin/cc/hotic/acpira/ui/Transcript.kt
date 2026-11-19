@@ -141,6 +141,9 @@ data class PromptMarkNames(val commands: List<String> = emptyList(), val summons
 /** Set along a chat's thread: the session's advertised commands and the summonable personas */
 val LocalPromptMarks = androidx.compose.runtime.staticCompositionLocalOf { PromptMarkNames() }
 
+/** The settings' process group: which step kinds a process lists, their icons, a finished process left open */
+val LocalProcessPrefs = androidx.compose.runtime.compositionLocalOf { cc.hotic.acpira.logic.ProcessPrefs() }
+
 /**
  * The prompt: a right-aligned bubble that always leaves `bubbleInset` free on its left; attachments ride above it. Its
  * `/command` and `@persona` tokens are painted as the composer painted them (Cards.swift UserMessageCard markedPrompt).
@@ -373,9 +376,12 @@ private fun CodexMessage(
 ) {
   val split = remember(turn) { splitCodexBlocks(turn.blocks.map(::observedBlock)) }
   val hasTools = remember(turn) { turn.blocks.any { it is ToolCallBlock } }
+  // The step kinds switched off leave the fold; the head still counts the whole turn
+  val hidden = LocalProcessPrefs.current.hidden
+  val process = remember(split, hidden) { cc.hotic.acpira.logic.visibleSteps(split.process, hidden) }
   // Goal milestones before anything else open the turn above the fold
   for (goal in split.goalsLead) GoalMilestone(goal)
-  CodexFold(turn, split.process, running, hasTools, key, now)
+  CodexFold(turn, process, running, hasTools, key, now)
   for (n in split.notices) NoticeRow(n)
   if (subagents.isNotEmpty()) {
     cc.hotic.acpira.ui.subagents.SubagentGroup(subagents)
@@ -743,7 +749,9 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
   val retired = !running && !hasTools && blocks.all { it is CompactionBlock }
   if (retired && blocks.isEmpty()) return
   var manual by rememberSaveable(key) { mutableStateOf<Boolean?>(null) }
-  val open = retired || (manual ?: running)
+  val prefs = LocalProcessPrefs.current
+  // Open while the turn works, or for good with the process kept open; a tap on the head still wins
+  val open = retired || (manual ?: (running || prefs.keepProcess))
   // The block the process opened on when it was first shown. While the earlier part of a windowed turn loads ahead of
   // it, the run and the part holding it keep its name (`runId`), so what the reader opened stays open and in place. It is
   // named again once that block is gone (the view opened anew on the session's tail)
@@ -769,14 +777,17 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
           // The rows of a delegation stay in view: in the stream while the parts show, under the head once they have
           // folded away, never a fold of their own
           is FoldPart.Subagents -> cc.hotic.acpira.ui.subagents.DelegatedSubagents(part.ids, Modifier.padding(top = Metrics.processProseGap))
+          // With the step icons off each row leads with a bead (RowLeadsContext)
           is FoldPart.Items -> Reveal(open) {
-            ProcessHistory(
-              part.items,
-              Modifier.padding(
-                top = if (retired) Metrics.s0 else if (i == 0) Metrics.s1 else Metrics.processProseGap,
-                bottom = if (!retired && i == parts.size - 1) Metrics.s1_5 else Metrics.s0,
-              ),
-            )
+            CompositionLocalProvider(LocalRowLeads provides prefs.stepIcons) {
+              ProcessHistory(
+                part.items,
+                Modifier.padding(
+                  top = if (retired) Metrics.s0 else if (i == 0) Metrics.s1 else Metrics.processProseGap,
+                  bottom = if (!retired && i == parts.size - 1) Metrics.s1_5 else Metrics.s0,
+                ),
+              )
+            }
           }
           // One live result outside every reveal: only the process rows around it collapse
           is FoldPart.Media -> Box(

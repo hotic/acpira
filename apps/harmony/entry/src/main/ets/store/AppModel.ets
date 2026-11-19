@@ -7,7 +7,7 @@ import { demoAgents, demoNow, demoSessions, demoView } from './Demo';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { defaultSettings, InitState, ListHostMsg, SessionCategories, SettingsView } from '../wire/Wire';
 import { ListHost, SessionLists } from './SessionLists';
-import { PrefKey, prefs } from './Prefs';
+import { PrefKey, prefs, processLook } from './Prefs';
 import { setLocale, t } from './L10n';
 import { projectName } from './SessionLogic';
 import {
@@ -579,6 +579,7 @@ export class AppModel implements ListHost {
     this.theme = prefs.string(PrefKey.theme, 'system');
     this.language = prefs.string(PrefKey.locale, 'auto');
     this.motion = prefs.bool(PrefKey.motion, true);
+    processLook.load();
     this.lists.restore();
     setLocale(this.language, systemLanguage);
     this.applyTheme();
