@@ -798,6 +798,51 @@ async fn a_host_sessions_view_shows_at_once_and_its_blobs_follow() {
   connections.dispose();
 }
 
+/// A page opening a host session while the host is away: the background driver never retries a host the user
+/// disconnected, so the open reaches it itself, and a host that turns it away is named instead of a view that never comes
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_a_host_session_reaches_the_host_or_says_why_not() {
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let work = lab.path().join("hostfs").join("work");
+  std::fs::create_dir_all(&work).unwrap();
+  let folder = format!("ssh://gen1{}", work.display());
+  let host = lab.host_home().join(".acpira").join("sessions");
+  std::fs::create_dir_all(&host).unwrap();
+  std::fs::write(host.join("s-away.json"), serde_json::to_vec(&list_record("s-away", &work.to_string_lossy(), "While away", false)).unwrap())
+    .unwrap();
+  let dir = tempfile::tempdir().unwrap();
+  let mut opts = crate::session_manager::Opts::fake(&fake).projects();
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(dir.path(), opts);
+  m.init().await;
+  m.handle(json!({ "type": "categoryOp", "op": "addProject", "cwd": folder })).await;
+  wait(&m, "the host's list", 30_000, || m.sessions().iter().any(|s| s["id"] == "s-away")).await;
+
+  // Disconnected by the user, and every new attempt turned away
+  std::fs::write(lab.path().join("fail"), "Host key verification failed.\n").unwrap();
+  connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+  wait(&m, "the host's engine to go", 15_000, || m.m.host_engines().is_empty()).await;
+  m.handle(json!({ "type": "selectSession", "id": "s-away" })).await;
+  let refused = || {
+    m.events.lock().unwrap().iter().find(|e| e["type"] == "sessionUnavailable" && e["id"] == "s-away").map(|e| e["reason"].to_string())
+  };
+  wait(&m, "the reason no view comes", 15_000, || refused().is_some()).await;
+  let reason = refused().unwrap();
+  assert!(reason.contains(&acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "gen1")])), "{reason}");
+  assert!(reason.contains("Host key verification failed"), "{reason}");
+
+  // Reachable again: opening it once more connects and brings the view
+  std::fs::remove_file(lab.path().join("fail")).unwrap();
+  m.handle(json!({ "type": "selectSession", "id": "s-away" })).await;
+  wait(&m, "the host's session on screen", 30_000, || m.active().is_some_and(|v| v["title"] == "While away")).await;
+  m.dispose().await;
+  connections.dispose();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn source_reconciliation_reselects_the_host_peer_without_tombstoning_its_session() {
   use acpira_host::remote::host_store::HostMirror;
