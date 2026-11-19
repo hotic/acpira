@@ -131,12 +131,6 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
       <Popover.Trigger render={at(fit.stage, fit.item)} />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
-        {/* Adding models belongs to the agent, not the currently selected side: a bare + at the end of the model search,
-            or on a head line of its own for a lone model, which lists no search */}
-        {add && !modelSearch(families, true) && <div className="mb-1 flex shrink-0 items-center justify-between px-2 pt-0.5">
-          <span className="text-3 text-fg-3">{t('settings.agentTab.models')}</span>
-          {add}
-        </div>}
         <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={(value, also) => onSetConfig(c.id, value, also)} close={() => setOpen(false)} fold add={add}
           model={c} memory={memory} shapes={shapes}
           reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} sidekickEffort={sidekickEffort} sidekickFast={sidekickFast} sidekickShapes={sidekickShapes} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
@@ -262,8 +256,8 @@ function ModelPanel(props: ModelPanelProps) {
     const sidekicks = cur.fusion.sidekicks.filter(s => cur.variants.some(v => v.lead === curVar.lead && v.sidekick === s));
     const leadLevel = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard')).find(tag => !tag.fast)?.label;
     return <>
-      <PairViews role={role} lead={<LeadPanel {...props} />} rows={sidekicks.length}
-        sidekick={<FusionSidekicks family={cur} variant={curVar} sidekicks={sidekicks} onSelect={id => onSelect(id)} />} />
+      <PairViews role={role} lead={<LeadPanel {...props} searchable />} rows={sidekicks.length}
+        sidekick={<FusionSidekicks add={props.add} family={cur} variant={curVar} sidekicks={sidekicks} onSelect={id => onSelect(id)} />} />
       <PairSwitch role={role} onRole={setRole}
         lead={{ name: curVar.lead, brand: modelBrand(curVar.lead), level: leadLevel }}
         sidekick={{ name: fusion.name, brand: modelBrand(fusion.name), level: fusion.effort || undefined }} />
@@ -276,8 +270,8 @@ function ModelPanel(props: ModelPanelProps) {
   if (isLone(props) && !picked) return <LeadPanel {...props} />;
   const leadLevel = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard')).find(tag => !tag.fast)?.label;
   return <>
-    <PairViews role={role} lead={<LeadPanel {...props} />} rows={sidekick.options.length + new Set(sidekick.options.map(o => o.description).filter(Boolean)).size}
-      sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} fast={sidekickFast} shapes={props.sidekickShapes} onSetConfig={(id, value, also) => onSetConfig?.(id, value, also)} />} />
+    <PairViews role={role} lead={<LeadPanel {...props} searchable />} rows={sidekick.options.length + new Set(sidekick.options.map(o => o.description).filter(Boolean)).size}
+      sidekick={<SidekickPanel add={props.add} control={sidekick} effort={sidekickEffort} fast={sidekickFast} shapes={props.sidekickShapes} onSetConfig={(id, value, also) => onSetConfig?.(id, value, also)} />} />
     {/* Under the lists, next to the chip it spells out: the search line stays the panel's top edge on either side */}
     <PairSwitch role={role} onRole={setRole}
       lead={{ name: cur?.name, brand: cur?.brand, level: leadLevel }}
@@ -458,13 +452,14 @@ const familySource = (f: ModelFamily) => (f.source && !f.variants.some(v => v.id
 // The model list: the whole panel, or the lead's side of PairSwitch (which sets the panel's height). Every row carries
 // the level and Fast its model runs with; a row with parameters opens them in a menu beside it. A lone model keeps
 // them under its row instead (`isLone`): a list of one has nothing to switch between
-function LeadPanel(props: ModelPanelProps) {
+function LeadPanel(props: ModelPanelProps & { searchable?: boolean }) {
   const { families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, fold, add } = props;
   const [menu, setMenu] = useState<{ key: string; row: HTMLElement }>();
   const list = useRef<HTMLDivElement>(null);
   const groups = useMemo(() => bySource(families, familySource), [families]);
   const twoLine = families.some(f => f.source && !familySource(f));
   const lone = isLone(props);
+  const searchable = props.searchable ?? modelSearch(families, fold);
   const views = useMemo(() => new Map(families.map(f => [f.key, familyView(f, props)])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [families, cur, curVar, reasoning, modelConfig, props.model, props.memory, props.shapes]);
@@ -477,6 +472,10 @@ function LeadPanel(props: ModelPanelProps) {
   const openedView = opened && views.get(opened.key);
   return (
     <>
+      {add && !searchable && <div className="mb-1 flex shrink-0 items-center justify-between px-2 pt-0.5">
+        <span className="text-3 text-fg-3">{t('settings.agentTab.models')}</span>
+        {add}
+      </div>}
       {/* Always listed, a lone model too: its checked row is what the panel is about */}
       <div ref={list} className="flex min-h-0 flex-col"
         onKeyDown={e => {
@@ -490,9 +489,9 @@ function LeadPanel(props: ModelPanelProps) {
         }}>
         <Command.Root<ModelFamily> items={groups ?? families} value={cur ?? null} itemToStringLabel={f => [f.name, f.source].filter(Boolean).join(' ')}
           itemToStringValue={f => f.key} isItemEqualToValue={(a, b) => a.key === b.key}>
-          <Command.Input visible={modelSearch(families, fold)} action={add} />
+          <Command.Input visible={searchable} action={add} />
           <Command.Empty />
-          <Command.List searchable={modelSearch(families, fold)}>
+          <Command.List searchable={searchable}>
             {grouped(groups, (f: ModelFamily) => {
               const view = views.get(f.key)!;
               const params = !lone && viewHasParams(f, view);
@@ -545,17 +544,16 @@ function LoneParams({ cur, curVar, onSelect, reasoning = [], modelConfig = [], h
 
 // The pair switch's sidekick side of a Fusion pair: the sidekicks Devin pairs with the lead in use, each with its level as
 // the pair names it. A pick is the pair with that sidekick, the lead, its level and Fast staying (findFusionVariant)
-function FusionSidekicks({ family: f, variant: v, sidekicks, onSelect }: { family: ModelFamily; variant: ModelVariant; sidekicks: string[]; onSelect: (id: string) => void }) {
+function FusionSidekicks({ family: f, variant: v, sidekicks, onSelect, add }: { add?: ReactNode; family: ModelFamily; variant: ModelVariant; sidekicks: string[]; onSelect: (id: string) => void }) {
   const pick = (sidekick: string) => {
     const hit = findFusionVariant(f, { lead: v.lead ?? '', effort: v.effort, sidekick, fast: v.fast });
     if (hit) onSelect(hit.id);
   };
-  const searchable = sidekicks.length >= SEARCH_FROM;
   return <div className="flex min-h-0 flex-1 flex-col">
     <Command.Root<string> items={sidekicks} value={v.sidekick ?? null}>
-      <Command.Input visible={searchable} />
+      <Command.Input action={add} />
       <Command.Empty />
-      <Command.List searchable={searchable} fill>
+      <Command.List searchable fill>
         {(s: string) => {
           const p = parseModelName(s);
           return <Command.Item key={s} value={s} onClick={() => pick(s)}>
@@ -645,7 +643,8 @@ function FusionParams({ family: f, variant: v, onSelect }: { family: ModelFamily
 // Models from two or more CLIs (the host's select) get a rail of CLI marks down the left edge: the list holds the open
 // CLI's models, filed by channel, so a group label always names a channel, never a CLI. A query searches every CLI, each
 // one's matches under its mark and, inside it, their channel (picked in lab/sidekick-source-pick.preview.html)
-function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig }: {
+function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig, add }: {
+  add?: ReactNode;
   control: ConfigControl; effort?: ConfigControl; fast?: ConfigControl; shapes?: ModelShapes; onSetConfig: (id: string, value: string, also?: Record<string, string>) => void;
 }) {
   const cur = control.options.find(o => o.id === (control.value ?? NO_SIDEKICK));
@@ -713,8 +712,7 @@ function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig
         </OptionContent>}
     </Command.Item>;
   };
-  const searchable = control.options.length >= SEARCH_FROM;
-  const body = <Command.List searchable={searchable} fill>
+  const body = <Command.List searchable fill>
     {searching ? searchGroup(row) : grouped(isGroups(items) ? items : undefined, row)}
   </Command.List>;
   return <>
@@ -730,7 +728,7 @@ function SidekickPanel({ control, effort, fast: fastControl, shapes, onSetConfig
       <Command.Root<SidekickOption> items={items} value={cur ?? null} itemToStringValue={o => o.id} isItemEqualToValue={(a, b) => a.id === b.id}
         inputValue={query} onInputValueChange={setQuery}
         itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, sidekickChannel(o), o.group?.name].filter(Boolean).join(' '))}>
-        <Command.Input visible={searchable} />
+        <Command.Input action={add} />
         {railed && open
           ? <div className="flex min-h-0 flex-1">
             <CliRail clis={clis} open={searching ? undefined : open.id} onOpen={openOn} />
