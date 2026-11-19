@@ -11,6 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.5] - 2026-11-19
+
+### Added
+
+- **A signed Android APK on every release.** The GitHub Release carries `Acpira-2.1.5-android.apk`, signed with one release key and versioned after Acpira, so each release installs over the last. A debug-signed test build has to be uninstalled before the first one.
+- **Any CLI can run locally for an SSH folder.** Local-run profiles replace the Claude and Antigravity special cases: an agent that supports it gets "run here" in settings, and a custom agent opts in with `localRun`. Its native file and command tools stay refused, also when a permission request names them sparsely. `acpira tool-guard <agent>` replaces `agy-guard`, which older hook files still run.
+- **Droid accounts and API key accounts.** Droid (Factory) logins save as separate accounts, with the allowance read from Factory's billing limits (macOS). A provider that takes an API key can save a pasted key as an account, checked with the vendor before it is stored. Droid turns now show their token usage.
+- Antigravity on `agy acp` 1.5 takes messages sent mid-turn: each goes in as a prompt of its own, waiting while a permission or question card is open. Its free-text "other" answers fold into their choice questions.
+- Antigravity 1.5.12's reply after a background command streams into a turn of its own. A stop ends that reply for good, and agy's "The stream was interrupted" note is no longer shown.
+- The phone apps get the desktop's Process settings (which step kinds a turn lists, step icons, keeping a finished process open), and open web links in an in-app browser. A long press on a link offers opening it outside and copying it.
+- File tabs in the tool panel get the file tree's context menu.
+- The stop button and Escape stay while sidekick rounds Acpira summoned are still running, and stop them too.
+- Plugins can hear `session.attention` when a session waits on the user, finishes or fails, and `turn.ended` for sessions run on an SSH host. Draft buttons get the draft's attachments and can call models with up to 8 images, a command can be a split chip, a message action's note answer opens in a popover, and a plugin can add read-only rows to the account menu, also for a plugin agent without one of its own.
+
+### Changed
+
+- The sidekick list applies each CLI's own hidden model families and groups effort, Fast and 1M variants under their model. The add-model button on the sidekick rail opens the settings of the CLI being browsed, and the model picker keeps its add-model button in the search field beside a sidekick list.
+- Settings read the built-in agent's models from its providers on every visit, and an agent no session has run yet is probed once so its controls show.
+- Large attachment previews open in parts instead of in one frame, reopening the docked tool panel no longer lays its tabs out from scratch, and review diffs highlight as soon as their lines arrive, with plain rows when highlighting is slow.
+- The to-do dock folds in and out, image results move with an opening fold, the thread fades under a sticky prompt, and a narrow window shows the title alone in its header.
+- Dock card controls and composer text line up on the 8px corner line, and dialog footer actions such as remove and refresh are real buttons.
+- The pinned adapters move to codex-acp 2.7.0 and claude-agent-acp 0.108.0.
+
+### Fixed
+
+- After Acpira updates a CLI adapter, the agent's live sessions reopen on the new one, at once when idle and after the current turn otherwise. Codex no longer fails every command after an in-app upgrade.
+- A Droid request on a managed Gemini model that keeps ending on thinking alone shows each retry, and a second identical cut stops it with advice instead of looping.
+- An approval level picked after the mode / approval split wins over a mode remembered from before it.
+- Opening a session of a disconnected SSH host connects the host, and says why if that fails within 30 seconds.
+- On the phone apps, a new session passes over the built-in agent while it has no model source. On iOS, a fold tapped while a running turn is followed stays under the finger.
+- A turn shows one card per offered plugin, and a removed plugin's card reads removed with a disabled button.
+- Asking to stop a sidekick that has already ended says how its last round ended instead of "nothing to stop".
+- Windows CLI install scripts keep their exit codes and readable error output.
+
 ## [2.1.4] - 2026-11-17
 
 ### Added
