@@ -39,6 +39,7 @@ struct TextSelectionSurface: UIViewRepresentable {
     context.coordinator.surface = self
     view.selectionScope = selection
     view.replyTap = replyTap
+    view.openLink = { [openURL] url in openURL(url) }
     if selection?.target == nil { selection?.target = view }
     view.actions = actions
     if let quote {
@@ -101,7 +102,7 @@ struct TextSelectionSurface: UIViewRepresentable {
     func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem,
                   defaultAction: UIAction) -> UIAction? {
       guard case .link(let url) = textItem.content else { return defaultAction }
-      return UIAction { [weak self] _ in self?.surface.openURL(url) }
+      return UIAction { [weak textView] _ in (textView as? SelectionTextView)?.open(url) }
     }
 
     /// This view only carries selection: its glyphs are clear and SwiftUI draws the text underneath, so the
@@ -124,6 +125,9 @@ struct SelectionAction {
 @Observable final class TextSelectionScope {
   var active = false
   var previewText: String?
+  /// The web link under the last touch on the block's text: its long-press menu leads with the link's own actions.
+  /// A press between the texts (a bullet, a gap) reaches no text view and keeps the last one
+  var link: URL?
   @ObservationIgnored weak var target: SelectionTextView?
 
   func select() {
@@ -151,24 +155,67 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
     return tap
   }()
 
+  /// Opens a link of the text (the surface's `openURL`)
+  var openLink: ((URL) -> Void)?
+  /// UIKit's own link tap does not fire on this surface (iOS 27 simulator, with every recogniser and override here
+  /// switched off), so a link is opened by a tap of the view's own. It takes no part in the double tap's wait: a
+  /// link opens on touch up
+  private lazy var linkTap: UITapGestureRecognizer = {
+    let tap = UITapGestureRecognizer(target: self, action: #selector(linkTapped(_:)))
+    tap.cancelsTouchesInView = false
+    tap.delegate = linkTouches
+    return tap
+  }()
+  private let linkTouches = LinkTouches()
+  /// One event opens one page, should UIKit's link action and the view's tap both report it
+  private var opening = false
+
   override func didMoveToWindow() {
     super.didMoveToWindow()
     guard window != nil else { return }
     if singleTap.view == nil { addGestureRecognizer(singleTap) }
+    if linkTap.view == nil { addGestureRecognizer(linkTap) }
     // Wait out UIKit's double tap (word selection), so selecting a word never also flips the row
     for case let tap as UITapGestureRecognizer in gestureRecognizers ?? [] where tap !== singleTap && tap.numberOfTapsRequired >= 2 {
       singleTap.require(toFail: tap)
     }
   }
 
+  @objc private func linkTapped(_ tap: UITapGestureRecognizer) {
+    guard !tapClearsSelection, let url = link(at: tap.location(in: self)) else { return }
+    open(url)
+  }
+
+  func open(_ url: URL) {
+    guard !opening else { return }
+    opening = true
+    DispatchQueue.main.async { [weak self] in self?.opening = false }
+    // The tap used the link up: a later press beside the text must not offer it again
+    selectionScope?.link = nil
+    openLink?(url)
+  }
+
   @objc private func tapped(_ tap: UITapGestureRecognizer) {
     guard let replyTap, !tapClearsSelection else { return }
     // A link keeps its own tap
-    if let position = closestPosition(to: tap.location(in: self)) {
-      let at = offset(from: beginningOfDocument, to: position)
-      if at < attributedText.length, attributedText.attribute(.link, at: at, effectiveRange: nil) != nil { return }
-    }
+    if link(at: tap.location(in: self)) != nil { return }
     replyTap()
+  }
+
+  /// The link whose glyph lies under the point. The closest position is a caret between two characters, so the
+  /// one on each side is asked for its own rect: the nearest caret alone names the neighbour for half of each glyph
+  func link(at point: CGPoint) -> URL? {
+    guard let position = closestPosition(to: point) else { return nil }
+    let caret = offset(from: beginningOfDocument, to: position)
+    for at in [caret, caret - 1] where at >= 0 && at < attributedText.length {
+      guard let url = attributedText.attribute(.link, at: at, effectiveRange: nil) as? URL,
+            let start = self.position(from: beginningOfDocument, offset: at),
+            let end = self.position(from: start, offset: 1),
+            let glyph = textRange(from: start, to: end),
+            firstRect(for: glyph).contains(point) else { continue }
+      return url
+    }
+    return nil
   }
 
   /// Start a long paragraph's preview near the touched line, not at an off-screen beginning.
@@ -188,6 +235,9 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
       if event?.type == .touches {
         selectionScope?.previewText = previewText
         tapClearsSelection = selectedRange.length > 0
+        // File and session links are the app's own pages: only a web address has somewhere else to go
+        let web = link(at: point).flatMap { $0.isWebPage ? $0 : nil }
+        if selectionScope?.link != web { selectionScope?.link = web }
       }
     }
     return hit
@@ -242,6 +292,17 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
     // The renderer inserts invisible wrapping hints and code padding. Neither belongs on the clipboard.
     UIPasteboard.general.string = selectionText(attributedText, range: selectedRange)
   }
+}
+
+/// Keeps the link tap to touches that land on a link, where it recognises beside UIKit's own taps on the text
+private final class LinkTouches: NSObject, UIGestureRecognizerDelegate {
+  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    guard let view = gestureRecognizer.view as? SelectionTextView else { return false }
+    return view.link(at: touch.location(in: view)) != nil
+  }
+
+  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                         shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 }
 
 private let selectionDecorationKey = NSAttributedString.Key("acpira.selectionDecoration")

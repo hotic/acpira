@@ -1,5 +1,11 @@
 package cc.hotic.acpira.ui.prose
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import cc.hotic.acpira.ui.isWebPage
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -69,6 +75,30 @@ internal const val DECORATION_TAG = "acpira.deco"
 /** The inks a paragraph reads: its text, its strong runs and its links */
 @Immutable
 data class InlineInks(val ink: Color, val strongInk: Color, val accent: Color, val code: Color)
+
+/**
+ * The web link under the last press on a block's text, for its long-press menu (apps/ios TextSelectionScope.link).
+ * BlockSelection clears it on every press before the text below sees it, so a press beside the text offers none
+ */
+class LinkPress {
+  var url: String? = null
+  /** The press landed on any link, which takes the press for its own tap */
+  var onLink = false
+  /** The press opened the block's menu: its release must not also tap the link under it */
+  var held = false
+}
+
+val LocalLinkPress = staticCompositionLocalOf<LinkPress?> { null }
+
+/** The tag of the link whose glyph lies under [at]: a markdown link's is its url, a file path's the path */
+private fun linkAt(text: AnnotatedString, layout: TextLayoutResult, at: Offset): String? {
+  val caret = layout.getOffsetForPosition(at)
+  for (k in intArrayOf(caret, caret - 1)) {
+    if (k < 0 || k >= text.length || !layout.getBoundingBox(k).contains(at)) continue
+    return text.getLinkAnnotations(k, k + 1).firstNotNullOfOrNull { it.item as? LinkAnnotation.Clickable }?.tag ?: continue
+  }
+  return null
+}
 
 /** What a tapped link opens: a workspace file, else the link as written (sessions and URLs) */
 private sealed interface LinkTarget {
@@ -212,6 +242,8 @@ fun InlineText(
   val text = remember(inlines, style, inks, weight) { InlineBuilder(style, inks) { open(it) }.paragraph(inlines, weight) }
   val chips = remember(text) { text.getStringAnnotations(CHIP_TAG, 0, text.length) }
   var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+  val press = LocalLinkPress.current
+  val links = remember(text) { text.hasLinkAnnotations(0, text.length) }
   val fill = ProseInk.hover
   val textStyle = proseTextStyle(style, weight).copy(color = inks.ink)
   Text(
@@ -222,7 +254,16 @@ fun InlineText(
     modifier = modifier
       .then(if (softWrap) Modifier.fillMaxWidth() else Modifier)
       .then(if (chips.isEmpty()) Modifier else Modifier.chips(chips, { layout }, fill))
-      .then(if (fade == null) Modifier else Modifier.streamFade(text, fade) { layout }),
+      .then(if (fade == null) Modifier else Modifier.streamFade(text, fade) { layout })
+      .then(if (press == null || !links) Modifier else Modifier.pointerInput(text, press) {
+        // Seen on the way down, nothing consumed: the link keeps its own tap
+        awaitEachGesture {
+          val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+          val tag = layout?.let { linkAt(text, it, down.position) }
+          press.onLink = tag != null
+          press.url = tag?.takeIf(::isWebPage)
+        }
+      }),
   )
 }
 

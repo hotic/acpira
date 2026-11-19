@@ -331,9 +331,10 @@ public struct RootView: View {
     .environment(model)
     .environment(handoff)
     .environment(\.pairing, pairing)
-    // Session links in replies and from outside open that session; any other link goes to the system
+    // Session links in replies and from outside open that session, a web page the in-app browser; any other link
+    // goes to the system
     .environment(\.openURL, openURLMemo("\(ObjectIdentifier(model).hashValue)") { [model] in
-      OpenURLAction { url in model.openLink(url) ? .handled : .systemAction }
+      OpenURLAction { url in model.openLink(url) || WebPage.open(url) ? .handled : .systemAction }
     })
     .onOpenURL { url in _ = model.openLink(url) }
     .preferredColorScheme(scheme)

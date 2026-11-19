@@ -10,6 +10,8 @@ import { ChatBarActions, Lead } from '../components/ChatBar';
 import { ToastLayer, toastHitTest } from '../components/Chrome';
 import { ComputerPage, ComputersPage, covers, PairConnect } from './Pairing';
 import { PairSheet } from './PairSheet';
+import { webPage, WebPageState, WebPageView } from '../components/WebPage';
+import { openOutside } from '../components/Copy';
 
 // The app's frame (apps/ios RootView.swift, apps/android ui/Root.kt): the list, and the chat, a new session or settings pushed
 // over it on a phone. A window at least splitMinW wide (tablets, foldables open, 2in1) keeps the list as a sidebar
@@ -37,6 +39,8 @@ export struct Root {
   @Local hidden: boolean = false;
   @Local welcoming: boolean = false;
   private stack: NavPathStack = new NavPathStack();
+  /** The in-app browser's page (components/WebPage.ets), pushed when a reply's web link asks for it */
+  @Local web: WebPageState = webPage;
 
   aboutToAppear(): void {
     this.welcoming = this.welcome;
@@ -45,6 +49,18 @@ export struct Root {
   @Monitor('welcome')
   onWelcome(): void {
     this.welcoming = this.welcome;
+  }
+
+  @Monitor('web.open')
+  onWeb(): void {
+    if (this.web.open) {
+      this.push('web', '');
+    }
+  }
+
+  closeWeb(): void {
+    this.web.open = false;
+    this.stack.pop();
   }
 
   /** "Continue in a new session" (the alert card): the new session page preset to this agent and project */
@@ -260,6 +276,20 @@ export struct Root {
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.form_page'))
+    } else if (name === 'web') {
+      NavDestination() {
+        WebPageView({
+          url: this.web.url,
+          onClose: () => this.closeWeb(),
+          onOutside: (url: string) => openOutside(this.getUIContext(), url)
+        })
+      }
+      .hideTitleBar(true)
+      .backgroundColor($r('app.color.bg0'))
+      .onBackPressed(() => {
+        this.closeWeb();
+        return true;
+      })
     } else if (name === 'coming') {
       NavDestination() {
         ComingPage({ title: t((param as Route).id), onBack: () => this.stack.pop() })

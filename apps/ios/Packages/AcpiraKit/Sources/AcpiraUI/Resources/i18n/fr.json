@@ -1612,6 +1612,7 @@
   "mobile.engine.demo": "Non connecté · données de démonstration",
   "mobile.engine.desc": "Tant que l’app n’est pas appairée à un moteur Acpira sur votre ordinateur, elle affiche des sessions d’exemple et les messages envoyés reçoivent une réponse de démonstration locale.",
   "mobile.link.missing": "Cette session n’est pas ici",
+  "mobile.link.copy": "Copier le lien",
   "mobile.changes.none": "Cette session n’a encore modifié aucun fichier",
   "mobile.engine.disconnected": "Déconnecté du moteur",
   "mobile.engine.dropped": "Un message du moteur n’a pas été compris. Mettez l’app à jour.",

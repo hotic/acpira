@@ -1,5 +1,9 @@
 package cc.hotic.acpira.ui.prose
 
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.runtime.CompositionLocalProvider
+import cc.hotic.acpira.ui.AppMenuCaption
+import cc.hotic.acpira.ui.openOutside
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -103,15 +107,55 @@ fun BlockSelection(block: MdBlock, onQuote: ((String) -> Unit)?, content: @Compo
   val bounds = remember { arrayOfNulls<Rect>(1) }
   // The long-press detector takes the block's taps too: an older reply's tap (its action row) is passed on from here
   val replyTap by rememberUpdatedState(cc.hotic.acpira.ui.LocalReplyTap.current)
+  // The web link the press landed on (InlineText reports it), and the one the open menu leads with
+  val press = remember { LinkPress() }
+  var link by remember { mutableStateOf<String?>(null) }
+  fun longPress() {
+    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    press.held = true
+    link = press.url
+    menu = true
+  }
   Box(
-    Modifier.onGloballyPositioned { bounds[0] = it.boundsInRoot() }.then(if (selecting) Modifier else Modifier.pointerInput(Unit) {
-      detectTapGestures(
-        onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); menu = true },
-        onTap = { replyTap?.invoke() },
-      )
-    }),
+    Modifier.onGloballyPositioned { bounds[0] = it.boundsInRoot() }.then(if (selecting) Modifier else Modifier
+      // Ahead of the text below on the way down: a press that reaches no link leaves none behind. A link takes its
+      // press for its own tap, so the long press below never sees one on a link: that one is timed here. Either way the
+      // release of a long press is taken before the link sees it (a Compose link opens on any release, however late)
+      .pointerInput(press) {
+        awaitEachGesture {
+          val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+          press.url = null
+          press.onLink = false
+          press.held = false
+          var ended = false
+          val moved = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+            var away = false
+            while (!ended && !away) {
+              val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id }
+              if (change == null || !change.pressed) ended = true
+              else away = (change.position - down.position).getDistance() > viewConfiguration.touchSlop
+            }
+            away
+          }
+          // Held still past the timeout on a link
+          if (moved == null && press.onLink) longPress()
+          while (!ended) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            if (press.held) event.changes.forEach { if (it.changedToUp()) it.consume() }
+            ended = event.changes.none { it.pressed }
+          }
+        }
+      }
+      .pointerInput(Unit) {
+        detectTapGestures(
+          onLongPress = { longPress() },
+          onTap = { replyTap?.invoke() },
+        )
+      }),
   ) {
-    if (selecting) SelectableBlock(block, onQuote, state, body) else body()
+    CompositionLocalProvider(LocalLinkPress provides press) {
+      if (selecting) SelectableBlock(block, onQuote, state, body) else body()
+    }
     AppMenu(expanded = menu, onDismiss = { menu = false }) {
       // Only the preview is shortened: Copy and Quote take the complete block
       Text(
@@ -121,6 +165,14 @@ fun BlockSelection(block: MdBlock, onQuote: ((String) -> Unit)?, content: @Compo
           .padding(Metrics.s3).testTag("block.preview"),
       )
       AppMenuGap()
+      // A press on a web link leads with the link: a tap already reads it in the app, so the menu offers the way out
+      // and the address itself
+      link?.let { url ->
+        AppMenuCaption(url)
+        AppMenuItem(t("browser.openSystem"), onClick = { menu = false; openOutside(context, url) }, modifier = Modifier.testTag("block.link.open"), icon = { MenuGlyph("compass") })
+        AppMenuItem(t("mobile.link.copy"), onClick = { menu = false; copyText(context, url) }, modifier = Modifier.testTag("block.link.copy"), icon = { MenuGlyph("link") })
+        AppMenuGap()
+      }
       AppMenuItem(t("quote.add"), onClick = { menu = false; onQuote(QuoteText.of(block)) }, modifier = Modifier.testTag("block.quote"), icon = { MenuGlyph("messageSquareText") })
       AppMenuItem(t("common.copy"), onClick = { menu = false; copyText(context, QuoteText.of(block)) }, modifier = Modifier.testTag("block.copy"), icon = { MenuGlyph("copy") })
       if (selectable) {

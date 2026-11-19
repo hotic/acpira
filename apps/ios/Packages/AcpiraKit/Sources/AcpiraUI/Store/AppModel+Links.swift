@@ -5,7 +5,7 @@ import Foundation
 // Links the app opens itself: a session link (`acpira://session/<id>` and the shells' forms, SessionLinks.swift) in a
 // reply, from a notification or from another app opens that session over the current screen, as the desktop's link
 // handler does. A file link the prose made of a path (FileLinks.swift) opens the file page of the chat it was tapped in.
-// Everything else goes to the system.
+// A web page opens in the in-app browser (Web/WebPage.swift); everything else goes to the system.
 
 extension AppModel {
   /// True when the link was the app's to open

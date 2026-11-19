@@ -54,6 +54,14 @@ private struct QuoteMenu: ViewModifier {
         .environment(\.textSelectionScope, selection)
         .contextMenu {
           if !selection.active {
+            // A press on a web link leads with the link: a tap already reads it in the app, so the menu offers
+            // the way out and the address itself
+            if let link = selection.link {
+              Section(link.absoluteString) {
+                Button(t("browser.openSystem"), systemImage: "safari") { WebPage.openOutside(link) }
+                Button(t("mobile.link.copy"), systemImage: "link") { UIPasteboardBridge.copy(link.absoluteString) }
+              }
+            }
             Button(t("quote.add"), systemImage: "text.quote") { quote.run(QuoteText.of(block)) }
             Button(t("common.copy"), systemImage: "doc.on.doc") { UIPasteboardBridge.copy(QuoteText.of(block)) }
             // Diagrams, formulas and image-only blocks have no native text surface.

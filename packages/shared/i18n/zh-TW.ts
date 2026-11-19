@@ -1677,6 +1677,7 @@ export const zhTW = {
   'mobile.engine.demo': '未連線 · 示範資料',
   'mobile.engine.desc': 'App 與電腦上的 Acpira 引擎配對之前，顯示的是範例工作階段，送出的訊息由本機示範回覆。',
   'mobile.link.missing': '這裡沒有這個工作階段',
+  'mobile.link.copy': '複製連結',
   'mobile.changes.none': '這個工作階段還沒有改動檔案',
   'mobile.engine.disconnected': '已與引擎中斷連線',
   'mobile.engine.dropped': '看不懂引擎傳來的一則訊息，請更新 App。',

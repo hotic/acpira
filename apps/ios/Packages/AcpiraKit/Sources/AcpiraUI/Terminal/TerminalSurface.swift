@@ -54,12 +54,12 @@ struct TerminalSurface: UIViewRepresentable {
       (source as? PhoneTerminalView)?.session.resize(cols: newCols, rows: newRows)
     }
 
-    /// A web address opens in the system browser. One on the loopback names the engine's computer, not the phone, so
+    /// A web address opens in the in-app browser. One on the loopback names the engine's computer, not the phone, so
     /// it goes nowhere
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
       guard let url = URL(string: link), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
             let host = url.host(), !loopback(host) else { return }
-      UIApplication.shared.open(url)
+      if !WebPage.open(url) { UIApplication.shared.open(url) }
     }
 
     /// OSC 52: a program may put text on the clipboard (vim, tmux over ssh), never read it back (xterm.ts)

@@ -1648,6 +1648,7 @@ export const ja = {
   'mobile.engine.demo': '未接続 · デモデータ',
   'mobile.engine.desc': 'コンピュータの Acpira エンジンとペアリングするまで、サンプルのセッションを表示し、送ったメッセージにはローカルのデモが返信します。',
   'mobile.link.missing': 'そのセッションはここにありません',
+  'mobile.link.copy': 'リンクをコピー',
   'mobile.changes.none': 'このセッションではまだファイルを変更していません',
   'mobile.engine.disconnected': 'エンジンとの接続が切れました',
   'mobile.engine.dropped': 'エンジンからのメッセージを解釈できませんでした。アプリを更新してください。',
