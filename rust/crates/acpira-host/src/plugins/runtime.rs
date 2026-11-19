@@ -35,6 +35,9 @@ pub const PROTOCOL_VERSION: u64 = 1;
 pub const INIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// After `shutdown`, how long a process has to exit before it is killed
 const STOP_GRACE: Duration = Duration::from_secs(2);
+/// A call the user started with a click and waits on its button for (a draft command, a page's method call): it may
+/// take a model call's time (`model/generate` gives up after 120 s), not a hook's few seconds on the prompt's path
+pub const CLICK_TIMEOUT: Duration = Duration::from_secs(150);
 /// Failed calls in a row that open the circuit, and how long it stays open
 const TRIP_AFTER: u32 = 3;
 const TRIP_FOR: Duration = Duration::from_secs(60);
@@ -391,8 +394,21 @@ impl Runtimes {
 
   /// Ask `plugin`'s process alone (a command it contributed); None when it does not answer `hook`
   pub async fn hook_of(&self, plugin: &str, hook: &str, payload: Value) -> Option<Result<Value, String>> {
+    self.hook_within(plugin, hook, payload, None).await
+  }
+
+  /// `hook_of` for a hook a click started (a draft command's button), given `CLICK_TIMEOUT`
+  pub async fn hook_clicked(&self, plugin: &str, hook: &str, payload: Value) -> Option<Result<Value, String>> {
+    self.hook_within(plugin, hook, payload, Some(CLICK_TIMEOUT)).await
+  }
+
+  async fn hook_within(&self, plugin: &str, hook: &str, payload: Value, limit: Option<Duration>) -> Option<Result<Value, String>> {
     let w = self.worker_of(plugin).await.filter(|w| w.answers(hook))?;
-    let r = w.call(&format!("hook/{hook}"), payload).await;
+    let method = format!("hook/{hook}");
+    let r = match limit {
+      Some(limit) => w.call_for(&method, payload, limit).await,
+      None => w.call(&method, payload).await,
+    };
     if let Err(e) = &r {
       (self.log)(&format!("plugin {plugin}: hook {hook}: {e}"));
     }
@@ -450,7 +466,8 @@ impl Runtimes {
     if !w.want.def.methods.iter().any(|m| m == method) {
       return Err(format!("plugin {plugin} offers no method `{method}`"));
     }
-    w.call(&format!("rpc/{method}"), json!({ "params": params, "from": from })).await
+    let limit = if from == "page" { CLICK_TIMEOUT } else { w.want.def.timeout() };
+    w.call_for(&format!("rpc/{method}"), json!({ "params": params, "from": from }), limit).await
   }
 
   /// What `initialize` tells a process of the plugins it depends on: the range it asked for and whether one is in effect

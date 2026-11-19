@@ -246,7 +246,8 @@ export function start(def = {}, options = {}) {
     p.hook('command', async (payload, extra) => {
       const fn = commands[payload?.name];
       if (typeof fn !== 'function') return null;
-      const out = await fn(payload.arguments ?? '', withCtx({ ...extra, draft: payload.draft === true, session: payload.session, menus: payload.menus ?? {} }));
+      // A draft button's run brings the draft's attachments too (pasted images: `{ kind: 'image', mimeType, data }`)
+      const out = await fn(payload.arguments ?? '', withCtx({ ...extra, draft: payload.draft === true, attachments: payload.attachments ?? [], session: payload.session, menus: payload.menus ?? {} }));
       return typeof out === 'string' ? { text: out } : out ?? null;
     });
   }

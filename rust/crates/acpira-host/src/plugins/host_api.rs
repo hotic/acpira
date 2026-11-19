@@ -180,10 +180,39 @@ impl Api {
         let system = params.get("system").and_then(Value::as_str).unwrap_or_default();
         let model = params.get("model").and_then(Value::as_str);
         let max = params.get("maxTokens").and_then(Value::as_u64);
-        let g = acpira_agent::generate::generate(&self.agent_home, model, system, prompt, max).await.map_err(|e| RpcError::new(-32000, e))?;
+        let images = generate_images(&params)?;
+        let g = acpira_agent::generate::generate(&self.agent_home, model, system, prompt, images, max).await.map_err(|e| RpcError::new(-32000, e))?;
         Ok(json!({ "text": g.text, "model": g.model, "usage": { "input": g.input_tokens, "output": g.output_tokens } }))
       }
       _ => Err(RpcError::method_not_found(method)),
     }
   }
+}
+
+/// Images a call sends with its prompt
+const GENERATE_IMAGES_MAX: usize = 8;
+
+/// `model/generate`'s `images`: `[{ mimeType, data }]`, `data` base64 or a `data:` URL, the shape of a draft's image
+fn generate_images(params: &Value) -> Result<Vec<acpira_agent::generate::Image>, RpcError> {
+  let Some(list) = params.get("images").filter(|v| !v.is_null()) else { return Ok(vec![]) };
+  let list = list.as_array().ok_or_else(|| bad("`images` is a list of { mimeType, data }"))?;
+  if list.len() > GENERATE_IMAGES_MAX {
+    return Err(bad(format!("at most {GENERATE_IMAGES_MAX} images go with one call")));
+  }
+  list
+    .iter()
+    .map(|i| {
+      let data = i.get("data").and_then(Value::as_str).filter(|d| !d.is_empty()).ok_or_else(|| bad("an image needs its base64 `data`"))?;
+      // A data URL carries its own type: `data:image/png;base64,....`
+      let (url_mime, data) = match data.strip_prefix("data:").and_then(|r| r.split_once(',')) {
+        Some((head, body)) => (head.strip_suffix(";base64").map(str::to_owned), body),
+        None => (None, data),
+      };
+      let mime = i.get("mimeType").and_then(Value::as_str).map(str::to_owned).or(url_mime).ok_or_else(|| bad("an image needs its `mimeType`"))?;
+      if !mime.starts_with("image/") {
+        return Err(bad(format!("`{mime}` is not an image type")));
+      }
+      Ok(acpira_agent::generate::Image { mime, data: data.to_owned() })
+    })
+    .collect()
 }

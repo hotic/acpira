@@ -43,8 +43,9 @@ pub fn parse(bytes: &[u8]) -> Result<(Manifest, Findings), String> {
 /// action needs a runtime that answers the `menu` hook
 fn check_menu(m: &Manifest, c: &CommandDef, at: &str, findings: &mut Findings) {
   let mut err = |s: String| findings.errors.push(s);
-  if c.button.is_none() || c.draft || c.input.is_some() {
-    err(format!("{at}: a `menu` needs a `button`, and takes neither `draft` nor `input`"));
+  // With `draft` the chip is split: its body rewrites the draft, its caret opens the menu
+  if c.button.is_none() || c.input.is_some() {
+    err(format!("{at}: a `menu` needs a `button`, and takes no `input`"));
   }
   if c.menu.len() > MENU_MAX_ITEMS {
     err(format!("{at}: a menu has at most {MENU_MAX_ITEMS} rows"));
@@ -217,7 +218,8 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
       err(findings, format!("{at} is declared twice"));
     }
     // A menu button is the command's way in: typing `/name` then needs the prompt or hook too, the button does not
-    if c.menu.is_empty() && c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()) && !hooked {
+    // (a split one does, its body runs the command)
+    if (c.menu.is_empty() || c.draft) && c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()) && !hooked {
       err(findings, format!("{at}: needs a `prompt`, or a runtime that answers the `command` hook"));
     }
     if !c.menu.is_empty() {

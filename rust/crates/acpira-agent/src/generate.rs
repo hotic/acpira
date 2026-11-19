@@ -23,8 +23,16 @@ pub struct Generated {
   pub output_tokens: Option<u64>,
 }
 
-/// Ask `pick` (or the fast model, else the first usable one) once. `home` is the built-in agent's home
-pub async fn generate(home: &Path, pick: Option<&str>, system: &str, prompt: &str, max_tokens: Option<u64>) -> Result<Generated, String> {
+/// An image sent with the prompt: base64 data and its mime type
+#[derive(Debug, Clone, PartialEq)]
+pub struct Image {
+  pub mime: String,
+  pub data: String,
+}
+
+/// Ask `pick` (or the fast model, else the first usable one) once, `images` after the prompt's text. `home` is the
+/// built-in agent's home
+pub async fn generate(home: &Path, pick: Option<&str>, system: &str, prompt: &str, images: Vec<Image>, max_tokens: Option<u64>) -> Result<Generated, String> {
   let config = ConfigCache::new(home.to_path_buf()).get();
   let catalog = crate::catalog::CatalogCache::new(home).get();
   let found = match pick {
@@ -37,7 +45,7 @@ pub async fn generate(home: &Path, pick: Option<&str>, system: &str, prompt: &st
   let request = Request {
     model: model.id.clone(),
     system: system.to_owned(),
-    items: vec![Item::User(vec![Part::Text(prompt.to_owned())])],
+    items: vec![Item::User(std::iter::once(Part::Text(prompt.to_owned())).chain(images.into_iter().map(|i| Part::Image { mime: i.mime, data: i.data })).collect())],
     tools: vec![],
     max_tokens: Some(model.output.map_or(limit, |o| o.min(limit))),
     output_limit: Some(limit),

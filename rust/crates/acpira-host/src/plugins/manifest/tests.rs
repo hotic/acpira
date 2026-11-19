@@ -187,6 +187,17 @@ fn a_command_menu_is_checked_and_resolves_picks_with_defaults() {
   let gone = json!({ "level": "max", "on": false });
   assert_eq!(Value::Object(def.menu_picks(gone.as_object())), json!({ "on": false, "level": "eager" }));
 
+  // A split chip (`draft` with a menu) runs the command from its body, so it needs the `command` hook
+  let split = |runtime: Value| {
+    json!({ "schema": 1, "id": "subs", "version": "0.1.0", "description": "x", "contributes": { "commands": [{ "name": "polish", "button": "Polish", "draft": true, "menu": menu.clone() }], "runtime": runtime } })
+  };
+  let (m, mut f) = manifest(split(json!({ "command": ["node", "run.mjs"], "hooks": ["command", "menu"] })));
+  check(&m, "subs", dir.path(), &|p| p == "node", &mut f);
+  assert!(f.ok(), "{f:?}");
+  let (m, mut f) = manifest(split(json!({ "command": ["node", "run.mjs"], "hooks": ["menu"] })));
+  check(&m, "subs", dir.path(), &|p| p == "node", &mut f);
+  assert!(f.text().contains("needs a `prompt`"), "{}", f.text());
+
   let bad = json!([
     { "id": "a", "kind": "radio", "label": "A" },
     { "id": "b", "kind": "radio", "group": "g", "label": "B", "default": true },
