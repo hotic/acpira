@@ -62,6 +62,7 @@ Rules for motion, status signals, rails, sticky prompts, bottom follow, scrollba
 - A finished turn the engine reopens with no prompt (a Claude autonomous cycle, a goal continuation, a steer's own peer turn) has its closing prose marked `phase: final` (`mark_reply_final`), and work after a final reply starts a new stretch (`splitPlanSections`, both clients): the reply stays in view instead of sinking into a fold that reopens above it. Turns from older engines carry no mark and still fold it in.
 - Turn duration runs from `AgentTurn.respondedAt`, never the send.
 - A retired empty `CodexFold` cancels its sibling gap on `Collapsible.Root` (the flex item), not the inner head.
+- Image results of a closed fold sit under it (`FoldImages`); an opening fold keeps them there until its panel has grown, then hands them to their tool row: moved into a panel growing from zero height, the picture vanished and unrolled again. Outside they sit the panel's `pb-1.5` lower, so they are lifted by that much while it opens and mount lifted on a close; that offset is tied to the open fold's margin in `chat.css`.
 - `FoldRows` wraps `Collapsible.Section`, not inside it: a closed body unmounts, so inner rows never replay their entrance.
 - `FlipRows` cancels, reads and animates in three passes, never interleaved per row (that froze long lists). Existing rows only translate.
 
