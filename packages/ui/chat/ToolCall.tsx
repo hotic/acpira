@@ -45,8 +45,14 @@ export { OpenToolFileContext } from './fileLinks';
 export const ToolCall = memo(function ToolCall({ block, grouped = false, continuing = false }: { block: ToolCallBlock; grouped?: boolean; continuing?: boolean }) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
-  return <div data-calls={block.id} className="contents"><EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} continuing={continuing} /></EntranceOnce></div>;
+  return <div data-calls={block.id} data-row-card={rowCard(block) || undefined} className="contents"><EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} continuing={continuing} /></EntranceOnce></div>;
 });
+
+// A row whose result card hangs under it (generated or shown images, a video, a widget): the item after it stands a
+// prose gap off the card (chat.css [data-row-card]), so the card reads as this row's and not the next one's. Read from
+// the block alone, so a fold toggling does not re-render every row for it
+const rowCard = (block: ToolCallBlock) => block.status === 'completed' &&
+  (isImageGenTool(block) || isShowImageTool(block) || isShowVideoTool(block) || isShowWidgetTool(block));
 
 // A result shown under its row: always for a row of its own, and for one in a process fold only while that fold is
 // open. Read here rather than in the row, so toggling a fold re-renders these few and not every tool row inside it

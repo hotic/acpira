@@ -291,8 +291,25 @@
   .process-content > :is(.acp-prose, .steered-message) + [data-calls] > *,
   /* A long process is cut into chunks (chat/ProcessChunks.tsx): the row that follows text across a cut */
   .process-content > [data-after-text] > :first-child:not([data-calls]),
-  .process-content > [data-after-text] > [data-calls]:first-child > * {
+  .process-content > [data-after-text] > [data-calls]:first-child > *,
+  /* A row's result card (ToolCall data-row-card: images, a video, a widget) hangs a gap under its own row; the item after
+     it keeps the prose gap off the card, so the card reads as its row's and not the next one's */
+  .process-content > [data-row-card] + :not([data-calls]),
+  .process-content > [data-row-card] + [data-calls] > * {
     margin-block-start: calc(var(--process-prose-gap) - var(--process-row-gap));
+  }
+  /* Narrative that opens the process (no row before it) stands under the fold head as it stands under a row: the prose
+     gap, less the head row's slack over a process row, the same sum the reply under a folded process takes. Without it
+     the text sat flush on the head while the rows after it kept the whole prose gap */
+  [data-under-head] > .process-rows > .process-content > .process-content:first-child > :is(.acp-prose, .steered-message):first-child {
+    margin-block-start: calc(var(--process-prose-gap) - (var(--chat-row) - var(--process-row)) / 2);
+  }
+  /* So does the first steered prompt (or subagent list) once the rows before it have folded away: it stands right under
+     the head, which is taller than a process row by twice that slack. A margin takes it back, since the part's own
+     prose-gap padding is a utility this layer cannot override; it eases with the fold */
+  [data-fold-head] ~ [data-card-part] { transition: margin-block-start var(--dur-open) ease-out; }
+  [data-fold-head] ~ [data-card-part]:not([data-open] ~ *, [data-card-part] ~ *) {
+    margin-block-start: calc((var(--process-row) - var(--chat-row)) / 2);
   }
 
   /* The reply stands under its process the way narrative stands under a tool row inside it (the prose gap), well

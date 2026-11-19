@@ -737,19 +737,19 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
               // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
               // the head (or the previous card) once they have folded away
               if (part.type === 'steer') return (
-                <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)">
+                <div key={part.id} data-card-part className="flex min-w-0 flex-col pt-(--process-prose-gap)">
                   <EntranceOnce id={itemEntrance(part.id)}><SteeredMessage block={part.block} /></EntranceOnce>
                 </div>
               );
               // The subagent rows of a delegation sit the same way: in the stream while the parts show, under the head
               // once they have folded away, and never as a fold of their own (each row enters by itself, as before)
               if (part.type === 'subagents') return (
-                <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)"><DelegatedSubagents ids={part.ids} /></div>
+                <div key={part.id} data-card-part className="flex min-w-0 flex-col pt-(--process-prose-gap)"><DelegatedSubagents ids={part.ids} /></div>
               );
               // The padding folds with its part: the prose gap after a card, the tail on the last. The first part gets none, so
               // the head and the first row stand one row pitch apart like the rows below them
               const body = (
-                <div className={cn(!retired && i > 0 && 'pt-(--process-prose-gap)', !retired && i === parts.length - 1 && 'pb-1.5')}>
+                <div data-under-head={(!retired && i === 0) || undefined} className={cn(!retired && i > 0 && 'pt-(--process-prose-gap)', !retired && i === parts.length - 1 && 'pb-1.5')}>
                   <ProcessHistory>
                     <ProcessChunks items={part.items} open={open} tail={running || bornOpen}>{rows => <ProcessBlocks blocks={blocks} items={rows} continuing={continuing} />}</ProcessChunks>
                   </ProcessHistory>
