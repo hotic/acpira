@@ -27,8 +27,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.LocalContentColor
@@ -309,9 +309,9 @@ private fun DrawScope.drawRail(leads: List<RailLead>, endAtLastRow: Boolean, col
 
 /**
  * ui/Row: a lead slot ([icon], or a custom [lead] that offers no rail anchor), the content parts on one baseline with
- * an 8 pt gap, trailing meta right-aligned in caption type. The slot's icon centres on an icon-wide column at the row's
- * start, so its ink stands on the text edge above and below it; the slot keeps its width, so the label column stays put.
- * An icon in the slot reports itself to the rail root above the row
+ * an 8 pt gap, trailing meta right-aligned in caption type. The slot gives up its air on both sides (chat.css `.row-lead`
+ * in the thread): it takes the icon's width, so the icon's ink stands on the text edge above and below it and the label
+ * follows the row gap; larger marks overhang that column evenly. An icon in the slot reports itself to the rail root above the row
  */
 @Composable
 fun AcpRow(
@@ -368,8 +368,9 @@ fun AcpRow(
           Box(
             Modifier
               .padding(top = if (leadTop) (WebType.text2.lineHeight.toDp() - WebMetrics.lead) / 2 else Metrics.s0)
-              .offset(x = -(WebMetrics.lead - WebMetrics.icon) / 2)
-              .size(WebMetrics.lead)
+              // An icon-wide column holding the full slot centred on it
+              .width(WebMetrics.icon)
+              .requiredSize(WebMetrics.lead)
               .enterFade(plays, delay),
             contentAlignment = Alignment.Center,
           ) {
@@ -380,7 +381,7 @@ fun AcpRow(
               iconOverlay?.invoke()
             }
           }
-          Spacer(Modifier.width(Metrics.gap))
+          Spacer(Modifier.width(WebMetrics.rowGap))
         }
         Row(
           Modifier.weight(1f).enterFade(plays, delay + RowMotion.rowEnterPart),
@@ -392,7 +393,7 @@ fun AcpRow(
           CompositionLocalProvider(LocalContentColor provides leadInk) {
             ProvideTextStyle(LocalTextStyle.current.merge(WebType.text3).copy(fontFeatureSettings = TABULAR)) {
               Row(
-                Modifier.padding(start = Metrics.gap).enterFade(plays, delay + RowMotion.rowEnterPart * 2),
+                Modifier.padding(start = WebMetrics.rowGap).enterFade(plays, delay + RowMotion.rowEnterPart * 2),
                 horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
                 verticalAlignment = Alignment.CenterVertically,
                 content = trailing,

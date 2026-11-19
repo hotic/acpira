@@ -51,8 +51,13 @@ object WebMetrics {
   /** Tailwind size-3: the fold chevron, the run's ✓ / ✗ */
   val chevron = 12.dp
   val ctlSm = 26.dp
-  /** The label column: the lead slot and the gap after it */
-  val indent = lead + Metrics.gap
+  /**
+   * The transcript's row gap (chat.css `--row-gap`): a row's lead takes only the icon's width, so its label follows the
+   * gap plus 4, the slot's air no longer stacked on the gap
+   */
+  val rowGap = Metrics.gap + 4.dp
+  /** The label column (chat.css `--indent`): the icon and the row gap after it. Bodies under a row start here */
+  val indent = icon + rowGap
   /** A tappable row's hit area reaches this far past the text column (--row-hit-outset) */
   val hit = 6.dp
   val railWidth = 1.dp
