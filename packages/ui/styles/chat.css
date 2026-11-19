@@ -194,13 +194,17 @@
      that label line; a mark filling the slot (Orb, subagent bars) overhangs it by the air on each side */
   :is([data-thread], [data-plan-dock]) { --row-gap: calc(var(--gap) + 4px); --indent: calc(var(--icon) + var(--row-gap)); }
   :is([data-thread], [data-plan-dock]) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2); }
+  /* The to-do dock's card (chat/Plan.tsx): its head row's hover fill stands 8px in from the card's outer edge (the 1px
+     border included), on the vertical lines of the composer's chips and send button below, while the row's text stays on
+     pad. Set here rather than in tokens.css so --pad is the shell's density, not the root's */
+  .plan-card { --row-hit-outset: calc(var(--pad) + 1px - 8px); }
 
   /* Dock cards (chat/Alert.tsx DockCard): text block, then the actions on its line. Below 30rem (the notice tier) a
      card that has a way around its primary takes two bands instead: the actions drop into a footer strip that spans the
      card under a hairline, the alternative at its start and the primary at its end, and the icon control stays on the
-     title's line */
+     title's line. Either way the controls end on the card-corner line, 8px in from the outer edge, as the composer's do */
   .dock-card { container: dock-card / inline-size; }
-  .dock-card-body { --dock-y: 10px; --dock-end: 10px; display: flex; align-items: center; gap: var(--gap); padding: var(--dock-y) var(--dock-end) var(--dock-y) var(--pad); }
+  .dock-card-body { --dock-y: 10px; --dock-end: var(--card-corner); display: flex; align-items: center; gap: var(--gap); padding: var(--dock-y) var(--dock-end) var(--dock-y) var(--pad); }
   .dock-card-actions { min-width: 0; margin: 0; padding: 0; border: 0; display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: var(--gap); max-width: 100%; }
   .dock-card-actions:empty { display: none; }
   @container dock-card (max-width: 30rem) {
@@ -208,7 +212,7 @@
     .dock-card-body[data-foot] > .dock-card-trail { grid-area: 1 / 2; align-self: start; }
     .dock-card-body[data-foot] > .dock-card-actions {
       grid-area: 2 / 1 / auto / -1; margin: var(--dock-y) calc(-1 * var(--dock-end)) calc(-1 * var(--dock-y)) calc(-1 * var(--pad));
-      max-width: none; padding: 8px; border-top: 1px solid var(--line);
+      max-width: none; padding: var(--card-corner); border-top: 1px solid var(--line);
     }
     .dock-card-body[data-foot] .dock-card-alt { margin-right: auto; }
   }

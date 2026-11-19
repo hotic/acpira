@@ -170,10 +170,11 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
           {/* The question is the card's head: a band of its own over a hairline, as the actions are under one, so it never
               reads as the first row of the answers. A text question has no rule: there the question is the field's label,
               and a rule between a label and its field parts them. The head stays outside the answer scrollport and its fade.
-              One leading line runs down the card: the keys, the field's edge and the footer buttons all stand the footer's
-              8px in, since a label that starts well inside the edge of the box under it reads as a slip. The question's
-              text sits a hair further in than those outlines: flush with a rounded outline, bare text looks outdented. */}
-          <div className={cn('flex shrink-0 flex-col gap-(--question-section-gap) px-2.5 pt-(--question-head-pad)',
+              One leading line runs down the card: the keys, the field's edge and the footer buttons all stand 8px in from
+              the card's outer edge (card-corner), the composer's line, since a label that starts well inside the edge of the
+              box under it reads as a slip. The question's text sits a hair further in than those outlines: flush with a
+              rounded outline, bare text looks outdented. */}
+          <div className={cn('flex shrink-0 flex-col gap-(--question-section-gap) px-card-corner-text pt-(--question-head-pad)',
             current.kind !== 'text' && 'border-b border-line pb-(--question-head-pad)')}>
             {subtitle && <div className="text-3 text-fg-3">{subtitle}</div>}
             {/* No glyph: it put the question in the answers' text column behind their keys. No row min height either: its
@@ -183,7 +184,7 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
               <h3 id={titleId} className="m-0 min-w-0 text-2 font-medium text-fg-strong [overflow-wrap:anywhere]">{current.text}</h3>
             </Row>
           </div>
-          <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex min-h-0 flex-col gap-(--question-section-gap) overflow-y-auto overscroll-y-contain px-2 py-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
+          <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex min-h-0 flex-col gap-(--question-section-gap) overflow-y-auto overscroll-y-contain px-card-corner py-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
             {block.message && page === 0 && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{block.message}</p>}
             <QuestionItem question={current} titleId={titleId} pick={picks[current.id] ?? EMPTY}
               onAttach={accepts ? attach : undefined}
@@ -193,7 +194,7 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
               onText={text => update(current.id, p => ({ ...p, text, ...(current.kind !== 'text' ? { other: true } : {}), ...(current.kind === 'single' ? { options: [] } : {}) }))} />
           </div>
         </div>
-        <div className="flex shrink-0 items-center justify-between gap-gap border-t border-line p-2">
+        <div className="flex shrink-0 items-center justify-between gap-gap border-t border-line p-card-corner">
           <Button variant="secondary" onClick={skip} className={cn(focusRing, 'h-ctl-sm border-line/50')}>{t('question.skip')}</Button>
           <div className="flex items-center gap-gap">
             {page > 0 && <Button variant="secondary" onClick={() => go(page - 1)} className={cn(focusRing, 'h-ctl-sm border-line/50')}>{t('question.prev')}</Button>}

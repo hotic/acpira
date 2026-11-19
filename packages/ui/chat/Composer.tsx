@@ -509,15 +509,15 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         onPaste={onPaste}
         placeholder={p.disabled ? t('composer.notReady') : p.revisePlan ? t('composer.placeholder.revisePlan') : p.running ? t(p.steer ? 'composer.placeholder.steer' : 'composer.placeholder.queue') : t('composer.placeholder')}
         className={cn(
-          // Match message text and attachment insets in every composer, including inline editors.
-          'min-w-0 resize-none bg-transparent px-pad pt-2.5 pb-1 text-1 outline-none transition-[color,min-height]',
+          // The text starts on the bar's chip line (composer-text) in every composer, inline editors included
+          'min-w-0 resize-none bg-transparent px-composer-text pt-2.5 pb-1 text-1 outline-none transition-[color,min-height]',
           'max-h-[calc(8*var(--text-1-lh))] placeholder:text-fg-3',
           // Queued / follow-up text while a turn runs stays at full strength; only an unready session dims the field
           p.disabled ? 'text-fg-3/60 placeholder:text-fg-3/60' : 'text-fg-strong',
         )}
       />
       {/* The hint sits under the text like a second, faint line: the agent's own wording for what to type after the command */}
-      {hint && <div className="truncate px-pad pb-1 font-mono text-mono text-fg-3">{hint}</div>}
+      {hint && <div className="truncate px-composer-text pb-1 font-mono text-mono text-fg-3">{hint}</div>}
       {slashOpen && <SlashList anchor={fieldRef} hits={slash.hits} active={slash.active} onHover={slash.setActive} onPick={pickCommand} />}
       {mentionOpen && <MentionList anchor={fieldRef} hits={hits} personas={personas} active={active} empty={span!.query.length > 0} onHover={setActive} onPick={pick} />}
       {/* The row is a container: below the sm tier (a 380 sidebar leaves ~324 here) the mode chip collapses to icon + caret so the option chips keep their room —

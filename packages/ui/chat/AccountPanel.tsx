@@ -157,7 +157,8 @@ function LocalAccountBody({ agent, account }: { agent: AgentInfo; account: Local
   const state: AccountState | undefined = account.status === 'ready' || account.status === 'loading'
     ? undefined
     : { text: localStateText(account), warn: localLoginNeeded(account), title: t(`quota.status.${account.status}`) };
-  return <div className="flex min-w-0 flex-col px-2 py-1.5 text-2">
+  // pb-2.5 rather than py-1.5's bottom: the same optical balance with the header title as the saved accounts' list
+  return <div className="flex min-w-0 flex-col px-2 pt-1.5 pb-2.5 text-2">
     <span className="flex min-w-0 items-center gap-2">
       {known
         ? <AccountLabel label={account.label} detail={account.detail} state={state} className="font-medium text-fg-1" />

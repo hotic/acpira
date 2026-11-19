@@ -23,6 +23,9 @@
   /* Where the last icon button on the title line ends, from its pane's side: its hover fill (inset in the box, ui/Button
      IconButton) ends on the content's trailing line (the cards', the Files tab's filter) */
   --line-end: calc(var(--start-x) - var(--icon-fill-inset));
+  /* The step between two icon buttons on the title line (Header's `gap-0.5`). A toggle pinned at the line's end keeps
+     it too: with a wider gap the header's last button and the toggle read as unevenly spaced siblings */
+  --line-step: 2px;
   /* The sheet header's ends (Header reads them) are the conversation's own lines, as the tool panel's tabs and its
      toggle stand on the panel's: the title starts on the cards' leading edge, an optical step in (bare text over a
      rounded box), and the last button ends on their trailing edge */
@@ -76,7 +79,7 @@
    session column folds. Its palette counts from the canvas (palette.css), so cards and the composer keep their contrast
    and what paints the page's colour (sticky prompts, fades) paints the canvas */
 .acp-shell[data-desktop][data-layout="files"] [data-sheet-header] { --sheet-lead: calc(var(--start-x) + 2px); }
-.acp-shell[data-desktop][data-layout="files"]:not([data-column]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--line-end) + var(--ctl) + var(--gap) + var(--caps-w)); }
+.acp-shell[data-desktop][data-layout="files"]:not([data-column]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--line-end) + var(--ctl) + var(--line-step) + var(--caps-w)); }
 .acp-shell[data-desktop][data-layout="files"] > :is([data-sheet], [data-subagent-panel="docked"]) { --bg-0: var(--canvas); }
 /* The docked subagent pane (chat/Shell.tsx, data-subagent-panel="docked"): its header line starts and ends at the dock's
    margin. When the pane ends the window's line (the tool panel closed, or the files layout's session column folded), the
@@ -87,7 +90,7 @@
 .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) > [data-subagent-panel="docked"] { --pane-trail: var(--start-x); }
 .acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])) > [data-subagent-panel="docked"],
 .acp-shell[data-desktop][data-layout="files"]:not([data-column]) > [data-subagent-panel="docked"] {
-  --pane-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w));
+  --pane-trail: calc(var(--start-x) + var(--ctl) + var(--line-step) + var(--caps-w));
 }
 
 /* A docked inspector never trades the main conversation for a drill-down. On smaller desktop
