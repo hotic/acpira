@@ -42,6 +42,8 @@ interface StartExtras {
  * engine has moved the window over it, and the next one continues from there
  */
 const EARLIER_TIMEOUT_MS = 15000;
+/** The built-in agent's id (providers.ts BUILTIN_AGENT_ID): the one with model sources */
+const BUILTIN_AGENT = 'acpira';
 
 export enum Connection {
   Demo,
@@ -986,10 +988,7 @@ export class AppModel implements ListHost {
     if (picked !== undefined) {
       return picked;
     }
-    if (this.live && !this.controlsAsked.has(agent)) {
-      this.controlsAsked.add(agent);
-      this.post({ type: 'controls', agent: agent });
-    }
+    this.askControls(agent);
     const view = this.view;
     if (view !== undefined && view.agent === agent && view.controls !== undefined && view.controls.options.length > 0) {
       return view.controls;
@@ -1001,6 +1000,28 @@ export class AppModel implements ListHost {
     // The demo borrows the showcase fixture's controls for that fixture's agent only, never another agent's models
     const demo = this.live ? undefined : fixtureView('showcase');
     return (demo !== undefined && demo.agent === agent ? demo.controls : undefined) ?? { modes: [], options: [] };
+  }
+
+  /** The engine's new-session controls for `agent`, asked once per wire */
+  private askControls(agent: string): void {
+    if (this.live && !this.controlsAsked.has(agent)) {
+      this.controlsAsked.add(agent);
+      this.post({ type: 'controls', agent: agent });
+    }
+  }
+
+  /**
+   * The built-in agent with no model source yet, as the engine's answer shows it (an approval select, no model): its
+   * first prompt can only fail, so a new session starts on it only when picked or when nothing else can start
+   * (apps/ios AppModel `lacksModel`)
+   */
+  lacksModel(agent: string): boolean {
+    if (agent !== BUILTIN_AGENT) {
+      return false;
+    }
+    this.askControls(agent);
+    const options = this.agentControls.get(agent);
+    return options !== undefined && options.length > 0 && !options.some(isModelControl);
   }
 
   commandsFor(agent: string): SlashCommand[] {

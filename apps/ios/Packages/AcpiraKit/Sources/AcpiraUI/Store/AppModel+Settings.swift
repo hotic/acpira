@@ -78,6 +78,24 @@ extension AppModel {
     return hostControls[key]?.options
   }
 
+  /// The built-in agent with no model source yet, as the engine's answer shows it (an approval select, no model): its
+  /// first prompt can only fail, so a new session starts on it only when picked or when nothing else can start
+  func lacksModel(_ agent: AgentId, cwd: String = "") -> Bool {
+    guard agent == Self.builtinAgent, let known = knownControls(agent, cwd: cwd) else { return false }
+    return !known.isEmpty && !known.contains(where: isModelControl)
+  }
+
+  /// The agent a new session starts on until one is picked: the asked one, else the newest session's, else the first
+  /// that can start; the built-in agent without a model source is passed over while another agent can start
+  func newSessionAgent(asked: AgentId?, cwd: String) -> AgentId {
+    let startable = launchable(agents).filter { $0.available != false }
+    let canAnswer = startable.contains { !lacksModel($0.id, cwd: cwd) }
+    let passed = { (id: AgentId) in canAnswer && self.lacksModel(id, cwd: cwd) }
+    if let asked, !passed(asked) { return asked }
+    return summaries.filter { !passed($0.agent) }.max { $0.updatedAt < $1.updatedAt }?.agent
+      ?? startable.first { !passed($0.id) }?.id ?? ""
+  }
+
   /// An agent the engine knows no models for yet (never run on that computer, no probe) gets one fresh probe on this
   /// wire: the desktop starts the CLI with the page and shows its models, the phone only starts it with the first prompt
   func probeUnknownControls(_ agent: AgentId, cwd: String = "") {

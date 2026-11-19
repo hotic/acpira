@@ -80,16 +80,20 @@ export struct NewSession {
     if (this.pickedAgent !== undefined) {
       return this.pickedAgent;
     }
-    if (this.args.agent !== undefined && this.args.agent.length > 0) {
-      return this.args.agent;
-    }
+    // The built-in agent without a model source is passed over while another agent can start (AppModel.lacksModel)
     const startable = this.model.startable();
-    const newest = this.model.summaries.filter((s: SessionSummary) => startable.some((a: AgentInfo) => a.id === s.agent))
+    const usable = startable.filter((a: AgentInfo) => !this.model.lacksModel(a.id));
+    const ready = usable.length > 0 ? usable : startable;
+    const asked = this.args.agent;
+    if (asked !== undefined && asked.length > 0 && (ready.some((a: AgentInfo) => a.id === asked) || !this.model.lacksModel(asked))) {
+      return asked;
+    }
+    const newest = this.model.summaries.filter((s: SessionSummary) => ready.some((a: AgentInfo) => a.id === s.agent))
       .sort((a: SessionSummary, b: SessionSummary) => b.updatedAt.localeCompare(a.updatedAt));
     if (newest.length > 0) {
       return newest[0].agent;
     }
-    return startable.length > 0 ? startable[0].id : this.model.defaultAgent();
+    return ready.length > 0 ? ready[0].id : this.model.defaultAgent();
   }
 
   /** Folders added by hand lead, then the user's order, then the folders sessions ran in */

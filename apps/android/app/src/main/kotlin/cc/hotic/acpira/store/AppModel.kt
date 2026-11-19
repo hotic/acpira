@@ -11,6 +11,7 @@ import cc.hotic.acpira.design.IconStore
 import cc.hotic.acpira.i18n.L10n
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.Outgoing
+import cc.hotic.acpira.logic.isModelControl
 import cc.hotic.acpira.logic.left
 import cc.hotic.acpira.logic.replayPicks
 import cc.hotic.acpira.logic.shownAttachment
@@ -613,6 +614,14 @@ class AppModel(
     val key = hostControlsKey(agent, cwd) ?: return agentControls[agent]
     return hostControls[key]
   }
+
+  /**
+   * The built-in agent with no model source yet, as the engine's answer shows it (an approval select, no model): its
+   * first prompt can only fail, so a new session starts on it only when picked or when nothing else can start
+   * (apps/ios AppModel `lacksModel`)
+   */
+  fun lacksModel(agent: String, cwd: String?): Boolean =
+    agent == BUILTIN_AGENT && knownControls(agent, cwd)?.let { it.isNotEmpty() && it.none(::isModelControl) } == true
 
   /**
    * Asks for every agent not answered yet, so a switch on the new session page finds the agent's models at once instead
