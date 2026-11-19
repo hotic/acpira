@@ -142,6 +142,8 @@ data class AgentInfo(
   val id: AgentId,
   val name: String,
   val accounts: Boolean? = null,
+  /** The account layer also takes a pasted API key as an account (settings on the desktop only) */
+  val accountKeys: Boolean? = null,
   val credentialsLocked: Boolean? = null,
   val localAccount: LocalAccountInfo? = null,
   val available: Boolean? = null,
@@ -154,6 +156,8 @@ data class AgentInfo(
   val vendor: String? = null,
   /** The agent's own mark as SVG path data on a 24 x 24 box, for an agent the app has no mark of its own for */
   val mark: List<String>? = null,
+  /** It can run on the engine's machine for a folder on an SSH host; absent from older engines */
+  val sshLocal: Boolean? = null,
 )
 
 @Serializable

@@ -133,6 +133,8 @@ public struct AgentInfo: Codable, Hashable, Sendable, Identifiable {
   public var id: AgentId
   public var name: String
   public var accounts: Bool?
+  /// The account layer also takes a pasted API key as an account (settings on the desktop only)
+  public var accountKeys: Bool?
   public var credentialsLocked: Bool?
   public var localAccount: LocalAccountInfo?
   public var available: Bool?
@@ -142,6 +144,8 @@ public struct AgentInfo: Codable, Hashable, Sendable, Identifiable {
   public var searched: [String]?
   public var install: AgentInstall?
   public var update: String?
+  /// It can run on the engine's machine for a folder on an SSH host; absent from older engines
+  public var sshLocal: Bool?
   public init(id: AgentId, name: String) { self.id = id; self.name = name }
 }
 
