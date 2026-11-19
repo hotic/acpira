@@ -197,8 +197,10 @@ const sessionDir = process.env.FAKE_SESSION_DIR;
 // nothing sent for either: session/list moves the session's updatedAt each time, and session/load on the live process
 // replays the conversation as it stands (the row closed with its receipt, then the reply). A "late-steps" prompt has the
 // model write that reply in steps, the time moving at each: a thought and a call still running, then (two <ms> later,
-// so a client polling sees the step between) the call closed and the words
+// so a client polling sees the step between) the call closed and the words. FAKE_LATE_LIVE is agy acp 1.5.12: the same
+// exit and reply also stream as they happen, with no prompt running (the replay still answers a load)
 const lateMs = Number(process.env.FAKE_LATE_REPLY) || 0;
+const lateLive = !!process.env.FAKE_LATE_LIVE;
 // When each session's late-command turn ended
 const lateTurns = new Map<string, number>();
 const lateSteps = new Set<string>();
@@ -1231,6 +1233,22 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started ' } });
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'it.' } });
       lateTurns.set(sid, Date.now());
+      // FAKE_LATE_LIVE: each stage streams when it is reached, a stop or not (the client has to drop what it no longer follows)
+      if (lateLive) {
+        const steps = text === 'late-steps';
+        setTimeout(() => void send({ ...lateCommand(true), sessionUpdate: 'tool_call_update' } as acp.SessionUpdate), lateMs);
+        setTimeout(() => void (async () => {
+          await send({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'The command exited.' } });
+          if (steps) await send({ sessionUpdate: 'tool_call', toolCallId: 'late-2', title: 'Read out.txt', kind: 'read', status: 'in_progress' });
+          else await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Late reply: late-done' } });
+        })(), lateMs * 2);
+        if (steps) {
+          setTimeout(() => void (async () => {
+            await send({ sessionUpdate: 'tool_call_update', toolCallId: 'late-2', status: 'completed' });
+            await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Late reply: late-done' } });
+          })(), lateMs * 4);
+        }
+      }
       return { stopReason: 'end_turn' };
     }
     if (text === 'async-shell') {

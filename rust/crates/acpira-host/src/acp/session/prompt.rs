@@ -743,6 +743,12 @@ impl AcpSession {
       } else {
         None
       };
+      // On a cancel agy appends a note meant for its model (`antigravity::cancel_note`): the stop row already says it
+      if stop == TurnStop::Cancelled
+        && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
+      {
+        take_cancel_note(self.vendor, turn);
+      }
       if let Some(e) = failed {
         let error = self.reply_error(&mut c, e);
         self.log(&format!("prompt failed in the reply: {}", error.message));
@@ -1025,9 +1031,11 @@ impl AcpSession {
     self.stop_exec_commands();
     // An autonomous cycle has no prompt response to settle it, nor has a late reply's turn: the stop does
     if c.peer.autonomous || c.late.open {
-      // The stop is the user's: the watcher that followed the late reply retires, and a replay it is reading is dropped
+      // The stop is the user's: the watcher that followed the late reply retires, a replay it is reading is dropped,
+      // and what the CLI still streams of the reply is not followed
       if c.late.open {
         c.late.watch += 1;
+        c.late.stopped = true;
       }
       self.end_detached(&mut c, TurnStop::Cancelled);
       self.touch(&mut c);
@@ -1047,6 +1055,18 @@ fn take_reply_error(vendor: Vendor, turn: &mut AgentTurn) -> Option<ReplyError> 
     x.markdown = kept;
   }
   Some(e)
+}
+
+/// Drop the note a vendor appends to the last text block when a turn is cancelled (the block goes when nothing is left)
+fn take_cancel_note(vendor: Vendor, turn: &mut AgentTurn) {
+  let Some(AgentBlock::Text(x)) = turn.blocks.last_mut() else { return };
+  let Some(kept) = vendor.cancel_note(&x.markdown).and_then(|at| x.markdown.get(..at)) else { return };
+  let kept = kept.trim_end().to_owned();
+  if kept.is_empty() {
+    turn.blocks.pop();
+  } else {
+    x.markdown = kept;
+  }
 }
 
 impl AcpSession {

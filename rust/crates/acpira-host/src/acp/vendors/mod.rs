@@ -181,6 +181,11 @@ impl Vendor {
     if self == Vendor::Antigravity { antigravity::reply_error(text) } else { None }
   }
 
+  /// Where the note a cancelled turn's reply ends on starts (`antigravity::cancel_note`)
+  pub fn cancel_note(self, text: &str) -> Option<usize> {
+    if self == Vendor::Antigravity { antigravity::cancel_note(text) } else { None }
+  }
+
   /// A failed turn arrives as an empty `end_turn`; the cause is only in the CLI's own session log (`logged_failure`)
   pub fn failure_log(self) -> Option<FailureLog> {
     match self {

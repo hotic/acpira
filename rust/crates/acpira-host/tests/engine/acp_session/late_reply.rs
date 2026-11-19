@@ -86,3 +86,57 @@ async fn another_agents_unfinished_command_still_fails_with_the_turn() {
   prompt(&s, "late-command").await;
   expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn", "blocks": [{ "status": "failed" }, { "markdown": "Started it." }] }));
 }
+
+fn texts_of(turn: &Value, kind: &str, field: &str) -> Vec<String> {
+  turn["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == kind).filter_map(|b| b[field].as_str()).map(str::to_owned).collect()
+}
+
+// agy 1.5.12 streams the exit and the reply as they happen: they land once, in one detached turn, and no replay is read
+// (a load would restart the stream and bring the reply's steps a second time)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_late_reply_that_streams_lands_once_and_reads_no_replay() {
+  let fake = fake_or_skip!();
+  let logs = tempfile::tempdir().unwrap();
+  let meta = logs.path().join("meta.log");
+  let h = Harness::for_agent(&fake, "antigravity", json!({ "env": { "FAKE_LATE_REPLY": "1200", "FAKE_LATE_LIVE": "1", "FAKE_META_LOG": meta } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "late-steps").await;
+  // The streamed thought and call open the late reply's turn
+  until(|| calls(&s).len() == 2, 15000).await;
+  assert!(s.is_running());
+  until(|| agent_text(&last_turn(&view(&s))).contains("Late reply"), 15000).await;
+  until(|| !s.is_running(), 20000).await;
+  let turn = last_turn(&view(&s));
+  expect_match(&turn, json!({ "stop": "end_turn" }));
+  assert_eq!(texts_of(&turn, "text", "markdown"), ["Started it.", "Late reply: late-done"]);
+  assert_eq!(texts_of(&turn, "thought", "text"), ["The command exited."]);
+  // The streamed exit settled the command's task and closed its row, receipt stripped
+  let first = &calls(&s)[0];
+  expect_match(first, json!({ "status": "completed" }));
+  assert!(first.to_string().contains("late-done") && !first.to_string().contains("Command exited"), "{first}");
+  expect_match(&calls(&s)[1], json!({ "status": "completed" }));
+  let loads = std::fs::read_to_string(&meta).unwrap_or_default().lines().filter(|l| l.contains(r#""method":"load""#)).count();
+  assert_eq!(loads, 0, "{:?}", h.logs());
+  prompt(&s, "say:next").await;
+  assert_eq!(agent_text(&last_turn(&view(&s))), "next");
+}
+
+// A stop ends a streaming late reply for good: what still streams of it is dropped, nothing reopens the turn
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_ends_a_streaming_late_reply_and_drops_what_follows() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "antigravity", json!({ "env": { "FAKE_LATE_REPLY": "1200", "FAKE_LATE_LIVE": "1" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "late-steps").await;
+  until(|| calls(&s).len() == 2, 15000).await;
+  assert!(s.is_running());
+  s.cancel().await;
+  until(|| !s.is_running(), 5000).await;
+  expect_match(last_turn(&view(&s)), json!({ "stop": "cancelled" }));
+  // The fake streams the rest of the reply regardless
+  tokio::time::sleep(std::time::Duration::from_millis(4000)).await;
+  assert!(!s.is_running());
+  assert!(!agent_text(&last_turn(&view(&s))).contains("Late reply"));
+  prompt(&s, "say:next").await;
+  assert_eq!(agent_text(&last_turn(&view(&s))), "next");
+}
