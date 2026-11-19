@@ -195,6 +195,38 @@ export function sidekickChannel(o: SessionOption): string | undefined {
   return o.source?.name ?? (o.group ? undefined : o.description);
 }
 
+// Group sidekick options into the same ModelFamily shape the lead's model list uses (collapsing embedded effort / Fast /
+// 1M variants such as Factory's "Opus 5.5 Fast Mode" or Devin's "SWE-2 High Fast"). Inside a host-sidekick CLI slice
+// (`cliId`), strip the synthetic CLI `group` and CLI-name `description` first (channel already lives in `source`), then
+// namespace `key` with `${cliId}\0` so equally named models from different CLIs stay distinct during cross-CLI search.
+// For a native select (no `cliId`), promote a provider `description` without `source` into `source` so channel grouping
+// matches the lead's.
+export function sidekickFamilies(options: SessionOption[], cliId?: string): ModelFamily[] {
+  const real = options.filter(o => o.id !== NO_SIDEKICK);
+  const normalized = cliId
+    ? real.map(o => ({ ...o, group: undefined, description: undefined }))
+    : real.map(o => (o.source || o.group || !o.description
+      ? o
+      : { ...o, source: { id: o.description, name: o.description, kind: 'custom' as const }, description: undefined }));
+  const families = groupModels(normalized);
+  return cliId ? families.map(f => ({ ...f, key: `${cliId}\0${f.key}` })) : families;
+}
+
+// Resolve the currently picked sidekick's family and variant across either a host-sidekick CLI list or a native select
+export function findSidekickFamily(options: SessionOption[], value: string | undefined): { family: ModelFamily; variant: ModelVariant; cli?: SidekickCli } | undefined {
+  if (!value || value === NO_SIDEKICK) return;
+  const clis = sidekickClis(options);
+  if (clis.length > 0) {
+    for (const cli of clis) {
+      const family = sidekickFamilies(cli.options, cli.id).find(f => f.variants.some(v => v.id === value));
+      if (family) return { family, variant: family.variants.find(v => v.id === value)!, cli };
+    }
+    return;
+  }
+  const family = sidekickFamilies(options).find(f => f.variants.some(v => v.id === value));
+  return family && { family, variant: family.variants.find(v => v.id === value)! };
+}
+
 // A level as the folded side of the model panel's lead / sidekick switch shows it: the narrow chip's short form
 export function levelShort(label: string): string {
   return LEVEL_SHORT[label] ?? label;

@@ -23,7 +23,7 @@ function providerPrefixed(option: SessionOption, configured: ModelSources) {
 // Agent-specific aliases are interpreted here; the generic model UI treats IDs as opaque.
 export function applyModelSources(agent: string, controls: ConfigControl[], configured: ModelSources = {}) {
   for (const control of controls) {
-    if (control.category !== 'model') continue;
+    if (control.category !== 'model' && !(agent === 'acpira' && control.category === '_sidekick')) continue;
     for (const option of control.options) {
       if (agent === 'kimi') {
         const slash = option.id.indexOf('/');

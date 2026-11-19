@@ -337,7 +337,11 @@ impl SessionManager {
   }
 
   pub fn emit_hidden(&self) {
-    self.emit(HostMsg::Hidden { hidden: self.hidden() });
+    let hidden = self.hidden();
+    for s in self.live_sessions() {
+      s.update_host_sidekick_hidden(hidden.clone());
+    }
+    self.emit(HostMsg::Hidden { hidden });
   }
 
   /// The built-in agent's settings were saved here: its processes push their sessions' changed controls at once
@@ -358,6 +362,11 @@ impl SessionManager {
       let agent = SELF_AGENT_ID.to_owned();
       let commands = me.known_commands(&agent).await;
       me.emit(HostMsg::Controls { controls: me.builtin_controls(), shapes: me.model_shapes(&agent), commands, agent, cwd: None });
+      for s in me.live_sessions() {
+        if s.agent != SELF_AGENT_ID {
+          s.refresh_host_sidekick().await;
+        }
+      }
     });
   }
 
@@ -372,6 +381,7 @@ impl SessionManager {
     let options = config_options(&config, &crate::model_catalog::current(), &st, Offers { booleans: true, sidekick: true });
     let mut controls = SessionControls::default();
     crate::acp::transcript::normalize::apply_config_options(&mut controls, &options);
+    acpira_shared::model_sources::apply_model_sources(SELF_AGENT_ID, &mut controls.options, &Default::default());
     controls.options
   }
 

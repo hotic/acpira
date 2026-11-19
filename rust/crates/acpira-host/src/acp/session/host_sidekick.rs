@@ -6,7 +6,8 @@
 
 use acpira_shared::composer_controls::is_reasoning_control;
 use acpira_shared::model_shapes::{ModelShapes, is_model_control, shape_for};
-use acpira_shared::models::parse_fusion_name;
+use acpira_shared::models::{parse_fusion_name, visible_options};
+use acpira_shared::settings::HiddenMap;
 use acpira_shared::subagents::SIDEKICK_ID;
 use acpira_shared::transcript::{ConfigControl, ControlType, OptionGroup, OptionSource, SessionOption, SourceKind};
 
@@ -40,6 +41,8 @@ pub(crate) struct HostSidekick {
   pub effort: Option<String>,
   /// The CLIs to pick from, read at each connection
   pub sources: Vec<SidekickSource>,
+  /// Per-CLI hidden model families (`acpira.hiddenOptions`), applied per source before building `controls`
+  pub hidden: HiddenMap,
   /// The selects as last built; empty until a connection read the sources
   pub controls: Vec<ConfigControl>,
   /// What each option of the select runs with once picked (`option_shapes`), built with `controls`
@@ -100,11 +103,14 @@ fn channel(o: &SessionOption) -> Option<OptionSource> {
 /// inside it, its channel), and the effort select of the picked model where its CLI has one. A pick no source lists
 /// any more stays offered, so a stale model list never drops it. `description` keeps the CLI's name for clients that
 /// file by it alone
-pub(crate) fn build(own: &str, sources: &[SidekickSource], pick: Option<&str>, effort: Option<&str>) -> Vec<ConfigControl> {
+pub(crate) fn build(own: &str, sources: &[SidekickSource], hidden: &HiddenMap, pick: Option<&str>, effort: Option<&str>) -> Vec<ConfigControl> {
   let mut options = vec![SessionOption { id: NO_SIDEKICK.into(), name: "None".into(), ..Default::default() }];
   let ordered = sources.iter().filter(|s| s.agent == own).chain(sources.iter().filter(|s| s.agent != own));
   for s in ordered {
-    options.extend(s.model.options.iter().filter(|o| candidate(&s.agent, o)).map(|o| SessionOption {
+    let hidden_for = hidden.get(&s.agent).and_then(|m| m.get(&s.model.id)).map(Vec::as_slice);
+    let current = pick.and_then(split_pick).filter(|(agent, _)| *agent == s.agent).map(|(_, model)| model);
+    let visible = visible_options(&s.model.options, hidden_for, current);
+    options.extend(visible.iter().filter(|o| candidate(&s.agent, o)).map(|o| SessionOption {
       id: format!("{}/{}", s.agent, o.id),
       name: o.name.clone(),
       description: Some(s.name.clone()),
@@ -246,16 +252,45 @@ impl AcpSession {
   pub(crate) async fn load_host_sidekick(&self) {
     let offered = self.host_sidekick_fits();
     let sources = if offered { self.deps.policy.sidekick_sources().await } else { vec![] };
+    let hidden = if offered { self.deps.policy.hidden_options() } else { HiddenMap::new() };
     let mut c = self.core.lock();
     c.sidekick.offered = offered;
     c.sidekick.sources = sources;
+    c.sidekick.hidden = hidden;
     self.rebuild_host_sidekick(&mut c);
+  }
+
+  /// Rebuilds the host's sidekick select after `hiddenOptions` changed and pushes the updated view
+  pub(crate) fn update_host_sidekick_hidden(&self, hidden: HiddenMap) {
+    let mut c = self.core.lock();
+    if !c.sidekick.offered || c.sidekick.hidden == hidden {
+      return;
+    }
+    c.sidekick.hidden = hidden;
+    self.rebuild_host_sidekick(&mut c);
+    self.touch(&mut c);
+  }
+
+  /// Reloads the host's sidekick sources (e.g. after built-in provider settings changed) and pushes the updated view
+  pub(crate) async fn refresh_host_sidekick(&self) {
+    if !self.host_sidekick_fits() {
+      return;
+    }
+    let sources = self.deps.policy.sidekick_sources().await;
+    let hidden = self.deps.policy.hidden_options();
+    let mut c = self.core.lock();
+    c.sidekick.offered = true;
+    c.sidekick.sources = sources;
+    c.sidekick.hidden = hidden;
+    self.rebuild_host_sidekick(&mut c);
+    self.touch(&mut c);
   }
 
   fn rebuild_host_sidekick(&self, c: &mut Core) {
     let Core { sidekick, state, .. } = c;
     state.controls.options.retain(|o| !ours(o));
-    sidekick.controls = if sidekick.offered { build(&self.agent, &sidekick.sources, sidekick.pick.as_deref(), sidekick.effort.as_deref()) } else { vec![] };
+    sidekick.controls =
+      if sidekick.offered { build(&self.agent, &sidekick.sources, &sidekick.hidden, sidekick.pick.as_deref(), sidekick.effort.as_deref()) } else { vec![] };
     sidekick.shapes = if sidekick.offered { option_shapes(&sidekick.sources, sidekick.effort.as_deref()) } else { ModelShapes::new() };
     self.place_host_sidekick(c);
   }
@@ -379,17 +414,21 @@ mod tests {
     SidekickSource { agent: agent.into(), name: name.into(), model, shapes }
   }
 
+  fn none_hidden() -> HiddenMap {
+    HiddenMap::new()
+  }
+
   #[test]
   fn select_files_each_model_under_its_cli_with_the_own_cli_first() {
     let sources = [source("antigravity", "Antigravity", &[("flash", "Gemini Flash")], None), source("claude", "Claude Code", &[("haiku", "Haiku")], None)];
-    let built = build("claude", &sources, Some("antigravity/flash"), None);
+    let built = build("claude", &sources, &none_hidden(), Some("antigravity/flash"), None);
     assert_eq!(built.len(), 1, "Antigravity has no level select");
     let ids: Vec<&str> = built[0].options.iter().map(|o| o.id.as_str()).collect();
     assert_eq!(ids, ["none", "claude/haiku", "antigravity/flash"]);
     assert_eq!(built[0].options[2].description.as_deref(), Some("Antigravity"));
     assert_eq!(built[0].options[2].group, Some(cli_group("antigravity", "Antigravity")));
     assert_eq!(built[0].value.as_deref(), Some("antigravity/flash"));
-    assert_eq!(build("claude", &sources, None, None)[0].value.as_deref(), Some("none"));
+    assert_eq!(build("claude", &sources, &none_hidden(), None, None)[0].value.as_deref(), Some("none"));
   }
 
   #[test]
@@ -398,7 +437,7 @@ mod tests {
     acpira.model.options[0].source = Some(OptionSource { id: "openrouter".into(), name: "OpenRouter".into(), kind: SourceKind::Custom });
     // An ACP option group stands in for a source the CLI does not mark
     acpira.model.options[1].group = Some(OptionGroup { id: "deepseek".into(), name: "DeepSeek".into() });
-    let built = build("claude", &[acpira, source("claude", "Claude Code", &[("opus", "Opus 5.5")], None)], None, None);
+    let built = build("claude", &[acpira, source("claude", "Claude Code", &[("opus", "Opus 5.5")], None)], &none_hidden(), None, None);
     let opus = |id: &str| built[0].options.iter().find(|o| o.id == id).unwrap().clone();
     assert_eq!(opus("acpira/openrouter/opus").source.map(|s| s.name).as_deref(), Some("OpenRouter"));
     assert_eq!(opus("acpira/openrouter/opus").group, Some(cli_group("acpira", "Acpira")));
@@ -408,32 +447,65 @@ mod tests {
   }
 
   #[test]
+  fn each_cli_filters_its_own_hidden_families_without_affecting_siblings() {
+    let factory = source(
+      "factory",
+      "Factory",
+      &[("opus-5-5", "Opus 5.5"), ("opus-5-5-fast", "Opus 5.5 Fast Mode"), ("opus-5", "Opus 5"), ("opus-5-fast", "Opus 5 Fast Mode")],
+      None,
+    );
+    let claude = source("claude", "Claude Code", &[("opus-5-5", "Opus 5.5"), ("opus-5", "Opus 5")], None);
+    let mut opencode = source("opencode", "OpenCode", &[("or/opus", "Opus 5.5"), ("ds/opus", "Opus 5.5")], None);
+    opencode.model.options[0].source = Some(OptionSource { id: "openrouter".into(), name: "OpenRouter".into(), kind: SourceKind::Custom });
+    opencode.model.options[1].source = Some(OptionSource { id: "deepseek".into(), name: "DeepSeek".into(), kind: SourceKind::Custom });
+    let hidden = HiddenMap::from([
+      ("claude".into(), std::collections::BTreeMap::from([("model".into(), vec!["Opus 5".into()])])),
+      ("opencode".into(), std::collections::BTreeMap::from([("model".into(), vec![r#"["openrouter","Opus 5.5"]"#.into()])])),
+    ]);
+    let built = build("claude", &[claude.clone(), factory.clone(), opencode.clone()], &hidden, None, None);
+    let ids: Vec<&str> = built[0].options.iter().map(|o| o.id.as_str()).collect();
+    // Claude hides Opus 5; Factory keeps Opus 5 and its Fast Mode; OpenCode hides only OpenRouter's Opus 5.5
+    assert_eq!(
+      ids,
+      ["none", "claude/opus-5-5", "factory/opus-5-5", "factory/opus-5-5-fast", "factory/opus-5", "factory/opus-5-fast", "opencode/ds/opus"]
+    );
+    // Hiding Opus 5 on Factory drops both its standard and Fast Mode variants, while a currently picked variant stays
+    let factory_hidden = HiddenMap::from([("factory".into(), std::collections::BTreeMap::from([("model".into(), vec!["Opus 5".into()])]))]);
+    let kept: Vec<String> = build("claude", &[factory], &factory_hidden, Some("factory/opus-5-fast"), None)[0]
+      .options
+      .iter()
+      .map(|o| o.id.clone())
+      .collect();
+    assert_eq!(kept, ["none", "factory/opus-5-5", "factory/opus-5-5-fast", "factory/opus-5-fast"]);
+  }
+
+  #[test]
   fn fusion_pairs_are_no_sidekick() {
     let sources = [source("devin", "Devin", &[("swe-2-high", "SWE-2 High"), ("fusion-x", "Fusion (Claude Fable 5.2 Medium + SWE-2 Medium)")], None)];
-    let ids: Vec<String> = build("claude", &sources, None, None)[0].options.iter().map(|o| o.id.clone()).collect();
+    let ids: Vec<String> = build("claude", &sources, &none_hidden(), None, None)[0].options.iter().map(|o| o.id.clone()).collect();
     assert_eq!(ids, ["none", "devin/swe-2-high"]);
   }
 
   #[test]
   fn antigravity_orchestrators_are_no_sidekick() {
     let sources = [source("antigravity", "Antigravity", &[("gemini-4-carbon", "Gemini 4 Carbon"), ("gemini-pro-orchestrator", "Orchestrator (Carbon)"), ("gemini-pro-orchestrator-argon", "Orchestrator (Argon)")], None)];
-    let ids: Vec<String> = build("claude", &sources, None, None)[0].options.iter().map(|o| o.id.clone()).collect();
+    let ids: Vec<String> = build("claude", &sources, &none_hidden(), None, None)[0].options.iter().map(|o| o.id.clone()).collect();
     assert_eq!(ids, ["none", "antigravity/gemini-4-carbon"]);
   }
 
   #[test]
   fn level_select_follows_the_picked_model() {
     let sources = [source("codex", "Codex", &[("luna", "Luna"), ("mini", "Mini")], Some(("luna", &["low", "high"])))];
-    let built = build("claude", &sources, Some("codex/luna"), Some("low"));
+    let built = build("claude", &sources, &none_hidden(), Some("codex/luna"), Some("low"));
     assert_eq!(built[1].category.as_deref(), Some(SIDEKICK_EFFORT_CATEGORY));
     assert_eq!(built[1].value.as_deref(), Some("low"));
     // A level the model lacks falls back to the one its CLI showed
-    assert_eq!(build("claude", &sources, Some("codex/luna"), Some("max"))[1].value.as_deref(), Some("high"));
+    assert_eq!(build("claude", &sources, &none_hidden(), Some("codex/luna"), Some("max"))[1].value.as_deref(), Some("high"));
   }
 
   #[test]
   fn a_pick_no_source_lists_stays_offered() {
-    let built = build("claude", &[], Some("codex/gone"), None);
+    let built = build("claude", &[], &none_hidden(), Some("codex/gone"), None);
     assert_eq!(built[0].value.as_deref(), Some("codex/gone"));
     assert!(built[0].options.iter().any(|o| o.id == "codex/gone"));
   }
@@ -491,9 +563,9 @@ mod tests {
 
   #[test]
   fn a_record_gives_back_its_pick() {
-    let saved = build("claude", &[], Some("codex/luna"), None);
+    let saved = build("claude", &[], &none_hidden(), Some("codex/luna"), None);
     assert_eq!(restored(&saved).pick.as_deref(), Some("codex/luna"));
-    assert!(restored(&build("claude", &[], None, None)).pick.is_none());
+    assert!(restored(&build("claude", &[], &none_hidden(), None, None)).pick.is_none());
     // The built-in agent's select is its own
     let own = ConfigControl { id: "sidekick".into(), category: Some(SIDEKICK_CATEGORY.into()), value: Some("openai/luna".into()), ..Default::default() };
     assert!(restored(&[own]).pick.is_none());
