@@ -68,7 +68,7 @@ export function DockCard({ title, detail, text, textRole, alt, actions, trail, r
       <Card role={role} className="dock-card">
         <div className="dock-card-body" data-foot={alt ? '' : undefined}>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <div className="flex min-w-0 items-center gap-gap">
+            <div className="flex min-w-0 items-baseline gap-0.5">
               <span className="min-w-0 truncate text-2 font-medium text-fg-1" title={title}>{title}</span>
               {detail}
             </div>
@@ -114,7 +114,7 @@ export function CopyDetail({ text, label }: { text: string; label: string }) {
     <button
       type="button"
       title={text}
-      className="min-w-0 truncate rounded-md px-1.5 py-0.5 text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1"
+      className="min-w-0 truncate rounded-md px-1 py-0.5 text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1"
       onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }}
     >
       {copied ? t('alert.copied') : label ? t('alert.copyWith', { detail: label }) : t('alert.copy')}

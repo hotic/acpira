@@ -154,7 +154,8 @@ export function DraftChips({ drafts, before, onRemove, onUpdate, className }: {
   before?: ReactNode;
   onRemove?: (indices: number[]) => void;
   onUpdate?: (index: number, draft: Draft) => void;
-  // Replaces the composer's padding (a question card lines the row up with its own text column)
+  // Replaces the composer's padding (a question card lines the row up with its own text column). The composer's p-2
+  // stands the first tile 8px from the field's top and side, on the leading edge of the bar's chips below, box over box
   className?: string;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -163,7 +164,7 @@ export function DraftChips({ drafts, before, onRemove, onUpdate, className }: {
   if (!drafts.length && !before) return null;
   const { quotes, named } = split(drafts);
   return (
-    <div className={cn('flex flex-wrap items-start gap-chip-gap px-pad pt-gap', className)}>
+    <div className={cn('flex flex-wrap items-start gap-chip-gap px-2 pt-2', className)}>
       {before}
       {quotes.length > 0 && (
         <Removable label={t('quote.removeAll')} onRemove={onRemove ? () => onRemove(quotes.map(q => q.index)) : undefined}>
