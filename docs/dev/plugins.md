@@ -21,7 +21,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - Folder map: `plugins/store.rs`. Only frozen read-only copies under `.versions/<id>/<hash>/` are ever loaded; `.sdk/` is not a valid id, so never read as a plugin.
 - `state.json` is the single source of truth, written tmp + rename under its lock; unknown fields survive a write (an older engine beside a newer one loses nothing). It keeps its last change, so a crash before the `changes.jsonl` append is repaired on the next start or commit.
 - Other engines learn of changes via the bus `touch` or config poll; the source folder is never watched.
-- `.blobs/` hard-links `node_modules` into snapshots on Unix only: on Windows the read-only flag belongs to the file, so snapshots copy.
+- `.blobs/` hard-links `node_modules` into snapshots on Unix only (on Windows the read-only flag is the file's, so they copy).
 
 ## Manifest
 
@@ -123,10 +123,10 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - Confirmation happens only in the host's own UI (plugin page, or the card `plugin_activate` adds). `acpira plugin propose` only files a proposal: nothing on the command line enables a plugin, so a model with a shell cannot skip the card.
 - The card is `AgentTurn.pluginCards`, not a block kind: old engines and the iOS decoder ignore an unknown field, a new block kind breaks their records. Its state is read from the plugins view so every window agrees; undo restores only what applying replaced (`PluginHost::undo_card`).
 - Cards show after the reply once the turn has ended (`Turns.tsx`): the agent keeps working after offering one, so a card placed mid-turn read as a stop in the work. `PluginCard.after` names the offering row (`offering_call`).
-- Slotless contributions land (`plugins/landings.ts`) once the card reads applied. `adds` lists the kinds; `restyles` the style hooks the sheet names (engine scan). Flights take `--land-ink`: the skin's colour when its tokens set `--brand` (the engine adds `--skin-ink`), else the foreground.
+- Slotless contributions land (`plugins/landings.ts`) once the card reads applied. Flights take `--land-ink`: the skin's colour when its tokens set `--brand` (the engine adds `--skin-ink`), else the foreground.
 - The skin reveal runs only for a click on this page (`plugins/skin.ts`) and waits for the backdrop's first frame. On WebKitGTK only the backdrop layer is uncovered: View Transitions can crash its UI process.
 - `plugin_activate` returns as soon as its card is shown, like `show_image`: an agent's turn never waits on a click, and the click is the hand-off. The dynamic check runs plugin code, so it stays after the click and never moves before the card.
-- A failed check returns its output verbatim, so a model can fix and retry: the static one as the call's answer, the dynamic one a card's apply runs as a queued message to the offering session, with the tail of the runtime's stderr, since a module that throws on load says why only there. A successful apply sends the agent nothing.
+- A failed check returns its output verbatim so a model can retry: the static one as the call's answer, the dynamic one as a queued message to the offering session with the runtime's stderr tail (a module that throws on load says why only there). A successful apply sends nothing.
 - Removal keeps snapshots and data; leftovers (`store::leftovers`) under a day old stay so a pending card's freeze survives; age is the folder's own time, since a frozen copy keeps file times. Removal and commit both check under the state lock; activation re-freezes once if its copy was cleaned meanwhile.
 
 ## Provenance
@@ -139,8 +139,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - `safeMode` in `state.json`: every engine unloads the user's plugins at once, surviving restarts. Built-in plugins are unaffected.
 - A stored switch, not a flag, so the persistent engine's socket does not depend on it and a shell reconnects to the engine it had. `--safe-mode` / `ACPIRA_SAFE_MODE=1` serve an engine whose plugin host cannot start.
 - Every way in sits outside the plugin page (a broken theme may cover it) and runs the shell's `acpira safe-mode`, so it works while the engine is stuck (`safeMode.ts`, `safe_mode.rs`, `SafeMode.kt`).
-- Unverified: none of these was clicked in a running IDE or app; only the CLI ran on a temp home.
 
 ## Telling the model
 
-- The MCP server instructions name the plugins folder from `HubOp::Features`. How to write a plugin reaches every agent, the built-in one included, only through them and `plugin_guide`; no skill repeats it. The built-in agent alone gets the engine's `skill-creator`, safe mode included: Codex and Claude Code ship their own, so other CLIs are never sent a second.
+- The MCP server instructions name the plugins folder from `HubOp::Features`. How to write a plugin reaches every agent only through them and `plugin_guide`. The built-in agent alone gets the engine's `skill-creator`, safe mode included: Codex and Claude Code ship their own, so other CLIs are never sent a second.
