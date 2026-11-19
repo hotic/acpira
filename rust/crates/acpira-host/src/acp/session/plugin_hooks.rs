@@ -474,6 +474,8 @@ impl AcpSession {
         return false;
       }
       let Some(e) = a.error.clone() else { return false };
+      // Restarting the exact prompt would defeat the guard that just stopped identical truncated streams.
+      if e.kind.as_deref() == Some("droid_gemini_truncated") { return false; }
       (e, c.plugin_state.retries)
     };
     if attempt >= RETRY_MAX {

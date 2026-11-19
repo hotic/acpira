@@ -284,7 +284,8 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
       }
       close_user_turn(s);
       let i = current_agent_turn(s);
-      if !text.trim().is_empty() {
+      // Another thought is not recovery from a thinking-only Gemini stream. Wait for text or a tool instead.
+      if !text.trim().is_empty() && !(s.agent.as_deref() == Some("droid") && agent(s, i).retry.is_some()) {
         clear_retry(s);
       }
       if let Some(AgentBlock::Thought(last)) = agent(s, i).blocks.last_mut()

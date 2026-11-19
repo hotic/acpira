@@ -752,6 +752,8 @@ export const zhTW = {
   'host.remoteFileFailed': '無法從 {host} 取回 {path}',
   'host.remoteUnreachable': '{host} 暫時連不上，等它連上後再試',
   'host.exited': '{agent} 程序退出（{code}）',
+  'host.droidGeminiThinkingOnly': 'Gemini 只傳回思考內容，沒有回覆或工具呼叫。Droid 正在重試。',
+  'host.droidGeminiCut': 'Gemini 連續兩次只傳回思考內容，沒有回覆。已停止 Droid 對同一請求的重試。可降低思考強度、拆分任務或切換模型後繼續。',
   'host.emptyResponse': 'CLI 已結束請求，但沒有返回回覆或錯誤詳情（ACP: end_turn）。可重試或檢視 CLI 日誌。',
   'host.agentMcpSkipped': '{agent} 啟動不了 MCP 伺服器 {name}（{reason}），這一輪因此中止。本工作階段之後會跳過它，正在重建連線：點重試即可繼續。修好伺服器後新建工作階段可恢復使用。',
   'host.agentMcpFailed': '{agent} 啟動不了 MCP 伺服器 {name}（{reason}），只要它還在設定裡，每一輪都會中止。它來自 {agent} 自己的 MCP 設定（~/.gemini/config/mcp_config.json）：在那裡修好或移除，再新建工作階段。',

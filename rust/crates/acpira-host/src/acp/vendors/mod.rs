@@ -12,6 +12,7 @@ pub mod claude_wakeup;
 pub mod claude_workflow;
 pub mod claude_workflow_log;
 pub mod claude_window;
+pub(crate) mod droid_retry;
 pub(crate) mod droid_usage;
 pub mod goal;
 pub mod grok;

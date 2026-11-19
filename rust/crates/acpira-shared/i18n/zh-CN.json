@@ -728,6 +728,8 @@
   "host.remoteFileFailed": "无法从 {host} 取回 {path}",
   "host.remoteUnreachable": "{host} 暂时连不上，等它连上后再试",
   "host.exited": "{agent} 进程退出（{code}）",
+  "host.droidGeminiThinkingOnly": "Gemini 只返回了思考内容，没有回复或工具调用。Droid 正在重试。",
+  "host.droidGeminiCut": "Gemini 连续两次只返回思考内容，没有回复。已停止 Droid 对同一请求的重试。可降低思考强度、拆分任务或切换模型后继续。",
   "host.emptyResponse": "CLI 已结束请求，但没有返回回复或错误详情（ACP: end_turn）。可重试或查看 CLI 日志。",
   "host.agentMcpSkipped": "{agent} 启动不了 MCP 服务器 {name}（{reason}），这一轮因此中止。本会话之后会跳过它，正在重建连接：点重试即可继续。修好服务器后新建会话可恢复使用。",
   "host.agentMcpFailed": "{agent} 启动不了 MCP 服务器 {name}（{reason}），只要它还在配置里，每一轮都会中止。它来自 {agent} 自己的 MCP 配置（~/.gemini/config/mcp_config.json）：在那里修好或移除，再新建会话。",

@@ -743,6 +743,8 @@ export const en = {
   'host.remoteFileFailed': 'Could not fetch {path} from {host}',
   'host.remoteUnreachable': '{host} cannot be reached right now. Try again once it is connected',
   'host.exited': '{agent} process exited ({code})',
+  'host.droidGeminiThinkingOnly': 'Gemini returned only thinking, without a reply or tool call. Droid is retrying.',
+  'host.droidGeminiCut': 'Droid stopped retrying after Gemini twice ended the same request with only thinking and no reply. Lower the reasoning effort, split the task, or switch models before continuing.',
   'host.emptyResponse': 'The CLI ended the request with no reply or error details (ACP: end_turn). Retry or check the CLI logs.',
   'host.agentMcpSkipped': '{agent} could not start the MCP server {name} ({reason}) and stopped the turn. It is left out of this session from now on and the connection is being rebuilt without it: Retry to continue. Fix the server and start a new session to use it again.',
   'host.agentMcpFailed': '{agent} could not start the MCP server {name} ({reason}) and stops every turn while it is configured. It comes from {agent}\'s own MCP config (~/.gemini/config/mcp_config.json): fix or remove it there, then start a new session.',

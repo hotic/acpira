@@ -1,6 +1,8 @@
 //! The turn itself: prompt, settle and cancel. The follow-up queue, usage snapshots, update routing, compaction policy,
 //! the automatic account switch and plan execution are further `impl AcpSession` blocks in sibling modules
 
+mod droid;
+
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -227,6 +229,7 @@ impl AcpSession {
     let blocks = std::mem::take(&mut accepted.prepared.blocks);
     // From here on Claude Code has a transcript for this native session to resume
     self.core.lock().unprompted = false;
+    let mut droid_cut = false;
     let result = match &turn.proc {
       Some(p) => {
         let mut params = self.prompt_params(turn.acp_id.as_deref(), blocks);
@@ -234,11 +237,44 @@ impl AcpSession {
         if let Some(id) = turn_id.filter(|_| crate::acp::session::edit::rewinds(&p.init)) {
           params["_meta"]["acpira/turn"] = Value::String(id);
         }
-        self.send_prompt(p, params).await
+        let send = self.send_prompt(p, params);
+        if let Some(model) = accepted.before.config.get("model").filter(|m| m.starts_with("gemini-"))
+          && let Some(dir) = p.droid_sessions.as_deref().and_then(|d| d.parent())
+          && let Some(id) = turn.acp_id.as_deref()
+        {
+          // The watcher lives exactly as long as this request; a ready ACP answer always wins.
+          tokio::pin!(send);
+          tokio::select! {
+            biased;
+            result = &mut send => result,
+            cut = self.watch_droid_cuts(&turn, p, dir, id, model) => {
+              droid_cut = cut;
+              if cut {
+                match tokio::time::timeout(super::lifecycle::CLOSE_GRACE, send).await {
+                  Ok(answer) => answer,
+                  Err(_) => {
+                    self.droid_cancel_unanswered(&turn).await;
+                    return;
+                  }
+                }
+              } else {
+                send.await
+              }
+            }
+          }
+        } else {
+          send.await
+        }
       }
       None => Err(RpcError::internal("no process")),
     };
     let settled = match result {
+      Ok(r) if droid_cut && r["stopReason"] == "cancelled" => {
+        let mut c = self.core.lock();
+        if !turn.live(&c) { return; }
+        self.settle(&mut c, TurnStop::Error, Some(droid::cut_error()));
+        Some(Settled { stop: TurnStop::Error, exhausted: false })
+      }
       Ok(r) => self.prompt_answered(r, &turn, &accepted, auto, droid_baseline).await,
       Err(e) => self.prompt_failed(e, &turn).await,
     };

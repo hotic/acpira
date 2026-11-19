@@ -1973,6 +1973,20 @@ const app = acp.agent({ name: 'fake-agent' })
       } };
     }
 
+    if (text.startsWith('droid thinking')) {
+      while (!cancelled.has(sid)) {
+        await send({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking' } });
+        const recover = process.env.FAKE_DROID_RECOVER;
+        if (recover && existsSync(recover)) {
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'recovered' } });
+          return { stopReason: 'end_turn' };
+        }
+        await new Promise(r => setTimeout(r, slowStepMs));
+      }
+      if (text.endsWith(' ignore cancel')) await new Promise(r => setTimeout(r, 60_000));
+      return { stopReason: 'cancelled' };
+    }
+
     if (text.includes('slow tool')) {
       steerable.add(sid);
       try {

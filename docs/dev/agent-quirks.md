@@ -68,6 +68,7 @@ How each external agent CLI behaves on the ACP wire, with the version observed. 
 ## Factory Droid
 
 - Droid 1.14.0 (adapter source and native session files): `session/prompt` returns only a stop reason; `usage_update` is last-call context occupancy, not turn output. A native `<id>.settings.json` keeps cumulative root `tokenUsage` apart from `inclusiveTokenUsage` (includes children). `outputTokens` already includes thinking; the thinking breakdown can be estimated by Droid. A resumed session can keep its original project's path in the store; `FACTORY_HOME_OVERRIDE` relocates the whole store. See `vendors/droid_usage.rs`.
+- Managed Gemini (1.14.0): thinking-only streams without a finish reason are retried as network or host-duration errors. The daemon emits `llm_retry`; the ACP translator discards it. The account's shared CLI log distinguishes individual failed attempts by native session, span and assistant message. Elapsed time or thought chunks alone do not distinguish this from productive work.
 - Static API keys (`fk-…`, droid 1.14.0 binary): `FACTORY_API_KEY` stands in for any stored login. droid's `/api/cli/whoami` schema has `userId`, `orgId`, `region` / `inferenceRegion`, `principalKind` and no email (whether the server sends one anyway is unverified). A key account still gets a private `FACTORY_HOME_OVERRIDE`: on the regular home droid would write the key org's `computer.json`, org policy cache and `api-key-identity/seed.json`. See `accounts/droid.rs`.
 
 ## Pi (pi-acp)

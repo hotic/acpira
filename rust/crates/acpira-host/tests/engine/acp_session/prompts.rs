@@ -393,6 +393,69 @@ async fn per_prompt_token_usage_lands_on_the_agent_turn() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn droid_stops_a_repeated_thinking_only_cut_but_keeps_the_native_session() {
+  use std::io::Write;
+  let fake = fake_or_skip!();
+  let home = tempfile::tempdir().unwrap();
+  let model = "gemini-4-carbon";
+  let recover = home.path().join("recover");
+  let h = Harness::for_agent(&fake, "droid", json!({ "env": { "FACTORY_HOME_OVERRIDE": home.path(), "FAKE_MODELS": model, "FAKE_DROID_RECOVER": recover } }));
+  let s = started(&h, home.path().to_str().unwrap()).await;
+  s.set_config("model".into(), model.into()).await.unwrap();
+  let sid = s.to_record().acp_session_id.unwrap();
+  let dir = home.path().join(".factory/logs");
+  std::fs::create_dir_all(&dir).unwrap();
+  let mut log = std::fs::File::create(dir.join("droid-log-single.log")).unwrap();
+  let mut cut = |attempt| {
+    let ts = acpira_host::util::now_iso();
+    let tags = json!({"sessionId":sid,"traceId":"trace","spanId":"span"});
+    writeln!(log, "[{ts}] WARN: [LLM] Response contained only thinking content with no text or tool calls | Context: {}", json!({"tags":tags,"modelId":model,"outputTokens":0,"length":456})).unwrap();
+    writeln!(log, "[{ts}] WARN: [LLM] LLM error | Context: {}", json!({"tags":tags,"modelId":model,"providerType":"gemini","apiProvider":"google","isRetryable":true,"attempt":attempt,"assistantMessageId":"req","errorName":"LLMNetworkError"})).unwrap();
+  };
+  let p = spawn_prompt(&s, "droid thinking");
+  wait_block(&s, "thought").await;
+  cut(1);
+  until(|| last_turn(&view(&s))["retry"]["attempt"] == 1, 7000).await;
+  cut(2);
+  until(|| last_turn(&view(&s))["stop"] == "error", 7000).await;
+  p.await.unwrap();
+  expect_match(&last_turn(&view(&s))["error"], json!({"kind":"droid_gemini_truncated", "retryable":false}));
+  // The next prompt does not inherit the cuts from the log. A user's own stop remains a cancellation.
+  let p = spawn_prompt(&s, "droid thinking");
+  until(|| {
+    let vw = view(&s);
+    vw["running"] == true && last_turn(&vw)["stop"].is_null() && last_turn(&vw)["blocks"][0]["type"] == "thought"
+  }, 5000).await;
+  s.cancel().await;
+  p.await.unwrap();
+  assert_eq!(last_turn(&view(&s))["stop"], "cancelled");
+  prompt(&s, "hi").await;
+  assert_eq!(last_turn(&view(&s))["stop"], "end_turn");
+  assert_eq!(s.to_record().acp_session_id.as_deref(), Some(sid.as_str()));
+
+  // A disappearing network error can recover on the one retry. Thought deltas do not close the row; real text does.
+  let p = spawn_prompt(&s, "droid thinking");
+  until(|| last_turn(&view(&s))["stop"].is_null() && last_turn(&view(&s))["blocks"][0]["type"] == "thought", 5000).await;
+  cut(1);
+  until(|| last_turn(&view(&s))["retry"]["attempt"] == 1, 7000).await;
+  std::fs::write(&recover, "ok").unwrap();
+  p.await.unwrap();
+  let turn = last_turn(&view(&s));
+  assert_eq!(turn["stop"], "end_turn");
+  assert!(turn["blocks"].as_array().unwrap().iter().any(|b| b["retry"]["status"] == "completed"));
+  std::fs::remove_file(recover).unwrap();
+
+  let p = spawn_prompt(&s, "droid thinking ignore cancel");
+  until(|| last_turn(&view(&s))["stop"].is_null() && last_turn(&view(&s))["blocks"][0]["type"] == "thought", 5000).await;
+  cut(1);
+  cut(2);
+  until(|| view(&s)["status"] == "error", 9000).await;
+  p.await.unwrap();
+  assert_eq!(last_turn(&view(&s))["error"]["kind"], "droid_gemini_truncated");
+  assert_eq!(view(&s)["running"], false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn droid_turn_usage_is_the_native_counter_delta_not_the_context_or_last_model_call() {
   let fake = fake_or_skip!();
   let home = tempfile::tempdir().unwrap();
