@@ -127,6 +127,12 @@ impl AcpSession {
     self.emit("turn.ended", || json!({ "stop": stop, "error": error, "usage": usage }));
   }
 
+  /// An edge `SessionManager::watch_attention` found (`session.attention`): `kind` waiting / done / error, `reason` what
+  /// a waiting session waits on (permission / question / lost_connection), `detail` what the notification would say
+  pub(crate) fn emit_attention(&self, kind: &str, reason: Option<&str>, detail: &str) {
+    self.emit("session.attention", || json!({ "kind": kind, "reason": reason, "title": self.title(), "detail": detail }));
+  }
+
   /// A permission request reached the session (before any gate, yolo or card decided it)
   pub(crate) fn emit_permission_asked(&self, req: &Value) {
     if self.deps.plugin_runtime.is_none() {

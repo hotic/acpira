@@ -100,11 +100,18 @@ impl SessionManager {
   /// has settled, once it stayed settled for ATTENTION_SETTLE (a queued follow-up or a hook's follow-up keeps it busy).
   /// Background work the agent reported counts as busy too: a turn that ends on "I'll report when it's done" is not done.
   /// A turn that failed is announced without waiting for it, since a long-lived monitor would hold the error back indefinitely.
-  /// A turn the user cancelled is not announced. Whether the user is already looking is the shell's call
+  /// A turn the user cancelled is not announced; one cut by its agent going away is, as an error. Whether the user is
+  /// already looking is the shell's call. Plugins hear the same edges as `session.attention`, the lost agent as waiting on
+  /// `lost_connection`
   fn watch_attention(&self, s: &Arc<AcpSession>) {
-    let Some(announce) = self.deps.attention.clone() else { return };
+    let announce = self.deps.attention.clone();
+    let plugins = s.deps.plugin_runtime.as_ref().is_some_and(|rt| rt.hears("session.attention"));
+    if announce.is_none() && !plugins {
+      return;
+    }
     let id = s.id.clone();
-    let waiting = s.list_state() == Some(SummaryState::Waiting);
+    let (state, question) = s.list_marks();
+    let waiting = state == Some(SummaryState::Waiting);
     let held = |s: &AcpSession| s.turn_busy() || (s.background_running() && s.last_stop() != Some(TurnStop::Error));
     let busy = held(s);
     let (asked, settled) = {
@@ -129,7 +136,12 @@ impl SessionManager {
     };
     let agent = self.registry().try_get(&s.agent).map(|d| d.name.clone()).unwrap_or_else(|| s.agent.clone());
     if asked {
-      announce(Attention { session_id: id.clone(), title: s.title(), agent: agent.clone(), kind: AttentionKind::Waiting, detail: s.attention_detail(true) });
+      let detail = s.attention_detail(true);
+      // A permission card outranks a question in the list mark, so `question` means only questions wait
+      s.emit_attention("waiting", Some(if question { "question" } else { "permission" }), &detail);
+      if let Some(announce) = &announce {
+        announce(Attention { session_id: id.clone(), title: s.title(), agent: agent.clone(), kind: AttentionKind::Waiting, detail });
+      }
     }
     let Some(seq) = settled else { return };
     let me = self.me.clone();
@@ -144,12 +156,23 @@ impl SessionManager {
       {
         return;
       }
+      // The agent went away under the turn: plugins hear it as waiting on a reconnect, the notification as a failed turn
+      let lost = s.lost_connection();
       let kind = match s.last_stop() {
         Some(TurnStop::Error) => AttentionKind::Error,
+        // The process exit may settle the turn before its failed prompt does, so it reads as a stop: still a failure
+        Some(TurnStop::Cancelled) if lost.is_some() => AttentionKind::Error,
         Some(TurnStop::Cancelled) | None => return,
         Some(_) => AttentionKind::Done,
       };
-      announce(Attention { session_id: id, title: s.title(), agent, kind, detail: s.attention_detail(false) });
+      let detail = lost.clone().filter(|why| !why.is_empty()).unwrap_or_else(|| s.attention_detail(false));
+      match lost {
+        Some(_) => s.emit_attention("waiting", Some("lost_connection"), &detail),
+        None => s.emit_attention(if kind == AttentionKind::Error { "error" } else { "done" }, None, &detail),
+      }
+      if let Some(announce) = announce {
+        announce(Attention { session_id: id, title: s.title(), agent, kind, detail });
+      }
     });
   }
 

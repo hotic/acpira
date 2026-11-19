@@ -253,6 +253,62 @@ async fn a_plugin_hears_sessions_made_renamed_and_deleted() {
   rt.stop_all().await;
 }
 
+// `session.attention` follows the notification's edges: a question card waits at once, the answered turn is done once
+// settled, a stopped turn is silent, and a process dying mid-turn waits on lost_connection (an error to the notification)
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_hears_attention_for_a_question_a_finished_turn_and_a_lost_connection() {
+  use acpira_host::session_manager::AttentionKind;
+  let fake = fake_or_skip!();
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let dir = tempfile::tempdir().unwrap();
+  let plugins = tempfile::tempdir().unwrap();
+  let rt = crate::acp_session::plugin_runtime::recorder(plugins.path(), &["session.attention"]).await;
+  let mut opts = Opts::fake(&fake);
+  opts.plugin_runtime = Some(rt.clone());
+  let m = Mgr::new(dir.path(), opts);
+  m.init().await;
+  m.new_session(None).await;
+  let id = m.active_id().unwrap();
+  let heard = || {
+    crate::acp_session::plugin_runtime::heard(plugins.path()).into_iter().map(|e| e["data"].clone()).collect::<Vec<_>>()
+  };
+  let edges = || heard().iter().map(|d| (d["kind"].as_str().unwrap().to_owned(), d["reason"].as_str().map(str::to_owned))).collect::<Vec<_>>();
+  let edge = |kind: &str, reason: Option<&str>| (kind.to_owned(), reason.map(str::to_owned));
+
+  let send = m.spawn_handle(json!({ "type": "send", "text": "ask-devin" }));
+  until(|| !heard().is_empty(), 8000).await;
+  let asked = &heard()[0];
+  assert_eq!((asked["session"].as_str(), asked["detail"].as_str()), (Some(id.as_str()), Some("What should the file be called?")));
+  let card = m
+    .view_of(&id)
+    .and_then(|x| crate::acp_session::agent_blocks(&x).into_iter().find(|b| b["type"] == "question"))
+    .unwrap();
+  m.handle(json!({ "type": "answer", "sessionId": id, "blockId": card["id"], "answers": { "q0": "report", "q1": ["src"] } })).await;
+  send.await.unwrap();
+  until(|| edges().len() == 2, 8000).await;
+  assert_eq!(edges(), [edge("waiting", Some("question")), edge("done", None)]);
+
+  let slow = m.spawn_handle(json!({ "type": "send", "text": "slow" }));
+  until(|| m.sessions().iter().any(|s| s["id"] == id && s["state"] == "working"), 5000).await;
+  m.handle(json!({ "type": "stop", "sessionId": id })).await;
+  slow.await.unwrap();
+
+  m.handle(json!({ "type": "send", "text": "exit-mid-turn" })).await;
+  until(|| edges().len() == 3, 8000).await;
+  assert_eq!(edges()[2], edge("waiting", Some("lost_connection")));
+  assert!(!heard()[2]["detail"].as_str().unwrap().is_empty(), "{:?}", heard()[2]);
+  // The notification heard the crash as a failed turn, whichever of the process exit and the failed prompt settled it
+  until(|| m.attentions.lock().unwrap().len() == 3, 5000).await;
+  let kinds = m.attentions.lock().unwrap().iter().map(|a| a.kind).collect::<Vec<_>>();
+  assert_eq!(kinds, [AttentionKind::Waiting, AttentionKind::Done, AttentionKind::Error]);
+  assert_eq!(m.attentions.lock().unwrap()[2].detail, heard()[2]["detail"].as_str().unwrap());
+  m.dispose().await;
+  rt.stop_all().await;
+}
+
 /// A plugin that, when the first turn ends, reads the sessions, renames this one, tries to answer a permission card
 /// (refused), shows a toast and asks the user a question, writing every answer to results.json
 const ACTOR: &str = r#"

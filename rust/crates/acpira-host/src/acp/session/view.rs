@@ -115,6 +115,15 @@ impl AcpSession {
     }).unwrap_or_default()
   }
 
+  /// Why the session lost its agent under the last turn, as plain text: the process died (`on_exit`, which races the
+  /// failed `session/prompt` closing the turn as an error or a stop) or forgot the session (`prompt_failed`), either way
+  /// leaving the session in error until it reconnects. None for a session still usable, as after the user's stop
+  pub fn lost_connection(&self) -> Option<String> {
+    let c = self.core.lock();
+    let cut = matches!(visible_turns(&c).last(), Some(Turn::Agent(a)) if matches!(a.stop, Some(TurnStop::Cancelled | TurnStop::Error)));
+    (cut && c.status == SessionStatus::Error).then(|| c.error.as_deref().map(plain_opening).unwrap_or_default())
+  }
+
   /// A background task the agent reported (AIR `asyncTasks`: Claude's background Bash, Monitor, workflows) still runs and
   /// is observed, or a summoned child the root turn left running. A task whose process went away is marked unknown on
   /// disconnect, so this cannot outlive the agent
