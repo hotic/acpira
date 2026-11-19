@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use serde_json::Value;
+use tokio::sync::oneshot;
 
 use acpira_shared::transcript::*;
 
@@ -12,7 +13,9 @@ use crate::acp::session::compaction::CompactionCompletion;
 use crate::acp::session::prompt::{Origin, Staged};
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::{push_steer, reopen_idle};
-use crate::acp::vendors::{claude_autonomous, steering};
+use crate::acp::transport::process::AgentProcess;
+use crate::acp::transport::rpc::{Handoff, RpcError};
+use crate::acp::vendors::{antigravity, claude_autonomous, steering};
 use crate::i18n::{t, tp};
 use crate::util::random_uuid;
 
@@ -22,6 +25,38 @@ pub(crate) struct QueuedEntry {
   pub prepared: PreparedPrompt,
 }
 
+/// A `session/prompt` answer read in order: the reader handles nothing after it until the Handoff is dropped
+pub(crate) type PromptAnswer = Result<(Value, Handoff), RpcError>;
+
+/// How a steer sent as a prompt of its own ended up (`steer_by_prompt`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptSteerEnd {
+  /// The running prompt answered: the steer joined the turn
+  Landed,
+  /// Its prompt failed before that: nothing joined the turn
+  Refused,
+  /// Its prompt bounced off a card the running prompt waits on: it is held until the card is answered
+  Held,
+  /// The turn was settled some other way first: the entry goes out as the next prompt
+  Missed,
+}
+
+/// A steer out as a `session/prompt` of its own (`Vendor::steers_by_prompt`), until the running prompt answers
+pub(crate) struct PromptSteer {
+  pub id: String,
+  /// Its prompt's answer, which the turn waits for once the steer has landed (`send_prompt`)
+  pub answer: oneshot::Receiver<PromptAnswer>,
+  /// Wakes `steer_entry`, which holds the entry claimed until then
+  pub end: oneshot::Sender<PromptSteerEnd>,
+}
+
+impl PromptSteer {
+  pub(crate) fn finish(self, end: PromptSteerEnd) -> oneshot::Receiver<PromptAnswer> {
+    let _ = self.end.send(end);
+    self.answer
+  }
+}
+
 /// Prompts parked behind the running turn, and the entry a send-now or a steer has claimed
 #[derive(Default)]
 pub(crate) struct PromptQueue {
@@ -29,15 +64,18 @@ pub(crate) struct PromptQueue {
   pub sending_id: Option<String>,
   /// The queued entry whose `_session/steering` request is on the wire; the queue holds its flush until the answer
   pub steering_id: Option<String>,
-  /// Entries asked to steer while a compaction ran (a steer then aborts it on claude-agent-acp): they steer in once that
-  /// compaction is over, or go out as ordinary follow-ups when the turn ends first
-  pub steer_after_compaction: Vec<String>,
+  /// Entries asked to steer while something held steers back: a compaction (a steer then aborts it on claude-agent-acp),
+  /// or a card waiting for an answer on an agent that refuses a prompt meanwhile (`card_holds_steer`). They steer in once
+  /// nothing holds them (`steer_held`), or go out as ordinary follow-ups when the turn ends first
+  pub held_steers: Vec<String>,
   /// The running turn's injected steers with their staged payloads, so a stop can queue the unanswered ones again
   /// (`requeue_unanswered_steers`); the turn's settle clears them
   pub steered: Vec<QueuedEntry>,
   /// A composer steer's entry while its steer is decided (`steer_prompt`): left out of the queue rows, so a steer that
   /// lands never flashes up as a queued follow-up first. It shows as one only when it stays in the queue
   pub hidden_id: Option<String>,
+  /// The steer whose own `session/prompt` is out while the running prompt has not answered yet (`steer_by_prompt`)
+  pub prompt_steer: Option<PromptSteer>,
 }
 
 impl PromptQueue {
@@ -250,12 +288,11 @@ impl AcpSession {
         return Ok(());
       }
       // A compaction under way: a steer would abort it (claude-agent-acp fails it `aborted` and starts over), and the
-      // send-now fallback would cancel it. The entry waits in the queue and steers in once the compaction is over
-      if c.phase.running && c.compaction.completion.as_ref().is_some_and(CompactionCompletion::running) {
-        if c.queue.entries.iter().any(|q| q.id == id) && !c.queue.steer_after_compaction.iter().any(|x| x == id) {
-          self.log("steer held: compaction under way");
-          c.queue.steer_after_compaction.push(id.to_owned());
-        }
+      // send-now fallback would cancel it. A card waiting for an answer on an agent that refuses a prompt meanwhile: the
+      // steer would bounce. Either way the entry waits in the queue and steers in once nothing holds it
+      let compacting = c.compaction.completion.as_ref().is_some_and(CompactionCompletion::running);
+      if c.phase.running && (compacting || self.card_holds_steer(&c)) {
+        self.hold_steer(&mut c, id, if compacting { "compaction under way" } else { "a card waits for an answer" });
         return Ok(());
       }
       // A Claude autonomous cycle is no turn of the adapter's, so `_session/steering` would answer `promptRequired`; a
@@ -297,16 +334,28 @@ impl AcpSession {
         Some(entry) => {
           let blocks = entry.prepared.blocks.clone();
           c.queue.steering_id = Some(id.to_owned());
+          // Registered under the claim, so the running prompt's answer cannot slip past it unseen (`land_prompt_steer`)
+          let by_prompt = c.proc.as_ref().is_some_and(|p| !steering::supported(&p.init) && self.vendor.steers_by_prompt(&p.init));
+          let channels = by_prompt.then(|| {
+            let (answer_tx, answer) = oneshot::channel();
+            let (end, end_rx) = oneshot::channel();
+            c.queue.prompt_steer = Some(PromptSteer { id: id.to_owned(), answer, end });
+            (answer_tx, end_rx)
+          });
           self.touch(&mut c);
-          Some((c.proc.clone(), c.acp_session_id.clone(), blocks))
+          Some((c.proc.clone(), c.acp_session_id.clone(), blocks, channels))
         }
       }
     };
-    let Some((proc, acp_id, blocks)) = claimed else { return self.send_queued(id).await };
+    let Some((proc, acp_id, blocks, channels)) = claimed else { return self.send_queued(id).await };
     let (Some(proc), Some(acp_id)) = (proc, acp_id) else {
+      self.core.lock().queue.prompt_steer = None;
       self.release_steer(id, false);
       return Ok(());
     };
+    if let Some((answer, end)) = channels {
+      return self.steer_by_prompt(id, proc, &acp_id, blocks, answer, end).await;
+    }
     match proc.request_ordered(steering::METHOD, steering::params(&acp_id, &blocks)).await {
       Ok((r, handoff)) => {
         let outcome = steering::outcome_of(&r);
@@ -349,10 +398,110 @@ impl AcpSession {
     Ok(())
   }
 
-  /// The compaction that held steers back is over and the turn runs on: they steer in, in the order they were asked for.
-  /// One that cannot land now stays queued as an ordinary follow-up
-  pub(crate) async fn steer_after_compaction(self: &Arc<Self>) {
-    let ids = std::mem::take(&mut self.core.lock().queue.steer_after_compaction);
+  /// The steer goes out as a `session/prompt` of its own, which answers the running prompt and owns the rest of the turn
+  /// (`antigravity::steers_by_prompt`). The entry stays claimed until the running prompt answers, which lands it as the
+  /// turn's steer block (`land_prompt_steer`); refused before that, it waits in the queue as before
+  async fn steer_by_prompt(
+    self: &Arc<Self>,
+    id: &str,
+    proc: Arc<AgentProcess>,
+    acp_id: &str,
+    blocks: Vec<Value>,
+    answer: oneshot::Sender<PromptAnswer>,
+    end: oneshot::Receiver<PromptSteerEnd>,
+  ) -> Result<()> {
+    let params = self.prompt_params(Some(acp_id), blocks);
+    let me = self.clone();
+    let sent = id.to_owned();
+    tokio::spawn(async move {
+      let r = proc.request_ordered("session/prompt", params).await;
+      // Bounced off a card that opened meanwhile: held until it is answered, nothing failed
+      let end = match &r {
+        Err(e) if antigravity::steer_bounced(&e.message) => PromptSteerEnd::Held,
+        _ => PromptSteerEnd::Refused,
+      };
+      if let Err(e) = &r
+        && me.refuse_prompt_steer(&sent, end)
+      {
+        me.log(&format!("steer {}: {e}", if end == PromptSteerEnd::Held { "bounced" } else { "failed" }));
+        if end == PromptSteerEnd::Refused {
+          me.notify(&tp("queue.steerFailed", &[("error", &e.to_string())]));
+        }
+        return;
+      }
+      // Landed by now (or about to be): the turn waits for this answer. A turn that went without it drops it here
+      let _ = answer.send(r);
+    });
+    match end.await {
+      Ok(PromptSteerEnd::Landed) => self.log("steer: sent as a prompt"),
+      Ok(PromptSteerEnd::Refused) => self.release_steer(id, false),
+      Ok(PromptSteerEnd::Held) => {
+        let mut c = self.core.lock();
+        c.queue.steering_id = None;
+        if c.phase.running {
+          self.hold_steer(&mut c, id, "bounced off a card");
+        }
+        self.touch(&mut c);
+        drop(c);
+        self.flush_queue();
+      }
+      Ok(PromptSteerEnd::Missed) | Err(_) => self.release_steer(id, true),
+    }
+    Ok(())
+  }
+
+  /// The running prompt answered (`send_prompt`) while a steer's own prompt was out: the steer joined the turn, which now
+  /// waits for that prompt's answer. Without one the turn is over, and a steer from here on would start a turn of the
+  /// agent's own, so none goes out until the next prompt
+  pub(crate) fn land_prompt_steer(&self) -> Option<oneshot::Receiver<PromptAnswer>> {
+    let mut c = self.core.lock();
+    let Some(steer) = c.queue.prompt_steer.take() else {
+      c.peer.idle = true;
+      return None;
+    };
+    if c.queue.steering_id.as_deref() == Some(steer.id.as_str()) {
+      c.queue.steering_id = None;
+    }
+    if let Some(i) = c.queue.entries.iter().position(|q| q.id == steer.id) {
+      let entry = c.queue.entries.remove(i);
+      let attachments = (!entry.prepared.attachments.is_empty()).then(|| entry.prepared.attachments.clone());
+      push_steer(&mut c.state, SteerBlock { id: entry.id, text: entry.text, attachments });
+    }
+    self.bump(&mut c);
+    Some(steer.finish(PromptSteerEnd::Landed))
+  }
+
+  /// The steer's own prompt failed while the running one had not answered: true when it was still waiting to land
+  fn refuse_prompt_steer(&self, id: &str, end: PromptSteerEnd) -> bool {
+    let mut c = self.core.lock();
+    if !c.queue.prompt_steer.as_ref().is_some_and(|s| s.id == id) {
+      return false;
+    }
+    if let Some(s) = c.queue.prompt_steer.take() {
+      s.finish(end);
+    }
+    true
+  }
+
+  /// agy refuses a prompt while the running one waits on a permission or question card (`antigravity::steer_bounced`):
+  /// a steer holds back while one of the session's own cards is open. A summoned child's card is its own session's
+  pub(crate) fn card_holds_steer(&self, c: &Core) -> bool {
+    let own = |node: &Option<String>| node.as_deref().is_none_or(|id| c.tree.relay_thread_of(id).is_none());
+    c.proc.as_ref().is_some_and(|p| self.vendor.steers_by_prompt(&p.init))
+      && (c.perms.pending.iter().any(|p| own(&p.node_id)) || c.questions.pending.iter().any(|q| own(&q.node_id)))
+  }
+
+  fn hold_steer(&self, c: &mut Core, id: &str, why: &str) {
+    if c.queue.entries.iter().any(|q| q.id == id) && !c.queue.held_steers.iter().any(|x| x == id) {
+      self.log(&format!("steer held: {why}"));
+      c.queue.held_steers.push(id.to_owned());
+    }
+  }
+
+  /// What held steers back is over and the turn runs on: they steer in, in the order they were asked for. One that cannot
+  /// land now is held again or stays queued as an ordinary follow-up
+  pub(crate) async fn steer_held(self: &Arc<Self>) {
+    let ids = std::mem::take(&mut self.core.lock().queue.held_steers);
     for id in ids {
       if let Err(e) = self.steer_entry(&id, false).await {
         self.log(&format!("held steer failed: {e}"));

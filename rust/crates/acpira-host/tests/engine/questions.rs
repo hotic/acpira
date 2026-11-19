@@ -116,6 +116,32 @@ fn codexs_note_field_folds_in_and_typed_text_picks_its_other_choice() {
   expect_eq(form_content(&schema, &qs, &answers(json!({ "q": "A" }))), json!({ "q": "A" }));
 }
 
+#[test]
+fn antigravitys_other_fields_fold_into_their_choice_questions_while_text_only_questions_stay() {
+  // agy acp 1.5.12 emits `q<n>` + `q<n>_other` with no `_meta`, and only `q<n>_other` for option-less questions
+  let schema = json!({ "type": "object", "properties": {
+    "q1": { "type": "string", "title": "Where to wire it?", "oneOf": [{ "const": "a", "title": "Option A" }, { "const": "b", "title": "Option B" }] },
+    "q1_other": { "type": "string", "title": "Other", "description": "Optional free-form answer to: Where to wire it?" },
+    "q2": { "type": "array", "title": "Which targets?", "items": { "anyOf": [{ "const": "cli", "title": "CLI" }, { "const": "bot", "title": "Bot" }] } },
+    "q2_other": { "type": "string", "title": "Other", "description": "Optional free-form answer to: Which targets?" },
+    "q3_other": { "type": "string", "title": "Any extra notes?" },
+  } });
+  assert_eq!(form_question_count(&schema), 3);
+  let qs = form_questions(&schema, "The agent has 3 questions.", None, None);
+  expect_match(v(&qs), json!([
+    { "id": "q1", "text": "Where to wire it?", "kind": "single", "other": true },
+    { "id": "q2", "text": "Which targets?", "kind": "multiple", "other": true },
+    { "id": "q3_other", "text": "Any extra notes?", "kind": "text" },
+  ]));
+  assert!(spare_message("The agent has 3 questions.", &qs).is_none());
+  assert!(spare_message("The agent has a question.", &qs).is_none());
+  expect_eq(
+    form_content(&schema, &qs, &answers(json!({ "q1": "custom", "q2": ["cli", "extra"], "q3_other": "ship it" }))),
+    json!({ "q1_other": "custom", "q2": ["cli"], "q2_other": "extra", "q3_other": "ship it" }),
+  );
+  expect_eq(form_content(&schema, &qs, &answers(json!({ "q1": "a" }))), json!({ "q1": "a" }));
+}
+
 fn questions(s: &acpira_host::acp::session::AcpSession) -> Vec<Value> {
   agent_blocks(&view(s)).into_iter().filter(|b| b["type"] == "question").collect()
 }

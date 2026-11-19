@@ -15,7 +15,8 @@ use crate::acp::session::compaction::{CompactionCompletion, is_compact_command};
 use crate::acp::session::edit::{Handoff, HistoryContext, history_context};
 use crate::acp::session::errors::{error_text, is_auth, is_session_gone, turn_error_of};
 use crate::acp::session::failure::{failure_of, failure_turn_error};
-use crate::acp::session::turn_usage::turn_usage_of;
+use crate::acp::session::queue::PromptSteerEnd;
+use crate::acp::session::turn_usage::{add_wire_usage, prompt_usage_of};
 use crate::acp::session::{AcpSession, Core, num};
 use crate::acp::transcript::normalize::{activity_of, apply_goal, apply_session_failure, end_turn, fail_turn};
 use crate::acp::transport::process::AgentProcess;
@@ -233,7 +234,7 @@ impl AcpSession {
         if let Some(id) = turn_id.filter(|_| crate::acp::session::edit::rewinds(&p.init)) {
           params["_meta"]["acpira/turn"] = Value::String(id);
         }
-        p.request("session/prompt", params).await
+        self.send_prompt(p, params).await
       }
       None => Err(RpcError::internal("no process")),
     };
@@ -267,9 +268,38 @@ impl AcpSession {
     }
   }
 
+  /// The turn's `session/prompt`. On an agent that steers by prompt (`Vendor::steers_by_prompt`) each steer is a prompt
+  /// of its own that answers the one before it at once and owns the rest of the turn (`steer_by_prompt`): the turn
+  /// follows them to the last one's answer, which carries the usage every earlier answer reported
+  async fn send_prompt(&self, p: &AgentProcess, params: Value) -> Result<Value, RpcError> {
+    if !self.vendor.steers_by_prompt(&p.init) {
+      return p.request("session/prompt", params).await;
+    }
+    let mut answer = p.request_ordered("session/prompt", params).await;
+    let mut earlier = Value::Null;
+    loop {
+      let (mut r, handoff) = answer?;
+      // Under the handoff, so the steer block lands ahead of whatever the steer's own prompt streams
+      let Some(next) = self.land_prompt_steer() else {
+        drop(handoff);
+        add_wire_usage(&mut r, &earlier);
+        return Ok(r);
+      };
+      // A stop that reached the agent ahead of the steer ended only the prompt it stopped: the steer would run on
+      if r.get("stopReason").and_then(Value::as_str) == Some("cancelled")
+        && let Some(sid) = self.core.lock().acp_session_id.clone()
+      {
+        p.notify("session/cancel", json!({ "sessionId": sid }));
+      }
+      drop(handoff);
+      add_wire_usage(&mut earlier, &r);
+      answer = next.await.unwrap_or_else(|_| Err(RpcError::internal("the steer's prompt went without an answer")));
+    }
+  }
+
   /// The `session/prompt` params: the blocks, and the auto-compaction setting as `_meta["acpira/compaction"]`, which
   /// the built-in agent reads to compact inside the turn at that threshold (every other agent ignores it)
-  fn prompt_params(&self, acp_id: Option<&str>, blocks: Vec<Value>) -> Value {
+  pub(crate) fn prompt_params(&self, acp_id: Option<&str>, blocks: Vec<Value>) -> Value {
     let mut params = json!({ "sessionId": acp_id, "prompt": blocks });
     // Every turn names whose settings it reads: the session's sender may have changed since the last one
     self.with_client_settings(&mut params, &self.agent);
@@ -848,10 +878,14 @@ impl AcpSession {
       comp.close();
     }
     c.compaction.completion = None;
-    // Steers held behind a compaction missed this turn: the queue sends them as ordinary follow-ups
-    c.queue.steer_after_compaction.clear();
+    // Steers held back missed this turn: the queue sends them as ordinary follow-ups
+    c.queue.held_steers.clear();
     // The turn's steers are its own from here on: a later stop has none of them to give back
     c.queue.steered.clear();
+    // A steer's own prompt the turn never took up: the entry goes out as the next prompt (`steer_by_prompt`)
+    if let Some(s) = c.queue.prompt_steer.take() {
+      s.finish(PromptSteerEnd::Missed);
+    }
     // The parent prompt returned: children still reported running are disconnected, never failed. A stopped or failed
     // turn keeps the cut: the interrupt may have killed them with no word on the wire
     let native_outlive = error.is_none() && stop == TurnStop::EndTurn && self.vendor.children_outlive_prompt();

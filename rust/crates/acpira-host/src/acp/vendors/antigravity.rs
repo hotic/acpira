@@ -9,11 +9,29 @@
 //! A `run_command` sent to the background outlives its turn, and the reply the CLI has the model write when it exits is
 //! stored but never sent. `session/load` on the live process replays the conversation with it: the `replay_*` helpers
 //! tell what such a replay holds that the transcript does not (`session/late_reply.rs`)
+//!
+//! Steering is a second `session/prompt` sent while one runs (`agy acp` from 1.5.0, its changelog; verified on 1.5.12 with
+//! `scripts/probe/steering.ts --via-prompt`): the running prompt answers `end_turn` at once with its usage so far, and the new
+//! one owns the rest of the turn, a running tool included, until it answers itself. The steer is taken up at the next
+//! model call and never echoed. A cancel answers the owning prompt `cancelled`, yet the steer stays in the conversation
 
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::Value;
+
+/// A `session/prompt` sent while a turn runs steers it (`agy acp` 1.5.0 and later): `steering::supported` stays false, as
+/// the CLI has no `_session/steering`. The older `agy_acp_server` package reported versions below that
+pub fn steers_by_prompt(init: &Value) -> bool {
+  init.pointer("/agentInfo/version").and_then(Value::as_str).and_then(super::steering::version_triple).is_some_and(|v| v >= (1, 5, 0))
+}
+
+/// The refusal of a prompt sent while the running one waits on a permission or question card (1.5.12: `Can't add this
+/// prompt to session <id>: the running prompt is waiting for a permission or question answer; answer it or send
+/// session/cancel, then send this prompt again`)
+pub fn steer_bounced(message: &str) -> bool {
+  message.contains("waiting for a permission or question answer")
+}
 
 /// What the failure text says
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +167,14 @@ static WRAPPED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r#
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn agy_acp_steers_by_prompt_from_1_5_0() {
+    let at = |v: &str| steers_by_prompt(&serde_json::json!({ "agentInfo": { "name": "Antigravity ACP Server", "version": v } }));
+    assert!(at("1.5.0") && at("1.5.12") && at("2.0.0"));
+    assert!(!at("1.2.1") && !at("1.4.12"));
+    assert!(!steers_by_prompt(&serde_json::json!({})));
+  }
 
   #[test]
   fn an_mcp_load_failure_names_the_server_and_its_reason() {

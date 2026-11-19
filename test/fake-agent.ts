@@ -101,6 +101,11 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // idle steer ignores the opt-in and runs a turn of its own (`startedNewTurn`, then active, `detached:<text>`, idle).
 // =codex-late: a steer during "slow" ends that turn first (idle, end_turn) and then lands idle, the race the host has to absorb;
 // =codex-gap: "slow" stops after 10 chunks, reports idle and answers the prompt 600 ms later.
+// =agy is agy acp 1.5.x: no `_session/steering`; a prompt sent while "slow" runs takes that turn over, so the running prompt
+// answers end_turn at once (usage 100 in / 10 out) and the new one streams `steered:<text>` and the chunks left, answering
+// end_turn (usage 50 / 5) or cancelled when it is over; a further prompt takes over from it the same way. "slow perm" first
+// waits on a permission card (allow), refusing every prompt meanwhile with agy's error; "slow perm bounce" refuses for 600 ms
+// before the card even reaches the client, the way a steer can cross a card on the wire.
 // A "slow tool" turn opens a tool call and holds every steer unanswered until it is cancelled, which drops them: a foreground
 // Bash on claude-agent-acp 0.86.0+, whose cancel drops the steered messages Claude Code has not picked up yet
 // FAKE_AGENT_VERSION → the version `initialize` reports in agentInfo (default 0.0.0)
@@ -160,6 +165,19 @@ const slowStepMs = Number(process.env.FAKE_SLOW_STEP_MS) || 40;
 const codexLike = steerMode.startsWith('codex');
 // codex-late: the steer that ends the running turn, and the moment that turn's response is out
 const lateSteer = new Map<string, { text: string; done: () => void }>();
+// agy: the sessions whose running prompt waits on a card, which refuse a prompt meanwhile
+const agyCard = new Set<string>();
+// agy: the prompt waiting to take over the session's running "slow" turn, handed the chunk index it carries on from
+const agyTakeover = new Map<string, (from: number) => void>();
+// agy: the running prompt hands its turn to the waiting one and answers at once
+const agyHandOver = (sid: string, i: number, usage: { inputTokens: number; outputTokens: number }): acp.PromptResponse | undefined => {
+  const take = agyTakeover.get(sid);
+  if (!take) return undefined;
+  agyTakeover.delete(sid);
+  // After this response is on the wire, as agy streams the steer's part only once the running prompt has answered
+  setTimeout(() => take(i), 20);
+  return { stopReason: 'end_turn', usage: { ...usage, totalTokens: usage.inputTokens + usage.outputTokens } };
+};
 const threadStatus = (sessionId: string, type: 'active' | 'idle') => ({ sessionId,
   update: { sessionUpdate: 'session_info_update', _meta: { codex: { threadStatus: type === 'active' ? { type, activeFlags: [] } : { type } } } } }) as unknown as acp.SessionNotification;
 const modes = new Map<string, string>();
@@ -306,7 +324,7 @@ const app = acp.agent({ name: 'fake-agent' })
       },
       // Only a fake with an extension to advertise answers with `_meta` at all
       ...(process.env.FAKE_STEERING || Object.keys(goalCap()).length
-        ? { _meta: { ...(process.env.FAKE_STEERING ? { steering: { supported: true } } : {}), ...goalCap() } } : {}),
+        ? { _meta: { ...(process.env.FAKE_STEERING && process.env.FAKE_STEERING !== 'agy' ? { steering: { supported: true } } : {}), ...goalCap() } } : {}),
       authMethods: [
         { id: 'fake.login', name: 'Fake login', description: 'run fake login' },
         // Terminal methods are only offered to clients that can run them (claude-agent-acp gates its logins the same way)
@@ -516,7 +534,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest('_session/steering', value => value as { sessionId: string; prompt: acp.ContentBlock[]; _meta?: { steering?: { idleBehavior?: string } } }, async ({ params, client }) => {
     const mode = steerMode;
-    if (!mode) throw acp.RequestError.methodNotFound('_session/steering');
+    if (!mode || mode === 'agy') throw acp.RequestError.methodNotFound('_session/steering');
     const sid = params.sessionId;
     const text = params.prompt.map(p => (p.type === 'text' ? p.text : `[${p.type}]`)).join('');
     if (process.env.FAKE_STEER_LOG) appendFileSync(process.env.FAKE_STEER_LOG, `${text}\n`);
@@ -624,6 +642,33 @@ const app = acp.agent({ name: 'fake-agent' })
     if (process.env.FAKE_PROMPT_LOG) appendFileSync(process.env.FAKE_PROMPT_LOG, `${JSON.stringify({ sessionId: sid, text: full })}\n`);
     const send = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: sid, update });
     cancelled.delete(sid);
+    // FAKE_STEERING=agy: a prompt while "slow" runs is a steer that carries the turn on, unless a card holds the turn
+    if (steerMode === 'agy' && agyCard.has(sid)) {
+      throw acp.RequestError.internalError(undefined, `Can't add this prompt to session ${sid}: the running prompt is waiting for a permission or question answer; answer it or send session/cancel, then send this prompt again`);
+    }
+    if (steerMode === 'agy' && steerable.has(sid)) {
+      const from = await new Promise<number>(resolve => agyTakeover.set(sid, resolve));
+      steerable.add(sid);
+      try {
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `steered:${text} ` } });
+        for (let i = from; i < 50; i++) {
+          if (cancelled.has(sid)) return { stopReason: 'cancelled' };
+          const handed = agyHandOver(sid, i, { inputTokens: 50, outputTokens: 5 });
+          if (handed) return handed;
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `${i} ` } });
+          await new Promise(r => setTimeout(r, slowStepMs));
+        }
+        return { stopReason: 'end_turn', usage: { inputTokens: 50, outputTokens: 5, totalTokens: 55 } };
+      } finally {
+        steerable.delete(sid);
+      }
+    }
+    // "exit-mid-turn" → the process dies while the turn runs, before any reply (a crashed CLI)
+    if (text === 'exit-mid-turn') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } });
+      setTimeout(() => process.exit(1), 50);
+      return new Promise<acp.PromptResponse>(() => {});
+    }
     // The goal extension: `/goal …` changes the snapshot, "goal-done" meets it
     const goalCommand = goalMode ? /^\/goal\s+([\s\S]+)$/.exec(text.trim()) : null;
     if (goalCommand || (goalMode && text === 'goal-done')) {
@@ -1942,6 +1987,20 @@ const app = acp.agent({ name: 'fake-agent' })
     }
 
     if (text.includes('slow')) {
+      if (steerMode === 'agy' && text.includes('perm')) {
+        agyCard.add(sid);
+        try {
+          await send({ sessionUpdate: 'tool_call', toolCallId: 'agy-perm', title: 'make', kind: 'execute', status: 'pending', rawInput: { command: 'make' } });
+          if (text.includes('bounce')) await new Promise(r => setTimeout(r, 600));
+          await client.request(acp.methods.client.session.requestPermission, {
+            sessionId: sid, toolCall: { toolCallId: 'agy-perm', title: 'make' },
+            options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
+          });
+        } finally {
+          agyCard.delete(sid);
+        }
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'agy-perm', status: 'completed' });
+      }
       steerable.add(sid);
       if (codexLike) await client.notify(acp.methods.client.session.update, threadStatus(sid, 'active'));
       const late = lateSteer;
@@ -1952,6 +2011,8 @@ const app = acp.agent({ name: 'fake-agent' })
             return { stopReason: 'cancelled' };
           }
           if (late.has(sid)) break;
+          const handed = steerMode === 'agy' ? agyHandOver(sid, i, { inputTokens: 100, outputTokens: 10 }) : undefined;
+          if (handed) return handed;
           if (steerMode === 'codex-gap' && i === 10) {
             await client.notify(acp.methods.client.session.update, threadStatus(sid, 'idle'));
             steerable.delete(sid);

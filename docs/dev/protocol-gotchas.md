@@ -28,7 +28,6 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 - The built-in agent's `exit_plan` mirrors Claude's shape plus `_meta["acpira/planApproval"]`, and follows an approval with its own `current_mode_update` to `agent`.
 - Claude ends the turn `cancelled` on a Revise `reject`, so Revise goes with the user's words as the queued next prompt; that turn counts as settled, not stopped (`revisedPlanEnd`).
 - A failed model switch leaves plan approval pending. Kimi 0.41.0 omits `current_mode_update` after approval: sync to Default only once its ExitPlanMode output confirms.
-- Known Claude (0.83.0) and Codex (1.13.0) plan labels localize (`permissionOptions.ts`); ids and unknown text stay verbatim.
 
 ## Permissions
 
@@ -44,7 +43,6 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 - A `category=mode` configOption stands in for modes only when none were sent (legacy Grok); beside modes it duplicates.
 - Claude / Antigravity mix permission levels and working modes in one list: `session/access.rs` shows the levels as the `approval` select beside `default` + working modes, so `mode_id` is that view; the CLI's mode is `AccessState::wire`. agy 1.5.9 has no full-access mode over ACP: full access is `accept-edits` plus host approval (`agent-quirks.md`).
 - User picks overlay the view and revert on failure; `agentControls` / `toRecord()` stay agent truth.
-- Every Fast shape is one switch (`isFastControl`): Devin `speed` select, Codex `fast-mode`, Claude `fast` boolean, model-name variants.
 - Advertising AIR `recommendedValue` makes claude-agent-acp report concrete values, not `default` rows.
 - A model switch re-sets the previous effort when offered (Devin resets `thought_level`, Claude re-seeds effort per model). While in flight, dependent controls use the target's learned shape; an unknown target hides the old effort / model parameters. Queued picks validate after earlier model answers; prompts wait until picks settle: an old menu cannot send an unsupported effort or race the new model.
 - Claude's Ultra is host-added and never hits the wire (`agent-quirks-claude.md`, Orchestration levels).
@@ -52,8 +50,8 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 ## Queue
 
 - Prompts sent during a turn queue host-side (memory, send order). Send-now cancels and lets completion flush; never send a concurrent prompt from the cancel response.
-- **Steering** (`vendors/steering.rs`, peers advertising `_meta.steering.supported`): `_session/steering` with `idleBehavior: promptRequired`, answered via `request_ordered` so an `injected` block lands before later updates. A steer that cannot land stays queued, never cancels the turn.
-- No steer during a compaction (it aborted the agent's own); steers park until it ends.
+- **Steering**: peers advertising `_meta.steering.supported` take `_session/steering` (`vendors/steering.rs`) with `idleBehavior: promptRequired`, answered via `request_ordered` so an `injected` block lands before later updates. agy takes a mid-turn `session/prompt` as the steer: the turn follows each steer's own prompt to its answer (`send_prompt`, `agent-quirks.md`). A steer that cannot land stays queued, never cancels the turn.
+- No steer during a compaction (it aborted the agent's own) or while agy waits on a card (it refuses the prompt); steers park until that ends.
 - A steer during a Claude autonomous cycle goes out as a plain `session/prompt` that takes the session over (no cancel): the adapter has no turn to steer into. Gated on `claude_autonomous::prompt_joins_cycle`; older adapters keep it queued — their prompt never settles.
 - codex-acp answers an idle steer `startedNewTurn`, so the race reads off `_meta.codex.threadStatus`: after `idle` no steer goes out; a `startedNewTurn` that slips through marks the session `detached` until the next `idle`.
 - **Stop and steers**: claude-agent-acp ≥ 0.86.0 drops unanswered steers on cancel, so cancel requeues them first (gated on `Vendor::requeues_steers_on_cancel` + agentInfo version). A handover cancel leaves them — the queue does not travel.
@@ -94,7 +92,7 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 - Background compaction: Devin 3000.6.14 and Kimi 0.41.0 acknowledge `/compact` before it finishes; the queue holds to completion (`acp/session/compaction.rs`). Releasing on the RPC response cancels Devin's or loses Kimi's reply. Grok 1.0.18 waits inside the request.
 - Advertising `clientCapabilities.session.compaction` moves claude-agent-acp / codex-acp to structured `compaction_update`. Prose adapters (devin / kimi / pi) match exact whole-chunk sentences in `compaction_text.rs`; add new ones with the version seen.
 - The ring's split (`shared/context.ts`): the built-in agent (`_meta["acpira/context"]`) answers from its last request, or restored history before the first call after a reopen. Every other agent, and any session without a live process, gets `context_estimate.rs`: the transcript after the last finished compaction scaled into the agent's figure (it can hold more than was sent), the rest one unsplit `agent` part.
-- Reported windows are observations, not model limits (Grok 1.0.18 250,000; Devin 3000.10.21 262,000; Kimi 0.41.0 262,144).
+- Reported windows are what the CLI says, not the model's limits.
 
 ## Questions
 
@@ -102,7 +100,7 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 - Devin 3000.6.14: gated on the client's `elicitation.form` capability; `elicitation/create` form **without** `toolCallId`, label in `const`, description in `title` (opposite of the spec). Missing keys in `accept` read as decline. Without one, the latest tool input with the same question count supplies labels.
 - Kimi 0.41.0: the same form **with** `toolCallId`, no descriptions, question texts joined in `message`; partial `accept` is fine.
 - Grok 1.0.18: private `_x.ai/ask_user_question`, `outcome` `accepted` / `skip_interview` / `chat_about_this`. A model claiming the tool unavailable is not a client failure.
-- Claude (claude-agent-acp ≥ 0.81.0) and Codex (codex-acp 1.13.0) add a free-text companion property per question (Claude's AIR `customAnswer` marker from 0.83.0, Codex `<id>_note` + a `None of the above` choice) and fixed English `message`s; companions fold into `other`, those messages drop.
+- Claude (claude-agent-acp ≥ 0.81.0), Codex (codex-acp 1.13.0) and Antigravity (`agy acp` 1.5.12) add a free-text companion property per question (Claude's AIR `customAnswer` marker from 0.83.0, Codex `<id>_note` + a `None of the above` choice, Antigravity `q<n>_other` with no `_meta` and `Optional free-form answer to: …` description) and fixed English `message`s; companions fold into `other`, those messages drop.
 - The built-in agent's `question` tool: Kimi's form plus descriptions and `_meta["acpira/allowOther"]`.
 - Answer images only where Acpira owns both ends (ACP form answers are flat primitives): `_meta["acpira/answerImages"]` on the form and the `accept`.
 - Skip maps to Grok `skip_interview` / form `decline` (or partial `accept`); Stop and turn end cancel.

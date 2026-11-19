@@ -6,9 +6,12 @@ import { builtinAgent } from '../lib/sidecarBin';
 
 // Raw-wire `_session/steering` probe: what an adapter really does with a steer, mid-turn and idle. Spends real model calls.
 //
-//   pnpm exec tsx scripts/probe/steering.ts <claude|codex|…> [--model TEXT] [--idle-wait MS] [--out FILE]
+//   pnpm exec tsx scripts/probe/steering.ts <claude|codex|…> [--model TEXT] [--idle-wait MS] [--via-prompt] [--out FILE]
 //
 // --model: switch the session's model configOption to the first value whose id or name contains TEXT (case-insensitive)
+// --via-prompt: for agents that steer by a second `session/prompt` sent mid-turn (agy acp): the steer goes out that way, during
+//   a running tool, during streamed prose, and once more followed by a `session/cancel`; there is no idle phase. Checks which
+//   request settles when, which updates land after each answer, and whether the steer is echoed
 //
 // 1. initialize: prints `_meta.steering`
 // 2. mid-turn: a prompt that runs `sleep 10` through the agent's shell tool; once the first tool call shows up, a steer asks the
@@ -44,10 +47,13 @@ const note = (what: string, extra?: unknown) => {
 };
 
 // What the root session streamed, split around the steer so the reply to it can be checked on its own
-type Phase = 'before' | 'after' | 'idle' | 'final';
+type Phase = 'before' | 'after' | 'idle' | 'final' | 'stream' | 'stream-after' | 'cancel' | 'cancel-after';
 let phase = 'before' as Phase;
-const text: Record<Phase, string> = { before: '', after: '', idle: '', final: '' };
-const updates: { t: number; phase: string; kind: string }[] = [];
+const text: Record<Phase, string> = { before: '', after: '', idle: '', final: '', stream: '', 'stream-after': '', cancel: '', 'cancel-after': '' };
+// answers: how many `session/prompt` requests had settled when the update came (--via-prompt)
+let answers = 0;
+const updates: { t: number; phase: string; kind: string; answers: number }[] = [];
+let firstChunk: (() => void) | undefined;
 let firstTool: (() => void) | undefined;
 
 const def = builtinAgent(agentId);
@@ -68,10 +74,12 @@ const agent = new RawAgent(def.spawn!, cwd, def.env ?? {}, {
     if (method !== 'session/update') return;
     const u = (params.update ?? {}) as Record<string, unknown>;
     const kind = String(u.sessionUpdate);
-    updates.push({ t: Date.now() - t0, phase, kind });
+    updates.push({ t: Date.now() - t0, phase, kind, answers });
     if (kind === 'agent_message_chunk') {
       const c = u.content as { type?: string; text?: string } | undefined;
       if (c?.type === 'text') { text[phase] += c.text ?? ''; process.stdout.write(c.text ?? ''); }
+      firstChunk?.();
+      firstChunk = undefined;
     } else if (kind === 'tool_call') {
       note(`tool_call ${String(u.title ?? '')}`);
       firstTool?.();
@@ -87,7 +95,7 @@ const agent = new RawAgent(def.spawn!, cwd, def.env ?? {}, {
 const summary: Record<string, unknown> = { agent: agentId, cwd };
 async function finish(code: number) {
   const byPhase = (p: string) => updates.filter(u => u.phase === p);
-  summary.updateKinds = Object.fromEntries((['before', 'after', 'idle', 'final'] as const).map(p => [p, [...new Set(byPhase(p).map(u => u.kind))]]));
+  summary.updateKinds = Object.fromEntries([...new Set(updates.map(u => u.phase))].map(p => [p, [...new Set(byPhase(p).map(u => u.kind))]]));
   summary.lastIdleUpdateAt = byPhase('idle').at(-1)?.t;
   log.push(JSON.stringify({ summary }));
   await writeFile(outFile, `${log.join('\n')}\n`);
@@ -96,6 +104,80 @@ async function finish(code: number) {
   process.exit(code);
 }
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => void finish(130));
+
+const viaPrompt = argv.includes('--via-prompt');
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const SLEEP_PROMPT = (secs: number) => `Run exactly this shell command and wait for it to finish: \`sleep ${secs} && echo sleep-done\`. Then reply with one short sentence saying what it printed.`;
+
+// One `session/prompt`, settled into what it answered, when, and how many updates had arrived by then
+function prompt(sessionId: string, label: string, message: string) {
+  const sent = Date.now();
+  const settle = (out: Record<string, unknown>) => {
+    answers++;
+    const at = { ...out, ms: Date.now() - sent, at: Date.now() - t0, updatesBefore: updates.length };
+    note(`${label} settled`, at);
+    return at;
+  };
+  return agent.request<Record<string, unknown>>('session/prompt', { sessionId, prompt: [{ type: 'text', text: message }] })
+    .then(r => settle({ result: r }), (e: unknown) => settle({ error: e instanceof RpcError ? { code: e.code, message: e.message } : String(e) }));
+}
+
+// Updates of one phase grouped by how many prompts had settled when each came
+const kindsByAnswers = (p: Phase) => Object.fromEntries([...new Set(updates.filter(u => u.phase === p).map(u => u.answers))]
+  .map(n => [`afterAnswers${n}`, updates.filter(u => u.phase === p && u.answers === n).map(u => u.kind)
+    .filter((k, i, a) => a.indexOf(k) === i)]));
+
+async function steerByPrompt(sessionId: string) {
+  // During a running tool
+  answers = 0;
+  const toolSeen = new Promise<void>(resolve => { firstTool = resolve; });
+  const p1 = prompt(sessionId, 'prompt 1 (tool)', SLEEP_PROMPT(10));
+  await Promise.race([toolSeen, sleep(20_000)]);
+  await sleep(1500);
+  phase = 'after';
+  const p2 = prompt(sessionId, 'steer prompt (tool)', `Additional instruction from the user: end your final reply with the exact word ${MARKER}.`);
+  const [a1, a2] = await Promise.all([p1, p2]);
+  summary.midTool = { first: a1, steer: a2, kinds: { before: kindsByAnswers('before'), after: kindsByAnswers('after') },
+    markerInReplyAfterSteer: text.after.includes(MARKER), replyBeforeSteer: text.before.slice(-300), replyAfterSteer: text.after.slice(-300) };
+  await sleep(1500);
+
+  // During streamed prose
+  phase = 'stream';
+  answers = 0;
+  const chunk = new Promise<void>(resolve => { firstChunk = resolve; });
+  const p3 = prompt(sessionId, 'prompt 2 (prose)', 'Without using any tools, write the numbers from 1 to 80, one per line, each followed by a fruit name.');
+  await Promise.race([chunk, sleep(30_000)]);
+  await sleep(800);
+  phase = 'stream-after';
+  const p4 = prompt(sessionId, 'steer prompt (prose)', `Additional instruction from the user: stop the list now and reply with just the word ${MARKER}-PROSE.`);
+  const [a3, a4] = await Promise.all([p3, p4]);
+  summary.midProse = { first: a3, steer: a4, kinds: { before: kindsByAnswers('stream'), after: kindsByAnswers('stream-after') },
+    markerAfterSteer: text['stream-after'].includes(`${MARKER}-PROSE`), proseBeforeSteerChars: text.stream.length,
+    replyAfterSteer: text['stream-after'].slice(-300) };
+  await sleep(1500);
+
+  // A cancel after a steer: does it stop both, and does the session take a prompt afterwards
+  phase = 'cancel';
+  answers = 0;
+  const toolSeen2 = new Promise<void>(resolve => { firstTool = resolve; });
+  const p5 = prompt(sessionId, 'prompt 3 (cancel)', SLEEP_PROMPT(20));
+  await Promise.race([toolSeen2, sleep(20_000)]);
+  await sleep(1000);
+  phase = 'cancel-after';
+  const p6 = prompt(sessionId, 'steer prompt (cancel)', `Additional instruction from the user: end your final reply with the exact word ${MARKER}-CANCEL.`);
+  await sleep(2000);
+  agent.notify('session/cancel', { sessionId });
+  note('session/cancel sent');
+  const [a5, a6] = await Promise.all([p5, p6]);
+  await sleep(5000);
+  summary.cancel = { first: a5, steer: a6, kinds: { before: kindsByAnswers('cancel'), after: kindsByAnswers('cancel-after') },
+    textAfterSteer: text['cancel-after'].slice(-300) };
+
+  phase = 'final';
+  const finalSent = Date.now();
+  const r = await agent.request<Record<string, unknown>>('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Reply with just OK.' }] });
+  summary.after = { stopReason: r.stopReason, ms: Date.now() - finalSent, text: text.final.slice(-200) };
+}
 
 const steer = (sessionId: string, message: string) => agent.request<Record<string, unknown>>('_session/steering', {
   sessionId, prompt: [{ type: 'text', text: message }], _meta: { steering: { idleBehavior: 'promptRequired' } },
@@ -123,6 +205,10 @@ try {
     note(`model → ${pick.value}`);
   }
   summary.model = model ?? modelOption?.currentValue;
+  if (viaPrompt) {
+    await steerByPrompt(sessionId);
+    await finish(0);
+  }
 
   // Mid-turn
   const toolSeen = new Promise<void>(resolve => { firstTool = resolve; });
