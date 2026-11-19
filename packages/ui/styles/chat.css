@@ -79,18 +79,19 @@
   &[data-more-below] { --fade-bottom: var(--scroll-fade-size); }
 }
 
-/* The transcript fades only its lower edge, and only while Thread marks data-more-below (the reader left the bottom)
-   or the floating connecting row sits over the tail. The second, fully opaque layer covers the scrollbar gutter, so
-   the thumb keeps its full length; the bar stays visible here, unlike scroll-fade. */
+/* The transcript always fades its top gap: a stuck prompt card stops just below it (HistoryMessage's band), so only a card
+   pushed out by the next exchange, and rows above it, pass through. The top padding (pt-pad-y) is at least a gap, so
+   nothing shows there at the start. The lower edge fades only while Thread marks data-more-below (the reader left the
+   bottom) or the floating connecting row sits over the tail. The second, fully opaque layer covers the scrollbar gutter,
+   so the thumb keeps its full length; the bar stays visible here, unlike scroll-fade. */
 @utility thread-fade {
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--gap), #000 calc(100% - var(--thread-fade-clear) - var(--thread-fade-span)), transparent calc(100% - var(--thread-fade-clear))), linear-gradient(#000, #000);
+  mask-size: 100% 100%, var(--scrollbar) 100%;
+  mask-position: 0 0, 100% 0;
+  mask-repeat: no-repeat;
   &[data-more-below],
   &:has(~ [data-plan-dock] [data-session-connecting]) {
-    --thread-fade-clear: 0px;
     --thread-fade-span: var(--scroll-fade-size);
-    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--thread-fade-clear) - var(--thread-fade-span)), transparent calc(100% - var(--thread-fade-clear))), linear-gradient(#000, #000);
-    mask-size: 100% 100%, var(--scrollbar) 100%;
-    mask-position: 0 0, 100% 0;
-    mask-repeat: no-repeat;
   }
   &:has(~ [data-plan-dock] [data-session-connecting]):not([data-more-below]) {
     --thread-fade-clear: var(--gap);
@@ -303,6 +304,17 @@
   }
   [data-process-fold][data-open]:not(:last-child) {
     margin-block-end: calc(var(--process-prose-gap) - var(--gap) - var(--spacing) * 1.5);
+  }
+  /* A process head right under the prompt card stands as far below the card as the reply stands below the head (the
+     prose gap, measured to the head row's box, whose slack over a process row matches the reply's leading). The margin
+     follows a head that retires (a reply with no steps) back to the message gap, in step with its fold closing */
+  [data-sticky-prompt] + [data-part="agent-message"] { transition: margin-block-start var(--dur-open) ease-out var(--dur-open); }
+  [data-sticky-prompt] + [data-part="agent-message"]:has(> :first-child > [data-process-fold]:first-child > [data-fold-head]:not([inert])) {
+    margin-block-start: calc(var(--process-prose-gap) - var(--msg-gap));
+  }
+  /* Under a steered prompt's card there is neither: the reply keeps the whole prose gap, as narrative after a card does */
+  [data-process-fold][data-card-tail]:not(:last-child) {
+    margin-block-end: calc(var(--process-prose-gap) - var(--gap));
   }
 
   /* The context report pointing at calls (chat/reportLink.ts): their rows lit on a band, the rest of the thread dimmed.

@@ -76,9 +76,10 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       const end = body.getBoundingClientRect().bottom - el.getBoundingClientRect().top - el.clientTop + el.scrollTop - lead;
       const frac = end - Math.floor(end);
       // A thread that fits its viewport has no tail to hold: its top is what stays put, and a pad following the height
-      // of a fold animating open or shut moved every row a device pixel back and forth per frame. The pad itself can
-      // be the only overflow, hence the pixel of slack while one is set
-      const fits = el.scrollHeight - el.clientHeight <= (lead ? 1 : 0);
+      // of a fold animating open or shut moved every row a device pixel back and forth per frame. Judged on the content
+      // without the pad (`end`), so the pad never decides whether it is needed: read off scrollHeight, a thread a
+      // fraction over its viewport fitted once padded and overflowed once not, and the pad came and went every frame
+      const fits = end <= el.clientHeight + 0.01;
       const next = fits || frac < 0.01 || frac > 0.99 ? 0 : Math.round((1 - frac) * 100) / 100;
       if (next === lead && padded === body) return false;
       lead = next;

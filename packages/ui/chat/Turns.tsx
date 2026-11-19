@@ -13,6 +13,7 @@ import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, RowLeadsCon
 import { Button } from '../ui/Button';
 import { Disclosure } from '../ui/Disclosure';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
+import { cssTimeVar } from '../ui/cssTime';
 import { useStableList } from '../ui/useStableList';
 import { Orb } from '../effects/Orb';
 import { cn } from '../ui/cn';
@@ -653,7 +654,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   const toggle = useCallback((next: boolean) => { setChoice({ key: memoryKey, manual: next }); if (memoryKey) rememberFold(memoryKey, next); }, [memoryKey]);
   const following = useFollowing();
   const quiet = useContext(QuietEntranceContext);
-  const { keepProcess, stepIcons } = useAppearance();
+  const { keepProcess, stepIcons, motion } = useAppearance();
   const held = useRef(false);
   const live = running || replyBusy || (!following && held.current);
   held.current = live;
@@ -673,6 +674,16 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   const continuing = continuingToolItem(items, running && turn.blocks.at(-1) === blocks.at(-1));
   const store = useProcessFolds(items, manual === undefined && keepProcess === 'off', live, following, memoryKey);
   const imageResults = useMemo(() => blocks.filter(isImageResultBlock), [blocks]);
+  // Image results move under their tool rows only once an opening fold has grown (FoldImages); with no transition to
+  // wait for (a quiet mount, motion switched off) they move at once
+  const [grown, setGrown] = useState(open);
+  if (!open && grown) setGrown(false);
+  const onGrown = useCallback(() => setGrown(true), []);
+  const imagesInFold = open && (grown || imageResults.length === 0 || quiet.current || motion === 'none' || reducedMotion());
+  // Images that leave a fold as it closes start from where they stood inside it. Recorded after commit: the reset of
+  // `grown` above re-runs this render, and a write here would already be read back by the rerun
+  const wasInFold = useRef(imagesInFold);
+  useLayoutEffect(() => { wasInFold.current = imagesInFold; });
   const activity = liveActivity(turn, lead);
   const since = clockStart(turn);
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
@@ -684,6 +695,9 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
     : undefined;
   // Steered prompts and the subagent rows at a delegation stay visible between the folding parts of the process
   const parts = useMemo(() => activeProcess ? processParts(items) : EMPTY_PARTS, [activeProcess, items]);
+  // What the reply stands under when it is a steered prompt's card: any of them once the parts have folded away, the
+  // last part while they show. A card has no row slack for the fold's margin to take back (chat.css)
+  const cardTail = open ? parts.at(-1)?.type === 'steer' : parts.some(part => part.type === 'steer');
   // Only items fold; a process of nothing but delegations has no chevron
   const foldable = activeProcess ? parts.some(part => part.type === 'items') : blocks.length > 0;
   // A fold opened by hand is read from its head; a working turn's, or one that mounts open, from its end too
@@ -706,10 +720,10 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
       // The root is the reply stack's flex item; an inner margin cannot cancel its sibling gap.
       retired && blocks.length === 0 && '-mb-gap [transition-delay:var(--dur-open)]',
       quiet.current && 'transition-none',
-    )} data-open={open || undefined} data-process-fold>
+    )} data-open={open || undefined} data-card-tail={cardTail || undefined} data-process-fold>
       {mounted.current && (
         // The clip reserves the head's hit area like the panel below; a flex column stretches the button to the full row
-        <div inert={retired} className={cn('-mx-hit grid transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out',
+        <div inert={retired} data-fold-head className={cn('-mx-hit grid transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out',
           retired ? 'grid-rows-[0fr] opacity-0 [transition-delay:var(--dur-open),0s]' : 'grid-rows-[1fr] opacity-100',
           quiet.current && 'transition-none')}>
           <div className="flex min-h-0 flex-col overflow-hidden px-hit"><EntranceOnce id="fold-head">{head}</EntranceOnce></div>
@@ -717,7 +731,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
       )}
       {blocks.length > 0 && (
         // The head keeps its status mark either way; the steps under it drop their icons with Appearance `stepIcons`
-        <RowLeadsContext.Provider value={stepIcons === 'on'}><ImageInFoldContext.Provider value={open}>
+        <RowLeadsContext.Provider value={stepIcons === 'on'}><ImageInFoldContext.Provider value={imagesInFold}>
           <AutoFoldContext.Provider value={store}>
             {activeProcess ? parts.map((part, i) => {
               // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
@@ -750,10 +764,8 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
           </AutoFoldContext.Provider>
         </ImageInFoldContext.Provider></RowLeadsContext.Provider>
       )}
-      {!open && imageResults.length > 0 && (
-        <div className="flex min-w-0 flex-col gap-gap pt-gap">
-          {imageResults.map(block => isShowWidgetTool(block) ? <ShownWidget key={block.id} block={block} /> : isShowVideoTool(block) ? <ShownVideos key={block.id} block={block} /> : <GeneratedImages key={block.id} block={block} />)}
-        </div>
+      {!imagesInFold && imageResults.length > 0 && (
+        <FoldImages blocks={imageResults} open={open} lifted={wasInFold.current} quiet={quiet.current} onGrown={onGrown} />
       )}
     </Collapsible.Root>
   );
@@ -772,6 +784,46 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   && prev.turn.retry === next.turn.retry
   && prev.turn.error === next.turn.error
   && waitState(prev.turn) === waitState(next.turn));
+
+const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+// Fallback for --dur-open when it cannot be read, plus a frame or two for the panel to finish growing
+const DEFAULT_OPEN_MS = 220;
+const GROWN_SLACK_MS = 50;
+
+// The image results of a closed process fold, drawn under it so a collapsed turn still shows them. An opening fold keeps
+// them here until its panel has grown (`onGrown`): they ride down with it, then take their place under their tool rows.
+// Moved into a panel that starts at zero height, a picture vanished and unrolled again. Here they stand the panel's tail
+// (`pb-1.5`) lower than under their row, so an open fold lifts them by that much and a closing fold mounts them lifted,
+// then lets them down with the close: when the images are the process's last step, neither hand-over moves a pixel.
+function FoldImages({ blocks, open, lifted, quiet, onGrown }: { blocks: ToolCallBlock[]; open: boolean; lifted: boolean; quiet: boolean; onGrown: () => void }) {
+  const frame = useRef<HTMLDivElement>(null);
+  const [lift, setLift] = useState(lifted);
+  // Let a closing fold's images down after one painted frame at the lifted spot, so the change transitions
+  useEffect(() => {
+    if (!lift || open) return;
+    let next = 0;
+    const first = requestAnimationFrame(() => { next = requestAnimationFrame(() => setLift(false)); });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(next); };
+  }, [lift, open]);
+  useEffect(() => {
+    if (!open) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Read in the next frame, as Collapsible's PanelFrame does: a style read inside the opening click resolves the whole body
+    const wait = requestAnimationFrame(() => {
+      const grow = frame.current ? cssTimeVar(frame.current, '--dur-open', DEFAULT_OPEN_MS) : DEFAULT_OPEN_MS;
+      timer = setTimeout(onGrown, grow + GROWN_SLACK_MS);
+    });
+    return () => { cancelAnimationFrame(wait); clearTimeout(timer); };
+  }, [open, onGrown]);
+  return (
+    <div ref={frame} className={cn('flex min-w-0 flex-col gap-gap pt-gap transition-transform',
+      open || lift ? '-translate-y-1.5 duration-(--dur-open) ease-out' : 'duration-(--dur-close) ease-(--ease-close)',
+      quiet && 'transition-none')}>
+      {blocks.map(block => isShowWidgetTool(block) ? <ShownWidget key={block.id} block={block} /> : isShowVideoTool(block) ? <ShownVideos key={block.id} block={block} /> : <GeneratedImages key={block.id} block={block} />)}
+    </div>
+  );
+}
 
 // The outer fold's close (--dur-close) and a frame or two: rows inside hold still until it has finished
 const SETTLE_MS = 400;

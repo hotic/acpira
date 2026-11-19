@@ -77,7 +77,10 @@ export const HistoryMessage = memo(function HistoryMessage(p: {
   // card never reads as the original until reopened. Read at render: closing the editor re-renders this card
   const shown = editor || !context ? p.turn : parkedTurn(p.turn, editKey(context.sessionId, p.turn, p.turnIndex));
   return (
-    <div data-sticky-prompt className="peer/prompt pointer-events-none sticky top-0 z-10 flex min-w-0 shrink-0 flex-col">
+    // The wrapper reaches one gap above the card (pt-gap, given back by -mt-gap) and sticks flush at the top: the card stops
+    // below the thread's top fade (thread-fade), and the band, painted in the page's colour while stuck, hides the rows
+    // that scrolled under the card. A card pushed out by the next exchange dissolves through the fade instead of a flat cut
+    <div data-sticky-prompt className="peer/prompt pointer-events-none sticky top-0 z-10 -mt-gap flex min-w-0 shrink-0 flex-col pt-gap">
       <div ref={base} data-part="user-message" data-turn={p.turnIndex} className="pointer-events-auto flex min-w-0 flex-col rounded-lg bg-bg-0">
         <div key={swap.n} className={cn('flex min-w-0 flex-col', swap.fade && 'fade-in')}>
           {editor

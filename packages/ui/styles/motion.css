@@ -163,6 +163,10 @@
 /* Catch-up is restored history: neither the fold nor its entry fade may replay the update. */
 .plan-entry-fold[data-quiet], .plan-entry-fold[data-quiet] .plan-dock-entry { transition: none; }
 
+/* The to-do dock folds in with its first list and out when its turn ends. A panel mounted open has no closed state
+   to grow from, so the first frame starts it folded; the thread's clearance follows the fold frame by frame */
+@starting-style { .plan-bar-fold[data-open]:not([data-quiet]) { grid-template-rows: 0fr; opacity: 0; } }
+
 /* One measured path from the icon to a short solid-dot endpoint. The segment's own
    height is the single source of length: the line fills it and the dot hangs off its
    bottom edge. ConnectedRail eases --rail-length itself (see the note there); a CSS
