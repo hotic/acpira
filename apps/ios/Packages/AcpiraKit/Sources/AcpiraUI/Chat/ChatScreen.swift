@@ -372,7 +372,7 @@ struct Thread: View {
     .background {
       TranscriptCollection(items: threadItems(session, preOpen: preOpen,
                                               loadingEarlier: model?.loadingEarlier[session.id] != nil), control: control,
-                           running: session.running, motion: motion, earlier: session.earlier,
+                           motion: motion, earlier: session.earlier,
                            loadEarlier: { [model] in model?.loadEarlier(session.id) },
                            fillEarlier: { [model] in model?.fillEarlier(session.id) }) { values in
         values.applyThread(session, quiet: quiet)
