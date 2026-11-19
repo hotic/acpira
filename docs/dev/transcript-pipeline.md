@@ -97,7 +97,7 @@ AIR extensions of codex-acp / claude-agent-acp (`acp-agents-compat.md`); code: `
 
 ## Usage, forking and export
 
-- `AgentTurn.usage` comes from the prompt response, absent fields stay absent. Kimi 0.41.0 reports none; Devin 3000.11.205 reports only the last model call while claude-agent-acp sums the turn, so throughput for a last-call tally is timed from the last tool's end. Output speed takes the built-in agent's `decodeMs`, else drops `idleMs` (`normalize/idle.rs`: background waits, pauses, detached continuations whose tokens never enter `usage`).
+- Turn usage normally comes from the prompt response. Kimi 0.41.0 reports none; Devin 3000.11.205 reports only the last model call while claude-agent-acp sums the turn, so throughput for a last-call tally is timed from the last tool's end. Output speed takes the built-in agent's `decodeMs`, else drops `idleMs` (`normalize/idle.rs`: background waits, pauses, detached continuations whose tokens never enter `usage`).
 - `input` always counts the whole prompt, cache included (`fold_cache_into_input`, also on record load). Devin, Grok and the built-in agent report it that way; claude-agent-acp 0.84.0, codex-acp and OpenCode report only the uncached remainder.
 - `usage_update` stamps `usage.context` on the last agent turn (Kimi's late idle one lands on the finished turn).
 - Forking copies the prefix with `historyPending` and re-saves every referenced blob (`blob_slots`). Native `session/fork` is unused: whole-session, not turn-addressed.
