@@ -418,6 +418,13 @@ impl PluginHost {
     self.reload();
     let mut out = vec![];
     for a in &self.loaded().active {
+      // A well-known read-only method: older hosts accept the manifest and just omit its account rows.
+      if a.manifest.contributes.runtime.as_ref().is_some_and(|r| r.methods.iter().any(|m| m == "account.rows")) {
+        out.push(acpira_shared::plugins::PluginSlot {
+          plugin: a.id.clone(), id: "account.rows".into(), slot: "account.rows".into(), title: a.manifest.display_name().to_owned(),
+          html: String::new(), width: None, height: None, method: Some("account.rows".into()),
+        });
+      }
       for u in &a.manifest.contributes.ui {
         let title = if u.title.trim().is_empty() { a.manifest.display_name().to_owned() } else { u.title.clone() };
         let piece = |html: String| acpira_shared::plugins::PluginSlot {
@@ -623,7 +630,7 @@ impl PluginHost {
     Ok(done)
   }
 
-  /// One of the plugin page's actions (`Reveal` is the shell's; the source folder is returned for it)
+  /// One of the plugin page's actions (`Reveal` returns the folder for the shell to show)
   pub async fn action(&self, action: PluginAction) -> Result<Option<PathBuf>> {
     let user = Provenance::user();
     // Ids come from the page or the command line and some become paths: refuse anything that is not a plugin id
@@ -645,7 +652,15 @@ impl PluginHost {
       PluginAction::Remove { id } => self.store.remove(&id, user).await?,
       PluginAction::Reveal { id } => {
         let dir = self.store.source(&id);
-        return if dir.is_dir() { Ok(Some(dir)) } else { Err(anyhow!("no plugin folder {}", dir.display())) };
+        if dir.is_dir() {
+          return Ok(Some(dir));
+        }
+        // A card can re-enable its frozen copy after removal retired the editable source.
+        self.reload();
+        if let Some(active) = self.loaded().active.iter().find(|a| a.id == id && a.dir.is_dir()) {
+          return Ok(Some(active.dir.clone()));
+        }
+        bail!("no plugin folder {}", dir.display());
       }
       PluginAction::SafeMode { on } => self.store.set_safe_mode(on, user).await?,
       PluginAction::Skin { id } => {
@@ -1008,6 +1023,40 @@ mod tests {
     }
     std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
     std::fs::write(dir.join("go.sh"), script).unwrap();
+  }
+
+  #[tokio::test]
+  async fn account_rows_are_discovered_only_from_a_confirmed_runtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = host(tmp.path());
+    h.start().await;
+    let dir = tmp.path().join("demo");
+    std::fs::create_dir_all(&dir).unwrap();
+    let m = json!({ "schema": 1, "id": "demo", "version": "1", "description": "Accounts",
+      "contributes": { "runtime": { "command": ["sh"], "methods": ["account.rows"] } } });
+    std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+    let (snap, _) = h.propose("demo", Provenance::cli()).await.unwrap();
+    assert!(h.ui_slots().is_empty());
+    // Commit a checked snapshot directly; no runtime is needed for slot discovery.
+    h.store.enable("demo", &snap.hash, Provenance::user()).await.unwrap();
+    assert!(h.ui_slots().iter().any(|s| s.plugin == "demo" && s.slot == "account.rows" && s.html.is_empty()));
+    h.action(PluginAction::Disable { id: "demo".into() }).await.unwrap();
+    assert!(h.ui_slots().is_empty());
+  }
+
+  #[tokio::test]
+  async fn reveal_uses_the_active_snapshot_when_the_source_is_gone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = host(tmp.path());
+    h.start().await;
+    write_plugin(tmp.path(), "demo", "exit 0", None);
+    let (frozen, _) = h.propose("demo", Provenance::cli()).await.unwrap();
+    h.action(PluginAction::Remove { id: "demo".into() }).await.unwrap();
+    h.action(PluginAction::Confirm { id: "demo".into(), snapshot: frozen.hash.clone() }).await.unwrap();
+    let reveal = || h.action(PluginAction::Reveal { id: "demo".into() });
+    assert_eq!(reveal().await.unwrap(), Some(frozen.dir));
+    write_plugin(tmp.path(), "demo", "exit 0", None);
+    assert_eq!(reveal().await.unwrap(), Some(tmp.path().join("demo")));
   }
 
   #[tokio::test]

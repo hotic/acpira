@@ -2,6 +2,7 @@
    Color roles prefer the host's --vscode-* values; with no host (LAB) they fall back to Dark / Light Modern values. */
 
 :root, .acp-shell {
+  --account-source: #99c9ff;
   --quota-track: 3px;
   /* A refreshed quota slides the fill and blends its color instead of jumping */
   --quota-fill-duration: 600ms;
@@ -299,6 +300,7 @@
 }
 
 [data-theme="light"] {
+  --account-source: #245c99;
   --fg-1: var(--host-fg, #0d0d0d);
   --fg-2: #6c6c6c;
   --action-fg: #707070;

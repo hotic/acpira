@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef } from 'react';
 import { Check, LockKeyhole, LogIn, Plus, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo } from '@acpira/shared/transcript';
 import type { AddAccountVia } from '@acpira/shared/protocol';
+import { PluginAccountRows } from '../plugins/AccountRows';
 import { PanelHeader } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
 import { AccountLabel, type AccountState } from '../ui/AccountLabel';
@@ -14,6 +15,8 @@ export interface AccountPanelProps {
   // Accounts of the current agent only
   accounts: AccountInfo[];
   accountId?: string;
+  session?: string;
+  remoteAuth?: boolean;
   close: () => void;
   onSelectAccount: (id: string) => void;
   onAddAccount: (agent: AgentInfo['id'], via: AddAccountVia) => void;
@@ -34,6 +37,7 @@ export const hasAccountMenu = (agent: AgentInfo) => !!(agent.accounts || agent.l
 // Official account: the identity and quota the CLI keeps itself, read-only but for the header's sign-in when the login is missing or expired
 export function AccountPanel(p: AccountPanelProps) {
   const { onRefreshQuota, agent } = p;
+  const contributed = !p.remoteAuth && <PluginAccountRows agent={agent.id} session={p.session} showCheck={!p.accountId} />;
   useEffect(() => {
     onRefreshQuota?.(agent.id);
     const timer = setInterval(() => onRefreshQuota?.(agent.id), 60_000);
@@ -58,6 +62,7 @@ export function AccountPanel(p: AccountPanelProps) {
     return <div className="flex flex-col">
       <PanelHeader action={login} tail={tag}>{p.agent.name}</PanelHeader>
       <LocalAccountBody agent={p.agent} account={local} />
+      {contributed}
     </div>;
   }
 
@@ -68,7 +73,9 @@ export function AccountPanel(p: AccountPanelProps) {
   const add = { label: t('composer.addAccount'), icon: <Plus strokeWidth={1.75} />, onClick: () => { p.onAddAccount(p.agent.id, 'auto'); p.close(); } };
   return <div className="flex flex-col">
     <PanelHeader action={unlock ?? add}>{p.agent.name}</PanelHeader>
-    <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-none flex max-h-pop flex-col overflow-y-auto">
+    {/* pb-1: the title's ink sits a line gap below its box, so the last quota bar needs that much more room above the popup
+        edge to look as far from it; outside the rows, so their hover fill keeps its shape */}
+    <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-none flex max-h-pop flex-col overflow-y-auto pb-1">
       {/* Stored accounts do not describe CLI credentials: a local API key can work with an empty account list. */}
       {!p.accounts.length && <StateLine>{t('settings.agent.accounts.none')}</StateLine>}
       {p.accounts.map((a, i) => <Fragment key={a.id}>
@@ -106,6 +113,7 @@ export function AccountPanel(p: AccountPanelProps) {
         </div>
       </Fragment>)}
     </RadioGroup.Root>
+    {contributed}
   </div>;
 }
 

@@ -161,7 +161,8 @@ export interface PluginSlot {
   plugin: string;
   // Unique within the plugin
   id: string;
-  slot: PluginUiSlot;
+  // account.rows is synthesized from the runtime method, not a manifest UI slot (older hosts ignore it).
+  slot: PluginUiSlot | 'account.rows';
   title: string;
   // The document, read from the frozen copy; empty for a button slot (message.actions, prompt.actions, selection.actions)
   html: string;

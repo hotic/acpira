@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
-import type { PluginSlot, PluginUiSlot } from '@acpira/shared/plugins';
+import type { PluginSlot } from '@acpira/shared/plugins';
 import type { HostMsg } from '@acpira/shared/protocol';
+import type { Draft } from '@acpira/shared/transcript';
 import { vscodeApi } from './vscodeApi';
 import { FRAME_KIT } from './plugins/kit';
 import type { SessionOutline } from './plugins/outline';
@@ -24,7 +25,7 @@ export function setPluginSlots(next: PluginSlot[]) {
   for (const l of listeners) l();
 }
 
-export function pluginPieces(slot: PluginUiSlot): PluginSlot[] {
+export function pluginPieces(slot: PluginSlot['slot']): PluginSlot[] {
   let list = bySlot.get(slot);
   if (!list) { list = slots.filter(s => s.slot === slot); bySlot.set(slot, list); }
   return list;
@@ -36,7 +37,7 @@ export function pluginPiece(plugin: string, id: string): PluginSlot | undefined 
 
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
 
-export function usePluginPieces(slot: PluginUiSlot): PluginSlot[] {
+export function usePluginPieces(slot: PluginSlot['slot']): PluginSlot[] {
   return useSyncExternalStore(subscribe, () => pluginPieces(slot));
 }
 

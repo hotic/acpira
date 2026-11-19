@@ -1456,6 +1456,7 @@ export function Shell(p: ShellProps) {
               agents={startAgents}
               accounts={p.accounts}
               accountId={p.accountId}
+              remoteAuth={p.remoteAuth}
               activeSessionId={p.activeSessionId}
               workspace={p.workspace}
               sessionScope={desktop ? 'all' : p.sessionScope}
