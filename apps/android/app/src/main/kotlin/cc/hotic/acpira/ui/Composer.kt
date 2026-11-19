@@ -490,10 +490,18 @@ private fun rememberChoices(controls: SessionControls, hidden: Map<String, List<
   val standard = t("composer.standard")
   return remember(controls, hidden, standard) {
     val brand = { o: SessionOption -> brandOf(context, o) }
-    // The sidekick's list is thinned as the lead's is
-    val models = if (hidden.isEmpty()) emptySet() else ComposerControls.split(controls.options, brand).let { s -> s.models + s.sidekick }.map { it.id }.toSet()
-    val shown = if (models.isEmpty()) controls else controls.copy(options = controls.options.map { c ->
-      if (c.id in models) c.copy(options = ModelVisibility.visibleOptions(c.options, hidden[c.id], c.value)) else c
+    // Cross-CLI host sidekicks are already filtered per CLI by the engine (`host_sidekick.rs`); only native single-agent
+    // sidekicks share the lead model's hidden list here
+    val split = if (hidden.isEmpty()) null else ComposerControls.split(controls.options, brand)
+    val leadModelId = split?.models?.firstOrNull()?.id
+    val modelIds = split?.models?.map { it.id }?.toSet().orEmpty()
+    val sidekickIds = split?.sidekick?.filter { ComposerControls.sidekickClis(it.options).isEmpty() }?.map { it.id }?.toSet().orEmpty()
+    val shown = if (modelIds.isEmpty() && sidekickIds.isEmpty()) controls else controls.copy(options = controls.options.map { c ->
+      when (c.id) {
+        in modelIds -> c.copy(options = ModelVisibility.visibleOptions(c.options, hidden[c.id], c.value))
+        in sidekickIds -> c.copy(options = ModelVisibility.visibleOptions(c.options, leadModelId?.let { hidden[it] }, c.value))
+        else -> c
+      }
     })
     ModelChoices(shown, brand, standard) { id, value -> onSetConfig(id, value) }
   }

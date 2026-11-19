@@ -165,4 +165,21 @@ class FusionSidekickTest {
       editTurnConfig(host, host, "host_sidekick", "a/terra", shapes).options.map { it.id },
     )
   }
+
+  @Test fun fastModeSuffixMergesOnBothLeadAndSidekick() {
+    val lead = ConfigControl("model", "Model", "model", options = options("opus-5-5" to "Opus 5.5", "opus-5-5-fast" to "Opus 5.5 Fast Mode"), value = "opus-5-5")
+    val sk = control("""{"id":"host_sidekick","name":"Sidekick","category":"_sidekick","value":"droid/opus-5-5-fast","options":[{"id":"none","name":"None"},{"id":"droid/opus-5-5","name":"Opus 5.5","description":"Factory","group":{"id":"droid","name":"Factory"}},{"id":"droid/opus-5-5-fast","name":"Opus 5.5 Fast Mode","description":"Factory","group":{"id":"droid","name":"Factory"}}]}""")
+    val fams = ComposerControls.sidekickFamilies(sk.options, { null }, "droid")
+    assertEquals(listOf("Opus 5.5"), fams.map { it.name })
+    assertTrue(fams[0].hasFast)
+    val sets = mutableListOf<String>()
+    val c = choices(listOf(lead, sk)) { id, v -> sets += "$id=$v" }
+    assertEquals(listOf("Opus 5.5"), c.families.map { it.name })
+    assertEquals(false, c.fast?.on)
+    c.fast?.set(true)
+    assertEquals("Opus 5.5", c.sidekickCur?.name)
+    assertEquals(true, c.sidekickFast?.on)
+    c.sidekickFast?.set(false)
+    assertEquals(listOf("model=opus-5-5-fast", "host_sidekick=droid/opus-5-5"), sets)
+  }
 }

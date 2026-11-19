@@ -106,7 +106,11 @@ enum ModelCatalog {
     func stripTrailingFlags() {
       while t.count > 1 {
         let last = t[t.count - 1].lowercased()
-        if last == "fast" { fast = true; t.removeLast() } else if last == "1m" { long = true; t.removeLast() } else { break }
+        if last == "fast" { fast = true; t.removeLast() }
+        // Droid / Factory spells it "Opus 5.5 Fast Mode"
+        else if t.count > 2, last == "mode", t[t.count - 2].lowercased() == "fast" { fast = true; t.removeLast(2) }
+        else if last == "1m" { long = true; t.removeLast() }
+        else { break }
       }
     }
     stripTrailingFlags()
@@ -401,6 +405,65 @@ enum ComposerControls {
   /// name there, which is no channel
   static func sidekickChannel(_ o: SessionOption) -> String? {
     o.source?.name ?? (o.group == nil ? o.description : nil)
+  }
+
+  /// composerControls.ts `sidekickFamilies`: group sidekick options into the same ModelFamily shape the lead's list
+  /// uses (collapsing embedded effort / Fast / 1M variants such as Factory's "Opus 5.5 Fast Mode" or Devin's "SWE-2 High Fast").
+  static func sidekickFamilies(_ options: [SessionOption], cliId: String? = nil) -> [ModelFamily] {
+    let real = options.filter { $0.id != noSidekick }
+    let normalized: [SessionOption] = if cliId != nil {
+      real.map { o in
+        var copy = o
+        copy.group = nil
+        copy.description = nil
+        return copy
+      }
+    } else {
+      real.map { o in
+        guard o.source == nil, o.group == nil, let desc = o.description, !desc.isEmpty else { return o }
+        var copy = o
+        copy.source = SessionOption.Source(id: desc, name: desc, kind: "custom")
+        copy.description = nil
+        return copy
+      }
+    }
+    let families = ModelCatalog.group(normalized)
+    guard let cliId else { return families }
+    return families.map { f in
+      var copy = f
+      copy.key = "\(cliId)\u{0}\(f.key)"
+      return copy
+    }
+  }
+
+  /// Resolve the currently picked sidekick's family and variant across either a host-sidekick CLI list or a native select
+  static func findSidekickFamily(_ options: [SessionOption], value: String?) -> (family: ModelFamily, variant: ModelVariant, cli: SidekickCli?)? {
+    guard let value, !value.isEmpty, value != noSidekick else { return nil }
+    let clis = sidekickClis(options)
+    if !clis.isEmpty {
+      for cli in clis {
+        if let f = sidekickFamilies(cli.options, cliId: cli.id).first(where: { $0.variants.contains { $0.id == value } }),
+           let v = f.variants.first(where: { $0.id == value }) {
+          return (f, v, cli)
+        }
+      }
+      return nil
+    }
+    guard let f = sidekickFamilies(options).first(where: { $0.variants.contains { $0.id == value } }),
+          let v = f.variants.first(where: { $0.id == value }) else { return nil }
+    return (f, v, nil)
+  }
+
+  /// Families filed under their channel in first-seen order, those without one first unlabelled; nil with fewer than two
+  /// channels, where the list stays flat (ModelPicker.tsx `bySource`)
+  static func byChannelFamilies(_ families: [ModelFamily]) -> [(channel: String, families: [ModelFamily])]? {
+    var groups: [(channel: String, families: [ModelFamily])] = []
+    for f in families {
+      let channel = (f.source != nil && !f.variants.contains { $0.id == f.source }) ? (f.source ?? "") : ""
+      if let i = groups.firstIndex(where: { $0.channel == channel }) { groups[i].families.append(f) } else { groups.append((channel, [f])) }
+    }
+    guard groups.filter({ !$0.channel.isEmpty }).count >= 2 else { return nil }
+    return groups.filter { $0.channel.isEmpty } + groups.filter { !$0.channel.isEmpty }
   }
 
   /// Rows filed under their channel in first-seen order, those without one first unlabelled; nil with fewer than two

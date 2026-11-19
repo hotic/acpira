@@ -777,7 +777,7 @@ struct LiquidControls: View {
                          glyph: AnyView(SidekickMark(picked: picked).foregroundStyle(Palette.fg1)),
                          caption: AnyView(GooCaption(text: picked.name, note: t("composer.sidekick"))),
                          tap: { enter(Self.sidekickLevel) }))
-    } else if let sk = c.sidekick { out.append(sidekickBean(sk, fast: c.sidekickFast)) }
+    } else if let sk = c.sidekick { out.append(sidekickBean(sk, picked: c.sidekickCur, fast: c.sidekickFast)) }
     return out
   }
 
@@ -855,74 +855,112 @@ struct LiquidControls: View {
   /// The built-in agent's sidekick, last so the lead's settings stay together: its mark with the plus badge (a faint
   /// fading plus for none), its model's name and what a sidekick does beside it. A tap trades the beans for the
   /// sidekick's own (`sidekickBeans`)
-  private func sidekickBean(_ sk: ConfigControl, fast: FastState?) -> GooBean {
-    let picked = Self.picked(sk)
+  private func sidekickBean(_ sk: ConfigControl, picked: ModelFamily?, fast: FastState?) -> GooBean {
+    let pickedOpt = Self.picked(sk)
     // None yet, with models from two or more CLIs: the tap goes straight to the CLI list, not to a lone agent bean
-    let toAgents = picked == nil && ComposerControls.sidekickClis(sk.options).count > 1
+    let toAgents = pickedOpt == nil && ComposerControls.sidekickClis(sk.options).count > 1
     return GooBean(key: "sidekick", title: t("composer.sidekick"),
-                   glyph: AnyView(SidekickMark(picked: picked).foregroundStyle(Palette.fg1)),
-                   caption: AnyView(GooCaption(text: picked?.name ?? t("composer.sidekickNone"), note: t("composer.sidekickHint"))),
+                   glyph: AnyView(SidekickMark(picked: pickedOpt).foregroundStyle(Palette.fg1)),
+                   caption: AnyView(GooCaption(text: picked?.name ?? pickedOpt?.name ?? t("composer.sidekickNone"), note: t("composer.sidekickHint"))),
                    tap: { enter(Self.sidekickLevel, opening: toAgents ? 1 : 0) })
   }
 
-  /// The sidekick's own beans, as the lead's read: its model (a list with None first), its reasoning level while the
-  /// model has levels, and its Fast while the model has a fast tier, flipped on a tap
+  /// The sidekick's own beans, as the lead's read: its model (families grouped identically to the lead, with None first
+  /// for a single CLI), its reasoning level while the model has levels, and its Fast while the model has a fast tier,
+  /// flipped on a tap
   private func sidekickBeans(_ c: ModelChoices) -> [GooBean] {
     guard let sk = c.sidekick else { return [] }
     let current = sk.value ?? ComposerControls.noSidekick
     let picked = Self.picked(sk)
+    let pickedFamily = c.sidekickCur
     let clis = ComposerControls.sidekickClis(sk.options)
     var out: [GooBean] = []
     // Models from two or more CLIs (the host's select): the CLI is a bean of its own, first, as the desktop's rail is,
-    // and the model bean lists one CLI's models; a group label in it then always names a channel, never a CLI
-    var listed: [SessionOption]? = sk.options
+    // and the model bean lists one CLI's families; a group label in it then always names a channel, never a CLI
+    let activeCli: ComposerControls.SidekickCli? = if clis.count > 1 {
+      clis.first { $0.id == browse } ?? clis.first { $0.id == picked?.group?.id }
+    } else {
+      clis.first
+    }
     if clis.count > 1 {
       let mine = clis.first { $0.id == picked?.group?.id }
       out.append(agentBean(sk, clis: clis, picked: mine))
-      listed = (clis.first { $0.id == browse } ?? mine)?.options
     }
-    if let listed {
-      let groups = ComposerControls.byChannel(listed)
-      let row = { (o: SessionOption) in
-        let none = o.id == ComposerControls.noSidekick
-        return GooRow(name: none ? t("composer.sidekickNone") : o.name, checked: o.id == current) {
-          SidekickRowGlyph(option: none ? nil : o, size: Metrics.iconCtl)
+    let families: [ModelFamily]? = if clis.count > 1 {
+      activeCli.map { ComposerControls.sidekickFamilies($0.options, cliId: $0.id) }
+    } else if let only = clis.first {
+      ComposerControls.sidekickFamilies(only.options, cliId: only.id)
+    } else {
+      ComposerControls.sidekickFamilies(sk.options)
+    }
+    if let families {
+      let showNone = clis.count <= 1
+      let groups = ComposerControls.byChannelFamilies(families)
+      let currentKey = pickedFamily?.key ?? ComposerControls.noSidekick
+      let noneRow = GooRow(name: t("composer.sidekickNone"), checked: picked == nil) {
+        SidekickRowGlyph(option: nil, size: Metrics.iconCtl)
+      } action: {
+        onSetConfig(sk.id, ComposerControls.noSidekick)
+        fold()
+      }
+      .id(ComposerControls.noSidekick)
+      let familyRow = { (f: ModelFamily) in
+        let checked = f.variants.contains { $0.id == current }
+        let target = f.variants.first?.id ?? f.key
+        return GooRow(name: f.name, checked: checked) {
+          VendorMark(brand: f.brand, name: f.name, size: Metrics.iconCtl)
         } action: {
-          onSetConfig(sk.id, o.id)
+          onSetConfig(sk.id, target)
           fold()
         }
-        .id(o.id)
+        .id(f.key)
       }
       out.append(GooBean(key: "sidekick.model", title: t("stats.model"),
                          // The badged mark, so this column reads as the sidekick's and not the lead's
                          glyph: AnyView(SidekickMark(picked: picked).foregroundStyle(Palette.fg1)),
-                         caption: AnyView(GooCaption(text: picked?.name ?? t("composer.sidekickNone"))), rows: listed.count,
+                         caption: AnyView(GooCaption(text: pickedFamily?.name ?? picked?.name ?? t("composer.sidekickNone"))),
+                         rows: families.count + (showNone ? 1 : 0),
                          labels: groups?.filter { !$0.channel.isEmpty }.count ?? 0,
-                         panel: AnyView(GooList(current: current) {
+                         panel: AnyView(GooList(current: currentKey) {
+                           if showNone { noneRow }
                            if let groups {
                              ForEach(groups, id: \.channel) { g in
                                if !g.channel.isEmpty { GooSection(title: g.channel) }
-                               ForEach(g.options) { row($0) }
+                               ForEach(g.families, id: \.key) { familyRow($0) }
                              }
                            } else {
-                             ForEach(listed) { row($0) }
+                             ForEach(families, id: \.key) { familyRow($0) }
                            }
                          })))
     }
-    let scale = picked == nil ? nil
-      : c.sidekickEffort.flatMap { ComposerControls.reasoningVisible($0) ? ComposerControls.presentReasoning($0) : nil }
-    if let effort = c.sidekickEffort, let scale, scale.efforts.count > 1 {
-      let level = scale.off ? t("mobile.thinking.off") : scale.efforts.first { $0.id == scale.value }?.name ?? t("composer.effort")
+    if picked != nil, let e = c.sidekickEffortScale, e.levels.count > 1 || e.thinking != nil {
+      let levels = e.levels.count > 1 ? e.levels : []
+      let level = e.thinking?.on == false ? t("mobile.thinking.off")
+        : levels.first { $0.0 == e.value }?.1 ?? (e.thinking != nil ? "Thinking" : t("composer.effort"))
       out.append(GooBean(key: "sidekick.effort", title: t("composer.effort"),
                          glyph: AnyView(Icon(.brain, size: Metrics.barIcon, strokeWidth: 1.75).foregroundStyle(Palette.fg1)),
-                         caption: AnyView(GooCaption(text: level)), rows: scale.efforts.count,
-                         panel: AnyView(GooList(current: scale.value) {
-                           ForEach(scale.efforts) { l in
-                             GooRow(name: l.name, checked: !scale.off && l.id == scale.value) { EmptyView() } action: {
-                               onSetConfig(effort.id, l.id)
+                         caption: AnyView(GooCaption(text: level)), rows: levels.count + (e.thinking != nil ? 1 : 0),
+                         panel: AnyView(GooList(current: e.thinking?.on == false ? "off" : e.value) {
+                           if let thinking = e.thinking {
+                             GooRow(name: t("mobile.thinking.off"), checked: !thinking.on) { EmptyView() } action: {
+                               thinking.set(false)
                                fold()
                              }
-                             .id(l.id)
+                             .id("off")
+                             if levels.isEmpty {
+                               GooRow(name: "Thinking", checked: thinking.on) { EmptyView() } action: {
+                                 thinking.set(true)
+                                 fold()
+                               }
+                               .id("on")
+                             }
+                           }
+                           ForEach(levels, id: \.0) { l in
+                             GooRow(name: l.1, checked: e.thinking?.on != false && l.0 == e.value) { EmptyView() } action: {
+                               e.pick(l.0)
+                               fold()
+                             }
+                             .id(l.0)
                            }
                          })))
     }
@@ -1108,7 +1146,10 @@ struct ModelChoices {
   let access: ConfigControl?
   /// The built-in agent's sidekick select, its level and its Fast (the last bean opens them as beans of their own)
   let sidekick: ConfigControl?
+  let sidekickCur: ModelFamily?
+  let sidekickCurVar: ModelVariant?
   let sidekickEffort: ConfigControl?
+  let sidekickEffortScale: Effort?
   let sidekickFast: FastState?
   private let nativeFast: FastState?
   private let onSetConfig: (String, String) -> Void
@@ -1131,23 +1172,36 @@ struct ModelChoices {
     self.collaboration = split.collaboration.first { $0.options.count > 1 }
     self.access = split.permission.first { $0.options.count > 1 }
     let sidekick = Self.sidekick(split, hidden: hidden)
+    let skCur = sidekick.flatMap { ComposerControls.findSidekickFamily($0.select.options, value: $0.select.value) }
+    let nativeSkFast = split.sidekickFast.first.map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
+    let skEffort = Self.sidekickEffort(select: sidekick?.select, cur: skCur?.family, curVar: skCur?.variant,
+                                       nativeEffort: sidekick?.effort, nativeFast: nativeSkFast, onSetConfig: onSetConfig)
     self.sidekick = sidekick?.select
+    self.sidekickCur = skCur?.family
+    self.sidekickCurVar = skCur?.variant
     self.sidekickEffort = sidekick?.effort
-    self.sidekickFast = split.sidekickFast.first.map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
+    self.sidekickEffortScale = skEffort
+    self.sidekickFast = (skEffort?.fast ?? nativeSkFast).flatMap { $0.disabled && !$0.on ? nil : $0 }
     self.nativeFast = split.modelConfig.first(where: ComposerControls.isFast).map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
     self.onSetConfig = onSetConfig
   }
 
   /// The models the settings left visible (ModelPicker.tsx visibleOptions)
-  private static func visible(_ c: ConfigControl, hidden: [String: [String]]) -> ConfigControl {
+  private static func visible(_ c: ConfigControl, hidden: [String: [String]], key: String? = nil) -> ConfigControl {
     var c = c
-    c.options = ModelCatalog.visibleOptions(c.options, hidden: hidden[c.id], current: c.value)
+    c.options = ModelCatalog.visibleOptions(c.options, hidden: hidden[key ?? c.id], current: c.value)
     return c
   }
 
-  /// The sidekick select, thinned as the lead's list is, and its level select
+  /// The sidekick select, thinned as the lead's list is, and its level select. Cross-CLI host sidekicks are already
+  /// filtered per CLI by the engine (`host_sidekick.rs`), so only a native single-agent sidekick takes the lead's hidden list
   static func sidekick(_ split: ComposerControls.Split, hidden: [String: [String]]) -> (select: ConfigControl, effort: ConfigControl?)? {
-    split.sidekick.first.map { (visible($0, hidden: hidden), split.sidekickEffort.first) }
+    split.sidekick.first.map { sk in
+      let shown = ComposerControls.sidekickClis(sk.options).isEmpty
+        ? visible(sk, hidden: hidden, key: split.models.first?.id)
+        : sk
+      return (shown, split.sidekickEffort.first)
+    }
   }
 
   /// Which of the chip's beans apply, in the column's order: the model, the reasoning level, Fast, the working mode,
@@ -1175,9 +1229,18 @@ struct ModelChoices {
     return f.variants.contains { $0.lead == v.lead && $0.effort == v.effort && $0.sidekick == name }
   }
 
+  private static func variantFast(family f: ModelFamily, variant v: ModelVariant, controlId: String,
+                                  onSetConfig: @escaping (String, String) -> Void) -> FastState? {
+    guard f.fusion == nil, f.hasFast else { return nil }
+    func at(_ long: Bool) -> ModelVariant? { f.variants.first { $0.effort == v.effort && $0.fast == !v.fast && $0.long == long } }
+    let hit = at(false) ?? at(v.long)
+    return FastState(on: v.fast, disabled: hit == nil) { _ in if let hit { onSetConfig(controlId, hit.id) } }
+  }
+
   private static func effort(split: ComposerControls.Split, cur: ModelFamily?, curVar: ModelVariant?, modelId: String?,
                              onSetConfig: @escaping (String, String) -> Void) -> Effort? {
     let nativeFast = split.modelConfig.first(where: ComposerControls.isFast).map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
+    let variantFast = cur.flatMap { f in curVar.flatMap { v in modelId.flatMap { id in Self.variantFast(family: f, variant: v, controlId: id, onSetConfig: onSetConfig) } } }
     var fusionFast: FastState?
     if let f = cur, f.fusion != nil, let v = curVar, let modelId {
       let pick = { (e: String, fast: Bool) in
@@ -1195,12 +1258,8 @@ struct ModelChoices {
                 { pick($0, v.fast) }, fusionFast ?? nativeFast, nil)
       }
     }
+    let resolvedFast = fusionFast ?? variantFast ?? nativeFast
     if let f = cur, let v = curVar, let modelId, f.fusion == nil, ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f) {
-      let fast: FastState? = f.hasFast ? {
-        func at(_ long: Bool) -> ModelVariant? { f.variants.first { $0.effort == v.effort && $0.fast == !v.fast && $0.long == long } }
-        let hit = at(false) ?? at(v.long)
-        return FastState(on: v.fast, disabled: hit == nil) { _ in if let hit { onSetConfig(modelId, hit.id) } }
-      }() : nativeFast
       let pick = { (e: String) in
         if let hit = ModelCatalog.findVariant(f, effort: e, fast: v.fast, long: false) { onSetConfig(modelId, hit.id) }
       }
@@ -1210,9 +1269,9 @@ struct ModelChoices {
         let thinking = FastState(on: on, disabled: ModelCatalog.findVariant(f, effort: on ? "" : "Thinking", fast: v.fast, long: false) == nil) {
           pick($0 ? "Thinking" : "")
         }
-        return ([], v.effort, pick, fast, thinking)
+        return ([], v.effort, pick, resolvedFast, thinking)
       }
-      return (f.efforts.map { ($0, $0.isEmpty ? t("composer.standard") : $0) }, v.effort, pick, fast, nil)
+      return (f.efforts.map { ($0, $0.isEmpty ? t("composer.standard") : $0) }, v.effort, pick, resolvedFast, nil)
     }
     if let c = split.reasoning.first(where: ComposerControls.reasoningVisible) {
       let p = ComposerControls.presentReasoning(c)
@@ -1223,11 +1282,48 @@ struct ModelChoices {
           if !on { onSetConfig(c.id, off) } else if let turnOn { onSetConfig(c.id, turnOn) }
         }
       }
-      guard p.efforts.count > 1 || thinking != nil else { return nil }
-      return (p.efforts.map { ($0.id, $0.name) }, p.off ? "" : p.value ?? "", { onSetConfig(c.id, $0) }, fusionFast ?? nativeFast, thinking)
+      guard p.efforts.count > 1 || thinking != nil else {
+        return (fusionFast ?? variantFast).map { ([], curVar?.effort ?? "", { _ in }, $0, nil) }
+      }
+      return (p.efforts.map { ($0.id, $0.name) }, p.off ? "" : p.value ?? "", { onSetConfig(c.id, $0) }, resolvedFast, thinking)
     }
-    // A fixed lead level can still have pair-level Fast, without a reasoning bean to own it.
-    return fusionFast.map { ([], curVar?.effort ?? "", { _ in }, $0, nil) }
+    // A model with embedded Fast (Factory "Opus 5.5 Fast Mode") or pair-level Fast can have Fast without a reasoning bean
+    return (fusionFast ?? variantFast).map { ([], curVar?.effort ?? "", { _ in }, $0, nil) }
+  }
+
+  /// Sidekick reasoning levels and Fast: embedded variants first (Devin effort / Fast, Factory Fast Mode), then native selects
+  private static func sidekickEffort(select: ConfigControl?, cur: ModelFamily?, curVar: ModelVariant?,
+                                     nativeEffort: ConfigControl?, nativeFast: FastState?,
+                                     onSetConfig: @escaping (String, String) -> Void) -> Effort? {
+    guard let select, let f = cur, let v = curVar else { return nil }
+    let variantFast = Self.variantFast(family: f, variant: v, controlId: select.id, onSetConfig: onSetConfig)
+    let resolvedFast = variantFast ?? nativeFast
+    if f.fusion == nil, ModelCatalog.variantScale(f) || ModelCatalog.thinkingOnly(f) {
+      let pick = { (e: String) in
+        if let hit = ModelCatalog.findVariant(f, effort: e, fast: v.fast, long: false) { onSetConfig(select.id, hit.id) }
+      }
+      if ModelCatalog.thinkingOnly(f) {
+        let on = v.effort == "Thinking"
+        let thinking = FastState(on: on, disabled: ModelCatalog.findVariant(f, effort: on ? "" : "Thinking", fast: v.fast, long: false) == nil) {
+          pick($0 ? "Thinking" : "")
+        }
+        return ([], v.effort, pick, resolvedFast, thinking)
+      }
+      return (f.efforts.map { ($0, $0.isEmpty ? t("composer.standard") : $0) }, v.effort, pick, resolvedFast, nil)
+    }
+    if let c = nativeEffort, ComposerControls.reasoningVisible(c) {
+      let p = ComposerControls.presentReasoning(c)
+      let turnOn = p.efforts.first { $0.id == "high" }?.id ?? p.efforts.first?.id ?? p.onId
+      let thinking = p.offId.map { off in
+        FastState(on: !p.off, disabled: false) { on in
+          if !on { onSetConfig(c.id, off) } else if let turnOn { onSetConfig(c.id, turnOn) }
+        }
+      }
+      if p.efforts.count > 1 || thinking != nil {
+        return (p.efforts.map { ($0.id, $0.name) }, p.off ? "" : p.value ?? "", { onSetConfig(c.id, $0) }, resolvedFast, thinking)
+      }
+    }
+    return variantFast.map { ([], v.effort, { _ in }, $0, nil) }
   }
 
   /// ModelPanel.pickFamily: into Fusion the model in use becomes the lead; out of it the lead's effort carries over

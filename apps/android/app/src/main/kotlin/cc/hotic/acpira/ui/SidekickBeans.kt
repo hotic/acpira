@@ -42,6 +42,7 @@ import cc.hotic.acpira.design.sidekickPulse
 import cc.hotic.acpira.i18n.t
 import cc.hotic.acpira.logic.ComposerControls
 import cc.hotic.acpira.logic.ModelChoices
+import cc.hotic.acpira.logic.ModelFamily
 import cc.hotic.acpira.model.ConfigControl
 import cc.hotic.acpira.model.SessionOption
 
@@ -102,69 +103,88 @@ internal fun sidekickBean(c: ModelChoices, enter: (opening: Int) -> Unit): Bean?
   // None yet, with models from two or more CLIs: the tap goes straight to the CLI list, not to a lone agent bean
   val toAgents = picked == null && ComposerControls.sidekickClis(sk.options).size > 1
   return Bean(
-    "sidekick", t("composer.sidekick"), picked?.name ?: t("composer.sidekickNone"),
+    "sidekick", t("composer.sidekick"), c.sidekickCur?.name ?: picked?.name ?: t("composer.sidekickNone"),
     glyph = { SidekickMark(picked) }, tap = { enter(if (toAgents) 1 else 0) }, note = t("composer.sidekickHint"),
   )
 }
 
 /**
  * The sidekick level's beans, as the lead's read: with models from two or more CLIs (the host's select) first the CLI,
- * as the desktop's rail is, then its model (one CLI's models, filed by channel, so a group label always names a
- * channel), its reasoning level while the model has levels, and its Fast while the model has a fast tier, flipped on a
- * tap. With one CLI the model list holds None first. A Fusion pair's level is its sidekick list alone
+ * as the desktop's rail is, then its model (one CLI's families grouped identically to the lead, filed by channel),
+ * its reasoning level while the model has levels, and its Fast while the model has a fast tier, flipped on a tap.
+ * With one CLI the model list holds None first. A Fusion pair's level is its sidekick list alone
  */
 internal fun sidekickBeans(c: ModelChoices, onSetConfig: (String, String) -> Unit, fold: () -> Unit, haptics: HapticFeedback, goo: Goo): List<Bean> {
   if (c.fusion != null) return listOf(fusionModelBean(c, sidekick = true, fold))
   val sk = c.sidekick ?: return emptyList()
   val current = sk.value ?: ComposerControls.noSidekick
   val picked = c.sidekickPicked
+  val pickedFamily = c.sidekickCur
   val none = t("composer.sidekickNone")
   val clis = ComposerControls.sidekickClis(sk.options)
   val out = mutableListOf<Bean>()
-  var listed: List<SessionOption>? = sk.options
-  if (clis.size > 1) {
+  val activeCli = if (clis.size > 1) {
     val mine = clis.firstOrNull { it.id == picked?.group?.id }
     out += agentBean(sk, clis, mine, onSetConfig, fold, goo)
-    listed = (clis.firstOrNull { it.id == goo.browse } ?: mine)?.options
-  }
+    clis.firstOrNull { it.id == goo.browse } ?: mine
+  } else clis.firstOrNull()
+  val listed = if (clis.size > 1) activeCli?.options else sk.options
+  val cliId = activeCli?.id
   if (listed != null) {
-    val groups = ComposerControls.byChannel(listed)
-    val order = groups?.flatMap { it.second } ?: listed
+    val showNone = clis.size <= 1
     out += Bean(
-      "sidekick.model", t("stats.model"), picked?.name ?: none,
+      "sidekick.model", t("stats.model"), pickedFamily?.name ?: picked?.name ?: none,
       // The badged mark, so this column reads as the sidekick's and not the lead's
       glyph = { SidekickMark(picked) },
-      rows = listed.size,
-      labels = groups?.count { it.first.isNotEmpty() } ?: 0,
+      rows = ComposerControls.sidekickFamilies(listed, { null }, cliId).let { fs -> fs.size + if (showNone) 1 else 0 },
+      labels = ComposerControls.byChannelFamilies(ComposerControls.sidekickFamilies(listed, { null }, cliId))?.count { it.first.isNotEmpty() } ?: 0,
       panel = {
+        val context = LocalContext.current
+        val families = remember(listed, cliId) { ComposerControls.sidekickFamilies(listed, { brandOf(context, it) }, cliId) }
+        val groups = remember(families) { ComposerControls.byChannelFamilies(families) }
+        val order = remember(families, groups) { groups?.flatMap { it.second } ?: families }
         @Composable
-        fun row(o: SessionOption) {
-          val isNone = o.id == ComposerControls.noSidekick
-          GooRow(if (isNone) none else o.name, o.id == current, glyph = { SidekickRowGlyph(if (isNone) null else o, Metrics.iconCtl) }) {
-            onSetConfig(sk.id, o.id); fold()
+        fun row(f: ModelFamily) {
+          val checked = f.variants.any { it.id == current }
+          val target = f.variants.firstOrNull()?.id ?: f.key
+          GooRow(f.name, checked, glyph = { VendorMark(f.brand, f.name, Palette.fgStrong, size = Metrics.iconCtl, fit = true) }) {
+            onSetConfig(sk.id, target); fold()
           }
         }
-        GooList(order.indexOfFirst { it.id == current }) {
-          if (groups == null) for (o in listed) row(o)
-          else for ((channel, options) in groups) {
+        val activeIndex = if (picked == null) 0 else order.indexOfFirst { f -> f.variants.any { it.id == current } }.let { if (it < 0) 0 else it + if (showNone) 1 else 0 }
+        GooList(activeIndex) {
+          if (showNone) {
+            GooRow(none, picked == null, glyph = { SidekickRowGlyph(null, Metrics.iconCtl) }) {
+              onSetConfig(sk.id, ComposerControls.noSidekick); fold()
+            }
+          }
+          if (groups == null) for (f in families) row(f)
+          else for ((channel, fams) in groups) {
             if (channel.isNotEmpty()) GooSection(channel)
-            for (o in options) row(o)
+            for (f in fams) row(f)
           }
         }
       },
     )
   }
-  val effort = c.sidekickEffort
-  val scale = if (picked == null) null else effort?.takeIf { ComposerControls.reasoningVisible(it) }?.let { ComposerControls.presentReasoning(it) }
-  if (effort != null && scale != null && scale.efforts.size > 1) {
-    val level = if (scale.off) t("mobile.thinking.off") else scale.efforts.firstOrNull { it.id == scale.value }?.name ?: t("composer.effort")
+  val e = if (picked == null) null else c.sidekickEffortScale
+  if (e != null && (e.levels.size > 1 || e.thinking != null)) {
+    val levels = if (e.levels.size > 1) e.levels else emptyList()
+    val thinking = e.thinking
+    val level = if (thinking?.on == false) t("mobile.thinking.off")
+      else levels.firstOrNull { it.first == e.value }?.second ?: if (thinking != null) "Thinking" else t("composer.effort")
     out += Bean(
       "sidekick.effort", t("composer.effort"), level,
       glyph = { Lucide("brain", Palette.fg1, size = Metrics.barIcon) },
-      rows = scale.efforts.size,
+      rows = levels.size + if (thinking != null) 1 else 0,
       panel = {
-        GooList(scale.efforts.indexOfFirst { it.id == scale.value }) {
-          for (l in scale.efforts) GooRow(l.name, !scale.off && l.id == scale.value) { onSetConfig(effort.id, l.id); fold() }
+        val active = if (thinking?.on == false) 0 else levels.indexOfFirst { it.first == e.value } + if (thinking != null) 1 else 0
+        GooList(active) {
+          if (thinking != null) {
+            GooRow(t("mobile.thinking.off"), !thinking.on) { thinking.set(false); fold() }
+            if (levels.isEmpty()) GooRow("Thinking", thinking.on) { thinking.set(true); fold() }
+          }
+          for ((id, label) in levels) GooRow(label, thinking?.on != false && id == e.value) { e.pick(id); fold() }
         }
       },
     )
