@@ -16,7 +16,8 @@ import { InspectorSplitter, clamp, fitPaneBounds, type PaneBounds } from '../cha
 import { lastRead, project, sameRead, shellResizeIdleIn, type GitStatus } from './api';
 import { registerBrowserFrame } from './browserTabs';
 import { FileGlyph, absPath, dirOf, markIndex, mediaKind, mediaUrl, nameOf, relPath } from './files';
-import { FileTree, ancestors } from './FileTree';
+import { FileTree, ancestors, fileTabMenuItems } from './FileTree';
+import { RowContextMenu } from '../chat/SessionMenu';
 import { FileViewer, ReviewView, preferMarkdownPreview } from './FileViewer';
 import { NewTab, type TabPick } from './NewTab';
 import { PluginFrame } from './PluginFrame';
@@ -313,7 +314,7 @@ interface TabGuard { leave: () => void; move: () => void }
 // - Windows and Linux: at the tab's end, in room kept for it, shown on the selected tab and on hover (Edge, VS Code,
 //   Windows Terminal), with no setting to flip it
 // `data-part="tab"` / `"tab-close"` are plugin style hooks (STYLE_HOOKS), so a skin can restyle or move them
-export function TabButton({ label, title, icon, on, closable, guard, closeAt = macOS ? 'start' : 'end', onSelect, onClose }: {
+export function TabButton({ label, title, icon, on, closable, guard, closeAt = macOS ? 'start' : 'end', menu, onSelect, onClose }: {
   label: string;
   title?: string;
   // The icon drawn with the classes given (they fade it for the close button)
@@ -323,6 +324,8 @@ export function TabButton({ label, title, icon, on, closable, guard, closeAt = m
   guard?: TabGuard;
   // Overridden only by the LAB, to show the other platform's tab
   closeAt?: 'start' | 'end';
+  // The tab's right-click menu (a file tab: the tree's entries for its file)
+  menu?: () => ReactNode;
   onSelect: () => void;
   onClose: () => void;
 }) {
@@ -334,7 +337,7 @@ export function TabButton({ label, title, icon, on, closable, guard, closeAt = m
       <X strokeWidth={1.5} className="size-3.5" />
     </span>
   );
-  return (
+  const button = (
     <button type="button" role="tab" data-part="tab" title={title ?? label} aria-selected={on} onClick={onSelect}
       onAuxClick={e => { if (closable && e.button === 1) onClose(); }}
       onPointerLeave={guard?.leave} onPointerMove={guard?.move}
@@ -347,6 +350,21 @@ export function TabButton({ label, title, icon, on, closable, guard, closeAt = m
       {atEnd && <span className="relative flex size-icon shrink-0">{close(on ? 'opacity-100' : 'group-hover/tab:opacity-100')}</span>}
     </button>
   );
+  return menu ? <RowContextMenu items={menu}>{button}</RowContextMenu> : button;
+}
+
+// A file (relative to the project, or absolute) or the project folder (an empty path) as a mention in the main composer
+export function mentionFile(root: string, path: string) {
+  const full = absPath(parseRemoteFolder(root)?.path ?? root, path);
+  const uri = fileUriOf(full) ?? full;
+  updateMainComposer(d => (d.some(x => x.kind === 'file' && x.uri === uri) ? d : [...d, { kind: 'file', uri, name: path || nameOf(root) }]), true);
+}
+
+// A file tab's right-click menu; none for the review, or for a plan shown from its Markdown with no file of its own
+export function fileTabMenu(view: PanelView | null | undefined, root: string, openEditor?: (path: string) => void, terminal?: boolean): (() => ReactNode) | undefined {
+  if (!view || view === 'review' || (view.planId && !/^([a-z]:)?[\\/]/i.test(view.path))) return undefined;
+  const path = view.path;
+  return () => fileTabMenuItems({ root, path, openEditor, terminal, onMention: rel => mentionFile(root, rel) });
 }
 
 // What "+" made becomes in its place: a Files tab of its own (the project's tree, like a browser tab each time and never
@@ -416,6 +434,7 @@ function ToolPanel(p: ToolPanelProps) {
             const face = tab.kind === 'files' ? filesTabFace(s.views[viewKey(tab.id, p.root, p.sessionId)]) : { label: tabLabel(tab), title: tabTitle(tab) };
             return (
               <TabButton key={tab.id} label={face.label} title={face.title} on={tab.id === s.tab} closable guard={fresh.guard(tab.id)}
+                menu={tab.kind === 'files' ? fileTabMenu(s.views[viewKey(tab.id, p.root, p.sessionId)], p.root, p.openEditor, s.terminal) : undefined}
                 icon={className => (face.path ? <FileGlyph name={face.path} className={className} /> : <Icon strokeWidth={1.5} className={className} />)}
                 onSelect={() => panel.select(tab.id)} onClose={() => panel.close(tab.id)} />
             );
@@ -601,10 +620,7 @@ export function useProjectFiles({ sessionId, root, running, shareSelection, show
     updateMainComposer(d => (d.some(x => sameRange(x, draft)) ? d : [...d, draft]), true);
     select(undefined);
   };
-  const mention = (path: string) => {
-    const uri = uriOf(path);
-    updateMainComposer(d => (d.some(x => x.kind === 'file' && x.uri === uri) ? d : [...d, { kind: 'file', uri, name: path || nameOf(root) }]), true);
-  };
+  const mention = (path: string) => mentionFile(root, path);
   // The tree changed the project itself: everything shown is read again
   const reload = () => setRefresh(r => r + 1);
   return { sessionId, root, key, tab, refresh, reload, changes, mark, changed, view, file, expanded, setExpanded, reveal, open, base, select, liveSelection, addRange, mention };

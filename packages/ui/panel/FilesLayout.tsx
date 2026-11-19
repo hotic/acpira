@@ -15,7 +15,7 @@ import { ContextTab, type ContextTabInfo } from '../context/ContextTab';
 import { TerminalFrame } from './TerminalFrame';
 import { PluginFrame } from './PluginFrame';
 import { usePluginPieces } from '../pluginSlots';
-import { BrowserFrame, MOVE_MS, TAB_ICON, TOGGLE_KEY, PanelTabList, TabButton, ViewPane, pickNewTab, tabLabel, tabTitle, terminalPathOpener, useFreshTab, useProjectFiles } from './ToolPanel';
+import { BrowserFrame, MOVE_MS, TAB_ICON, TOGGLE_KEY, PanelTabList, TabButton, ViewPane, fileTabMenu, pickNewTab, tabLabel, tabTitle, terminalPathOpener, useFreshTab, useProjectFiles } from './ToolPanel';
 
 // The desktop app's files layout (acpira.desktopLayout = files, picked in the LAB, lab/desk-ide.preview, 2026-10-24): the
 // conversation layout flipped, the raised sheet moved from the chat to what the session works on. Shell lays the chat on
@@ -139,7 +139,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
               ? <TabButton key="review" label={t('panel.allChanges')} on={!!shown && sameView(shown, v)} closable
                   icon={className => <Layers strokeWidth={1.5} className={className} />} onSelect={() => panel.showView(r, v)} onClose={() => panel.closeView(root, v)} />
               : <TabButton key={`file:${v.path}`} label={nameOf(v.path)} title={v.path} on={!!shown && sameView(shown, v)} closable
-                  icon={className => <FileGlyph name={v.path} className={className} />} onSelect={() => panel.showView(r, v)} onClose={() => panel.closeView(root, v)} />))}
+                  icon={className => <FileGlyph name={v.path} className={className} />} menu={fileTabMenu(v, root, p.openEditor, s.terminal)} onSelect={() => panel.showView(r, v)} onClose={() => panel.closeView(root, v)} />))}
             {pages.map(tab => {
               const Icon = TAB_ICON[tab.kind];
               return (

@@ -258,6 +258,43 @@ const trashLabel = () => t(windowsOS ? 'panel.menu.recycle' : 'panel.menu.trash'
 const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
 const under = (path: string, dir: string) => path === dir || path.startsWith(`${dir}/`);
 
+const menuItem = (key: string, Icon: typeof Copy, label: string, run: () => void, disabled?: boolean) => (
+  <DropdownMenu.Item key={key} disabled={disabled} onClick={run}><OptionContent icon={<Icon strokeWidth={1.5} />}>{label}</OptionContent></DropdownMenu.Item>
+);
+const menuRule = (key: string) => <DropdownMenu.Separator key={key} className="my-1 h-px bg-line" />;
+
+export interface FileTabMenu {
+  root: string;
+  // As the view names it: relative to the project, or absolute for a file outside it (a plan under ~/.agents/plans)
+  path: string;
+  openEditor?: (path: string) => void;
+  terminal?: boolean;
+  onMention: (path: string) => void;
+}
+
+// A file tab's right-click menu: the tree's own entries for that file, minus what needs the tree in place (new entries,
+// renaming, deleting). A file outside the project keeps the ones that only need its absolute path
+export function fileTabMenuItems(m: FileTabMenu): ReactNode[] {
+  const host = parseRemoteFolder(m.root);
+  const base = host?.path ?? m.root;
+  const outside = /^([a-z]:)?[\\/]/i.test(m.path);
+  const rel = outside ? undefined : m.path;
+  const abs = absPath(base, m.path);
+  const folder = dirOf(m.path);
+  // The tree's cwd for a project folder; a folder outside the project only on this computer
+  const cwd = rel !== undefined ? (folder ? absPath(m.root, folder) : m.root) : host ? undefined : folder;
+  return [
+    ...m.openEditor ? [menuItem('editor', SquareArrowOutUpRight, t('panel.openFile'), () => m.openEditor!(abs))] : [],
+    menuItem('reveal', FolderSearch, revealLabel(), () => vscodeApi().postMessage({ type: 'openPath', path: abs, reveal: true }), !!host),
+    ...m.terminal && cwd ? [menuItem('terminal', SquareTerminal, t('panel.menu.terminal'), () => panel.openTerminal(cwd))] : [],
+    menuRule('sep-copy'),
+    menuItem('mention', AtSign, t('panel.mention'), () => m.onMention(m.path)),
+    menuItem('path', Copy, t('panel.menu.copyPath'), () => void navigator.clipboard.writeText(abs)),
+    ...rel !== undefined ? [menuItem('rel', CopySlash, t('panel.menu.copyRelPath'), () => void navigator.clipboard.writeText(rel))] : [],
+  ];
+}
+
+
 export function FileTree(p: FileTreeProps) {
   // Seeded with what this project's tree showed last; every folder is still read again below
   const [dirs, setDirs] = useState<Record<string, DirListing | undefined>>(() => lastRead.dirs.get(p.root) ?? {});
@@ -428,10 +465,7 @@ export function FileTree(p: FileTreeProps) {
   const remove = (path: string) => void edit({ op: 'delete', path }, () => p.setExpanded(open => open.filter(x => !under(x, path))));
   const menuItems = (at: MenuTarget) => {
     const folder = at.dir ? at.path : dirOf(at.path);
-    const item = (key: string, Icon: typeof Copy, label: string, run: () => void, disabled?: boolean) => (
-      <DropdownMenu.Item key={key} disabled={disabled} onClick={run}><OptionContent icon={<Icon strokeWidth={1.5} />}>{label}</OptionContent></DropdownMenu.Item>
-    );
-    const rule = (key: string) => <DropdownMenu.Separator key={key} className="my-1 h-px bg-line" />;
+    const item = menuItem, rule = menuRule;
     return [
       ...!at.dir && p.openEditor ? [item('editor', SquareArrowOutUpRight, t('panel.openFile'), () => p.openEditor!(abs(at.path)))] : [],
       // A host's files are not on this computer's disk
