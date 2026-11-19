@@ -3,6 +3,7 @@ import { Check } from 'lucide-react';
 import type { AccountQuota } from '@acpira/shared/transcript';
 import { callPluginMethod, usePluginPieces } from '../pluginSlots';
 import { QuotaBars } from '../ui/QuotaBars';
+import { cn } from '../ui/cn';
 
 export interface PublishedAccountRow { label: string; badge: string; selected: boolean; windows: AccountQuota['windows'] }
 
@@ -21,8 +22,8 @@ export function accountRowsOf(result: unknown): PublishedAccountRow[] {
   });
 }
 
-export function PublishedAccountRow({ row, source, showCheck }: { row: PublishedAccountRow; source: string; showCheck: boolean }) {
-  return <div data-plugin-account className="mx-1 flex min-w-0 flex-col border-t border-line px-1 py-1.5 text-2">
+export function PublishedAccountRow({ row, source, showCheck, separated = true }: { row: PublishedAccountRow; source: string; showCheck: boolean; separated?: boolean }) {
+  return <div data-plugin-account className={cn('mx-1 flex min-w-0 flex-col px-1 py-1.5 text-2', separated && 'border-t border-line')}>
     <div className="flex min-w-0 items-center gap-2">
       <span className="truncate font-medium text-fg-1" title={row.label}>{row.label}</span>
       <span title={source} className="max-w-1/2 shrink-0 truncate rounded-sm border border-(--account-source)/25 bg-(--account-source)/10 px-1 text-3 text-(--account-source)">{row.badge}</span>
@@ -32,12 +33,12 @@ export function PublishedAccountRow({ row, source, showCheck }: { row: Published
   </div>;
 }
 
-export function PluginAccountRows({ agent, session, showCheck }: { agent: string; session?: string; showCheck: boolean }) {
+export function PluginAccountRows({ agent, session, showCheck, only }: { agent: string; session?: string; showCheck: boolean; only?: boolean }) {
   const pieces = usePluginPieces('account.rows');
-  return <>{pieces.map(p => <SourceRows key={JSON.stringify([p.plugin, agent, session])} plugin={p.plugin} source={p.title} agent={agent} session={session} showCheck={showCheck} />)}</>;
+  return <>{pieces.filter(p => !only || p.plugin === agent).map(p => <SourceRows key={JSON.stringify([p.plugin, agent, session])} plugin={p.plugin} source={p.title} agent={agent} session={session} showCheck={showCheck} separated={!only} />)}</>;
 }
 
-function SourceRows({ plugin, source, agent, session, showCheck }: { plugin: string; source: string; agent: string; session?: string; showCheck: boolean }) {
+function SourceRows({ plugin, source, agent, session, showCheck, separated }: { plugin: string; source: string; agent: string; session?: string; showCheck: boolean; separated: boolean }) {
   const [rows, setRows] = useState<PublishedAccountRow[]>([]);
   useEffect(() => {
     let active = true;
@@ -55,5 +56,5 @@ function SourceRows({ plugin, source, agent, session, showCheck }: { plugin: str
     const timer = setInterval(refresh, 60_000);
     return () => { active = false; clearInterval(timer); };
   }, [agent, session, plugin]);
-  return <>{rows.map((row, i) => <PublishedAccountRow key={i} row={row} source={source} showCheck={showCheck} />)}</>;
+  return <>{rows.map((row, i) => <PublishedAccountRow key={i} row={row} source={source} showCheck={showCheck} separated={separated || i > 0} />)}</>;
 }

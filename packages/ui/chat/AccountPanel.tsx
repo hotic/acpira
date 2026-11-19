@@ -37,7 +37,7 @@ export const hasAccountMenu = (agent: AgentInfo) => !!(agent.accounts || agent.l
 // Official account: the identity and quota the CLI keeps itself, read-only but for the header's sign-in when the login is missing or expired
 export function AccountPanel(p: AccountPanelProps) {
   const { onRefreshQuota, agent } = p;
-  const contributed = !p.remoteAuth && <PluginAccountRows agent={agent.id} session={p.session} showCheck={!p.accountId} />;
+  const contributed = !p.remoteAuth && <PluginAccountRows agent={agent.id} session={p.session} showCheck={!p.accountId} only={!hasAccountMenu(agent)} />;
   useEffect(() => {
     onRefreshQuota?.(agent.id);
     const timer = setInterval(() => onRefreshQuota?.(agent.id), 60_000);
@@ -65,6 +65,8 @@ export function AccountPanel(p: AccountPanelProps) {
       {contributed}
     </div>;
   }
+
+  if (!p.agent.accounts) return <div className="flex flex-col"><PanelHeader>{p.agent.name}</PanelHeader>{contributed}</div>;
 
   // A locked keychain keeps the saved logins unreadable: importing or signing in again would only duplicate them
   const unlock = p.agent.credentialsLocked && p.onUnlockCredentials
