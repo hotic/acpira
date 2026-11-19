@@ -1308,6 +1308,9 @@ pub enum WebviewMsg {
     name: String,
     #[serde(default)]
     arguments: String,
+    /// The draft's attachments (pasted images among them), handed to the `command` hook as they are
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<Draft>,
   },
   /// A row of a plugin command button's menu was picked: the engine keeps the pick and tells the plugin
   PluginMenu {

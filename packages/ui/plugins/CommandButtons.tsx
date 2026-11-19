@@ -3,7 +3,7 @@ import {
   Bot, Bug, Check, Eye, FileText, Flame, GitBranch, GitCommitHorizontal, GitPullRequest, Heart, Languages, ListChecks, LoaderCircle,
   MessageSquare, Package, Play, RefreshCw, Rocket, Search, Sparkles, SquareTerminal, Star, TestTube, WandSparkles, Zap, type LucideIcon,
 } from 'lucide-react';
-import type { CommandMenuItem, SlashCommand } from '@acpira/shared/transcript';
+import type { CommandMenuItem, Draft, SlashCommand } from '@acpira/shared/transcript';
 import { Chip, ChipTag } from '../ui/Button';
 import { DropdownMenu, optionClass } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
@@ -18,7 +18,8 @@ import { useArrival } from './Pieces';
 // `draft` its text replaces the draft, one edit the field's undo takes back. A command that takes no draft (`input:
 // "none"`) sends `/name` alone and leaves the draft be. One applied from a card flies in from it.
 // The plugin picks the glyph and the look; a press sends a ring of the brand colour out of the button (motion.css).
-// A command with a `menu` is a menu chip instead, drawn like the mode chip: the engine keeps the session's picks
+// A command with a `menu` is a menu chip instead, drawn like the mode chip: the engine keeps the session's picks. A draft
+// command with a menu is split: the body rewrites the draft, the caret opens the menu (the model the rewrite uses)
 
 // The manifest's BUTTON_ICONS, one glyph each (test/pluginButtonIcons.test.ts keeps the two lists equal)
 export const BUTTON_ICONS: Record<string, LucideIcon> = {
@@ -34,11 +35,20 @@ const LOOK = {
   outline: 'text-fg-1 shadow-[inset_0_0_0_1px_var(--line-strong)] hover:bg-active',
   icon: 'bg-chip text-fg-1 hover:bg-chip-hover w-ctl-sm justify-center px-0',
 };
+// A split chip's caret while its menu is open: the look's hover fill, so the half keeps the body's colour
+const OPEN = {
+  brand: 'data-[popup-open]:bg-[color-mix(in_srgb,var(--brand)_26%,transparent)]',
+  solid: 'data-[popup-open]:bg-chip-hover',
+  outline: 'data-[popup-open]:bg-active',
+  icon: 'data-[popup-open]:bg-chip-hover',
+};
 
-export const CommandButtons = memo(function CommandButtons({ commands, sessionId, draft, disabled, onSend, onSendBare, onDraft, onRewriting, onNotice, onOpenChange }: {
+export const CommandButtons = memo(function CommandButtons({ commands, sessionId, draft, attachments, disabled, onSend, onSendBare, onDraft, onRewriting, onNotice, onOpenChange }: {
   commands?: SlashCommand[];
   sessionId?: string;
   draft: string;
+  // The draft's attachments, handed to a draft command with its text (a rewrite that reads the pasted images)
+  attachments?: readonly Draft[];
   disabled?: boolean;
   // In the draft's place, with its attachments; `onSendBare` leaves both in the field
   onSend: (text: string) => void;
@@ -60,7 +70,7 @@ export const CommandButtons = memo(function CommandButtons({ commands, sessionId
     if (!sessionId) return;
     onRewriting(true);
     try {
-      const text = await callPluginCommand(sessionId, c.name, args);
+      const text = await callPluginCommand(sessionId, c.name, args, attachments);
       onRewriting(false);
       if (text !== undefined) onDraft(text, args);
     } catch (e) {
@@ -74,9 +84,14 @@ export const CommandButtons = memo(function CommandButtons({ commands, sessionId
       {plugins.map(plugin => (
         // Keyed by its buttons too: a plugin applied again with changed buttons lands again
         <PluginButtons key={`${plugin}|${buttons.filter(c => c.plugin === plugin).map(c => c.name).join(',')}`} plugin={plugin} sessionId={sessionId}>
-          {buttons.filter(c => c.plugin === plugin).map(c => c.menu?.length
-            ? <CommandMenu key={c.name} command={c} sessionId={sessionId} disabled={disabled} onOpenChange={onOpenChange} />
-            : <CommandButton key={c.name} command={c} disabled={disabled} run={run(c)} />)}
+          {buttons.filter(c => c.plugin === plugin).map(c => !c.menu?.length
+            ? <CommandButton key={c.name} command={c} disabled={disabled} run={run(c)} />
+            : c.draft
+              ? <span key={c.name} className="inline-flex shrink-0 items-center">
+                  <CommandButton command={c} disabled={disabled} run={run(c)} className="rounded-r-none" />
+                  <CommandMenu command={c} sessionId={sessionId} disabled={disabled} onOpenChange={onOpenChange} caretOnly />
+                </span>
+              : <CommandMenu key={c.name} command={c} sessionId={sessionId} disabled={disabled} onOpenChange={onOpenChange} />)}
         </PluginButtons>
       ))}
     </div>
@@ -94,7 +109,8 @@ function PluginButtons({ plugin, sessionId, children }: { plugin: string; sessio
   );
 }
 
-function CommandButton({ command: c, disabled, run }: { command: SlashCommand; disabled?: boolean; run: () => Promise<void> }) {
+// `className`: the body of a split chip squares its end against the caret
+function CommandButton({ command: c, disabled, run, className }: { command: SlashCommand; disabled?: boolean; run: () => Promise<void>; className?: string }) {
   // A draft command waits on the plugin's process (a model call may take seconds): one run at a time, shown on the chip
   const [busy, setBusy] = useState(false);
   // Each press mounts a fresh ring, so a quick second press rings again
@@ -104,8 +120,8 @@ function CommandButton({ command: c, disabled, run }: { command: SlashCommand; d
   const glyph = busy ? <LoaderCircle className="animate-spin" strokeWidth={1.75} /> : <Icon strokeWidth={1.75} className={look === 'brand' ? 'text-(--brand)' : look === 'icon' ? 'text-fg-1' : undefined} />;
   return (
     <span className="relative inline-flex shrink-0 rounded-sm">
-      <Chip caret={false} disabled={disabled || busy} title={c.description || c.button}
-        aria-label={c.button} aria-busy={busy || undefined} className={cn('command-press', LOOK[look])} icon={glyph}
+      <Chip caret={false} disabled={disabled || busy} title={[c.description || c.button, c.badge].filter(Boolean).join('\n')}
+        aria-label={c.button} aria-busy={busy || undefined} className={cn('command-press', LOOK[look], className)} icon={glyph}
         narrow={look === 'icon' ? undefined : 'icon'}
         onClick={() => { setPresses(n => n + 1); setBusy(true); void run().finally(() => setBusy(false)); }}>
         {/* The icon look is the glyph alone, centred in a square: no label slot to push it aside */}
@@ -117,21 +133,26 @@ function CommandButton({ command: c, disabled, run }: { command: SlashCommand; d
 }
 
 // A command button with a `menu`: the chip names the command and carries the first group's pick as a tag, and its menu
-// opens upwards like the mode chip's. A radio pick closes the menu as a mode pick does; a toggle keeps it open
-function CommandMenu({ command: c, sessionId, disabled, onOpenChange }: { command: SlashCommand; sessionId?: string; disabled?: boolean; onOpenChange?: (open: boolean) => void }) {
+// opens upwards like the mode chip's. A radio pick closes the menu as a mode pick does; a toggle keeps it open.
+// `caretOnly`: the caret half of a split chip, the pick named in its tooltip; a hairline parts it from the body
+function CommandMenu({ command: c, sessionId, disabled, onOpenChange, caretOnly }: { command: SlashCommand; sessionId?: string; disabled?: boolean; onOpenChange?: (open: boolean) => void; caretOnly?: boolean }) {
   const look = c.look && c.look in LOOK ? c.look : 'brand';
   const Icon = (c.icon && BUTTON_ICONS[c.icon]) || Zap;
+  const trigger = caretOnly
+    ? <Chip className={cn('shrink-0 rounded-l-none px-1 shadow-[inset_1px_0_0_var(--line)]', LOOK[look === 'icon' ? 'solid' : look], OPEN[look])}
+        title={[t('permission.more'), c.badge].filter(Boolean).join('\n')} aria-label={`${c.button} ${t('permission.more')}`}>{null}</Chip>
+    : <Chip className={cn('shrink-0', LOOK[look])} narrow={look === 'icon' ? undefined : 'icon'}
+        title={[c.description || c.button, c.badge].filter(Boolean).join('\n')} aria-label={c.button}
+        icon={<Icon strokeWidth={1.75} className={look === 'brand' ? 'text-(--brand)' : look === 'icon' ? 'text-fg-1' : undefined} />}
+        tags={c.badge ? [<ChipTag key="badge">{c.badge}</ChipTag>] : undefined} tagsKey={c.badge ?? ''}>
+        {look === 'icon' ? null : c.button}
+      </Chip>;
   const pick = (item: string) => { if (sessionId) vscodeApi().postMessage({ type: 'pluginMenu', sessionId, name: c.name, item }); };
   const items = c.menu ?? [];
   const wide = items.some(i => i.description);
   return (
     <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
-      <DropdownMenu.Trigger disabled={disabled || !sessionId} render={<Chip className={cn('shrink-0', LOOK[look])} narrow={look === 'icon' ? undefined : 'icon'}
-        title={[c.description || c.button, c.badge].filter(Boolean).join('\n')} aria-label={c.button}
-        icon={<Icon strokeWidth={1.75} className={look === 'brand' ? 'text-(--brand)' : look === 'icon' ? 'text-fg-1' : undefined} />}
-        tags={c.badge ? [<ChipTag key="badge">{c.badge}</ChipTag>] : undefined} tagsKey={c.badge ?? ''}>
-        {look === 'icon' ? null : c.button}
-      </Chip>} />
+      <DropdownMenu.Trigger disabled={disabled || !sessionId} render={trigger} />
       <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width={wide ? 'md' : 'sm'}><DropdownMenu.Popup>
         <div className="scroll-none flex max-h-pop flex-col overflow-y-auto">
           {menuRuns(items).map((run, i) => <MenuRun key={i} run={run} onPick={pick} />)}

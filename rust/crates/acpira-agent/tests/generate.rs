@@ -3,7 +3,7 @@
 
 use serde_json::json;
 
-use acpira_agent::generate::generate;
+use acpira_agent::generate::{Image, generate};
 use acpira_agent::mock::{self, MockModel};
 
 #[tokio::test]
@@ -20,22 +20,29 @@ async fn one_call_goes_to_the_picked_model_or_the_fast_one() {
 
   // No pick: the fast model, with the system prompt and the text as one user message
   fast.push(mock::text("from fast"));
-  let g = generate(home.path(), None, "Be brief.", "say hi", Some(64)).await.unwrap();
+  let g = generate(home.path(), None, "Be brief.", "say hi", vec![], Some(64)).await.unwrap();
   assert_eq!((g.text.as_str(), g.model.as_str()), ("from fast", "fast/f1"));
   let sent = fast.requests()[0].body.to_string();
   assert!(sent.contains("Be brief.") && sent.contains("say hi") && !sent.contains("\"tools\""), "{sent}");
 
   // A pick goes where it says; one that does not exist is refused without a call
   main.push(mock::text("from main"));
-  assert_eq!(generate(home.path(), Some("mock/m1"), "", "x", None).await.unwrap().text, "from main");
-  let e = generate(home.path(), Some("mock/nope"), "", "x", None).await.unwrap_err();
+  assert_eq!(generate(home.path(), Some("mock/m1"), "", "x", vec![], None).await.unwrap().text, "from main");
+  let e = generate(home.path(), Some("mock/nope"), "", "x", vec![], None).await.unwrap_err();
   assert!(e.contains("mock/nope"), "{e}");
   assert_eq!((main.requests().len(), fast.requests().len()), (1, 1));
+
+  // Images go after the text in the same user message
+  main.push(mock::text("seen"));
+  let image = Image { mime: "image/png".into(), data: "iVBORw0KGgo=".into() };
+  assert_eq!(generate(home.path(), Some("mock/m1"), "", "what is in it", vec![image], None).await.unwrap().text, "seen");
+  let sent = main.requests()[1].body.to_string();
+  assert!(sent.contains("what is in it") && sent.contains("iVBORw0KGgo=") && sent.contains("image/png"), "{sent}");
 }
 
 #[tokio::test]
 async fn no_model_source_is_an_error_a_plugin_can_read() {
   let home = tempfile::tempdir().unwrap();
-  let e = generate(home.path(), None, "", "x", None).await.unwrap_err();
+  let e = generate(home.path(), None, "", "x", vec![], None).await.unwrap_err();
   assert!(e.contains("no model source"), "{e}");
 }

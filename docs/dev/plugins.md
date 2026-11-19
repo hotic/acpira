@@ -47,6 +47,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 - After the agent's own (the agent's wins a clash), expanded before the `prompt` hook.
 - `button` is a native composer chip (`plugins/CommandButtons.tsx`), working in every host unlike a frame. A button that takes no draft (`CommandDef::takes_draft`) sends `/name` alone and leaves the draft, so a fixed prompt never swallows half-typed text.
 - A `menu` button is a setting: picks live per session in the record (`PluginState::menus`), so the menu never waits on a process; hooks read them as `menus`, stored before the `menu` hook hears a pick.
+- `draft` + `menu` is a split chip (body runs, caret opens the menu). A draft button's `command` (with the draft's attachments) and a page's method call get `CLICK_TIMEOUT` (`runtime.rs`): the user waits on the button; a typed `/name` keeps the hook limit.
 - A `draft` result is dropped if the draft changed meanwhile; if the composer went, it is parked as the session's draft. Steering a queued plugin `/name` falls back to send-now, since a steer would carry the raw text (`queue.rs`).
 
 ## Script tools

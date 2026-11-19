@@ -310,11 +310,11 @@ impl SessionManager {
         }
       }
       // A plugin's process may take its full time limit: off the message loop, answered to this page by id
-      W::PluginCommand { id, session_id, name, arguments } => {
+      W::PluginCommand { id, session_id, name, arguments, attachments } => {
         let (s, v) = (valid(&session_id).then(|| self.live(&session_id)).flatten(), v.clone());
         tokio::spawn(async move {
           let outcome = match &s {
-            Some(s) => s.run_plugin_command(&name, &arguments, true).await,
+            Some(s) => s.run_plugin_command(&name, &arguments, Some(&attachments)).await,
             None => Some(Err(t("plugin.command.noSession"))),
           };
           let (result, error) = match outcome {

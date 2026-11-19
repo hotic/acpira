@@ -129,12 +129,13 @@ export function callPluginMethod(plugin: string, method: string, params?: unknow
   });
 }
 
-// A command button with `draft` (plugins/CommandButtons.tsx): the text that replaces the draft, if the command gave one
-export function callPluginCommand(sessionId: string, name: string, args: string): Promise<string | undefined> {
+// A command button with `draft` (plugins/CommandButtons.tsx): the text that replaces the draft, if the command gave one.
+// The draft's attachments go along, so a rewrite can read the pasted images too
+export function callPluginCommand(sessionId: string, name: string, args: string, attachments?: readonly Draft[]): Promise<string | undefined> {
   const id = `pc-${++seq}`;
   return new Promise<unknown>((resolve, reject) => {
     ownCalls.set(id, { resolve, reject });
-    vscodeApi().postMessage({ type: 'pluginCommand', id, sessionId, name, arguments: args });
+    vscodeApi().postMessage({ type: 'pluginCommand', id, sessionId, name, arguments: args, ...(attachments?.length ? { attachments: [...attachments] } : {}) });
   }).then(r => {
     const text = (r as { text?: unknown } | undefined)?.text;
     return typeof text === 'string' ? text : undefined;

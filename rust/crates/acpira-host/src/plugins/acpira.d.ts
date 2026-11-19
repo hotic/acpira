@@ -49,6 +49,8 @@ declare module '@acpira/plugin' {
       post(message: unknown): Promise<unknown>;
       composer(text: string, replace?: boolean, session?: string): Promise<unknown>;
     };
+    // One call through the built-in agent's models: `{ prompt, system, model, maxTokens, images: [{ mimeType, data }] }`,
+    // answered `{ text, model, usage }`
     model: { generate(params: string | Record<string, unknown>): Promise<any> };
     providers: { set(providers: unknown[]): Promise<unknown> };
     request<T = any>(method: string, params?: Record<string, unknown>): Promise<T>;
@@ -91,6 +93,20 @@ declare module '@acpira/plugin' {
   // A command menu's state: each radio group's pick (by group name) and each toggle (by its id)
   export type MenuPicks = Record<string, string | boolean>;
 
+  // One of the draft's attachments, as the composer holds it: a pasted image is base64 `data`
+  export type Attachment =
+    | { kind: 'image'; mimeType: string; data: string; name?: string }
+    | { kind: 'text'; name: string; text: string }
+    | { kind: 'file'; uri: string; name: string }
+    | { kind: 'selection'; uri: string; name: string; startLine: number; endLine: number; text: string }
+    | { kind: 'quote'; text: string; comment?: string };
+
+  // What a `message.actions` button's method may answer to fill the popover its click opened: this Markdown, `title`
+  // dim beside the button's title. Any other answer closes the popover; each opening calls the method again
+  export interface NoteAnswer {
+    note: string | { markdown: string; title?: string };
+  }
+
   type Maybe<T> = T | null | undefined | void | Promise<T | null | undefined | void>;
   type Handler<P = any, R = unknown> = (payload: P, ctx: Context) => Maybe<R>;
 
@@ -110,8 +126,11 @@ declare module '@acpira/plugin' {
     // Schedules of plugin.json: `due` is the occurrence in milliseconds (a missed run catches up once)
     schedules?: Record<string, (ctx: Context & { due: number }) => unknown>;
     // Commands of plugin.json without a `prompt`: the prompt to send in their place, or nothing
-    // `menus`: every command button menu's picks in the session, by command; `picks` in an answer moves this command's
-    commands?: Record<string, (args: string, ctx: Context & { draft: boolean; session?: string; menus: Record<string, MenuPicks> }) => Maybe<string | { text?: string; picks?: MenuPicks }>>;
+    // `menus`: every command button menu's picks in the session, by command; `picks` in an answer moves this command's.
+    // `attachments`: what the draft holds when its button runs it (`draft`), images as `{ kind: 'image', mimeType, data }`.
+    // `session` here is the session id, so it hides the session API: `ctx.request('session/get', { session })` reads it.
+    // A method reads a command menu's picks from the checked rows of that view's `commands`
+    commands?: Record<string, (args: string, ctx: Context & { draft: boolean; attachments: Attachment[]; session?: string; menus: Record<string, MenuPicks> }) => Maybe<string | { text?: string; picks?: MenuPicks }>>;
     // Command buttons with a `menu`: a row was picked (`item`, its id), `picks` already holds the result; answer
     // `{ picks }` to change them (an `action` row keeps nothing otherwise)
     menus?: Record<string, (item: string, ctx: Context & { session: string; picks: MenuPicks }) => Maybe<{ picks?: MenuPicks }>>;

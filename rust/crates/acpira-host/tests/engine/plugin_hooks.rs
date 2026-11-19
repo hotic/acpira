@@ -283,14 +283,17 @@ async fn a_plugins_commands_join_every_menu_and_its_skills_reach_an_agent_that_d
   let entry = m.view_of(&id).unwrap()["commands"].as_array().unwrap().iter().find(|c| c["name"] == "review").cloned().unwrap();
   assert_eq!(entry["plugin"], "hooker");
   m.handle(json!({ "type": "pluginCommand", "id": "c1", "sessionId": id, "name": "review", "arguments": "my draft" })).await;
-  m.handle(json!({ "type": "pluginCommand", "id": "c2", "sessionId": id, "name": "ping", "arguments": "soon" })).await;
+  // The draft's attachments ride along to the hook, a pasted image as the composer holds it
+  m.handle(json!({ "type": "pluginCommand", "id": "c2", "sessionId": id, "name": "ping", "arguments": "soon", "attachments": [{ "kind": "image", "mimeType": "image/png", "data": "iVBORw0KGgo=" }] })).await;
   m.handle(json!({ "type": "pluginCommand", "id": "c3", "sessionId": id, "name": "nope", "arguments": "" })).await;
   let called = |call: &str| m.events.lock().unwrap().iter().find(|e| e["type"] == "pluginCalled" && e["id"] == call).cloned();
   until(|| ["c1", "c2", "c3"].iter().all(|c| called(c).is_some()), 5000).await;
   assert_eq!(called("c1").unwrap()["result"]["text"], "echo-text Please review my draft");
   assert_eq!(called("c2").unwrap()["result"]["text"], "echo-text pong soon");
   assert!(called("c3").unwrap()["error"].as_str().is_some_and(|e| e.contains("/nope")));
-  assert_eq!(calls(plugins.path(), "hook/command").last().unwrap()["draft"], true);
+  let hooked = calls(plugins.path(), "hook/command").last().cloned().unwrap();
+  assert_eq!(hooked["draft"], true);
+  assert_eq!(hooked["attachments"][0]["mimeType"], "image/png");
   assert_eq!(turns(&m.view_of(&id).unwrap()), before);
 
   // A command added while the session is open shows in its menu at once

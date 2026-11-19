@@ -654,8 +654,9 @@ export type WebviewMsg =
   | { type: 'pluginBackdrop'; plugin: string; snapshot: string }
   // Call a method a plugin's process offers (runtime.methods); answered by pluginCalled
   | { type: 'pluginCall'; id: string; plugin: string; method: string; params?: unknown }
-  // A plugin command's button with `draft`: its text for the draft, answered by pluginCalled with { text }
-  | { type: 'pluginCommand'; id: string; sessionId: string; name: string; arguments: string }
+  // A plugin command's button with `draft`: its text for the draft, answered by pluginCalled with { text }; the draft's
+  // attachments (pasted images among them) go to the command hook as they are
+  | { type: 'pluginCommand'; id: string; sessionId: string; name: string; arguments: string; attachments?: Draft[] }
   // A row of a plugin command button's menu was picked: the engine keeps the pick and tells the plugin
   | { type: 'pluginMenu'; sessionId: string; name: string; item: string }
   // The built-in agent's model sources: read them, or apply an edit and get the view back

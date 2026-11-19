@@ -358,7 +358,8 @@ impl AcpSession {
           draft: c.def.draft,
           icon: c.def.icon.clone(),
           look: c.def.look.clone(),
-          takes_draft: c.def.button.is_some() && c.def.menu.is_empty() && c.def.takes_draft(),
+          // A menu chip leaves the draft alone, unless it is split: a draft command whose caret opens the menu
+          takes_draft: c.def.button.is_some() && (c.def.menu.is_empty() || c.def.draft) && c.def.takes_draft(),
           menu,
           badge,
         }
@@ -383,12 +384,13 @@ impl AcpSession {
   async fn plugin_command(&self, text: &str) -> Option<Result<Option<String>, String>> {
     let name = command_name(text)?;
     let args = text.get(name.len() + 1..).unwrap_or_default().trim();
-    self.run_plugin_command(name, args, false).await
+    self.run_plugin_command(name, args, None).await
   }
 
   /// A plugin's command `name` (one the agent has none of) run with `args`: its template filled in, or its process's
-  /// answer. `draft`: run from its composer button for text that replaces the draft, which the hook is told
-  pub async fn run_plugin_command(&self, name: &str, args: &str, draft: bool) -> Option<Result<Option<String>, String>> {
+  /// answer. `draft`: run from its composer button for text that replaces the draft, with the draft's attachments; the
+  /// hook is told both, and since the user waits on the button rather than on a prompt, it may take a model call's time
+  pub async fn run_plugin_command(&self, name: &str, args: &str, draft: Option<&[Draft]>) -> Option<Result<Option<String>, String>> {
     let rt = self.deps.plugin_runtime.clone()?;
     if self.core.lock().state.commands.iter().any(|c| c.name == name) {
       return None;
@@ -399,11 +401,15 @@ impl AcpSession {
       return Some(Ok(Some(expand(template, args))));
     }
     let mut call = json!({ "name": name, "arguments": args });
-    if draft {
+    if let Some(attachments) = draft {
       call["draft"] = json!(true);
+      if !attachments.is_empty() {
+        call["attachments"] = json!(attachments);
+      }
     }
     let payload = self.plugin_payload(call);
-    Some(match rt.hook_of(&cmd.plugin, "command", payload).await {
+    let answer = if draft.is_some() { rt.hook_clicked(&cmd.plugin, "command", payload).await } else { rt.hook_of(&cmd.plugin, "command", payload).await };
+    Some(match answer {
       None => Err(format!("{}: /{name} needs its process, which is not running", cmd.plugin)),
       Some(Err(e)) => Err(format!("{}: {e}", cmd.plugin)),
       Some(Ok(answer)) => {
