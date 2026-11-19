@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { zstdDecompressSync } from 'node:zlib';
 import type { AccountAction, AddAccountVia, HostMsg, InitState, WebviewMsg } from '@acpira/shared/protocol';
 import type { SidecarMsg } from '@acpira/shared/sidecar';
-import type { AgentId, NativeSessionInfo, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
+import type { AgentId, ConfigControl, NativeSessionInfo, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
 import { Shell } from '../../test/sidecarShell';
 import { sidecarBin } from './sidecarBin';
 
@@ -201,6 +201,15 @@ export class View {
     const msg = (await reply).message as Extract<HostMsg, { type: 'nativeSessions' }>;
     if (msg.error) throw new Error(msg.error);
     return msg.sessions;
+  }
+
+  // The settings page's refresh: a throwaway spawn of the agent reads its models, which then count as known (the host's
+  // sidekick select lists only CLIs whose models it has seen)
+  async probeControls(agent: AgentId): Promise<ConfigControl[]> {
+    const reply = this.shell.upcoming((m): m is Extract<SidecarMsg, { type: 'hostMessage' }> =>
+      m.type === 'hostMessage' && m.viewId === this.id && m.message.type === 'controls' && m.message.agent === agent, 120_000);
+    this.post({ type: 'controls', agent, fresh: true });
+    return ((await reply).message as Extract<HostMsg, { type: 'controls' }>).controls;
   }
 
   async importNativeSession(agent: AgentId, s: NativeSessionInfo) {
