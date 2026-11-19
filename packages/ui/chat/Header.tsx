@@ -19,6 +19,7 @@ import { cn } from '../ui/cn';
 import { SessionMenu, Submenu } from './SessionMenu';
 import type { ShellHandlers } from './Shell';
 import { SlotPieces } from '../plugins/Pieces';
+import { usePluginPieces } from '../pluginSlots';
 
 export interface HeaderProps {
   title: string;
@@ -69,6 +70,10 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
   useLocale();
   const desktop = useDesktop();
   const narrowDesk = desktop && !!narrow;
+  const accountPieces = usePluginPieces('account.rows');
+  const nativeAccounts = hasAccountMenu(agent);
+  // Plugin agents use their plugin id. A read-only panel needs neither stored nor CLI-owned accounts.
+  const pluginAccounts = !remoteAuth && accountPieces.some(p => p.plugin === agent.id);
   const [accountOpen, setAccountOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const account = accounts?.find(a => a.id === accountId);
@@ -99,7 +104,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
   // in the header. The submenu is the account panel's list without its quota bars and removal (both stay in settings)
   const menuLead = (): ReactElement[] => {
     const rows: ReactElement[] = [];
-    if (hasAccountMenu(agent)) {
+    if (nativeAccounts) {
       const mine = accounts?.filter(a => a.agent === agent.id) ?? [];
       const local = agent.localAccount;
       // Before the CLI's own login is found, its label is only the product name (AccountPanel's LocalAccountBody)
@@ -194,7 +199,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
               onNewInCategory={category => { on.newSession(agent.id, category); setHistoryOpen(false); }} />
           </Popover.Popup></Popover.Positioner></Popover.Portal>
         </Popover.Root>}
-        {hasAccountMenu(agent) && !narrowDesk && accountButton}
+        {((nativeAccounts && !narrowDesk) || (!nativeAccounts && pluginAccounts)) && accountButton}
         {/* The active session's "…" menu: the row summary when the list knows it, a stub built from the header facts otherwise */}
         {activeSessionId && (
           <SessionMenu
