@@ -10,51 +10,119 @@ func hasAccountMenu(_ agent: AgentInfo) -> Bool { agent.accounts == true || agen
 
 // MARK: - Quota
 
-/// QuotaBars.tsx: per window a line (name, the time to its reset as a badge, what is left) over a 7 pt tube whose
-/// fill turns warn under 30 % and danger under 10 %
+/// What is wrong with a stored account's quota read, shown in place of its plan/source tag (AccountPanel.tsx savedState)
+struct SavedAccountIssue: Equatable, Sendable {
+  let text: String
+  let warn: Bool
+}
+
+/// The issue tag for a saved account, if the keychain is locked or its last quota read failed
+func savedAccountIssue(agent: AgentInfo, account: AccountInfo) -> SavedAccountIssue? {
+  // A plugin's account signs in with what the plugin gives, never through the locked store
+  if agent.credentialsLocked == true && account.plugin == nil {
+    return SavedAccountIssue(text: t("quota.short.locked"), warn: true)
+  }
+  guard let issue = account.quotaIssue, issue != .unknown else { return nil }
+  return SavedAccountIssue(text: t("quota.short.\(issue.rawValue)"), warn: issue == .expired)
+}
+
+/// QuotaBars.tsx: per window a metadata line over a slim tube whose fill turns warn under 30 % and danger under 10 %
+/// (grey while stale). Windows that come in pairs under one label (e.g. a model group's 5-hour and weekly allowance)
+/// share one aligned row at every width: the label once, then the two windows side by side
 struct QuotaBars: View {
   let quota: AccountQuota
-  /// The text's step and ink: the popup's caption by default, a step up in the system account sheet
-  var style = TypeScale.text3
-  var ink = Palette.popFg2
+  /// The last read failed, so these are the last known figures: grey tubes and dimmed text
+  var stale = false
+  /// Matches desktop's `text-3`, the same step as the account row's plan and source tags
+  var style = TypeScale.text4
   @Environment(\.now) private var now
+  @State private var wide = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Metrics.gap) {
-      ForEach(quota.windows, id: \.id) { w in QuotaBar(window: w, now: now) }
-      if let balance = quota.onDemandBalanceUsd, balance.isFinite {
-        HStack(alignment: .firstTextBaseline, spacing: Metrics.s2) {
-          Text(web: t("quota.onDemandBalance"), paragraph: false).lineLimit(1)
-          Spacer(minLength: 0)
-          Text(verbatim: balance.formatted(.currency(code: "USD")))
+    let pairs = QuotaTime.labelPairs(quota.windows)
+    let balance = quota.onDemandBalanceUsd.flatMap { $0.isFinite ? $0 : nil }
+    if !quota.windows.isEmpty || balance != nil {
+      VStack(alignment: .leading, spacing: Metrics.s2) {
+        if let pairs {
+          Grid(alignment: .leading, horizontalSpacing: Metrics.gap, verticalSpacing: Metrics.s2) {
+            ForEach(pairs, id: \.first.id) { pair in
+              GridRow {
+                Text(web: QuotaTime.windowLabel(pair.first.id), paragraph: false)
+                  .foregroundStyle(stale ? Palette.fg3 : Palette.fg1)
+                  .lineLimit(1)
+                  .fixedSize()
+                  .gridCellAnchor(.leading)
+                QuotaBar(window: pair.first, now: now, stale: stale, bare: true, wide: wide)
+                QuotaBar(window: pair.second, now: now, stale: stale, bare: true, wide: wide)
+              }
+            }
+          }
+        } else if wide && quota.windows.count > 1 {
+          let rows = stride(from: 0, to: quota.windows.count, by: 2).map { i in
+            (quota.windows[i], i + 1 < quota.windows.count ? quota.windows[i + 1] : nil)
+          }
+          Grid(alignment: .leading, horizontalSpacing: Metrics.gap, verticalSpacing: Metrics.s2) {
+            ForEach(rows, id: \.0.id) { first, second in
+              GridRow {
+                QuotaBar(window: first, now: now, stale: stale, bare: false, wide: wide)
+                if let second {
+                  QuotaBar(window: second, now: now, stale: stale, bare: false, wide: wide)
+                } else {
+                  Color.clear.frame(height: 0)
+                }
+              }
+            }
+          }
+        } else {
+          VStack(alignment: .leading, spacing: Metrics.s2) {
+            ForEach(quota.windows, id: \.id) { w in
+              QuotaBar(window: w, now: now, stale: stale, bare: false, wide: wide)
+            }
+          }
+        }
+        if let balance {
+          HStack(alignment: .firstTextBaseline, spacing: Metrics.s2) {
+            Text(web: t("quota.onDemandBalance"), paragraph: false).lineLimit(1)
+            Spacer(minLength: 0)
+            Text(verbatim: balance.formatted(.currency(code: "USD")))
+          }
         }
       }
+      .textStyle(style)
+      .foregroundStyle(stale ? Palette.fg3 : Palette.fg2)
+      .monospacedDigit()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .onGeometryChange(for: Bool.self) { $0.size.width >= Metrics.quotaWide } action: { wide = $0 }
     }
-    .textStyle(style)
-    .foregroundStyle(ink)
-    .monospacedDigit()
-    .padding(.top, Metrics.s2)
   }
 }
 
 private struct QuotaBar: View {
   let window: QuotaWindow
   let now: Date
+  var stale = false
+  var bare = false
+  var wide = false
 
   var body: some View {
-    let pct = Int((window.remaining * 100).rounded())
-    let resets = window.resetsAt.flatMap(QuotaTime.parse)
+    let pct = min(100, max(0, Int((window.remaining * 100).rounded())))
+    let label = QuotaTime.windowLabel(window.id)
+    let reset = QuotaTime.resetText(window, now: now, bare: bare, wide: wide)
     VStack(alignment: .leading, spacing: Metrics.s1) {
-      HStack(spacing: Metrics.s2) {
-        Text(web: QuotaTime.windowLabel(window.id), paragraph: false).fixedSize()
-        Text(web: resets.map { $0 > now ? QuotaTime.until($0, now: now, compact: true) : t("quota.resetPending") }
-               ?? t(window.remaining >= 1 ? "quota.resetIdle" : "quota.resetUnknown"), paragraph: false)
+      HStack(spacing: bare && !wide ? Metrics.s1 : Metrics.s2) {
+        if !bare {
+          Text(web: label, paragraph: false)
+            .foregroundStyle(stale ? Palette.fg3 : Palette.fg1)
+            .lineLimit(1)
+            .fixedSize()
+        }
+        Text(web: reset, paragraph: false)
+          .foregroundStyle(Palette.quotaReset)
           .lineLimit(1)
-          .padding(.horizontal, Metrics.s1)
-          .background(RoundedRectangle(cornerRadius: Metrics.rSm).fill(Palette.popActive))
+          .truncationMode(.tail)
           .layoutPriority(-1)
         Spacer(minLength: 0)
-        Text(web: t("quota.left", ["pct": pct]), paragraph: false).fixedSize()
+        Text(verbatim: "\(pct)%").fixedSize()
       }
       Capsule()
         .fill(Palette.popActive)
@@ -62,19 +130,29 @@ private struct QuotaBar: View {
         .overlay(alignment: .leading) {
           GeometryReader { proxy in
             Capsule()
-              .fill(window.remaining <= 0.1 ? Palette.quotaDanger : window.remaining <= 0.3 ? Palette.quotaWarn : Palette.quotaOk)
+              .fill(stale ? Palette.quotaStale : window.remaining <= 0.1 ? Palette.quotaDanger : window.remaining <= 0.3 ? Palette.quotaWarn : Palette.quotaOk)
               .frame(width: proxy.size.width * CGFloat(pct) / 100)
           }
         }
         .clipShape(Capsule())
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(Text(web: t("quota.aria", ["window": QuotaTime.windowLabel(window.id), "pct": pct])))
+    .accessibilityLabel(Text(web: QuotaTime.accessibilityLabel(window, now: now)))
   }
 }
 
-/// The reset countdown's wording (QuotaBars.tsx fmtUntil): up to two units, compact units run together in CJK
+/// Two windows sharing one label (e.g. a model group's 5-hour and weekly allowance)
+struct QuotaPair: Equatable, Sendable {
+  let first: QuotaWindow
+  let second: QuotaWindow
+}
+
+/// The reset countdown's wording and window pairing (QuotaBars.tsx): up to two units, compact units run together in CJK
 enum QuotaTime {
+  /// Shown in a bare narrow cell when a window has no upcoming reset ("Not started" does not fit half a narrow row)
+  static let noReset = "—"
+
   static func parse(_ iso: String) -> Date? { Date(iso: iso) }
 
   /// Known window ids translated, anything else shown as sent
@@ -84,13 +162,53 @@ enum QuotaTime {
     return text == key ? id : text
   }
 
-  static func until(_ date: Date, now: Date, compact: Bool = false) -> String {
+  /// The windows two by two when every such pair shares its label; nil for any other list (QuotaBars.tsx labelPairs)
+  static func labelPairs(_ windows: [QuotaWindow]) -> [QuotaPair]? {
+    guard !windows.isEmpty, windows.count.isMultiple(of: 2) else { return nil }
+    var pairs: [QuotaPair] = []
+    pairs.reserveCapacity(windows.count / 2)
+    for i in stride(from: 0, to: windows.count, by: 2) {
+      let a = windows[i], b = windows[i + 1]
+      guard windowLabel(a.id) == windowLabel(b.id) else { return nil }
+      pairs.append(QuotaPair(first: a, second: b))
+    }
+    return pairs
+  }
+
+  static func until(_ date: Date, now: Date, compact: Bool = false, largestOnly: Bool = false) -> String {
     let minutes = Int((max(0, date.timeIntervalSince(now)) / 60).rounded(.up))
     func unit(_ name: String, _ n: Int) -> String { t(compact ? "quota.time.short.\(name)" : "quota.time.\(name)", ["n": n]) }
     let separator = compact && ["zh-CN", "zh-TW", "ja"].contains(L10n.locale) ? "" : " "
     if minutes < 60 { return unit("minutes", minutes) }
     let hours = minutes / 60
-    if hours < 24 { return [unit("hours", hours), minutes % 60 > 0 ? unit("minutes", minutes % 60) : nil].compactMap { $0 }.joined(separator: separator) }
-    return [unit("days", hours / 24), hours % 24 > 0 ? unit("hours", hours % 24) : nil].compactMap { $0 }.joined(separator: separator)
+    if hours < 24 {
+      return [unit("hours", hours), !largestOnly && minutes % 60 > 0 ? unit("minutes", minutes % 60) : nil]
+        .compactMap { $0 }.joined(separator: separator)
+    }
+    return [unit("days", hours / 24), !largestOnly && hours % 24 > 0 ? unit("hours", hours % 24) : nil]
+      .compactMap { $0 }.joined(separator: separator)
+  }
+
+  static func resetLabel(_ window: QuotaWindow, now: Date) -> String {
+    guard let resets = window.resetsAt.flatMap(parse) else {
+      return t(window.remaining >= 1 ? "quota.resetIdle" : "quota.resetUnknown")
+    }
+    if resets <= now { return t("quota.resetPending") }
+    return t("quota.reset", ["time": until(resets, now: now)])
+  }
+
+  /// Metadata line reset text: a bare narrow cell keeps only the largest unit or an em-dash
+  static func resetText(_ window: QuotaWindow, now: Date, bare: Bool, wide: Bool) -> String {
+    let resets = window.resetsAt.flatMap(parse)
+    let ahead = resets.map { $0 > now } ?? false
+    if bare && !wide {
+      return ahead ? until(resets!, now: now, compact: true, largestOnly: true) : noReset
+    }
+    return ahead ? until(resets!, now: now, compact: true) : resetLabel(window, now: now)
+  }
+
+  static func accessibilityLabel(_ window: QuotaWindow, now: Date) -> String {
+    let pct = min(100, max(0, Int((window.remaining * 100).rounded())))
+    return "\(t("quota.aria", ["window": windowLabel(window.id), "pct": pct]))\(t("common.metaSep"))\(resetLabel(window, now: now))"
   }
 }

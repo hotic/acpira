@@ -138,6 +138,9 @@ public enum Swatches {
   public static let quotaOk = ok.mix(bg2, 0.65)
   public static let quotaWarn = warn.mix(bg2, 0.75)
   public static let quotaDanger = danger.mix(bg2, 0.7)
+  /// Stale quota bar fill (`bg-fg-3/50`) and dimmed reset text (`text-fg-3/85`)
+  public static let quotaStale = fg3.alpha(0.5)
+  public static let quotaReset = fg3.alpha(0.85)
   // Popup surface: `.popup-surface[data-palette="menu"]` over --menu-bg = --bg-1. The surface redefines the text levels
   // as mixes of its own foreground into its background, and the tonal states as that foreground at low alpha
   public static let menuBg = bg1
@@ -212,6 +215,8 @@ public enum Palette {
   public static var accountSource: Color { Swatches.accountSource.color }
   public static var quotaWarn: Color { Swatches.quotaWarn.color }
   public static var quotaDanger: Color { Swatches.quotaDanger.color }
+  public static var quotaStale: Color { Swatches.quotaStale.color }
+  public static var quotaReset: Color { Swatches.quotaReset.color }
   public static var menuBg: Color { Swatches.menuBg.color }
   public static var menuLine: Color { Swatches.menuLine.color }
   public static var popFg2: Color { Swatches.popFg2.color }
@@ -305,7 +310,9 @@ public enum Metrics {
   public static let s3: CGFloat = 12
   public static let s6: CGFloat = 24
   /// --quota-track: the quota tube's height
-  public static let quotaTrack: CGFloat = 7
+  public static let quotaTrack: CGFloat = 3
+  /// --container-quota (30rem): width at which unpaired windows lay out in two columns and paired cells show full resets
+  public static let quotaWide: CGFloat = 480
   // Command card
   public static let commandX: CGFloat = pad - gap / 2
   public static let commandY: CGFloat = gap * 0.75

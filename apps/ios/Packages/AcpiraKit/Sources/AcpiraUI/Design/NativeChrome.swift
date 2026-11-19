@@ -358,10 +358,11 @@ struct NativeAccountSheet: View {
         if let local = agent.localAccount {
           // Before a login is found the label is only the product name the bar already shows
           let known = local.label != agent.name || local.detail != nil
+          let stale = local.status != "ready" && local.status != "loading"
           Section {
             if known {
               NativeAccountRow(title: local.label, plan: local.detail, caption: t("quota.officialAccount"), quota: local.quota,
-                               status: local.quota == nil ? t("quota.status.\(local.status)") : nil)
+                               stale: stale, status: local.quota == nil ? t("quota.status.\(local.status)") : nil)
             } else {
               NativeAccountRow(title: local.status == "login_required" ? t("composer.notLoggedIn") : t("quota.officialAccount"),
                                caption: t("quota.status.\(local.status)"))
@@ -379,8 +380,13 @@ struct NativeAccountSheet: View {
                 onSelect(a.id)
                 dismiss()
               } label: {
-                // A plugin's account carries its tag in the plan's place and names the plugin below
-                NativeAccountRow(title: a.label, source: a.badge, caption: a.badge == nil ? a.detail : a.plugin, checked: a.id == accountId, checkSlot: true, quota: a.quota)
+                // A plugin's account carries its tag in the plan's place and names the plugin below; a failed read
+                // replaces the tag with the issue and dims any last-known bars
+                let issue = savedAccountIssue(agent: agent, account: a)
+                let issueStatus = a.quota == nil ? a.quotaIssue.flatMap { $0 == .unknown ? nil : t("quota.status.\($0.rawValue)") } : nil
+                NativeAccountRow(title: a.label, source: issue == nil ? a.badge : nil, issue: issue,
+                                 caption: a.badge == nil ? a.detail : a.plugin, checked: a.id == accountId, checkSlot: true,
+                                 quota: a.quota, stale: issue != nil, status: issueStatus)
                   .contentShape(Rectangle())
               }
               .buttonStyle(.plain)
@@ -414,17 +420,20 @@ struct NativeAccountSheet: View {
 }
 
 /// One login in the system account sheet, at the phone's reading sizes (the popup's AccountIdentity is set for a dense
-/// desktop panel): a list row's avatar, the name with its plan as a tag over a caption, then the quota windows a step
-/// above the popup's. The check keeps its slot in a list of logins, so picking one moves nothing
+/// desktop panel): a list row's avatar, the name with its plan/source/issue as a tag over a caption, then the desktop-
+/// aligned quota bars. The check keeps its slot in a list of logins, so picking one moves nothing
 struct NativeAccountRow: View {
   var title: String
   var plan: String?
   /// The tag of an account a plugin lists, in the colour all of them share (--account-source)
   var source: String?
+  /// Shown in place of the plan/source tag when a stored account's quota read failed or the keychain is locked
+  var issue: SavedAccountIssue?
   var caption: String?
   var checked = false
   var checkSlot = false
   var quota: AccountQuota?
+  var stale = false
   /// Shown in place of the quota when there is none (still loading, signed out …)
   var status: String?
 
@@ -442,16 +451,15 @@ struct NativeAccountRow: View {
               .foregroundStyle(Palette.fgStrong)
               .lineLimit(1)
               .truncationMode(.middle)
-            if let plan {
-              Text(web: plan, paragraph: false)
+            if let issue {
+              Text(web: issue.text, paragraph: false)
                 .textStyle(TypeScale.text4, weight: .medium)
-                .foregroundStyle(Palette.fg1)
+                .foregroundStyle(issue.warn ? Palette.warn : Palette.fg3)
                 .padding(.horizontal, Metrics.s2)
                 .padding(.vertical, Metrics.s0_5)
-                .background(Capsule().fill(Palette.popActive))
+                .background(Capsule().fill(issue.warn ? Palette.warn.opacity(0.15) : Palette.popActive))
                 .fixedSize()
-            }
-            if let source {
+            } else if let source {
               Text(web: source, paragraph: false)
                 .textStyle(TypeScale.text4, weight: .medium)
                 .foregroundStyle(Palette.accountSource)
@@ -459,6 +467,14 @@ struct NativeAccountRow: View {
                 .padding(.vertical, Metrics.s0_5)
                 .background(Capsule().fill(Palette.accountSource.opacity(0.1)))
                 .overlay(Capsule().strokeBorder(Palette.accountSource.opacity(0.25)))
+                .fixedSize()
+            } else if let plan {
+              Text(web: plan, paragraph: false)
+                .textStyle(TypeScale.text4, weight: .medium)
+                .foregroundStyle(Palette.fg1)
+                .padding(.horizontal, Metrics.s2)
+                .padding(.vertical, Metrics.s0_5)
+                .background(Capsule().fill(Palette.popActive))
                 .fixedSize()
             }
           }
@@ -475,7 +491,7 @@ struct NativeAccountRow: View {
         }
       }
       if let quota {
-        QuotaBars(quota: quota, style: TypeScale.text2, ink: Palette.fg1)
+        QuotaBars(quota: quota, stale: stale)
       } else if let status {
         Text(web: status, paragraph: false).textStyle(TypeScale.text3).foregroundStyle(Palette.fg2)
       }

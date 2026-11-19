@@ -25,8 +25,10 @@ val Metrics.planEntryPadY: Dp get() = 2.dp
 val Metrics.planMax: Dp get() = WebMetrics.rowDense * 7
 /** --plan-body-max at phone height: a plan card shows the plan's opening and fades; the whole plan is one tap away */
 val Metrics.planBody: Dp get() = WebMetrics.row * 10
-/** A quota window's tube */
-val Metrics.quotaTrack: Dp get() = 7.dp
+/** A quota window's tube (--quota-track) */
+val Metrics.quotaTrack: Dp get() = 3.dp
+/** Width at which unpaired quota windows flow into two columns and paired cells show full resets (--container-quota) */
+val Metrics.quotaWide: Dp get() = 480.dp
 /** A login's avatar in the account sheet */
 val Metrics.avatar: Dp get() = 44.dp
 /** The starting pill in the bar's title slot: the bar buttons' height */
@@ -45,6 +47,8 @@ private object PopSwatches {
   val quotaOk = Swatches.ok.mix(Swatches.bg2, 0.65f)
   val quotaWarn = Swatches.warn.mix(Swatches.bg2, 0.75f)
   val quotaDanger = Swatches.danger.mix(Swatches.bg2, 0.7f)
+  val quotaStale = Swatches.fg3.alpha(0.5f)
+  val quotaReset = Swatches.fg3.alpha(0.85f)
 }
 
 @Composable @ReadOnlyComposable
@@ -55,7 +59,10 @@ val Palette.popFg2: Color @Composable @ReadOnlyComposable get() = pick(PopSwatch
 val Palette.popFg3: Color @Composable @ReadOnlyComposable get() = pick(PopSwatches.popFg3)
 /** A chip or badge fill on a popover or dock card */
 val Palette.popActive: Color @Composable @ReadOnlyComposable get() = pick(PopSwatches.popActive)
-/** A quota tube's fill: plenty, under 30 %, under 10 % */
+/** A quota tube's fill: plenty, under 30 %, under 10 %, stale */
 val Palette.quotaOk: Color @Composable @ReadOnlyComposable get() = pick(PopSwatches.quotaOk)
 val Palette.quotaWarn: Color @Composable @ReadOnlyComposable get() = pick(PopSwatches.quotaWarn)
 val Palette.quotaDanger: Color @Composable @ReadOnlyComposable get() = pick(PopSwatches.quotaDanger)
+val Palette.quotaStale: Color @Composable @ReadOnlyComposable get() = pick(PopSwatches.quotaStale)
+/** Dimmed reset countdown on a quota bar (`text-fg-3/85`) */
+val Palette.quotaReset: Color @Composable @ReadOnlyComposable get() = pick(PopSwatches.quotaReset)

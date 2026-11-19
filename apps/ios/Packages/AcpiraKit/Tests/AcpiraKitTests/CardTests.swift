@@ -302,3 +302,44 @@ private let claudeOptions: [PermissionOption] = decode("""
     #expect(m.views[id]?.running == true)
   }
 }
+
+@MainActor struct QuotaBarsTests {
+  private func window(_ id: String, _ remaining: Double, resetsAt: String? = nil) -> QuotaWindow {
+    decode(#"{"id":"\#(id)","remaining":\#(remaining)\#(resetsAt.map { #","resetsAt":"\#($0)""# } ?? "")}"#)
+  }
+
+  @Test func labelPairsGroupsMatchingConsecutiveLabels() throws {
+    let antigravity = [
+      window("5hGemini", 0.84), window("weeklyGemini", 0.78),
+      window("5hClaude", 1.0), window("weeklyClaude", 1.0),
+    ]
+    let pairs = try #require(QuotaTime.labelPairs(antigravity))
+    #expect(pairs.count == 2)
+    #expect(pairs[0].first.id == "5hGemini" && pairs[0].second.id == "weeklyGemini")
+    #expect(pairs[1].first.id == "5hClaude" && pairs[1].second.id == "weeklyClaude")
+
+    // Unpaired windows stay nil
+    #expect(QuotaTime.labelPairs([window("daily", 0.12), window("weekly", 0.58)]) == nil)
+    #expect(QuotaTime.labelPairs([window("weekly", 0.91)]) == nil)
+    #expect(QuotaTime.labelPairs([]) == nil)
+  }
+
+  @Test func resetTextShortensBareNarrowCells() throws {
+    let saved = L10n.locale
+    defer { L10n.setLocale(saved) }
+    L10n.setLocale("en")
+    let now = try #require(QuotaTime.parse("2026-10-09T09:00:00.000Z"))
+    let hours = window("5hGemini", 0.84, resetsAt: "2026-10-09T11:35:00.000Z")
+    let days = window("weeklyGemini", 0.78, resetsAt: "2026-10-15T20:00:00.000Z")
+    let pending = window("5hGemini", 0.56, resetsAt: "2026-10-09T08:00:00.000Z")
+    let idle = window("5hClaude", 1.0)
+
+    #expect(QuotaTime.resetText(hours, now: now, bare: true, wide: false) == "2h")
+    #expect(QuotaTime.resetText(hours, now: now, bare: true, wide: true) == "2h 35m")
+    #expect(QuotaTime.resetText(days, now: now, bare: true, wide: false) == "6d")
+    #expect(QuotaTime.resetText(days, now: now, bare: true, wide: true) == "6d 11h")
+    #expect(QuotaTime.resetText(pending, now: now, bare: true, wide: false) == QuotaTime.noReset)
+    #expect(QuotaTime.resetText(idle, now: now, bare: true, wide: false) == QuotaTime.noReset)
+    #expect(QuotaTime.resetText(pending, now: now, bare: false, wide: false) == t("quota.resetPending"))
+  }
+}
