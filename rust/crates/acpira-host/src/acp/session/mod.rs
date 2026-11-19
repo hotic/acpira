@@ -436,17 +436,20 @@ impl AcpSession {
         cwd: Some(record.cwd.clone()),
         ..Default::default()
       };
+      let vendor = Vendor::of(&record.agent);
+      let mut controls = record.controls;
+      vendor.tidy_controls(&mut controls.options);
       // A reopened session whose effort shows Ultra asks for ultracode from its first request
       let ultracode = crate::acp::session::ultracode::UltracodeState {
-        on: crate::acp::vendors::claude_ultracode::shown_on(&record.controls.options),
+        on: crate::acp::vendors::claude_ultracode::shown_on(&controls.options),
         ..Default::default()
       };
-      let sidekick = crate::acp::session::host_sidekick::restored(&record.controls.options);
+      let sidekick = crate::acp::session::host_sidekick::restored(&controls.options);
       let turns = restore_command_receipts(restore_plan_snapshots(record.turns));
       let turns = if seal { restore_interrupted_turns(turns, &record.updated_at) } else { turns };
       let state = NormalizeState {
         turns,
-        controls: record.controls,
+        controls,
         usage: record.usage,
         commands: record.commands,
         title: Some(record.title).filter(|t| !t.is_empty()),
@@ -456,10 +459,10 @@ impl AcpSession {
         goal: record.goal,
         ..Default::default()
       };
-      let tree = SubagentTree::new(tree_log, ctx, record.subagents, Some(&record.updated_at), Vendor::of(&record.agent).resumed_child_logs());
+      let tree = SubagentTree::new(tree_log, ctx, record.subagents, Some(&record.updated_at), vendor.resumed_child_logs());
       AcpSession {
         id: record.id,
-        vendor: Vendor::of(&record.agent),
+        vendor,
         agent: record.agent,
         cwd: record.cwd,
         created_at: record.created_at,

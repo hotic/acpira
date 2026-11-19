@@ -395,10 +395,11 @@ impl SessionManager {
     }
     let index = self.state.lock().index.clone();
     for s in index.iter().filter(|s| s.agent == agent) {
-      let options = match self.live(&s.id) {
+      let mut options = match self.live(&s.id) {
         Some(l) => l.agent_controls().options,
         None => self.deps.store.load_controls(&s.id).await.map(|c| c.options).unwrap_or_default(),
       };
+      crate::acp::vendors::Vendor::of(agent).tidy_controls(&mut options);
       if !options.is_empty() {
         return options;
       }
@@ -456,7 +457,12 @@ impl SessionManager {
 
   /// The parameters each of this agent's models came with, as remembered from its sessions (`model_shapes.rs`)
   pub fn model_shapes(&self, agent: &str) -> Option<ModelShapes> {
-    self.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned())
+    let mut shapes = self.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned())?;
+    let vendor = crate::acp::vendors::Vendor::of(agent);
+    for opts in shapes.values_mut() {
+      vendor.tidy_controls(opts);
+    }
+    Some(shapes)
   }
 
   /// What the user last ran each of this agent's models with

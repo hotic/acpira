@@ -202,7 +202,8 @@ fn facts(agent: &str, env: &HashMap<String, String>, cwd: &Path) -> ModelFacts {
 /// every publish may run it. The built-in agent is not narrowed: its scale is the settings page's
 /// (`ProviderModel::offered_efforts`, which already takes the catalogue's levels for a guessed list), and cutting it
 /// again hid levels the page shows lit (a Medium saved for a model the catalogue lists as low / high / max)
-pub fn refine_controls(agent: &str, options: &mut [ConfigControl], facts: &ModelFacts) {
+pub fn refine_controls(agent: &str, options: &mut Vec<ConfigControl>, facts: &ModelFacts) {
+  crate::acp::vendors::Vendor::of(agent).tidy_controls(options);
   apply_model_sources(agent, options, &facts.sources);
   if agent != SELF_AGENT_ID {
     clip_efforts(options, &crate::model_catalog::current(), &facts.native);
