@@ -23,6 +23,8 @@ pub mod pi_failure;
 pub mod pi_usage;
 pub mod steering;
 
+use acpira_shared::transcript::ConfigControl;
+
 /// The built-in agents whose adapters the session handles specially
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Vendor {
@@ -215,5 +217,82 @@ impl Vendor {
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
   pub fn plan_exit_in_tool_output(self) -> bool {
     self == Vendor::Kimi
+  }
+
+  /// Drop leaked built-in subagents from Claude's `agent` persona select, and drop the select itself when only
+  /// `default` remains: claude-agent-acp 0.108.1's `BUILTIN_AGENT_NAMES` misses Claude Code 2.1.299's built-in
+  /// `web-fetch` subagent, so the picker appears even with no custom agents configured. Keep an entry if it is the
+  /// session's current value so an already-selected session can still switch back to `default`.
+  pub fn tidy_controls(self, options: &mut Vec<ConfigControl>) {
+    if self != Vendor::Claude {
+      return;
+    }
+    options.retain_mut(|ctl| {
+      if ctl.id != "agent" {
+        return true;
+      }
+      ctl.options.retain(|o| o.id != "web-fetch" || ctl.value.as_deref() == Some(o.id.as_str()));
+      ctl.options.iter().any(|o| o.id != "default")
+    });
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use acpira_shared::transcript::SessionOption;
+
+  use super::*;
+
+  fn agent_control(value: Option<&str>, ids: &[&str]) -> ConfigControl {
+    ConfigControl {
+      id: "agent".into(),
+      name: "Agent".into(),
+      category: None,
+      kind: None,
+      options: ids.iter().map(|&id| SessionOption { id: id.into(), name: id.into(), ..Default::default() }).collect(),
+      value: value.map(str::to_owned),
+    }
+  }
+
+  fn model_control() -> ConfigControl {
+    ConfigControl {
+      id: "model".into(),
+      name: "Model".into(),
+      category: Some("model".into()),
+      kind: None,
+      options: vec![SessionOption { id: "opus".into(), name: "Opus".into(), ..Default::default() }],
+      value: Some("opus".into()),
+    }
+  }
+
+  #[test]
+  fn claude_drops_agent_control_when_only_leaked_web_fetch_was_offered() {
+    let mut options = vec![model_control(), agent_control(Some("default"), &["default", "web-fetch"])];
+    Vendor::Claude.tidy_controls(&mut options);
+    assert_eq!(options.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["model"]);
+  }
+
+  #[test]
+  fn claude_keeps_custom_agents_without_web_fetch() {
+    let mut options = vec![agent_control(Some("default"), &["default", "web-fetch", "reviewer"])];
+    Vendor::Claude.tidy_controls(&mut options);
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].options.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["default", "reviewer"]);
+  }
+
+  #[test]
+  fn claude_keeps_web_fetch_while_it_is_the_selected_value() {
+    let mut options = vec![agent_control(Some("web-fetch"), &["default", "web-fetch"])];
+    Vendor::Claude.tidy_controls(&mut options);
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].options.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["default", "web-fetch"]);
+  }
+
+  #[test]
+  fn other_vendors_leave_agent_control_alone() {
+    let mut options = vec![agent_control(Some("default"), &["default", "web-fetch"])];
+    Vendor::Codex.tidy_controls(&mut options);
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].options.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["default", "web-fetch"]);
   }
 }

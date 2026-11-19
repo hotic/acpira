@@ -244,7 +244,7 @@ impl SessionPolicy for ManagerPolicy {
   }
 
   fn model_shapes(&self, agent: &str) -> Option<ModelShapes> {
-    self.me.upgrade().and_then(|m| m.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned()))
+    self.me.upgrade().and_then(|m| m.model_shapes(agent))
   }
 
   fn model_memory(&self, agent: &str) -> Option<ModelMemory> {

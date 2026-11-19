@@ -673,6 +673,7 @@ impl AcpSession {
       return;
     }
     let mut next = known.options.clone();
+    self.vendor.tidy_controls(&mut next);
     for ctl in &mut next {
       if let Some(v) = settings.and_then(|s| s.config.get(&ctl.id))
         && ctl.options.iter().any(|o| &o.id == v)
