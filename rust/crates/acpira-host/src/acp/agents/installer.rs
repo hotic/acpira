@@ -185,19 +185,30 @@ fn posix_shell() -> String {
 
 /// Windows PowerShell 5.1 source for `line`, UTF-16LE base64 like the terminal launch (no second quoting layer)
 fn powershell(line: &str, proxy: Option<&str>) -> (String, Vec<String>) {
+  // `$LASTEXITCODE` starts defined: a vendor script run through `iex` may turn on `Set-StrictMode -Version Latest` in
+  // this scope (agy's install.ps1), and reading an unset variable then throws when no native command ran
   let mut script = String::from(
     "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
      $ProgressPreference = 'SilentlyContinue'; \
-     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; ",
+     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; \
+     $global:LASTEXITCODE = 0; ",
   );
   if let Some(url) = proxy.filter(|u| u.starts_with("http://") || u.starts_with("https://")) {
     // Invoke-RestMethod / WebClient in 5.1 read this, not the environment; loopback stays direct
     script.push_str(&format!("[System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy('{}', $true); ", url.replace('\'', "''")));
   }
   script.push_str(line);
-  // A native command's failure (npm.cmd) does not end the script by itself
-  script.push_str("\nif ($LASTEXITCODE) { exit $LASTEXITCODE }");
+  // The line's own last pipeline decides: a failed native command (npm.cmd) keeps its exit code, a failed cmdlet exits 1.
+  // A code a vendor script left behind after absorbing a failure itself (agy's `agy install` step) does not count
+  script.push_str("\nif (-not $?) { exit $(if ($global:LASTEXITCODE) { $global:LASTEXITCODE } else { 1 }) }");
   let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+  // Not `-EncodedCommand`: 5.1 then assumes a PowerShell parent whenever stderr is redirected and writes Write-Host
+  // and errors as CLIXML there, whatever `-OutputFormat` says. A quote-free `-Command` decodes the same source instead;
+  // the dot-sourced script block keeps one scope, and a top-level error names the decoded source, not the base64
+  let bootstrap = format!(
+    "$acpiraScript = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{}')); . ([scriptblock]::Create($acpiraScript))",
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+  );
   (
     "powershell.exe".into(),
     vec![
@@ -206,8 +217,8 @@ fn powershell(line: &str, proxy: Option<&str>) -> (String, Vec<String>) {
       "-NonInteractive".into(),
       "-ExecutionPolicy".into(),
       "Bypass".into(),
-      "-EncodedCommand".into(),
-      base64::engine::general_purpose::STANDARD.encode(bytes),
+      "-Command".into(),
+      bootstrap,
     ],
   )
 }
@@ -715,22 +726,55 @@ mod tests {
     assert_eq!(lines[0], "line 10");
   }
 
+  /// The PowerShell source inside a Windows plan's bootstrap
+  fn windows_source(args: &[String]) -> String {
+    let boot = args.last().unwrap();
+    let b64 = boot.split_once("FromBase64String('").unwrap().1.split_once("')").unwrap().0;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+    String::from_utf16(&bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect::<Vec<_>>()).unwrap()
+  }
+
   #[test]
   fn the_windows_plan_carries_utf8_tls_the_proxy_and_the_exit_code() {
     let (program, args) = powershell("npm install -g pi-acp", Some("http://127.0.0.1:7890"));
     assert_eq!(program, "powershell.exe");
     assert!(args.contains(&"-NonInteractive".to_owned()) && args.contains(&"Bypass".to_owned()));
-    let bytes = base64::engine::general_purpose::STANDARD.decode(args.last().unwrap()).unwrap();
-    let src = String::from_utf16(&bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect::<Vec<_>>()).unwrap();
+    // The bootstrap crosses the process command line: no double quotes for a second parser to mangle
+    assert!(!args.iter().any(|a| a == "-EncodedCommand") && !args.last().unwrap().contains('"'));
+    let src = windows_source(&args);
     assert!(src.contains("OutputEncoding"));
     assert!(src.contains("Tls12"));
     assert!(src.contains("New-Object System.Net.WebProxy('http://127.0.0.1:7890', $true)"));
-    assert!(src.contains("npm install -g pi-acp\nif ($LASTEXITCODE) { exit $LASTEXITCODE }"));
+    assert!(src.contains("npm install -g pi-acp\nif (-not $?)"));
     // A SOCKS proxy is left to the environment: .NET's WebProxy speaks HTTP only
     let (_, args) = powershell("irm x | iex", Some("socks5://127.0.0.1:1080"));
-    let bytes = base64::engine::general_purpose::STANDARD.decode(args.last().unwrap()).unwrap();
-    let src = String::from_utf16(&bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect::<Vec<_>>()).unwrap();
-    assert!(!src.contains("WebProxy"));
+    assert!(!windows_source(&args).contains("WebProxy"));
+  }
+
+  /// Windows PowerShell runs these; `ACPIRA_TEST_POWERSHELL` points elsewhere
+  fn real_powershell() -> Option<String> {
+    std::env::var("ACPIRA_TEST_POWERSHELL").ok().or_else(|| cfg!(windows).then(|| "powershell.exe".into()))
+  }
+
+  #[tokio::test]
+  async fn windows_install_exit_codes_follow_the_line_and_stderr_stays_text() {
+    let Some(shell) = real_powershell() else { return };
+    for (line, code) in [
+      // agy's install.ps1 when agy.exe is already there: strict mode and no native command
+      ("iex 'Set-StrictMode -Version Latest; $ErrorActionPreference = \"Stop\"; Write-Host \"already installed\"'", 0),
+      // A vendor script that absorbs its own native failure
+      ("iex 'try { cmd /c exit 4 } catch {}; $done = 1'", 0),
+      ("cmd /c exit 3", 3),
+      ("Get-Item 'C:\\acpira-missing\\nothing'", 1),
+      ("iex 'throw \"Fatal: Installation failed.\"'", 1),
+    ] {
+      let (_, args) = powershell(line, None);
+      // The engine's own spawn path, so its Windows argument quoting is what PowerShell parses
+      let output = crate::platform::command::command(&shell, &args).output().await.unwrap();
+      let stderr = String::from_utf8_lossy(&output.stderr);
+      assert_eq!(output.status.code(), Some(code), "{line}: {stderr}");
+      assert!(!stderr.contains("CLIXML"), "{line}: {stderr}");
+    }
   }
 
   #[cfg(unix)]

@@ -5,7 +5,7 @@ Windows boundaries the code works around, their checks, and what lacks native ac
 ## Platform boundaries
 
 - Executable lookup skips the same-named npm POSIX shim; batch files always go through `platform::command::spawn_spec`.
-- Terminal and install scripts are built only in Rust (`platform/terminal.rs`); native argv goes via `ProcessStartInfo` because PowerShell 5.1 drops empty arguments and mangles double quotes.
+- Terminal and install scripts are built only in Rust (`platform/terminal.rs`, `acp/agents/installer.rs`); native argv goes via `ProcessStartInfo` because PowerShell 5.1 drops empty arguments and mangles double quotes.
 - Devin 3000.11.3's install script overwrites the running EXE in place, so the old entry is kept and restored on failure. Devin uses the Roaming AppData Known Folder, ignoring XDG / APPDATA overrides (`accounts::devin`).
 - Shared config links: never `cmd /c mklink` (it writes to sidecar stdout). File hard links stay on one volume and stop following the source once it is atomically replaced.
 - File lock liveness treats access denied as alive (`store::file_lock`).
