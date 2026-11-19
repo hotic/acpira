@@ -476,17 +476,23 @@ export function App() {
   const sessionId = session?.id;
   useEffect(() => setSubagentTranscripts({}), [sessionId]);
 
-  // The model lists of an agent page come from the configOptions of its latest session; ask for them on first visit.
-  // The personas' CLIs are asked for wherever the view is: the subagents page picks their models, and the composer's
-  // summon menu names them (a cached read in the engine, no CLI is started)
+  // The model lists of an agent page come from the configOptions of its latest session (the built-in agent's from its
+  // settings, pushed again on every save). The personas' CLIs are asked for wherever the view is: the subagents page
+  // picks their models, and the composer's summon menu names them (a cached read in the engine, no CLI is started).
+  // Each visit to the settings asks once more, so a list a newer session changed does not stay as first read
   // Requests in flight are not sent twice while another agent's reply re-runs the effect
   const personaAgents = useMemo(() => [...new Set(settings?.subagents.map(p => p.agent))].sort().join('\n'), [settings?.subagents]);
+  const askedThisVisit = useRef(new Set<string>());
   useEffect(() => {
+    const visiting = view === 'settings';
+    if (!visiting) askedThisVisit.current.clear();
     const wanted = personaAgents ? personaAgents.split('\n') : [];
-    if (view === 'settings' && page.kind === 'agent') wanted.push(page.id);
+    if (visiting && page.kind === 'agent') wanted.push(page.id);
     for (const agent of wanted) {
-      if (controls[agent] !== undefined || controlsAsked.current.has(agent)) continue;
+      const current = controls[agent] !== undefined && (!visiting || askedThisVisit.current.has(agent));
+      if (current || controlsAsked.current.has(agent)) continue;
       controlsAsked.current.add(agent);
+      askedThisVisit.current.add(agent);
       post({ type: 'controls', agent });
     }
   }, [view, page, controls, personaAgents]);
@@ -635,6 +641,18 @@ export function App() {
     },
     providerProbe: (id, probe) => post({ type: 'providerProbe', id, probe }),
   }), []);
+
+  // An agent no session has run yet (just added, enabled or installed) has nothing cached: its open page probes it once per
+  // settings visit, as the refresh button does (a cold CLI start, no prompt). A probe that also comes back empty is not retried
+  const probedThisVisit = useRef(new Set<string>());
+  useEffect(() => {
+    if (view !== 'settings') { probedThisVisit.current.clear(); return; }
+    if (page.kind !== 'agent' || controls[page.id]?.length !== 0 || probedThisVisit.current.has(page.id)) return;
+    const info = agents.find(a => a.id === page.id);
+    if (!info || info.disabled || info.available === false) return;
+    probedThisVisit.current.add(page.id);
+    settingsOn.refreshAgent(page.id);
+  }, [view, page, controls, agents, settingsOn]);
 
   const openSettings = useCallback((target?: SettingsPage) => {
     if (target) setPage(target);

@@ -1375,7 +1375,7 @@ export const zhTW = {
   'settings.models.official': '官方模型',
   'settings.models.custom': '自訂設定',
   'settings.models.thinking': '思考設定',
-  'settings.models.none': '新建 {agent} 工作階段或點選右上角重新整理後顯示可用選項。',
+  'settings.models.none': '新建 {agent} 工作階段或點選「重新偵測」後顯示可用選項。',
   'settings.tab.mcp': 'MCP',
   'settings.tab.skills': '技能',
   'settings.tab.rules': '規則',
