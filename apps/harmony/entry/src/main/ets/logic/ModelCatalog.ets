@@ -730,7 +730,11 @@ export class ModelChoices {
     this.modes = controls.modes.length > 1 && ComposerControls.workingModes(controls) === undefined ? controls.modes : [];
     this.collaboration = split.collaboration.find((c: ConfigControl) => c.options.length > 1);
     this.access = split.permission.find((c: ConfigControl) => c.options.length > 1);
-    this.sidekick = split.sidekick.length > 0 ? ModelChoices.visible(split.sidekick[0], off) : undefined;
+    // Host-owned cross-CLI sidekicks are already filtered per CLI by the engine (`host_sidekick.rs`), so only a native
+    // single-agent sidekick takes the lead's hidden list here
+    this.sidekick = split.sidekick.length > 0
+      ? (ComposerControls.sidekickClis(split.sidekick[0].options).length > 0 ? split.sidekick[0] : ModelChoices.visible(split.sidekick[0], off))
+      : undefined;
     this.sidekickEffort = split.sidekickEffort[0];
     this.sidekickFast = split.sidekickFast.length > 0 ? nativeToggle(split.sidekickFast[0], onSetConfig) : undefined;
   }

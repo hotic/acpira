@@ -261,6 +261,10 @@ impl SessionPolicy for ManagerPolicy {
     })
   }
 
+  fn hidden_options(&self) -> acpira_shared::settings::HiddenMap {
+    self.me.upgrade().map(|m| m.hidden()).unwrap_or_default()
+  }
+
   fn claim(&self, session: &str) -> Option<Result<u64, String>> {
     Some(self.me.upgrade().map_or(Ok(0), |m| m.claim_turn(session)))
   }

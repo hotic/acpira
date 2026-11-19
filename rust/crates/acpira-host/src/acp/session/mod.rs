@@ -132,6 +132,10 @@ pub trait SessionPolicy: Send + Sync {
   fn sidekick_sources(&self) -> BoxFuture<Vec<crate::acp::session::host_sidekick::SidekickSource>> {
     Box::pin(async { vec![] })
   }
+  /// Option families hidden from the composer menus (`acpira.hiddenOptions`)
+  fn hidden_options(&self) -> acpira_shared::settings::HiddenMap {
+    Default::default()
+  }
   /// Takes the session's cross-engine lease for a turn about to start (`store::session_lease`) and returns its pin; Err:
   /// the notice to show, another engine is running one or the lease could not be taken, and this turn must not start.
   /// None: no leases

@@ -37,7 +37,7 @@ fn provider_prefixed(option: &mut SessionOption, configured: &ModelSources) {
 }
 
 pub fn apply_model_sources(agent: &str, controls: &mut [ConfigControl], configured: &ModelSources) {
-  for control in controls.iter_mut().filter(|c| c.category.as_deref() == Some("model")) {
+  for control in controls.iter_mut().filter(|c| c.category.as_deref() == Some("model") || (agent == "acpira" && c.category.as_deref() == Some("_sidekick"))) {
     for option in &mut control.options {
       match agent {
         "kimi" => {

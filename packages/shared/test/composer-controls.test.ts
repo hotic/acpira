@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, sidekickChannel, sidekickClis, thoughtCorrection } from '../composerControls';
+import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, findSidekickFamily, isFastControl, isUltraLevel, levelShort, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, sidekickChannel, sidekickClis, sidekickFamilies, thoughtCorrection } from '../composerControls';
 import { groupModels } from '../models';
 import type { ConfigControl } from '../transcript';
 
@@ -239,5 +239,39 @@ describe('shared composer controls', () => {
     const own = [{ id: 'none', name: 'None' }, { id: 'ds/flash', name: 'DeepSeek V4.1 Flash', description: 'DeepSeek' }];
     expect(sidekickClis(own)).toEqual([]);
     expect(sidekickChannel(own[1]!)).toBe('DeepSeek');
+  });
+
+  it('groups sidekick variants into the same model families as the lead list', () => {
+    const cli = (id: string, name: string) => ({ id, name });
+    const host = [
+      { id: 'none', name: 'None' },
+      { id: 'factory/opus-5-5', name: 'Opus 5.5', description: 'Factory', group: cli('factory', 'Factory') },
+      { id: 'factory/opus-5-5-fast', name: 'Opus 5.5 Fast Mode', description: 'Factory', group: cli('factory', 'Factory') },
+      { id: 'devin/swe-2-medium', name: 'SWE-2 Medium', description: 'Devin', group: cli('devin', 'Devin') },
+      { id: 'devin/swe-2-high', name: 'SWE-2 High', description: 'Devin', group: cli('devin', 'Devin') },
+      { id: 'devin/swe-2-high-fast', name: 'SWE-2 High Fast', description: 'Devin', group: cli('devin', 'Devin') },
+      { id: 'claude/opus-5-5', name: 'Opus 5.5', description: 'Claude Code', group: cli('claude', 'Claude Code') },
+    ];
+    const [factory, devin, claude] = sidekickClis(host);
+    const factoryFams = sidekickFamilies(factory!.options, factory!.id);
+    expect(factoryFams).toHaveLength(1);
+    expect(factoryFams[0]!.name).toBe('Opus 5.5');
+    expect(factoryFams[0]!.hasFast).toBe(true);
+    expect(factoryFams[0]!.source).toBeUndefined();
+    expect(factoryFams[0]!.variants.map(v => [v.id, v.fast])).toEqual([['factory/opus-5-5', false], ['factory/opus-5-5-fast', true]]);
+
+    // Same model name across two CLIs keeps distinct keys for cross-CLI search
+    const claudeFams = sidekickFamilies(claude!.options, claude!.id);
+    expect(factoryFams[0]!.key).not.toBe(claudeFams[0]!.key);
+
+    const devinFams = sidekickFamilies(devin!.options, devin!.id);
+    expect(devinFams).toHaveLength(1);
+    expect(devinFams[0]!.efforts).toEqual(['Medium', 'High']);
+    expect(devinFams[0]!.hasFast).toBe(true);
+
+    const picked = findSidekickFamily(host, 'factory/opus-5-5-fast');
+    expect(picked?.family.name).toBe('Opus 5.5');
+    expect(picked?.variant.fast).toBe(true);
+    expect(picked?.cli?.id).toBe('factory');
   });
 });

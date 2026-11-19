@@ -92,6 +92,10 @@ fn strip_trailing_flags(t: &mut Vec<&str>, fast: &mut bool, long: &mut bool) {
     if t.len() > 1 && last == "fast" {
       *fast = true;
       t.pop();
+    } else if t.len() > 2 && last == "mode" && t[t.len() - 2].eq_ignore_ascii_case("fast") {
+      // Droid spells it "Opus 5.5 Fast Mode"
+      *fast = true;
+      t.truncate(t.len() - 2);
     } else if t.len() > 1 && last == "1m" {
       *long = true;
       t.pop();
@@ -165,6 +169,7 @@ pub struct ModelVariant {
 pub struct ModelFamily {
   pub key: String,
   pub name: String,
+  pub source: Option<String>,
   pub variants: Vec<ModelVariant>,
 }
 
@@ -199,9 +204,15 @@ pub fn group_models(options: &[SessionOption]) -> Vec<ModelFamily> {
     } else {
       p.family.clone()
     };
+    let source = o
+      .source
+      .as_ref()
+      .map(|s| s.name.clone())
+      .or_else(|| o.group.as_ref().map(|g| g.name.clone()))
+      .or_else(|| separate.then(|| o.id.clone()));
     let f = map.entry(key.clone()).or_insert_with(|| {
       order.push(key.clone());
-      ModelFamily { key: key.clone(), name: p.family.clone(), variants: vec![] }
+      ModelFamily { key: key.clone(), name: p.family.clone(), source, variants: vec![] }
     });
     if let Some(lead) = &p.lead {
       let fu = fusion.entry(key.clone()).or_default();
@@ -248,9 +259,92 @@ pub fn group_models(options: &[SessionOption]) -> Vec<ModelFamily> {
     .collect()
 }
 
+/// Preferences stored before the family had a source: its bare name, or the `Provider/Name` Pi and OpenCode used to show
+/// (mirror of `packages/shared/models.ts` `nameLegacyKeys`).
+fn name_legacy_keys(f: &ModelFamily, name: &str) -> Vec<String> {
+  let mut keys = match &f.source {
+    Some(src) => vec![name.to_owned(), format!("{src}/{name}")],
+    None => vec![name.to_owned()],
+  };
+  if f.key.starts_with('[')
+    && let Ok(serde_json::Value::Array(parts)) = serde_json::from_str::<serde_json::Value>(&f.key)
+    && parts.len() == 2
+    && let Some(ns) = parts[0].as_str()
+  {
+    keys.push(json!([ns, name]).to_string());
+  }
+  keys
+}
+
+/// Whether `f` is hidden by `hidden` (mirror of `packages/shared/models.ts` `familyHidden`).
+#[must_use]
+pub fn family_hidden(f: &ModelFamily, hidden: &[String]) -> bool {
+  let has = |k: &str| hidden.iter().any(|h| h == k);
+  has(&f.key)
+    || name_legacy_keys(f, &f.name).iter().any(|k| has(k))
+    || (f.variants.len() > 1 && f.variants.iter().all(|v| name_legacy_keys(f, &v.name).iter().any(|k| has(k))))
+}
+
+/// Drop the options whose family is hidden; the current value always stays reachable, and a list that would hide
+/// everything shows everything (mirror of `packages/shared/models.ts` `visibleOptions`).
+#[must_use]
+pub fn visible_options(options: &[SessionOption], hidden: Option<&[String]>, current: Option<&str>) -> Vec<SessionOption> {
+  let Some(hidden) = hidden.filter(|h| !h.is_empty()) else {
+    return options.to_vec();
+  };
+  let hidden_ids: HashSet<String> = group_models(options)
+    .into_iter()
+    .filter(|f| family_hidden(f, hidden))
+    .flat_map(|f| f.variants.into_iter().map(|v| v.id))
+    .collect();
+  let kept: Vec<SessionOption> = options.iter().filter(|o| current == Some(o.id.as_str()) || !hidden_ids.contains(&o.id)).cloned().collect();
+  if kept.is_empty() { options.to_vec() } else { kept }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::transcript::{OptionSource, SourceKind};
+
+  fn opt(id: &str, name: &str) -> SessionOption {
+    SessionOption { id: id.into(), name: name.into(), ..Default::default() }
+  }
+
+  #[test]
+  fn visible_options_hides_families_keeps_current_and_never_empties() {
+    let options = vec![
+      opt("opus-5-5", "Opus 5.5"),
+      opt("opus-5-5-fast", "Opus 5.5 Fast Mode"),
+      opt("opus-5", "Opus 5"),
+      opt("opus-5-fast", "Opus 5 Fast Mode"),
+    ];
+    let hidden = vec!["Opus 5".to_owned()];
+    let shown: Vec<String> = visible_options(&options, Some(&hidden), None).into_iter().map(|o| o.id).collect();
+    assert_eq!(shown, ["opus-5-5", "opus-5-5-fast"]);
+    // Current stays reachable even when its family is hidden
+    let with_current: Vec<String> = visible_options(&options, Some(&hidden), Some("opus-5-fast")).into_iter().map(|o| o.id).collect();
+    assert_eq!(with_current, ["opus-5-5", "opus-5-5-fast", "opus-5-fast"]);
+    // Hiding every family falls back to showing all
+    let all_hidden = vec!["Opus 5.5".to_owned(), "Opus 5".to_owned()];
+    assert_eq!(visible_options(&options, Some(&all_hidden), None).len(), options.len());
+  }
+
+  #[test]
+  fn visible_options_matches_source_qualified_and_legacy_keys() {
+    let mut a = opt("or/opus", "Opus 5.5");
+    a.source = Some(OptionSource { id: "openrouter".into(), name: "OpenRouter".into(), kind: SourceKind::Custom });
+    let mut b = opt("ds/opus", "Opus 5.5");
+    b.source = Some(OptionSource { id: "deepseek".into(), name: "DeepSeek".into(), kind: SourceKind::Custom });
+    let options = vec![a, b];
+    // Source-qualified key hides only that source
+    let hidden = vec![r#"["openrouter","Opus 5.5"]"#.to_owned()];
+    let shown: Vec<String> = visible_options(&options, Some(&hidden), None).into_iter().map(|o| o.id).collect();
+    assert_eq!(shown, ["ds/opus"]);
+    // Legacy `Source/Name` key matches too
+    let legacy = vec!["DeepSeek/Opus 5.5".to_owned()];
+    let shown: Vec<String> = visible_options(&options, Some(&legacy), None).into_iter().map(|o| o.id).collect();
+    assert_eq!(shown, ["or/opus"]);
+  }
 
   #[test]
   fn parses_devin_and_parenthesized_names() {

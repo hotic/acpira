@@ -92,8 +92,8 @@ export interface ComposerProps {
   onCompact: () => void;
   // Session-level navigation is omitted from history and queued-message editors.
   toolbarStart?: ReactNode;
-  // Opens this agent's model settings: an empty composer's shortcut or the shared header of its model panel
-  onAddModel?: () => void;
+  // Opens an agent's model settings (defaults to this session's agent; the sidekick CLI rail passes the open CLI)
+  onAddModel?: (agentId?: string) => void;
   // The session's own composer (not an inline editor): it takes drafts pushed from outside (editor "Add to chat", transcript quotes)
   // and, with `shareSelection`, offers the editor's live selection as a toolbar chip that goes out with the next prompt
   main?: boolean;
@@ -583,7 +583,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.onAddModel && p.main && !p.edit && !p.controlsLocked && !models.length && (
-            <Chip caret={false} className="shrink-0" icon={<Plus strokeWidth={1.75} />} onClick={p.onAddModel}>{t('settings.providers.addModel')}</Chip>
+            <Chip caret={false} className="shrink-0" icon={<Plus strokeWidth={1.75} />} onClick={() => p.onAddModel!()}>{t('settings.providers.addModel')}</Chip>
           )}
           {!models.length && reasoning.map(c => (
             <ReasoningControl key={c.id} control={c} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
