@@ -130,10 +130,13 @@ impl App {
     {
       // No title bar: the page's column title row and sheet header are the title bar (data-drag-region) and leave the
       // traffic lights their room (desktop.css --lights-w). Tauri measures the lights 9 pt lower than Electron's
-      // trafficLightPosition, so (17, 30) here is Electron's (17, 21): the lights' centre on the header row's centre line
-      // (desktop.css: the sheet's inset plus half the 40 px line, 28 pt off the top)
-      b =
-        b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true).traffic_light_position(tauri::LogicalPosition::new(17.0, 30.0));
+      // trafficLightPosition, so y 30 here is Electron's 21: the lights' centre on the header row's centre line
+      // (desktop.css: the sheet's inset plus half the 40 px line, 28 pt off the top). Their left edge is the cards' line,
+      // and the page moves it where it draws another (mac.rs set_lights_x)
+      b = b
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(crate::mac::LIGHTS_X, 30.0));
     }
     // No system title bar either: the page draws the caption's buttons and the menu (chat/DesktopFrame.tsx WindowCaption,
     // AppMenus). The system still gives the undecorated window its shadow, rounded corners and resize edges, and the

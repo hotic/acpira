@@ -465,6 +465,8 @@ export type WebviewMsg =
   // Desktop shell only: an item of the menu the page draws (desktopMenu), and the window's own controls
   | { type: 'menuCommand'; id: string }
   | { type: 'windowControl'; op: WindowControl }
+  // Desktop shell only, macOS: the traffic lights' left edge in CSS px, the leading line of what the page has under them
+  | { type: 'windowLights'; x: number }
   // Desktop shell only: the tool panel's browser tabs. A tab opens (on `url`, or empty), its page's messages go up, it
   // closes; the new-tab page asks for the address bar's history (answered with panelHistory)
   // folder: the session folder when it is on an SSH host, whose dev servers the tab shows

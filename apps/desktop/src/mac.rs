@@ -481,6 +481,141 @@ mod wheel {
   }
 }
 
+/// The traffic lights' left edge as a window is built (app/windows.rs): the cards' line at the default density, which the
+/// session column's icons share (desktop.css --lights-x)
+pub const LIGHTS_X: f64 = 22.0;
+
+/// Moves the traffic lights' left edge to `x` (the page's windowLights: the line of whatever lies under them now) and
+/// keeps it there. Tauri has no setter once the window is built: tao puts the buttons back at the built inset on every
+/// draw, and AppKit at its own on a resize or leaving full screen. Both go through each button's frame, so an observer
+/// of that frame puts the button back in the same call, before anything paints. Shifting a superview's bounds instead
+/// does not last: AppKit lays the title bar out to them again on the next resize
+pub fn set_lights_x(window: &tauri::WebviewWindow, x: f64) {
+  let Ok(ns) = window.ns_window() else { return };
+  let (ns, x) = (ns as usize, x.clamp(0.0, 3.0 * LIGHTS_X));
+  let _ = window.run_on_main_thread(move || lights::place(ns as *mut AnyObject, x));
+}
+
+mod lights {
+  use std::cell::{Cell, RefCell};
+  use std::collections::HashMap;
+
+  use objc2::encode::{Encode, Encoding};
+  use objc2::rc::Retained;
+  use objc2::runtime::{AnyClass, AnyObject};
+  use objc2::{AnyThread, DefinedClass, define_class, msg_send, sel};
+  use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
+
+  #[repr(C)]
+  #[derive(Clone, Copy)]
+  struct Point {
+    x: f64,
+    y: f64,
+  }
+
+  // SAFETY: laid out as CGPoint (two CGFloat, f64 on every Mac this app runs on)
+  unsafe impl Encode for Point {
+    const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+  }
+
+  #[repr(C)]
+  #[derive(Clone, Copy)]
+  struct Rect {
+    origin: Point,
+    size: Point,
+  }
+
+  // SAFETY: laid out as CGRect (CGSize is two CGFloat like CGPoint)
+  unsafe impl Encode for Rect {
+    const ENCODING: Encoding = Encoding::Struct("CGRect", &[Point::ENCODING, Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING])]);
+  }
+
+  /// One window's close, minimize and zoom buttons, the first one's left edge and the step to the next
+  struct Ivars {
+    buttons: [usize; 3],
+    x: Cell<f64>,
+    step: f64,
+  }
+
+  define_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "AcpiraLights"]
+    #[ivars = Ivars]
+    struct Lights;
+
+    unsafe impl NSObjectProtocol for Lights {}
+
+    impl Lights {
+      // NSViewFrameDidChangeNotification of one of the buttons
+      #[unsafe(method(moved:))]
+      fn moved(&self, note: &AnyObject) {
+        // SAFETY: a notification's object, here the button it was registered for
+        let button: *mut AnyObject = unsafe { msg_send![note, object] };
+        self.put(button);
+      }
+    }
+  );
+
+  impl Lights {
+    fn put(&self, button: *mut AnyObject) {
+      let iv = self.ivars();
+      let Some(i) = iv.buttons.iter().position(|b| *b == button as usize) else { return };
+      let x = iv.x.get() + i as f64 * iv.step;
+      // SAFETY: a live button of the window (it just posted, or place read it from the window), on the main thread.
+      // Setting the origin posts again; by then the button is in place and this returns
+      unsafe {
+        let frame: Rect = msg_send![button, frame];
+        if (frame.origin.x - x).abs() > 0.01 {
+          let _: () = msg_send![button, setFrameOrigin: Point { x, y: frame.origin.y }];
+        }
+      }
+    }
+  }
+
+  thread_local! {
+    // By NSWindow. A closed window's entry stays until its address is used again: a few words
+    static WATCHED: RefCell<HashMap<usize, Retained<Lights>>> = RefCell::new(HashMap::new());
+  }
+
+  /// Main thread only
+  pub fn place(window: *mut AnyObject, x: f64) {
+    // SAFETY: the caller's own NSWindow on the main thread; NSWindowCloseButton, MiniaturizeButton and ZoomButton are
+    // 0, 1 and 2, nil in a window without them
+    let buttons: [*mut AnyObject; 3] = unsafe { [msg_send![window, standardWindowButton: 0usize], msg_send![window, standardWindowButton: 1usize], msg_send![window, standardWindowButton: 2usize]] };
+    if buttons.iter().any(|b| b.is_null()) {
+      return;
+    }
+    let ids = buttons.map(|b| b as usize);
+    WATCHED.with_borrow_mut(|watched| {
+      let lights = match watched.get(&(window as usize)) {
+        Some(l) if l.ivars().buttons == ids => l.clone(),
+        _ => {
+          // SAFETY: the buttons checked above
+          let (close, minimize): (Rect, Rect) = unsafe { (msg_send![buttons[0], frame], msg_send![buttons[1], frame]) };
+          let this = Lights::alloc().set_ivars(Ivars { buttons: ids, x: Cell::new(x), step: minimize.origin.x - close.origin.x });
+          // SAFETY: NSObject's init on the freshly allocated object whose ivars were just set
+          let this: Retained<Lights> = unsafe { msg_send![super(this), init] };
+          let Some(center) = AnyClass::get(c"NSNotificationCenter") else { return };
+          let name = NSString::from_str("NSViewFrameDidChangeNotification");
+          for button in buttons {
+            // SAFETY: the default center keeps observers weakly, so one outliving its buttons is never called
+            unsafe {
+              let center: *mut AnyObject = msg_send![center, defaultCenter];
+              let _: () = msg_send![center, addObserver: &*this, selector: sel!(moved:), name: &*name, object: button];
+            }
+          }
+          watched.insert(window as usize, this.clone());
+          this
+        }
+      };
+      lights.ivars().x.set(x);
+      for button in buttons {
+        lights.put(button);
+      }
+    });
+  }
+}
+
 /// Shows a window in front of the others without making it key or activating the app (Electron's showInactive): an
 /// agent's open_browser, and every window of a background run
 pub fn order_front(window: &tauri::WebviewWindow) {
