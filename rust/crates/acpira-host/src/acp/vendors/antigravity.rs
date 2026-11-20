@@ -42,6 +42,10 @@ pub enum ReplyError {
   McpFailed { server: String, reason: Option<String> },
   /// Google refused the request from this network's region (`User location is not supported for the API use.`)
   Region,
+  /// `⚠ Authentication expired. Please log back in.` (agy 1.5.13): the process reads its token once, at start, and a
+  /// failed refresh ends every later turn so. A ticket renewed in its token file since (a plugin's account) reaches only a
+  /// new process
+  AuthExpired(String),
   /// Already worded for a person (quota, browser tool, lost connection, other SDK errors)
   Other(String),
 }
@@ -64,7 +68,11 @@ pub fn reply_error(text: &str) -> Option<(usize, ReplyError)> {
   }
   if let Some(line) = tail.strip_prefix(WARNING) {
     // A reply of the model's own that ends on a warning sign spans more than the one line the CLI sends
-    return (!line.contains('\n')).then(|| (at, ReplyError::Other(line.trim().to_owned())));
+    if line.contains('\n') {
+      return None;
+    }
+    let line = line.trim().to_owned();
+    return Some((at, if line.starts_with("Authentication expired") { ReplyError::AuthExpired(line) } else { ReplyError::Other(line) }));
   }
   Some((at, ReplyError::Other(tail.to_owned())))
 }
@@ -217,6 +225,14 @@ mod tests {
     );
     let bare = "The MCP server 'x_1' failed to initialize. Fix the MCP server, or remove it from your configuration and start a new session, to continue.";
     assert_eq!(reply_error(bare).unwrap().1, ReplyError::McpFailed { server: "x_1".into(), reason: None });
+  }
+
+  #[test]
+  fn an_expired_sign_in_is_told_apart_from_other_warnings() {
+    let text = "Running the tests.\n⚠ Authentication expired. Please log back in.\n";
+    let (at, e) = reply_error(text).unwrap();
+    assert_eq!((text.get(..at), e), (Some("Running the tests.\n"), ReplyError::AuthExpired("Authentication expired. Please log back in.".into())));
+    assert_eq!(reply_error("\n⚠ Individual quota reached.\n").unwrap().1, ReplyError::Other("Individual quota reached.".into()));
   }
 
   #[test]

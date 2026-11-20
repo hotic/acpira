@@ -187,10 +187,18 @@ impl AccountManager {
     if strategy == SwitchStrategy::Off {
       return None;
     }
-    // A plugin's account and the user's own are never swapped for each other without a pick: the session stays on
-    // the plugin's account and shows the error
-    if current.is_some_and(|c| plugin_accounts::split_id(c).is_some()) {
-      return None;
+    // A plugin's account and the user's own are never swapped for each other without a pick: a plugin's account moves
+    // only to another one the same plugin lists, whose quota is what the plugin last said
+    if let Some(cur) = current
+      && let Some((plugin, _)) = plugin_accounts::split_id(cur)
+    {
+      let q = self.plugin_account(cur).and_then(|a| a.quota);
+      self.parked.lock().insert(cur.to_owned(), parked_until(q.as_ref(), now_ms()));
+      let list: Vec<AccountInfo> =
+        self.plugin_infos(Some(agent)).into_iter().filter(|a| plugin_accounts::split_id(&a.id).is_some_and(|(p, _)| p == plugin)).collect();
+      let id = pick_fallback(&list, current, strategy, &self.parked.lock(), now_ms())?;
+      (self.log)(&format!("account fallback ({strategy:?}) within plugin {plugin}: {cur} → {id}"));
+      return list.into_iter().find(|a| a.id == id);
     }
     if let Some(cur) = current {
       self.refresh_quota(cur, true).await;
@@ -202,6 +210,30 @@ impl AccountManager {
     let id = pick_fallback(&list, current, strategy, &self.parked.lock(), now_ms())?;
     (self.log)(&format!("account fallback ({strategy:?}): {} → {id}", current.unwrap_or("-")));
     list.into_iter().find(|a| a.id == id)
+  }
+
+  /// The saved account a session moves to when its own was removed (here or by another host): the switch strategy's pick,
+  /// else the one a new session would take. None while the account is still saved, for a plugin's account (`unavailable`
+  /// explains that one), or with no saved account of the agent left, so the session stops on sign-in as before
+  pub async fn replacement(self: &Arc<Self>, agent: &str, account: &str) -> Option<AccountInfo> {
+    if plugin_accounts::split_id(account).is_some() || !self.supports(agent) {
+      return None;
+    }
+    // Another host may have removed or added accounts since this one last read the file
+    self.reload().await;
+    if self.store.get(account).is_some() {
+      return None;
+    }
+    // The same account now listed by a plugin (one an older engine kept in the store): the session follows it
+    let listed = self.plugin_infos(Some(agent)).into_iter().find(|a| plugin_accounts::split_id(&a.id).is_some_and(|(_, local)| local == account));
+    if listed.is_some() {
+      return listed;
+    }
+    match self.fallback(agent, None).await {
+      Some(a) => Some(a),
+      // Strategy off or every account out of allowance: the agent's default, as a new session would get
+      None => self.store.default_for(agent).map(|a| self.with_quota(a)),
+    }
   }
 
   pub fn supports(&self, agent: &str) -> bool {
@@ -841,8 +873,21 @@ impl SessionAccountHooks for AccountHooks {
     Box::pin(async move { m.fallback(&agent, current.as_deref()).await.map(|a| (a.id, a.label)) })
   }
 
+  fn replacement(&self, agent: String, account: String) -> BoxFuture<Option<(String, String)>> {
+    let m = self.0.clone();
+    Box::pin(async move { m.replacement(&agent, &account).await.map(|a| (a.id, a.label)) })
+  }
+
   fn label(&self, account: String) -> Option<String> {
     self.0.get(&account).map(|a| a.label)
+  }
+
+  fn quota(&self, account: String) -> BoxFuture<Option<AccountQuota>> {
+    let m = self.0.clone();
+    Box::pin(async move {
+      m.refresh_quota(&account, true).await;
+      m.get(&account).and_then(|a| a.quota)
+    })
   }
 
   fn default_account(&self, agent: String) -> Option<String> {
@@ -976,6 +1021,47 @@ mod plugin_account_tests {
     assert_eq!(*lists.lock(), 1);
     m.set_plugin_accounts("demo", "Demo", &[with(0.4)], false).unwrap();
     assert_eq!(*lists.lock(), 2);
+  }
+
+  #[tokio::test]
+  async fn a_removed_account_hands_its_sessions_to_the_strategy_pick() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path()).await;
+    let draft = |label: &str| AccountDraft { label: label.into(), detail: None, secret: "s".into(), meta: None };
+    let a = m.store.add("codex", draft("a@x.io")).await.unwrap();
+    let b = m.store.add("codex", draft("b@x.io")).await.unwrap();
+    let c = m.store.add("codex", draft("c@x.io")).await.unwrap();
+    // Still saved, a plugin's own, or an agent off the account layer: the session keeps its binding
+    assert!(m.replacement("codex", &a.id).await.is_none());
+    assert!(m.replacement("codex", "plugin:demo:r1").await.is_none());
+    assert!(m.replacement("grok", &a.id).await.is_none());
+    m.remove(&a.id).await.unwrap();
+    m.set_switch_policy(Arc::new(|_: &str| SwitchStrategy::ListOrder));
+    assert_eq!(m.replacement("codex", &a.id).await.map(|x| x.id), Some(b.id.clone()));
+    // Strategy off: the default a new session would take
+    m.set_switch_policy(Arc::new(|_: &str| SwitchStrategy::Off));
+    m.touch(&c.id).await.unwrap();
+    assert_eq!(m.replacement("codex", &a.id).await.map(|x| x.id), Some(c.id.clone()));
+    // Removed by another host: this one's cached list still has it until the re-read
+    let other = AccountStore::new(dir.path().join("accounts.json"), m.store.vault().clone(), Arc::new(|_| {}));
+    other.load().await.unwrap();
+    other.remove(&c.id).await.unwrap();
+    assert_eq!(m.replacement("codex", &c.id).await.map(|x| x.id), Some(b.id.clone()));
+    // Nothing left to move to
+    m.remove(&b.id).await.unwrap();
+    assert!(m.replacement("codex", &b.id).await.is_none());
+  }
+
+  #[tokio::test]
+  async fn a_stored_account_follows_to_the_plugin_that_lists_it_now() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path()).await;
+    let kept = m.store.add("codex", AccountDraft { label: "team".into(), detail: None, secret: "s".into(), meta: None }).await.unwrap();
+    let mut listed = rented("/a");
+    listed["id"] = json!(kept.id);
+    m.set_plugin_accounts("demo", "Demo", &[listed], false).unwrap();
+    m.remove(&kept.id).await.unwrap();
+    assert_eq!(m.replacement("codex", &kept.id).await.map(|a| a.id), Some(format!("plugin:demo:{}", kept.id)));
   }
 
   #[tokio::test]
