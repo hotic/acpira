@@ -135,14 +135,13 @@ impl HostRuntime {
       bridge_exe.as_deref().map(PathBuf::from),
       log.clone(),
     );
-    let mut account_providers: Vec<Arc<dyn crate::accounts::provider::AccountProvider>> = vec![Arc::new(devin), Arc::new(codex), Arc::new(claude)];
-    // Saved Antigravity accounts lean on how `agy` stores a login inside an SSH session, seen on macOS only: elsewhere
-    // the agent keeps its one CLI login
-    if cfg!(target_os = "macos") {
-      account_providers.push(Arc::new(AntigravityAccountProvider::new(root.join("accounts").join("antigravity"), binary_of("antigravity"))));
-      // Droid's login key is read from the macOS keychain only; Linux and Windows keep it in a keyring (accounts/droid.rs)
-      account_providers.push(Arc::new(DroidAccountProvider::new(root.join("accounts").join("droid"), binary_of("droid"))));
-    }
+    let account_providers: Vec<Arc<dyn crate::accounts::provider::AccountProvider>> = vec![
+      Arc::new(devin),
+      Arc::new(codex),
+      Arc::new(claude),
+      Arc::new(AntigravityAccountProvider::new(root.join("accounts").join("antigravity"), binary_of("antigravity"))),
+      Arc::new(DroidAccountProvider::new(root.join("accounts").join("droid"), binary_of("droid"))),
+    ];
     let accounts = AccountManager::new(
       account_store,
       account_providers,

@@ -3,8 +3,12 @@
 //! off the same directory. On macOS the login is `auth.v2.loginkeychain`: AES-256-GCM as base64 `iv:tag:data` with a
 //! 16-byte IV, keyed by the login-keychain item service "Factory CLI", account "auth-encryption-key-security-cli",
 //! written through /usr/bin/security (so reading it back through that tool never prompts) and shared by every home.
-//! With the keyring off it is `auth.v2.file` with its key in `auth.v2.key`. Linux and Windows keep the key in the
-//! system keyring through keytar, which is not read here, so saved accounts are macOS only. The plaintext is
+//! With the keyring off (FACTORY_DISABLE_KEYRING=1, droid 1.14.0) it is `auth.v2.file` with its key in `auth.v2.key`.
+//! Linux and Windows seal `auth.v2.keyring` with a key keytar puts in the system keyring (service "Factory CLI",
+//! account "auth-encryption-key", the 32 bytes as base64). A saved account there runs with the keyring off, so its
+//! login is the file pair this module reads on every system; the CLI's own keyring login is read on Windows from the
+//! generic credential keytar names `<service>/<account>` (read off keytar's source, unchecked against a Windows droid
+//! login) and not at all on Linux, where it runs as before without being listed. The plaintext is
 //! `{ access_token, refresh_token, active_organization_id, whoami }`; droid refreshes the tokens in place and the
 //! refresh token rotates, so a login is never copied. A saved account is a private FACTORY_HOME_OVERRIDE under
 //! ~/.acpira/accounts/droid/ whose `.factory` keeps its own login and identity files and links every other entry into
@@ -61,10 +65,20 @@ const CLIENT_VERSION: &str = "1.14.0";
 /// The region a key's whoami named, kept in the account's meta so quota reads go to the same host
 const META_REGION: &str = "region";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 const KEYCHAIN_SERVICE: &str = "Factory CLI";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "auth-encryption-key-security-cli";
+/// The keyring item of the systems droid reaches through keytar
+#[cfg(windows)]
+const KEYRING_ACCOUNT: &str = "auth-encryption-key";
+/// The login sealed with the secure store's key: droid goes through /usr/bin/security on macOS, keytar elsewhere
+const SECURE_FILE: &str = if cfg!(target_os = "macos") { "auth.v2.loginkeychain" } else { "auth.v2.keyring" };
+/// Keeps droid's login in the file pair instead of the system keyring
+const NO_KEYRING_ENV: &str = "FACTORY_DISABLE_KEYRING";
+/// Whether a saved account's login is sealed with the secure store's key like the CLI's own (macOS). Elsewhere the
+/// account keeps the file pair, which needs no keyring to be read back
+const KEYRING_SHARED: bool = cfg!(target_os = "macos");
 /// The `.factory` entries an account keeps for itself: the login, its write lock, and the files naming the signed-in
 /// user or organization (computer registration, cached org policy)
 const OWN: [&str; 9] = [
@@ -153,8 +167,8 @@ pub fn decrypt(blob: &str, key: &[u8]) -> Option<String> {
   String::from_utf8(plain).ok()
 }
 
-/// The login-keychain key every home's `auth.v2.loginkeychain` is sealed with
-async fn keychain_key() -> Option<Vec<u8>> {
+/// The secure store's key, which every home's `SECURE_FILE` is sealed with
+async fn secure_key() -> Option<Vec<u8>> {
   #[cfg(target_os = "macos")]
   {
     let out = tokio::process::Command::new("/usr/bin/security")
@@ -169,7 +183,12 @@ async fn keychain_key() -> Option<Vec<u8>> {
     }
     base64::engine::general_purpose::STANDARD.decode(String::from_utf8_lossy(&out.stdout).trim()).ok()
   }
-  #[cfg(not(target_os = "macos"))]
+  #[cfg(windows)]
+  {
+    let raw = crate::platform::credentials::read_generic(&format!("{KEYCHAIN_SERVICE}/{KEYRING_ACCOUNT}"))?;
+    base64::engine::general_purpose::STANDARD.decode(String::from_utf8_lossy(&raw).trim()).ok()
+  }
+  #[cfg(not(any(target_os = "macos", windows)))]
   None
 }
 
@@ -177,8 +196,8 @@ async fn keychain_key() -> Option<Vec<u8>> {
 /// none or it cannot be opened from here
 async fn read_credentials(dir: &Path) -> Option<Value> {
   let mut plain = None;
-  if let Ok(blob) = tokio::fs::read_to_string(dir.join("auth.v2.loginkeychain")).await
-    && let Some(key) = keychain_key().await
+  if let Ok(blob) = tokio::fs::read_to_string(dir.join(SECURE_FILE)).await
+    && let Some(key) = secure_key().await
   {
     plain = decrypt(&blob, &key);
   }
@@ -234,8 +253,11 @@ impl AccountProvider for DroidAccountProvider {
       create_private_dir(&home).await?;
       prepare_home(&home, &OWN).await?;
       // An API key in the environment would stand in for the login and skip the sign-in
-      let env: BTreeMap<String, Option<String>> =
+      let mut env: BTreeMap<String, Option<String>> =
         [(HOME_ENV.into(), Some(home.to_string_lossy().into_owned())), ("FACTORY_API_KEY".into(), None)].into();
+      if !KEYRING_SHARED {
+        env.insert(NO_KEYRING_ENV.into(), Some("1".into()));
+      }
       Ok(LoginFlow {
         command: bin,
         args: vec![],
@@ -375,6 +397,8 @@ fn spawn_vars(cred: &AccountCredential) -> Option<(PathBuf, BTreeMap<String, Str
   let mut env: BTreeMap<String, String> = [(HOME_ENV.to_owned(), home.to_string_lossy().into_owned())].into();
   if is_key(cred) {
     env.insert(KEY_ENV.to_owned(), cred.secret.clone());
+  } else if !KEYRING_SHARED {
+    env.insert(NO_KEYRING_ENV.to_owned(), "1".to_owned());
   }
   Some((home, env))
 }
@@ -545,7 +569,9 @@ mod tests {
   fn a_plugin_key_needs_a_private_home() {
     let p = DroidAccountProvider::new(PathBuf::from("/x"), std::sync::Arc::new(|| Box::pin(async { None })));
     let env = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> { pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect() };
-    assert_eq!(p.plugin_env_error(&env(&[(HOME_ENV, "/data/factory-homes/L"), (KEY_ENV, "fk-x")])), None);
+    // A drive letter makes the path absolute on Windows
+    let own = if cfg!(windows) { "C:/data/factory-homes/L" } else { "/data/factory-homes/L" };
+    assert_eq!(p.plugin_env_error(&env(&[(HOME_ENV, own), (KEY_ENV, "fk-x")])), None);
     assert!(p.plugin_env_error(&env(&[(KEY_ENV, "fk-x")])).is_some());
     assert!(p.plugin_env_error(&env(&[(HOME_ENV, "homes/L"), (KEY_ENV, "fk-x")])).is_some());
     assert!(p.plugin_env_error(&env(&[(HOME_ENV, &default_home().to_string_lossy()), (KEY_ENV, "fk-x")])).is_some());
@@ -569,6 +595,8 @@ mod tests {
     let (_, env) = spawn_vars(&login).unwrap();
     assert_eq!(env.get(HOME_ENV).map(String::as_str), Some("/accounts/droid/u1"));
     assert!(!env.contains_key(KEY_ENV));
+    // Off macOS a saved login stays out of the system keyring, which is not read back here
+    assert_eq!(env.contains_key(NO_KEYRING_ENV), !cfg!(target_os = "macos"));
     assert!(spawn_vars(&AccountCredential { secret: LOCAL_LOGIN.into(), meta: None }).is_none());
     assert!(KEY_OWN.starts_with(&OWN) && KEY_OWN.contains(&"api-key-identity"));
   }

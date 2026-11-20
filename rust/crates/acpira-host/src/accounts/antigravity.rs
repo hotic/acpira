@@ -1,4 +1,5 @@
-//! Antigravity (Google account) logins. `agy` 1.5.9 keeps its login in one OS keyring item (`gemini` / `antigravity`)
+//! Antigravity (Google account) logins. `agy` 1.5.9 keeps its login in one OS keyring item (`gemini` / `antigravity`:
+//! the macOS keychain, on Windows the generic credential `gemini:antigravity` holding the same JSON as it is)
 //! wherever `--gemini-dir` points, so a directory alone cannot hold a second account. Inside an SSH session it leaves
 //! the keyring alone and keeps the login in `<gemini dir>/antigravity-cli/antigravity-oauth-token` (its log: "Using
 //! file-based token storage because SSH session detected"; any of SSH_CONNECTION / SSH_CLIENT / SSH_TTY does it, and
@@ -8,11 +9,14 @@
 //! turns it into the flag. The account's gemini dir owns the token file and `antigravity-cli/cache` (the sign-in method
 //! and the account's default project); every other entry links into the regular ~/.gemini, so conversations, settings,
 //! skills and MCP config stay one store and a switched session loads its own conversation. The local login keeps the
-//! keyring and the regular dir. `agy` refreshes its tokens in place; Acpira only reads the email.
+//! keyring and the regular dir. `agy` refreshes its tokens in place; Acpira only reads the email. Windows takes the
+//! same variables and keeps the file the same way (1.5.9); a Linux keyring login is not read, only a token file is.
+//! `conversation_summaries.db` is linked on Unix alone (`OWN_DB`).
 //!
 //! Quota: `agy -p /usage --output-format json` answers from the vendor without an agent turn or a conversation
-//! (`usage` all zero). Print mode has no `--gemini-dir`, so a saved account's read runs with HOME set to the account
-//! home, which is why the gemini dir is named `.gemini` there. Checked on macOS only
+//! (`usage` all zero). Print mode has no `--gemini-dir`, so a saved account's read runs with the home directory set to
+//! the account home (HOME, on Windows USERPROFILE), which is why the gemini dir is named `.gemini` there. A live read
+//! was checked on macOS only
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -48,6 +52,10 @@ const APP_DIR: &str = "antigravity-cli";
 const TOKEN_FILE: &str = "antigravity-oauth-token";
 /// What an account's `antigravity-cli` keeps for itself: the login, and the cache that records how it signed in
 const OWN: [&str; 2] = [TOKEN_FILE, "cache"];
+/// `agy`'s index of the conversations. A file link on Windows is a hard link wherever symlinks need a privilege
+/// (`platform::files::create_link`), and SQLite keeps `-wal` and `-shm` beside the path it opened, so a linked database
+/// would be written through two logs: an account keeps its own index there
+const OWN_DB: [&str; 3] = ["conversation_summaries.db", "conversation_summaries.db-shm", "conversation_summaries.db-wal"];
 /// A signed-out `agy` waits a minute for a sign-in before it answers; the read outlasts that to hear the answer
 const USAGE_TIMEOUT: Duration = Duration::from_secs(75);
 
@@ -86,7 +94,7 @@ fn email_of(login: &Value) -> Option<String> {
 }
 
 /// A keyring value as go-keyring wrote it: values that are not plain ASCII words go in base64 or hex behind a prefix
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", windows, test))]
 fn keyring_json(raw: &str) -> Option<Value> {
   use base64::Engine;
   let raw = raw.trim();
@@ -100,8 +108,17 @@ fn keyring_json(raw: &str) -> Option<Value> {
   serde_json::from_slice(&bytes).ok()
 }
 
-/// The login `agy` itself would use without an account: the token file inside an SSH session, the keychain item otherwise
+/// The login `agy` itself would use without an account: the token file inside an SSH session, the keyring item
+/// otherwise (which `agy` leaves for the file once the keyring fails it)
 async fn local_login() -> Option<Value> {
+  #[cfg(windows)]
+  {
+    if !in_ssh()
+      && let Some(login) = crate::platform::credentials::read_generic("gemini:antigravity").and_then(|raw| keyring_json(&String::from_utf8_lossy(&raw)))
+    {
+      return Some(login);
+    }
+  }
   #[cfg(target_os = "macos")]
   {
     if !in_ssh() {
@@ -123,7 +140,8 @@ async fn local_login() -> Option<Value> {
 fn link_store(store: &Path, shared: &Path) {
   let _ = std::fs::create_dir_all(store.join(APP_DIR));
   link_shared(store, shared, &[APP_DIR]);
-  link_shared(&store.join(APP_DIR), &shared.join(APP_DIR), &OWN);
+  let own: Vec<&str> = if cfg!(windows) { OWN.iter().chain(&OWN_DB).copied().collect() } else { OWN.to_vec() };
+  link_shared(&store.join(APP_DIR), &shared.join(APP_DIR), &own);
 }
 
 /// The login in a saved account's own store
@@ -254,7 +272,8 @@ async fn usage(bin: &str, home: Option<&Path>) -> Result<Value> {
   let mut cmd = crate::acp::agents::launch::command(bin, &args);
   cmd.current_dir(std::env::temp_dir()).stdin(std::process::Stdio::null()).kill_on_drop(true);
   if let Some(home) = home {
-    cmd.env("HOME", home);
+    // Where `agy` looks for its home directory: USERPROFILE on Windows (1.5.9 ignores HOME there)
+    cmd.env(if cfg!(windows) { "USERPROFILE" } else { "HOME" }, home);
     if !in_ssh() {
       cmd.env(SSH_ENV[0], SSH_STAND_IN);
     }
@@ -365,9 +384,11 @@ mod tests {
     // A plugin's store is its own absolute dir, never the regular one or a place inside it
     let p = AntigravityAccountProvider::new(PathBuf::from("/x"), std::sync::Arc::new(|| Box::pin(async { None })));
     let store = |d: &str| -> StrMap { [(STORE_ENV.to_owned(), d.to_owned())].into() };
-    assert_eq!(p.plugin_env_error(&store("/x/acc")), None);
+    // A drive letter makes the path absolute on Windows
+    let root = if cfg!(windows) { "C:/x" } else { "/x" };
+    assert_eq!(p.plugin_env_error(&store(&format!("{root}/acc"))), None);
     assert_eq!(p.plugin_env_error(&StrMap::new()), None);
-    for bad in ["acc/.gemini", "/x/../acc", &default_home().to_string_lossy(), &default_home().join("sub").to_string_lossy()] {
+    for bad in ["acc/.gemini", &format!("{root}/../acc"), &default_home().to_string_lossy(), &default_home().join("sub").to_string_lossy()] {
       assert!(p.plugin_env_error(&store(bad)).is_some(), "{bad} accepted");
     }
     assert!(spawn_args("claude", Some(&env)).is_empty());

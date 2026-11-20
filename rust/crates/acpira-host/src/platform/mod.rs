@@ -2,6 +2,8 @@
 
 pub mod command;
 #[cfg(windows)]
+pub mod credentials;
+#[cfg(windows)]
 pub mod environment;
 pub mod file_url;
 pub mod files;
