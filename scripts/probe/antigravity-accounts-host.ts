@@ -73,7 +73,11 @@ try {
     await viewer.newSession('antigravity');
     viewer.post({ type: 'selectAccount', id: account.id });
     await viewer.until(() => viewer.active()?.accountId === account.id && viewer.active()?.status === 'ready', 60_000, 'the session on the new account');
-    const ps = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n').filter(l => l.includes(`--gemini-dir ${dir}`));
+    // `<pid> <command line>` of every process
+    const all = process.platform === 'win32'
+      ? execFileSync('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }'], { encoding: 'utf8' })
+      : execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
+    const ps = all.split(/\r?\n/).filter(l => l.includes(`--gemini-dir ${dir}`));
     check('the process runs on the account dir', ps.length > 0, `${ps.length} process(es)`);
     // `agy` names its log after its pid; the log dir is the regular one, linked into the account dir
     const pids = ps.map(l => l.trim().split(/\s+/)[0]);

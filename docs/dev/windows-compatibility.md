@@ -15,6 +15,9 @@ Windows boundaries the code works around, their checks, and what lacks native ac
 - Session lock takeover only targets a verified direct child of another sidecar (`lock_holder.rs`).
 - Remote / WSL: the backend OS decides command syntax; `agents.json` keeps local Windows and remote Linux config apart.
 - Release sidecars: MSVC target, static CRT (`scripts/release/sidecar-targets.mjs`).
+- Credential Manager items belong to a logon session: an SSH key session has none, so a keyring login reads as absent there (`platform::credentials`).
+- `agy` 1.5.9: login in the generic credential `gemini:antigravity`; under the SSH variables it takes the token file as on macOS; print mode finds its home through USERPROFILE, not HOME. An account's gemini dir keeps its own `conversation_summaries.db`: hard-linked, it would get a second `-wal` / `-shm` (`accounts::antigravity`).
+- Saved Droid logins run with `FACTORY_DISABLE_KEYRING=1` and keep the file pair (`accounts::droid`).
 - Remote access: the logon task runs the GUI-subsystem engine (`serve --service --log`, the exe's own output redirected) so no console opens; owner-only control pipe and DACLs (`host-architecture.md`, Remote access gateway). Unverified on Windows: `/Create /F` over a running instance, `SetStdHandle` redirection.
 
 ## Regression checks
@@ -29,4 +32,5 @@ Windows boundaries the code works around, their checks, and what lacks native ac
 - Some native Rust engine tests and POSIX-only `pnpm test` cases (file modes, `fileLock`, `acpira serve` socket) fail on Windows.
 - Unverified: real OAuth per vendor, terminal TTY, IDE buttons and browser callbacks, native arm64, each vendor's stdio MCP launch, shared drives, redirected Known Folders, antivirus / enterprise policy, PowerShell or WSL interop disabled.
 - Unverified for remote access: firewall prompt, `DnsServiceRegister` seen from an iPhone, Modern Standby.
+- Unverified: a droid sign-in on Windows (a saved login's file pair, keytar's `Factory CLI/auth-encryption-key` item behind the CLI's own login; droid 1.16.0 was checked for `FACTORY_HOME_OVERRIDE`, `FACTORY_API_KEY` and its store code only).
 - Claude may use a user-level `ANTHROPIC_API_KEY`, so "not signed in" does not mean the CLI lacks credentials (`agent-quirks-claude.md`).
