@@ -70,10 +70,12 @@ import WebKit
                                 options: [sourced("o/k3", "K3", "official", "official"), sourced("g/k3", "K3", "gw", "custom"), SessionOption(id: "auto", name: "Auto")])
     control.value = "o/k3"
     let effort = ConfigControl(id: "effort", name: "Effort", category: "thought_level", type: "select", options: options(["low", "high"]))
-    // The built-in agent's sidekick pick and its levels are composer controls, not model families
+    // Permission levels, Fast selects and sidekick controls are composer controls, not model families
+    let approval = ConfigControl(id: "approval", name: "Approval", category: "_permission_mode", type: "select", options: options(["ask", "full"]))
+    let speed = ConfigControl(id: "speed", name: "Speed", category: "model_config", type: "select", options: options(["standard", "fast"]))
     let sidekick = ConfigControl(id: "sidekick", name: "Sidekick", category: "_sidekick", type: "select", options: options(["none", "g/k3"]))
     let sidekickEffort = ConfigControl(id: "sidekick_effort", name: "Sidekick effort", category: "_sidekick_effort", type: "select", options: options(["low", "high"]))
-    let catalogs = ModelSettings.catalogs([control, effort, sidekick, sidekickEffort]) ?? []
+    let catalogs = ModelSettings.catalogs([control, effort, approval, speed, sidekick, sidekickEffort]) ?? []
     #expect(catalogs.map(\.control.id) == ["model"])
     let groups = ModelSettings.groups(catalogs, query: "")
     #expect(groups.map(\.key) == ["model:official", "model:custom", "model:other"])

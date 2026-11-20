@@ -179,6 +179,16 @@ export function modelBeans(c: ModelChoices, goo: Goo, act: ModelActions): Bean[]
         fold();
       })), access.options.findIndex((o: SessionOption) => o.id === level?.id)));
   }
+  const agent = c.agent;
+  if (agent !== undefined) {
+    const current = agent.options.find((o: SessionOption) => o.id === agent.value) ?? agent.options[0];
+    out.push(bean('agent', agent.name, current !== undefined ? current.name : agent.name,
+      lucideGlyph(current !== undefined ? modeIcon(current) : 'circleDashed'),
+      agent.options.map((o: SessionOption) => choice(o.id, o.name, o.id === current?.id, lucideGlyph(modeIcon(o)), () => {
+        act.setConfig(agent.id, o.id);
+        fold();
+      })), agent.options.findIndex((o: SessionOption) => o.id === current?.id)));
+  }
   // None yet, with models from two or more CLIs: the sidekick bean goes straight to the CLI list, not to a lone agent bean
   const toAgents = c.fusion === undefined && c.sidekick !== undefined && pickedSidekick(c) === undefined &&
     ComposerControls.sidekickClis(c.sidekick.options).length > 1;

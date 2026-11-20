@@ -102,7 +102,7 @@ struct SubagentInspector: View {
 }
 
 /// The child's thread: the main thread's views and its stick-to-bottom following (ChatScreen's `Thread`), with what
-/// the inspector adds around the turns: the loading row, a receipt node's note and result, a nested child's result,
+/// the inspector adds around the turns: the loading row, a receipt node's result, a nested child's result,
 /// the note on a child whose outcome never arrived
 private struct InspectorThread: View {
   let view: SessionView
@@ -131,11 +131,9 @@ private struct InspectorThread: View {
           .environment(\.holdScroll, hold)
           .environment(\.scrollGesture, gesture)
           .environment(\.threadFollowing, following)
-        if receipt || loading || result != nil || node.state == .disconnected {
+        if loading || result != nil || node.state == .disconnected {
           VStack(alignment: .leading, spacing: WebMetrics.msgGap) {
-            if receipt {
-              Text(web: t("subagents.receiptOnly")).foregroundStyle(Palette.fg3).fixedSize(horizontal: false, vertical: true)
-            } else if loading {
+            if loading {
               // Led by the Orb and labelled like a working turn's head, which takes its place once the turns arrive
               Row { Orb() } content: { RowLabel(t("subagents.loading"), shimmer: true) }
             }

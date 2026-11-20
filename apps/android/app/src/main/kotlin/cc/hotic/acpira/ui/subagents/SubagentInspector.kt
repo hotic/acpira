@@ -163,7 +163,7 @@ private fun childView(root: SessionView, node: SubagentSummary, transcript: Suba
 
 /**
  * The child's thread: the main thread's views and its stick-to-bottom following, with what the inspector adds around
- * the turns: the loading row, a receipt node's note and result, a nested child's result, the note on a child whose
+ * the turns: the loading row, a receipt node's result, a nested child's result, the note on a child whose
  * outcome never arrived
  */
 @Composable
@@ -175,7 +175,7 @@ private fun InspectorThread(model: AppModel, session: String, view: SessionView,
   // settled child with no process of its own
   val result = if (receipt || node.visibility == SubagentVisibility.nested || (loaded && empty && node.state != SubagentState.running)) node.result else null
   val items = remember(view.turns) { exchanges(view.turns) }
-  val extra = receipt || loading || result != null || node.state == SubagentState.disconnected
+  val extra = loading || result != null || node.state == SubagentState.disconnected
   val total = items.size + if (extra) 1 else 0
   val list = rememberLazyListState()
   var following by remember { mutableStateOf(true) }
@@ -216,9 +216,7 @@ private fun InspectorThread(model: AppModel, session: String, view: SessionView,
             verticalArrangement = Arrangement.spacedBy(Metrics.msgGap),
           ) {
             CompositionLocalProvider(LocalRowHeight provides WebMetrics.chatRow) {
-              if (receipt) {
-                Text(t("subagents.receiptOnly"), color = Palette.fg3, style = WebType.text2)
-              } else if (loading) {
+              if (loading) {
                 // Led by the Orb and labelled like a working turn's head, which takes its place once the turns arrive
                 AcpRow(lead = { Orb() }, modifier = Modifier.testTag("subagent.loading")) { RowLabel(t("subagents.loading"), shimmer = true) }
               }

@@ -619,6 +619,23 @@ private fun modelBeans(c: ModelChoices, onSetMode: (String) -> Unit, onSetConfig
       },
     )
   }
+  c.agent?.let { agent ->
+    val current = agent.options.firstOrNull { it.id == agent.value } ?: agent.options.firstOrNull()
+    out += Bean(
+      "agent", agent.name, current?.name ?: agent.name,
+      glyph = { Lucide(current?.let(::modeIcon) ?: "circleDashed", Palette.fg1, size = Metrics.barIcon) },
+      rows = agent.options.size,
+      panel = {
+        GooList(agent.options.indexOfFirst { it.id == current?.id }) {
+          for (o in agent.options) {
+            GooRow(o.name, o.id == current?.id, glyph = { Lucide(modeIcon(o), Palette.fgStrong, size = Metrics.icon) }) {
+              onSetConfig(agent.id, o.id); fold()
+            }
+          }
+        }
+      },
+    )
+  }
   sidekickBean(c) { opening -> goo.enter(SIDEKICK_LEVEL, opening) }?.let { out += it }
   return out
 }

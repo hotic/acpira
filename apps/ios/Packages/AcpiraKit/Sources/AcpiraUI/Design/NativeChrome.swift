@@ -373,7 +373,7 @@ struct NativeAccountSheet: View {
         } else {
           Section {
             if accounts.isEmpty {
-              NativeAccountRow(title: t("settings.agent.accounts.none"), caption: t("composer.noAccounts"))
+              NativeAccountRow(title: t("settings.agent.accounts.none"))
             }
             ForEach(accounts) { a in
               Button {

@@ -50,7 +50,7 @@ private func reshape(_ fallback: SessionControls, _ settings: TurnSettings, live
   // A draft has no agent to correct an old scale. Until this model's shape is known, do not offer another model's
   // effort or Fast as though it belonged to the selected model.
   var next = fallback
-  next.options.removeAll { ComposerControls.isReasoning($0) || $0.category == "model_config" }
+  next.options.removeAll { ComposerControls.isReasoning($0) || $0.category == "model_config" || $0.category == "speed" }
   return next
 }
 
