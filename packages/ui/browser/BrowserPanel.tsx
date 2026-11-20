@@ -383,7 +383,6 @@ export function BrowserPanel() {
                 <div className="flex h-full flex-col items-center justify-center gap-1 px-page text-center">
                   <Globe strokeWidth={1} className="mb-gap size-ctl text-fg-3" />
                   <p className="m-0 text-2 font-medium text-fg-1">{t('browser.source')}</p>
-                  <p className="m-0 text-2 text-fg-3">{t('browser.emptyHint')}</p>
                 </div>
               )}
             </div>

@@ -139,16 +139,14 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
       <div ref={scroll} className="pane-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter">
         <div ref={body} className={cn('follow-pad mx-auto flex min-w-0 flex-col gap-msg pb-msg', wide && 'max-w-chat-column')}>
           {node.task !== undefined && !taskInTurns && <TaskCard task={node.task} />}
+          {/* A delegation without a process of its own keeps only what the parent received */}
           {receiptOnly(node) ? (
-            <>
-              <p className="m-0 px-pad text-2 text-fg-3">{t('subagents.receiptOnly')}</p>
-              {node.result !== undefined && (
-                <section className="flex min-w-0 flex-col gap-1 px-pad">
-                  <div className="text-3 text-fg-3">{t('subagents.result')}</div>
-                  <Prose block={textOf(node.result)} />
-                </section>
-              )}
-            </>
+            node.result !== undefined && (
+              <section className="flex min-w-0 flex-col gap-1 px-pad">
+                <div className="text-3 text-fg-3">{t('subagents.result')}</div>
+                <Prose block={textOf(node.result)} />
+              </section>
+            )
           ) : transcript === undefined ? (
             <Row className="px-pad text-fg-3"><Shimmer active>{t('subagents.loading')}</Shimmer></Row>
           ) : (

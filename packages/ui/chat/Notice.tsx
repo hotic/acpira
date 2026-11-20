@@ -209,7 +209,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     : status === 'auth_required'
     ? {
         title: t('notice.login.title', { agent: agent.name }),
-        text: withAccounts ? t('notice.login.accounts') : authMethods?.length ? t('notice.login.methods') : t('notice.login.terminal'),
+        text: withAccounts ? t('notice.login.accounts') : authMethods?.length ? undefined : t('notice.login.terminal'),
       }
     : status === 'error' && takeOver
       ? { title: t('notice.takeOver.title'), text: t('notice.takeOver.text') }
