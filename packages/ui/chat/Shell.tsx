@@ -54,7 +54,7 @@ import { agentsForFolder, launchable, pickFolderAgent } from '@acpira/shared/age
 import { canRunHere, parseRemoteFolder, sshLocalAgents } from '@acpira/shared/remote';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ProjectDialog } from './ProjectDialog';
-import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postWindowControl, useShellCommands, useShellToasts } from '../desktop';
+import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postWindowControl, useShellCommands, useShellToasts, useWindowLights } from '../desktop';
 import { hitShortcut } from '../keybindings';
 import { droppedPathResolver, hostDragPaths, setWebviewState, webviewState } from '../vscodeApi';
 import { focusMainComposer, mainComposerEmpty, moveDraft } from './useComposerDraft';
@@ -534,6 +534,11 @@ export function Shell(p: ShellProps) {
   // Files layout: the title row's toggle folds the explorer, the pinned one at the top-right corner (⌥⌘B) the session column
   const explorerHidden = usePanelValue(s => s.explorerHidden);
   const toggleSessions = useCallback(() => hideColumn(!columnHidden), [hideColumn, columnHidden]);
+  // macOS: the traffic lights stand on the cards' line, which the column's icons share, so they stay put as the column
+  // folds or the window narrows (desktop.css --lights-x). The files layout, the panel's page over a narrow window and
+  // another density draw another line, and the lights move there
+  const panelOpen = usePanelValue(s => s.open);
+  useWindowLights(root, desktop, [files, panelOpen, canDock, a.density]);
   const [inspect, setInspect] = useState<{ id: string }>();
   const [graphOpen, setGraphOpen] = useState(false);
   useEffect(() => setGraphOpen(false), [p.activeSessionId]);

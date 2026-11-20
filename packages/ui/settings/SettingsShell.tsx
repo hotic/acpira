@@ -15,7 +15,7 @@ import { ShellLayerContext } from '../ui/Popover';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { agentUpdates, appUpdatePending } from '../ui/UpdateDot';
 import { LocaleContext, t } from '../i18n';
-import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postUpdate, useUpdateState } from '../desktop';
+import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postUpdate, useUpdateState, useWindowLights } from '../desktop';
 import { hitShortcut } from '../keybindings';
 import { ShortcutsPage } from './ShortcutsPage';
 import { AboutPage } from './AboutPage';
@@ -159,6 +159,8 @@ export function SettingsShell(p: SettingsShellProps) {
     </IconButton>
   );
   const desktop = !!p.desktop;
+  // macOS: the lights on the rail's line, the chat column's (desktop.css --lights-x)
+  useWindowLights(root, desktop, [p.appearance.density]);
   // The desktop updater's state for About (HostMsg updateState, kept in packages/ui/desktop.ts)
   const update = useUpdateState();
   // SSH hosts are offered once the engine answered for them (remote/api.ts)

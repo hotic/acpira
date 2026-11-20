@@ -48,11 +48,18 @@
 /* A narrow window (data-narrow): the title row keeps the lights and the column's toggle only, so the header gains two
    buttons' width. Scoped to the header/tabs/rail consumers so crossing the tier never invalidates inherited vars on the whole shell. */
 .acp-shell[data-desktop][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--title-lead) + var(--ctl) + var(--gap)); }
-/* The lights span x 17-77 (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath of about 15 px
-   to its icon */
+/* The lights span 60 px from --lights-x (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath
+   of about 15 px to its icon (67: the span and that breath, desktop.ts LIGHTS_ROOM) */
 /* macOS: the header line is 40 px, so its controls get a breath above and below inside the sheet; the lights' centre
    sits on the line's centre (the sheet's inset and half the line, 28 off the window's top, apps/desktop windows.rs) */
-.acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; --hdr: 40px; }
+/* The lights' left edge stands on the cards' line, the sheet's inset plus --start-x off the window's edge: the cards
+   and the composer start there in a window without a column, and the column's and the settings rail's icons stand on
+   it too (--column-pad below), so the lights stay put as the column folds or the window narrows. Two places draw
+   another line under them, and the shell moves the lights there (Shell.tsx posts the title row's padding as it eases,
+   apps/desktop mac.rs set_lights_x): the files layout's explorer, and the panel's page over a narrow window */
+.acp-shell[data-desktop][data-os="mac"] { --lights-x: calc(var(--sheet-inset) + var(--start-x)); --lights-w: calc(var(--lights-x) + 67px); --hdr: 40px; }
+.acp-shell[data-desktop][data-os="mac"][data-layout="files"] { --lights-x: 17px; }
+.acp-shell[data-desktop][data-os="mac"][data-narrow]:has(> [data-tool-panel-wrap][data-shown]) { --lights-x: var(--start-x); }
 /* The session column and the settings rail in its place: the side padding that puts a row's icon (the row's own 8 px,
    then the icon's inset in its lead cell) on the cards' line, so the column reads on the line the sheet takes once it
    is folded. Both sides, so a row's fill keeps equal margins. macOS only: where the page draws the caption, the rows'
@@ -196,6 +203,8 @@
      with the column; the column and the settings rail leave a strip of its height under it */
   .acp-shell[data-desktop] :is([data-title-row], [data-title-space]) { margin-top: var(--title-top); }
   .acp-shell[data-desktop] [data-title-row] { padding-left: var(--title-lead); }
+  /* macOS: the lights follow this padding (Shell.tsx), so it eases with the column and they glide instead of jumping */
+  .acp-shell[data-desktop][data-os="mac"] [data-title-row] { transition: padding-left var(--sidebar-duration) var(--sidebar-ease); }
   /* The column folds away (its title row's first button) and back. Only while it moves (data-column-moving, never under the
      drag that resizes it) its width eases, and the sheet's left inset and its header's room for the lights with it. The
      column's content keeps its open width meanwhile (--column-w, which Shell measures), clipped instead of re-wrapped. The
