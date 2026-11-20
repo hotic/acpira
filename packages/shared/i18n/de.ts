@@ -739,6 +739,8 @@ export const de = {
   'host.remoteFileFailed': '{path} konnte nicht von {host} geholt werden',
   'host.remoteUnreachable': '{host} ist gerade nicht erreichbar; versuche es erneut, sobald die Verbindung steht',
   'host.exited': 'Der {agent}-Prozess wurde beendet ({code})',
+  'host.droidStandardExhausted': 'Das Factory-Standard-Kontingent ist aufgebraucht, daher läuft {model} erst nach dem Zurücksetzen wieder. Droid wollte diese Sitzung eigenmächtig auf {core} (Droid Core) umstellen: Der Durchlauf wurde gestoppt und {model} beibehalten. Warten Sie auf das Zurücksetzen oder wählen Sie selbst ein anderes Modell.',
+  'host.droidStandardExhaustedUntil': 'Das Factory-Standard-Kontingent ist aufgebraucht, daher läuft {model} erst nach dem Zurücksetzen um {at} wieder. Droid wollte diese Sitzung eigenmächtig auf {core} (Droid Core) umstellen: Der Durchlauf wurde gestoppt und {model} beibehalten. Warten Sie bis dahin oder wählen Sie selbst ein anderes Modell.',
   'host.droidGeminiThinkingOnly': 'Gemini lieferte nur Überlegungen, ohne Antwort oder Werkzeugaufruf. Droid versucht es erneut.',
   'host.droidGeminiCut': 'Gemini hat dieselbe Anfrage zweimal nur mit Überlegungen und ohne Antwort beendet. Weitere Versuche wurden gestoppt. Zum Fortfahren die Denktiefe verringern, die Aufgabe aufteilen oder das Modell wechseln.',
   'host.emptyResponse': 'Das CLI hat die Anfrage ohne Antwort und ohne Fehlerdetails beendet (ACP: end_turn). Erneut versuchen oder die CLI-Logs prüfen.',

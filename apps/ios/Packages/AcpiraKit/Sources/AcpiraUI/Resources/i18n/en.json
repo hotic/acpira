@@ -728,6 +728,8 @@
   "host.remoteFileFailed": "Could not fetch {path} from {host}",
   "host.remoteUnreachable": "{host} cannot be reached right now. Try again once it is connected",
   "host.exited": "{agent} process exited ({code})",
+  "host.droidStandardExhausted": "Factory Standard usage is used up, so {model} cannot run until it resets. Droid tried to switch this session to {core} (Droid Core) on its own: the turn was stopped and {model} kept. Wait for the reset, or pick another model yourself to continue.",
+  "host.droidStandardExhaustedUntil": "Factory Standard usage is used up, so {model} cannot run until it resets at {at}. Droid tried to switch this session to {core} (Droid Core) on its own: the turn was stopped and {model} kept. Wait until then, or pick another model yourself to continue.",
   "host.droidGeminiThinkingOnly": "Gemini returned only thinking, without a reply or tool call. Droid is retrying.",
   "host.droidGeminiCut": "Droid stopped retrying after Gemini twice ended the same request with only thinking and no reply. Lower the reasoning effort, split the task, or switch models before continuing.",
   "host.emptyResponse": "The CLI ended the request with no reply or error details (ACP: end_turn). Retry or check the CLI logs.",

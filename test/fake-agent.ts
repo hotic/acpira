@@ -646,6 +646,9 @@ const app = acp.agent({ name: 'fake-agent' })
     saveSession(params.sessionId);
     if (process.env.FAKE_CONFIG_USAGE) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
       update: { sessionUpdate: 'usage_update', used: 24_000, size: 200_000 } });
+    // FAKE_CONFIG_ECHO: echo the new set as a config_option_update ahead of the answer, as droid 1.14.0 does
+    if (process.env.FAKE_CONFIG_ECHO) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
+      update: { sessionUpdate: 'config_option_update', configOptions: configOptions() } });
     return { configOptions: configOptions() };
   })
   .onNotification(acp.methods.agent.session.cancel, async ({ params }) => {
@@ -784,6 +787,21 @@ const app = acp.agent({ name: 'fake-agent' })
       const saved = readSession(sid);
       if (!saved) throw acp.RequestError.invalidParams(undefined, 'unknown native session');
       saveSession(sid, [...saved.prompts, params.prompt]);
+    }
+    // FAKE_CORE_KEYS=<comma list>: under one of those keys every prompt meets droid's overage swap ('droid core swap')
+    // FAKE_CORE_ALWAYS: the same for every prompt of this process (an account started with its own variables)
+    const coreSwap = text === 'droid core swap' || !!process.env.FAKE_CORE_ALWAYS
+      || !!(apiKey && process.env.FAKE_CORE_KEYS?.split(',').includes(apiKey));
+    if (coreSwap) {
+      config.model = 'kimi-k3';
+      await send({ sessionUpdate: 'config_option_update', configOptions: configOptions() });
+      while (!cancelled.has(sid)) await new Promise(r => setTimeout(r, slowStepMs));
+      return { stopReason: 'cancelled' };
+    }
+    // The model this process would answer on
+    if (text === 'which model') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `model=${config.model}` } });
+      return { stopReason: 'end_turn' };
     }
     if (apiKey && process.env.FAKE_EXHAUSTED_KEYS?.split(',').includes(apiKey)) {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial work' } });

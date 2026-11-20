@@ -311,11 +311,17 @@ struct FakeProvider {
   plan: Mutex<Option<String>>,
   /// Secrets of the credentials `forget` was asked to drop
   forgotten: Mutex<Vec<String>>,
+  /// The agent it signs in (`fake` unless a test needs a built-in's quirks)
+  agent: &'static str,
 }
 
 impl FakeProvider {
   fn new() -> Arc<FakeProvider> {
-    let p = FakeProvider::default();
+    Self::new_for("fake")
+  }
+
+  fn new_for(agent: &'static str) -> Arc<FakeProvider> {
+    let p = FakeProvider { agent, ..Default::default() };
     *p.import_draft.lock().unwrap() = Some(draft("one@example.com", Some("Max"), "good-key", None));
     Arc::new(p)
   }
@@ -323,7 +329,7 @@ impl FakeProvider {
 
 impl AccountProvider for FakeProvider {
   fn agent(&self) -> &str {
-    "fake"
+    self.agent
   }
   fn import_local(&self) -> BoxFuture<Option<AccountDraft>> {
     self.imports.fetch_add(1, Ordering::SeqCst);
@@ -413,10 +419,15 @@ fn setup(fake: &crate::support::FakeAgent, load_only: bool) -> Setup {
 }
 
 fn setup_env(fake: &crate::support::FakeAgent, extra: Value) -> Setup {
+  setup_env_as(fake, "fake", extra)
+}
+
+/// The same under a built-in agent's id, with that agent's quirks over the fake's wire
+fn setup_env_as(fake: &crate::support::FakeAgent, agent: &'static str, extra: Value) -> Setup {
   let dir = tempfile::tempdir().unwrap();
   let cwd = dir.path().join("needs-auth");
   std::fs::create_dir(&cwd).unwrap();
-  let provider = FakeProvider::new();
+  let provider = FakeProvider::new_for(agent);
   let store = Arc::new(store_in(dir.path()));
   let toasts = Arc::new(Mutex::new(vec![]));
   let t = toasts.clone();
@@ -433,7 +444,7 @@ fn setup_env(fake: &crate::support::FakeAgent, extra: Value) -> Setup {
   for (k, x) in extra.as_object().unwrap() {
     env[k] = x.clone();
   }
-  let mut opts = Opts::with_agents(fake.setting(json!({ "env": env })), "fake").cwd(cwd.to_str().unwrap());
+  let mut opts = Opts::with_agents(fake.setting_as(agent, json!({ "env": env })), agent).cwd(cwd.to_str().unwrap());
   opts.accounts = Some(accounts.clone());
   let m = Mgr::new(&dir.path().join("sessions"), opts);
   Setup { m, accounts, store, provider, toasts, terminals, dir }
@@ -612,6 +623,38 @@ async fn a_reload_keeps_the_imported_account_binding_and_authenticates_the_repla
   assert_eq!(provider.authentications.load(Ordering::SeqCst), 1);
   expect_match(restored.active_of(&viewer).unwrap(), json!({ "id": record["id"], "accountId": record["accountId"], "status": "ready" }));
   restored.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_old_session_whose_account_was_removed_opens_on_a_remaining_one_instead_of_asking_to_sign_in() {
+  let fake = fake_or_skip!();
+  let s = setup(&fake, false);
+  s.m.init().await;
+  s.m.new_session(None).await;
+  s.m.handle(json!({ "type": "addAccount", "agent": "fake", "via": "import" })).await;
+  until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && !a["accountId"].is_null()), 5000).await;
+  let record = s.m.active().unwrap();
+  let id = record["id"].as_str().unwrap().to_owned();
+  s.m.dispose().await;
+  // Another window removes the session's account; a second one is left
+  let store = Arc::new(store_in(s.dir.path()));
+  store.load().await.unwrap();
+  let two = store.add("fake", draft("two@example.com", None, "good-key", None)).await.unwrap();
+  store.remove(record["accountId"].as_str().unwrap()).await.unwrap();
+  let provider = FakeProvider::new();
+  let accounts = AccountManager::new(store, vec![provider.clone()], log(), Arc::new(|_, _, _, _| {}), Arc::new(|_: &str, _: &str| {}));
+  let mut opts = Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": s.dir.path() } })), "fake");
+  opts.accounts = Some(accounts);
+  let restored = Mgr::new(&s.dir.path().join("sessions"), opts);
+  restored.init().await;
+  let viewer = restored.m.attach(Some(acpira_shared::sidecar::InitialView::MostRecent { most_recent: true }));
+  restored.m.ensure_active_for(&viewer).await;
+  until(|| restored.active_of(&viewer).is_some_and(|a| a["status"] != "starting"), 5000).await;
+  expect_match(restored.active_of(&viewer).unwrap(), json!({ "id": id, "accountId": two.id, "status": "ready" }));
+  restored.dispose().await;
+  // The new binding is the session's from now on
+  let transcripts = TranscriptStore::new(s.dir.path().join("sessions"), log(), None);
+  assert_eq!(transcripts.load(&id).await.unwrap().account_id, Some(two.id));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1066,12 +1109,16 @@ async fn a_transient_hand_off_failure_is_auth_required_and_retry_re_authenticate
 
 /// A session on `one` (good-key, exhausted) with `two` (good-key-2) saved next to it
 async fn exhausted_session(s: &Setup) -> (String, String) {
+  exhausted_session_as(s, "fake").await
+}
+
+async fn exhausted_session_as(s: &Setup, agent: &str) -> (String, String) {
   s.m.init().await;
   s.m.new_session(None).await;
-  s.m.handle(json!({ "type": "addAccount", "agent": "fake", "via": "import" })).await;
+  s.m.handle(json!({ "type": "addAccount", "agent": agent, "via": "import" })).await;
   until(|| s.m.active().is_some_and(|a| a["status"] == "ready"), 5000).await;
   let one = s.accounts.list()[0].id.clone();
-  let two = s.store.add("fake", draft("two@example.com", None, "good-key-2", None)).await.unwrap().id;
+  let two = s.store.add(agent, draft("two@example.com", None, "good-key-2", None)).await.unwrap().id;
   s.accounts.reload().await;
   (one, two)
 }
@@ -1139,6 +1186,153 @@ async fn with_every_account_exhausted_or_the_switch_off_the_error_stays() {
   until(|| s.m.active().is_some_and(|a| turns_in(&a) == 2 && a["turns"][1]["error"].is_object()), 5000).await;
   expect_match(s.m.active().unwrap(), json!({ "status": "ready", "accountId": one }));
   s.m.dispose().await;
+}
+
+fn model_of(m: &Mgr) -> Value {
+  m.active().unwrap()["controls"]["options"].as_array().unwrap().iter().find(|o| o["id"] == "model").unwrap()["value"].clone()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_droid_core_swap_moves_the_turn_to_the_next_account_on_the_picked_model() {
+  let fake = fake_or_skip!();
+  let env = |keys: &str| json!({ "FAKE_CORE_KEYS": keys, "FAKE_MODELS": "claude-fable-5.2,kimi-k3", "FAKE_CONFIG_ECHO": "1" });
+  // One has used up its Standard usage, two still has it: the turn continues on two, on the model the user picked
+  let s = setup_env_as(&fake, "droid", env("good-key"));
+  let (one, two) = exhausted_session_as(&s, "droid").await;
+  s.m.handle(json!({ "type": "setConfig", "configId": "model", "value": "claude-fable-5.2" })).await;
+  until(|| model_of(&s.m) == "claude-fable-5.2", 5000).await;
+  s.m.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && turns_in(&a) == 4 && a["turns"][3]["stop"] == "end_turn"), 10_000).await;
+  expect_match(s.m.active().unwrap(), json!({ "accountId": two }));
+  let t = turns(&s.m);
+  assert!(t[1]["error"].is_null(), "{}", t[1]);
+  let notice = t[1]["blocks"].as_array().unwrap().iter().find(|b| b["type"] == "notice").cloned().unwrap();
+  expect_match(&notice, json!({ "category": "limit" }));
+  expect_match(&t[2], json!({ "role": "user", "auto": true, "autoReason": "accountSwitch" }));
+  assert_eq!(model_of(&s.m), "claude-fable-5.2");
+  // The new account's process answers on the picked model, never the Droid Core one
+  s.m.handle(json!({ "type": "send", "text": "which model" })).await;
+  until(|| turns(&s.m).last().is_some_and(|t| t["stop"] == "end_turn" && t["blocks"][0]["markdown"].is_string()), 5000).await;
+  assert_eq!(turns(&s.m).last().unwrap()["blocks"][0]["markdown"], "model=claude-fable-5.2");
+  assert_ne!(one, two);
+  s.m.dispose().await;
+
+  // Every account used up: the error stays, still on the picked model
+  let s = setup_env_as(&fake, "droid", env("good-key,good-key-2"));
+  let (_, two) = exhausted_session_as(&s, "droid").await;
+  s.m.handle(json!({ "type": "setConfig", "configId": "model", "value": "claude-fable-5.2" })).await;
+  until(|| model_of(&s.m) == "claude-fable-5.2", 5000).await;
+  s.m.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && turns_in(&a) == 4 && a["turns"][3]["error"].is_object()), 10_000).await;
+  expect_match(s.m.active().unwrap(), json!({ "accountId": two }));
+  expect_match(&turns(&s.m)[3], json!({ "stop": "error", "error": { "kind": "resource_exhausted" } }));
+  assert_eq!(model_of(&s.m), "claude-fable-5.2");
+  s.m.dispose().await;
+}
+
+/// A plugin listing Droid accounts (`LISTER` under `droid`, `accounts` replacing its one entry) beside a saved account
+/// of the user's, and a manager whose Droid session runs the fake with two models to pick from
+async fn droid_plugin_setup(fake: &crate::support::FakeAgent, accounts: Option<&str>) -> (tempfile::TempDir, Arc<AccountManager>, Arc<acpira_host::plugins::runtime::Runtimes>, Mgr) {
+  let dir = tempfile::tempdir().unwrap();
+  let init_log = dir.path().join("init.log");
+  let store = Arc::new(store_in(dir.path()));
+  store.load().await.unwrap();
+  store.add("droid", draft("own@example.com", None, "good-key-2", None)).await.unwrap();
+  let manager = AccountManager::new(store, vec![FakeProvider::new_for("droid")], log(), Arc::new(|_, _, _, _| {}), Arc::new(|_: &str, _: &str| {}));
+  manager.reload().await;
+  let plugins = dir.path().join("plugins");
+  let pdir = plugins.join("lister");
+  std::fs::create_dir_all(&pdir).unwrap();
+  let one = "[{ id: 'r1', agent: 'fake', label: 'team', badge: 'Rented', env: { FAKE_INIT_LOG: '@LOG@' },\n      quota: { windows: [{ id: 'weekly', remaining: 0.25 }] } }]";
+  assert!(LISTER.contains(one));
+  let script = LISTER.replace(one, accounts.unwrap_or(one)).replace("agent: 'fake'", "agent: 'droid'").replace("@LOG@", init_log.to_str().unwrap());
+  std::fs::write(pdir.join("plugin.mjs"), script).unwrap();
+  let m = json!({ "schema": 1, "id": "lister", "version": "1.0.0", "description": "d",
+    "contributes": { "runtime": { "command": ["node", "plugin.mjs"], "methods": ["account.remove"] } } });
+  let (manifest, _) = acpira_host::plugins::manifest::parse(m.to_string().as_bytes()).unwrap();
+  let rt = acpira_host::plugins::runtime::Runtimes::new(plugins.join(".data"), log());
+  rt.set_accounts(manager.clone());
+  rt.enable(None);
+  rt.sync(&[Arc::new(acpira_host::plugins::host::Active { id: "lister".into(), hash: "h".into(), dir: pdir, manifest })]).await;
+  until(|| manager.get("plugin:lister:r1").is_some(), 10_000).await;
+  let cwd = dir.path().join("work");
+  std::fs::create_dir(&cwd).unwrap();
+  let env = json!({ "FAKE_SESSION_DIR": dir.path(), "FAKE_MODELS": "claude-fable-5.2,kimi-k3", "FAKE_CONFIG_ECHO": "1" });
+  let mut opts = Opts::with_agents(fake.setting_as("droid", json!({ "env": env })), "droid").cwd(cwd.to_str().unwrap());
+  opts.accounts = Some(manager.clone());
+  let mgr = Mgr::new(&dir.path().join("sessions"), opts);
+  mgr.init().await;
+  mgr.new_session(None).await;
+  until(|| mgr.active().is_some_and(|a| a["status"] == "ready"), 5000).await;
+  (dir, manager, rt, mgr)
+}
+
+/// Bind the session to `id` and pick Fable on it
+async fn droid_on(mgr: &Mgr, id: &str) {
+  mgr.handle(json!({ "type": "selectAccount", "id": id })).await;
+  until(|| mgr.active().is_some_and(|a| a["status"] == "ready" && a["accountId"] == id), 10_000).await;
+  mgr.handle(json!({ "type": "setConfig", "configId": "model", "value": "claude-fable-5.2" })).await;
+  until(|| model_of(mgr) == "claude-fable-5.2", 5000).await;
+}
+
+fn last_of(mgr: &Mgr) -> Value {
+  mgr.active().unwrap()["turns"].as_array().unwrap().last().cloned().unwrap()
+}
+
+// A plugin's account: with no other account of that plugin, a Droid Core swap on it stops the turn
+// with the error and keeps the picked model, even with a saved account of the user's next to it
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_droid_core_swap_on_a_plugin_account_stops_without_switching_or_changing_model() {
+  let fake = fake_or_skip!();
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let (_dir, _accounts, rt, mgr) = droid_plugin_setup(&fake, None).await;
+  let id = "plugin:lister:r1";
+  droid_on(&mgr, id).await;
+  mgr.handle(json!({ "type": "send", "text": "droid core swap" })).await;
+  until(|| mgr.active().is_some_and(|a| a["status"] == "ready" && last_of(&mgr)["error"].is_object()), 10_000).await;
+  expect_match(mgr.active().unwrap(), json!({ "accountId": id }));
+  expect_match(last_of(&mgr), json!({ "stop": "error", "error": { "kind": "resource_exhausted" } }));
+  assert_eq!(model_of(&mgr), "claude-fable-5.2");
+  // Nothing hands it on: no automatic continue follows
+  tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+  assert_eq!(mgr.active().unwrap()["turns"].as_array().unwrap().len(), 2);
+  mgr.handle(json!({ "type": "send", "text": "which model" })).await;
+  until(|| last_of(&mgr)["stop"] == "end_turn", 5000).await;
+  assert_eq!(last_of(&mgr)["blocks"][0]["markdown"], "model=claude-fable-5.2");
+  mgr.dispose().await;
+  rt.stop_all().await;
+}
+
+// Several accounts of one plugin: the used-up one hands the turn to the plugin's next account (never the user's own),
+// which continues it on the picked model
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_used_up_plugin_account_hands_the_turn_to_the_same_plugins_next_account() {
+  let fake = fake_or_skip!();
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let two = "[{ id: 'r1', agent: 'fake', label: 'team', badge: 'Rented', env: { FAKE_INIT_LOG: '@LOG@', FAKE_CORE_ALWAYS: '1' },
+      quota: { windows: [{ id: 'weekly', remaining: 0.25 }] } },
+    { id: 'r2', agent: 'fake', label: 'team 2', badge: 'Rented', env: {}, quota: { windows: [{ id: 'weekly', remaining: 0.9 }] } }]";
+  let (_dir, accounts, rt, mgr) = droid_plugin_setup(&fake, Some(two)).await;
+  until(|| accounts.get("plugin:lister:r2").is_some(), 5000).await;
+  droid_on(&mgr, "plugin:lister:r1").await;
+  mgr.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| mgr.active().is_some_and(|a| a["status"] == "ready" && a["turns"].as_array().unwrap().len() == 4 && a["turns"][3]["stop"] == "end_turn"), 10_000).await;
+  let a = mgr.active().unwrap();
+  expect_match(&a, json!({ "accountId": "plugin:lister:r2" }));
+  assert!(a["turns"][1]["error"].is_null(), "{}", a["turns"][1]);
+  expect_match(&a["turns"][2], json!({ "role": "user", "auto": true, "autoReason": "accountSwitch" }));
+  assert_eq!(model_of(&mgr), "claude-fable-5.2");
+  mgr.handle(json!({ "type": "send", "text": "which model" })).await;
+  until(|| last_of(&mgr)["stop"] == "end_turn" && last_of(&mgr)["blocks"][0]["markdown"].is_string(), 5000).await;
+  assert_eq!(last_of(&mgr)["blocks"][0]["markdown"], "model=claude-fable-5.2");
+  mgr.dispose().await;
+  rt.stop_all().await;
 }
 
 // Claude / Codex: the CLI's own login is listed without a "+" click, follows a re-login and stays gone once removed

@@ -756,6 +756,8 @@ export const zhCN = {
   'host.remoteFileFailed': '无法从 {host} 取回 {path}',
   'host.remoteUnreachable': '{host} 暂时连不上，等它连上后再试',
   'host.exited': '{agent} 进程退出（{code}）',
+  'host.droidStandardExhausted': 'Factory 的 Standard 额度已用完，{model} 暂时用不了。Droid 想自己把会话换到 {core}（Droid Core），已停止这一轮并保留 {model}。等额度重置，或手动换个模型继续。',
+  'host.droidStandardExhaustedUntil': 'Factory 的 Standard 额度已用完，{model} 要到 {at} 恢复后才能用。Droid 想自己把会话换到 {core}（Droid Core），已停止这一轮并保留 {model}。等到那时，或手动换个模型继续。',
   'host.droidGeminiThinkingOnly': 'Gemini 只返回了思考内容，没有回复或工具调用。Droid 正在重试。',
   'host.droidGeminiCut': 'Gemini 连续两次只返回思考内容，没有回复。已停止 Droid 对同一请求的重试。可降低思考强度、拆分任务或切换模型后继续。',
   'host.emptyResponse': 'CLI 已结束请求，但没有返回回复或错误详情（ACP: end_turn）。可重试或查看 CLI 日志。',

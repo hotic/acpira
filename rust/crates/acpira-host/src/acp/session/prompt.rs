@@ -228,7 +228,12 @@ impl AcpSession {
     }
     let blocks = std::mem::take(&mut accepted.prepared.blocks);
     // From here on Claude Code has a transcript for this native session to resume
-    self.core.lock().unprompted = false;
+    {
+      let mut c = self.core.lock();
+      c.unprompted = false;
+      // A swap refused in an earlier turn that never settled here (its process closed) is not this turn's
+      c.droid_core.blocked = None;
+    }
     let mut droid_cut = false;
     let result = match &turn.proc {
       Some(p) => {
@@ -275,9 +280,12 @@ impl AcpSession {
         self.settle(&mut c, TurnStop::Error, Some(droid::cut_error()));
         Some(Settled { stop: TurnStop::Error, exhausted: false })
       }
+      // Droid moved onto a Droid Core model during the turn and was stopped (`droid_core.rs`)
+      Ok(_) if self.core.lock().droid_core.blocked.is_some() => self.settle_core_swap(&turn).await,
       Ok(r) => self.prompt_answered(r, &turn, &accepted, auto, droid_baseline).await,
       Err(e) => self.prompt_failed(e, &turn).await,
     };
+    self.core.lock().droid_core.blocked = None;
     if accepted.forked {
       self.reclaim_fork_history(&turn);
     }

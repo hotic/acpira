@@ -724,6 +724,8 @@
   "host.remoteFileFailed": "無法從 {host} 取回 {path}",
   "host.remoteUnreachable": "{host} 暫時連不上，等它連上後再試",
   "host.exited": "{agent} 程序退出（{code}）",
+  "host.droidStandardExhausted": "Factory 的 Standard 額度已用完，{model} 暫時無法使用。Droid 想自行把工作階段換到 {core}（Droid Core），已停止這一輪並保留 {model}。等額度重置，或手動換個模型繼續。",
+  "host.droidStandardExhaustedUntil": "Factory 的 Standard 額度已用完，{model} 要到 {at} 恢復後才能使用。Droid 想自行把工作階段換到 {core}（Droid Core），已停止這一輪並保留 {model}。等到那時，或手動換個模型繼續。",
   "host.droidGeminiThinkingOnly": "Gemini 只傳回思考內容，沒有回覆或工具呼叫。Droid 正在重試。",
   "host.droidGeminiCut": "Gemini 連續兩次只傳回思考內容，沒有回覆。已停止 Droid 對同一請求的重試。可降低思考強度、拆分任務或切換模型後繼續。",
   "host.emptyResponse": "CLI 已結束請求，但沒有返回回覆或錯誤詳情（ACP: end_turn）。可重試或檢視 CLI 日誌。",

@@ -15,7 +15,7 @@ use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_t
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx, native_sidekick_call};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
-use crate::acp::vendors::{antigravity, claude_autonomous, claude_wakeup, claude_window, goal, hermes, steering};
+use crate::acp::vendors::{Vendor, antigravity, claude_autonomous, claude_wakeup, claude_window, droid_core, goal, hermes, steering};
 use crate::util::now_ms;
 
 const RUNNING_KINDS: [&str; 6] =
@@ -264,6 +264,16 @@ impl AcpSession {
     // child updates. A nested tool from a detached child can look like ordinary content, but it must not reopen the root.
     self.open_autonomous(&mut c, &kind);
     let title_before = (kind == "session_info_update").then(|| c.state.title.clone());
+    // Droid moving the session onto a Droid Core model on its own once Standard usage ran out: refused before it shows
+    if kind == "config_option_update"
+      && self.vendor == Vendor::Droid
+      && !c.replaying
+      && c.droid_core.own_picks == 0
+      && let Some(swap) = droid_core::swap_of(&c.state.controls, &u)
+    {
+      self.refuse_core_swap(&mut c, swap);
+      return;
+    }
     if !apply_update(&mut c.state, &u) {
       return;
     }
