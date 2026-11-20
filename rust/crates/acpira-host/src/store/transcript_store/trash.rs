@@ -97,8 +97,8 @@ impl TranscriptStore {
       }
     }
     let root = acpira_agent::acp::sessions_root(&home);
-    // The session's scratch folder in its project, found through the log's header, so before the log goes. One left
-    // behind (a file Windows keeps open) is swept by the next session there (`acpira_agent::scratch::sweep`)
+    // The session's scratch folder (under the data root or in its project), found through the log's header, so before
+    // the log goes. One left behind (a file Windows keeps open) is swept by a later session (`acpira_agent::scratch`)
     if let Some(log) = confined(&root, &format!("{acp}.jsonl")).await {
       let data = home.clone();
       if let Ok(Err(e)) = tokio::task::spawn_blocking(move || acpira_agent::scratch::remove_for_log(&log, &data)).await {

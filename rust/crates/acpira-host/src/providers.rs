@@ -13,7 +13,7 @@ use tokio::fs;
 use acpira_agent::llm::discover;
 use acpira_shared::providers::{
   APPROVAL_LEVELS, EFFORTS_FIELD, LocalSource, PROVIDERS_FILE, Thinking, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
-  COMPACTION_STRATEGIES, FAST_MODEL_OFF, ProvidersView, WEB_SEARCH_BACKENDS, model_pick, provider_secret_key, web_secret_key,
+  COMPACTION_STRATEGIES, FAST_MODEL_OFF, ProvidersView, SCRATCH_PLACES, WEB_SEARCH_BACKENDS, model_pick, provider_secret_key, web_secret_key,
   SYNCED_FROM_FIELD,
 };
 
@@ -109,7 +109,8 @@ impl ProviderStore {
         web_keys.push(backend.to_owned());
       }
     }
-    ProvidersView { providers, error: None, approval: file.approval, raw_mode: file.raw_mode == Some(true), scratch_folder_off: file.scratch_folder == Some(false), fast_model: file.fast_model, fast_model_auto, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
+    let scratch_place = file.scratch_place_of().to_owned();
+    ProvidersView { providers, error: None, approval: file.approval, raw_mode: file.raw_mode == Some(true), scratch_folder_off: file.scratch_folder == Some(false), scratch_place, fast_model: file.fast_model, fast_model_auto, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -229,6 +230,19 @@ impl ProviderStore {
           .edit(|file| {
             // On is the default, written as no entry
             file.scratch_folder = (!on).then_some(false);
+            Ok(())
+          })
+          .await
+      }
+      ProviderAction::ScratchPlace { place } => {
+        if !SCRATCH_PLACES.contains(&place.as_str()) {
+          bail!("Unknown scratch place: {place}");
+        }
+        self
+          .edit(|file| {
+            // Defaults (on, under the data root) are written as no entry
+            file.scratch_folder = (place == "off").then_some(false);
+            file.scratch_place = (place == "project").then(|| place.clone());
             Ok(())
           })
           .await
@@ -494,6 +508,18 @@ mod tests {
     assert_eq!(s.view().await.compaction.as_deref(), Some("chunk"));
     compaction("summary").await.unwrap();
     assert_eq!(s.view().await.compaction, None);
+
+    // Where temp files go: the data root by default, written as no entry; off wins over a place
+    assert_eq!(s.view().await.scratch_place, "data");
+    let scratch = |place: &str| s.apply(ProviderAction::ScratchPlace { place: place.into() });
+    assert!(scratch("desktop").await.is_err());
+    scratch("project").await.unwrap();
+    assert_eq!(s.view().await.scratch_place, "project");
+    scratch("off").await.unwrap();
+    let v = s.view().await;
+    assert!(v.scratch_folder_off && v.scratch_place == "off");
+    scratch("data").await.unwrap();
+    assert!(!std::fs::read_to_string(dir.path().join(PROVIDERS_FILE)).unwrap().contains("scratch"));
     assert!(!std::fs::read_to_string(dir.path().join(PROVIDERS_FILE)).unwrap().contains("compaction"));
 
     // The search backend: its key goes to the vault under its own prefix, the view only says one is stored, and

@@ -68,6 +68,10 @@ pub const WEB_SEARCH_BACKENDS: [&str; 3] = ["default", "jina", "deepseek"];
 /// replies, no model call, `chunk.rs`)
 pub const COMPACTION_STRATEGIES: [&str; 2] = ["summary", "chunk"];
 
+/// Where sessions keep temp files (`acpira_agent::scratch`), the default first: `data` (a folder per project under the
+/// data root, nothing in the project), `project` (`.acpira/tmp` in the project) and `off` (the system's temp folder)
+pub const SCRATCH_PLACES: [&str; 3] = ["data", "project", "off"];
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvidersFile {
@@ -82,10 +86,15 @@ pub struct ProvidersFile {
   /// Raw mode (`acpira_agent::modes::RAW`) is offered in the mode picker; absent is off. Open sessions update too
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub raw_mode: Option<bool>,
-  /// Sessions keep temp files in a scratch folder in the project (`acpira_agent::scratch`); absent is on. Sessions
-  /// opened from then on follow it
+  /// `false`: sessions keep temp files in the system's temp folder rather than a scratch folder
+  /// (`acpira_agent::scratch`); absent is on. Kept apart from `scratch_place` so an older engine reading the file still
+  /// parses it. Sessions opened from then on follow both
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub scratch_folder: Option<bool>,
+  /// Where the scratch folders go when on: `project` is the only value written, absent (or unknown) is `data`
+  /// (`SCRATCH_PLACES`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub scratch_place: Option<String>,
   /// The model for quick side jobs such as naming a session (`<provider id>/<model id>`), or `FAST_MODEL_OFF`; absent,
   /// or a model no longer usable, picks one (`ProvidersFile::fast_pick`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -341,6 +350,15 @@ pub fn split_pick(pick: &str) -> Option<(&str, &str)> {
 }
 
 impl ProvidersFile {
+  /// Where sessions keep temp files, one of `SCRATCH_PLACES`: off wins over a place
+  pub fn scratch_place_of(&self) -> &'static str {
+    match (self.scratch_folder, self.scratch_place.as_deref()) {
+      (Some(false), _) => "off",
+      (_, Some("project")) => "project",
+      _ => "data",
+    }
+  }
+
   pub fn parse(text: &str) -> serde_json::Result<ProvidersFile> {
     serde_json::from_str(text)
   }
@@ -412,10 +430,14 @@ pub struct ProvidersView {
   /// Raw mode is offered in the mode picker (`ProvidersFile::raw_mode`)
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub raw_mode: bool,
-  /// Sessions keep temp files in a scratch folder in the project (`ProvidersFile::scratch_folder`); sent only when off,
-  /// so absent reads as on
+  /// Sessions keep temp files in the system's temp folder (`ProvidersFile::scratch_folder`); sent only when off, for
+  /// webviews older than `scratch_place`
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub scratch_folder_off: bool,
+  /// Where sessions keep temp files, one of `SCRATCH_PLACES` (`ProvidersFile::scratch_place_of`). Always sent: a view
+  /// without it comes from an engine that still puts them in the project
+  #[serde(default)]
+  pub scratch_place: String,
   /// The file's fast model pick as written (`ProvidersFile::fast_model`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub fast_model: Option<String>,
@@ -504,8 +526,11 @@ pub enum ProviderAction {
   Approval { level: String },
   /// Offer Raw mode in the mode picker, or stop offering it
   RawMode { on: bool },
-  /// Keep new sessions' temp files in a scratch folder in the project, or in the system's temp folder
+  /// Keep new sessions' temp files in a scratch folder in the project, or in the system's temp folder (older webviews;
+  /// `ScratchPlace` supersedes it)
   ScratchFolder { on: bool },
+  /// Where new sessions keep temp files (one of `SCRATCH_PLACES`)
+  ScratchPlace { place: String },
   /// Set the fast model (a usable `<provider id>/<model id>`, or `FAST_MODEL_OFF`); absent or empty picks one
   FastModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]

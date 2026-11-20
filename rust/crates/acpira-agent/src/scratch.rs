@@ -1,15 +1,20 @@
-//! A session's scratch folder, `<cwd>/.acpira/tmp/<key>/`: TMPDIR, TEMP and TMP of its commands point there, so temp
-//! files stay in the project, show which session made them and go with it. `.acpira/tmp/.gitignore` (`*`) keeps the
-//! folder out of git without touching the project's own ignore files. Each folder holds an owner file (the session and
-//! the data root); deleting and sweeping go by it alone, never by a name that merely looks like a key, so another data
-//! root's sessions (the harness, a test home) are never touched. The engine deletes a session's folder with its log
-//! (`remove_for_log`); the first use in a project sweeps the folders whose sessions are gone (`sweep`)
+//! A session's scratch folder: TMPDIR, TEMP and TMP of its commands point there, so temp files show which session made
+//! them and go with it. Two places (`Place`): under the data root, `<data>/tmp/<project>/<key>/` (the default, nothing
+//! lands in the project; `<project>` is the folder's name and a hash of its path), or in the project,
+//! `<cwd>/.acpira/tmp/<key>/`, whose `.gitignore` (`*`) keeps it out of git without touching the project's own ignore
+//! files. A session that has a folder in either place keeps it whatever the setting says now, as its recorded prompt
+//! names that one. Each folder holds an owner file (the session and the data root); deleting and sweeping go by it
+//! alone, never by a name that merely looks like a key, so another data root's sessions (the harness, a test home) are
+//! never touched. The engine deletes a session's folder with its log, in either place (`remove_for_log`); a session's
+//! first use sweeps the folders whose sessions are gone (`sweep_around`), the project's `.acpira/tmp` included, so a
+//! project's folders from before a switch go with their sessions and `.acpira` with the last of them
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 
 const DOT: &str = ".acpira";
 const TMP: &str = "tmp";
@@ -21,6 +26,8 @@ const KEY_LEN: usize = 8;
 /// NUL on macOS: Python's multiprocessing adds about 32 (`pymp-…/listener-…`), ssh-agent about 27. A default chat's
 /// folder comes to 65
 pub const MAX_BYTES: usize = 70;
+/// The longest project name in a folder under the data root, in bytes
+const NAME_BYTES: usize = 16;
 /// A folder whose session log is gone is kept this long after its last change: a session that just made its folder
 /// may not have written its log yet
 const ORPHAN_AGE: Duration = Duration::from_secs(24 * 3600);
@@ -31,22 +38,63 @@ const WALK_LIMIT: usize = 5000;
 /// TMPDIR
 pub const VARS: [&str; 3] = ["TMPDIR", "TEMP", "TMP"];
 
-/// Where a session's scratch folder goes; None where it takes none: the user's home and a filesystem root (`.acpira`
-/// under home is the data root), or a path over `MAX_BYTES`
-pub fn place(cwd: &Path, id: &str, user_home: Option<&Path>) -> Option<PathBuf> {
-  // A root spelled another way (`/usr/..`, a link to `/`) counts as one too; a folder that cannot be resolved takes none
-  if !cwd.is_absolute() || std::fs::canonicalize(cwd).map_or(true, |c| c.parent().is_none()) {
+/// Where new scratch folders go (`ProvidersFile::scratch_place`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+  /// Under the data root, one folder per project
+  Data,
+  /// In the project's `.acpira/tmp`
+  Project,
+}
+
+/// Where a session's scratch folder goes: the folder it already has in either place, else the one `at` names. None
+/// where it takes none: a path over `MAX_BYTES`, and in the project the user's home and a filesystem root (`.acpira`
+/// under home is the data root). `home` is the data root
+pub fn place(cwd: &Path, id: &str, user_home: Option<&Path>, home: &Path, at: Place) -> Option<PathBuf> {
+  if !cwd.is_absolute() {
     return None;
   }
-  if user_home.is_some_and(|h| same_dir(h, cwd)) {
-    return None;
+  let k = key(id)?;
+  let (project, data) = (project_tmp(cwd, user_home).map(|r| r.join(&k)), data_tmp(home, cwd).join(&k));
+  let owner = home_key(home);
+  if let Some(had) = [project.as_ref(), Some(&data)].into_iter().flatten().find(|p| real_dir(p) && owner_in(p, &owner).as_deref() == Some(id)) {
+    return Some(had.clone());
   }
-  let path = tmp_root(cwd).join(key(id)?);
+  let path = match at {
+    Place::Data => data,
+    Place::Project => project?,
+  };
   (path.as_os_str().len() <= MAX_BYTES).then_some(path)
+}
+
+/// The project's `.acpira/tmp`, None at the user's home and a filesystem root
+fn project_tmp(cwd: &Path, user_home: Option<&Path>) -> Option<PathBuf> {
+  // A root spelled another way (`/usr/..`, a link to `/`) counts as one too; a folder that cannot be resolved takes none
+  if std::fs::canonicalize(cwd).map_or(true, |c| c.parent().is_none()) || user_home.is_some_and(|h| same_dir(h, cwd)) {
+    return None;
+  }
+  Some(tmp_root(cwd))
 }
 
 fn tmp_root(cwd: &Path) -> PathBuf {
   cwd.join(DOT).join(TMP)
+}
+
+/// A project's folder under the data root, `<data>/tmp/<name>-<hash>`: the folder's name made safe for any filesystem
+/// (at most `NAME_BYTES`, no leading dot) and a hash of the path as the session gives it, which the engine reads back
+/// off the log header to delete it
+fn data_tmp(home: &Path, cwd: &Path) -> PathBuf {
+  let raw = cwd.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+  let mut name = String::new();
+  for c in raw.trim_start_matches('.').chars() {
+    let c = if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' };
+    if name.len() + c.len_utf8() > NAME_BYTES {
+      break;
+    }
+    name.push(c);
+  }
+  let hash: String = Sha256::digest(cwd.to_string_lossy().as_bytes()).iter().take(3).map(|b| format!("{b:02x}")).collect();
+  home.join(TMP).join(if name.is_empty() { hash } else { format!("{name}-{hash}") })
 }
 
 fn key(id: &str) -> Option<String> {
@@ -84,6 +132,8 @@ pub struct Scratch {
   path: Option<PathBuf>,
   id: String,
   home: PathBuf,
+  /// The session folder, whose `.acpira/tmp` the first use sweeps too (`sweeping`)
+  cwd: Option<PathBuf>,
   state: parking_lot::Mutex<State>,
 }
 
@@ -98,7 +148,14 @@ struct State {
 impl Scratch {
   /// `path` from `place`, None for a session that takes no folder
   pub fn new(path: Option<PathBuf>, id: &str, home: &Path) -> Scratch {
-    Scratch { path, id: id.to_owned(), home: home.to_path_buf(), state: Default::default() }
+    Scratch { path, id: id.to_owned(), home: home.to_path_buf(), cwd: None, state: Default::default() }
+  }
+
+  /// The first use also sweeps `cwd`'s `.acpira/tmp`, which a session keeping its folder under the data root would
+  /// never look at otherwise
+  pub fn sweeping(mut self, cwd: &Path) -> Scratch {
+    self.cwd = Some(cwd.to_path_buf());
+    self
   }
 
   /// The folder the prompt names, made or not
@@ -107,8 +164,8 @@ impl Scratch {
   }
 
   /// The folder, made with its ignore and owner files when it is not there; None when the session takes none or it
-  /// cannot be made (the command then runs with the system's temp folder). The first success sweeps the project's
-  /// other folders on a thread of its own
+  /// cannot be made (the command then runs with the system's temp folder). The first success sweeps the other folders
+  /// on a thread of its own (`sweep_around`)
   pub fn ensure(&self) -> Option<PathBuf> {
     let path = self.path.as_ref()?;
     let mut st = self.state.lock();
@@ -123,8 +180,8 @@ impl Scratch {
     match create(path, &self.id, &self.home) {
       Ok(()) => {
         if !st.made {
-          let (root, home, own) = (path.parent().map(Path::to_path_buf)?, self.home.clone(), path.clone());
-          std::thread::spawn(move || sweep(&root, &home, &own, SystemTime::now()));
+          let (home, own, cwd) = (self.home.clone(), path.clone(), self.cwd.clone());
+          std::thread::spawn(move || sweep_around(&own, &home, cwd.as_deref(), SystemTime::now()));
         }
         st.made = true;
         Some(path.clone())
@@ -154,7 +211,7 @@ fn create(path: &Path, id: &str, home: &Path) -> std::io::Result<()> {
   for _ in 0..2 {
     std::fs::create_dir_all(root)?;
     if !real_dir(root) || root.parent().is_none_or(|d| !real_dir(d)) {
-      return Err(std::io::Error::other(".acpira/tmp is not a plain folder"));
+      return Err(std::io::Error::other(format!("{} is not a plain folder", root.display())));
     }
     match std::fs::create_dir(path) {
       Ok(()) => {
@@ -186,18 +243,23 @@ fn write_new(path: &Path, text: &str) -> std::io::Result<()> {
   }
 }
 
-/// Delete a session's folder in `cwd` when its owner file names this session and data root, then `.acpira` if
-/// nothing else is left in it. True when a folder went
+/// Delete a session's folder for `cwd`, in the project and under the data root, where its owner file names this
+/// session and data root; then the emptied project folder (and `.acpira` when nothing else is left in it). True when a
+/// folder went
 pub fn remove(cwd: &Path, id: &str, home: &Path) -> std::io::Result<bool> {
   let Some(k) = key(id) else { return Ok(false) };
-  let root = tmp_root(cwd);
-  let dir = root.join(k);
-  if !real_dir(&cwd.join(DOT)) || !real_dir(&root) || !real_dir(&dir) || owner_in(&dir, &home_key(home)).as_deref() != Some(id) {
-    return Ok(false);
+  let owner = home_key(home);
+  let mut gone = false;
+  for root in [tmp_root(cwd), data_tmp(home, cwd)] {
+    let dir = root.join(&k);
+    if !root.parent().is_some_and(real_dir) || !real_dir(&root) || !real_dir(&dir) || owner_in(&dir, &owner).as_deref() != Some(id) {
+      continue;
+    }
+    delete(&dir)?;
+    prune(&root);
+    gone = true;
   }
-  delete(&dir)?;
-  prune(&root);
-  Ok(true)
+  Ok(gone)
 }
 
 /// Remove a scratch folder with its owner file last: a failure (a file Windows keeps open, a job writing meanwhile)
@@ -233,8 +295,8 @@ pub fn remove_for_log(log: &Path, home: &Path) -> std::io::Result<bool> {
   }
 }
 
-/// A `tmp` holding only its ignore file goes, and `.acpira` with it when empty. Should a session make a folder
-/// meanwhile, the ignore file comes back
+/// A folder of scratch folders holding only its ignore file goes, and its parent (`.acpira`, the data root's `tmp`)
+/// with it when empty. Should a session make a folder meanwhile, the ignore file comes back
 fn prune(root: &Path) {
   let only_ignore = std::fs::read_dir(root).is_ok_and(|rd| rd.flatten().all(|e| e.file_name() == IGNORE));
   if !only_ignore {
@@ -250,7 +312,24 @@ fn prune(root: &Path) {
   }
 }
 
-/// Delete the folders in `root` (a project's `.acpira/tmp`) that this data root's sessions left: the session's log is
+/// A session's first sweep: its own folder's siblings, the project's `.acpira/tmp` and every project folder under the
+/// data root (one whose project is gone or never opened again is reached only this way), each pruned once empty
+fn sweep_around(own: &Path, home: &Path, cwd: Option<&Path>, now: SystemTime) {
+  let mut roots: Vec<PathBuf> = own.parent().map(Path::to_path_buf).into_iter().collect();
+  roots.extend(cwd.map(tmp_root));
+  if let Ok(rd) = std::fs::read_dir(home.join(TMP)) {
+    roots.extend(rd.flatten().map(|e| e.path()));
+  }
+  roots.sort();
+  roots.dedup();
+  for root in roots.iter().filter(|r| real_dir(r)) {
+    sweep(root, home, own, now);
+    prune(root);
+  }
+}
+
+/// Delete the folders in `root` (a project's `.acpira/tmp`, a project's folder under the data root) that this data
+/// root's sessions left: the session's log is
 /// gone and the folder quiet for `ORPHAN_AGE` (an edit's fork, a crash, a file Windows kept open). A session whose log
 /// is still there may be reopened by another process at any time, so its folder stays however old. `own` is skipped;
 /// folders of another data root are never touched
@@ -314,6 +393,12 @@ mod tests {
     p
   }
 
+  /// A temp dir short enough for `place`'s length rule (the system's is long already on macOS)
+  #[cfg(unix)]
+  fn short() -> tempfile::TempDir {
+    tempfile::Builder::new().tempdir_in("/tmp").unwrap()
+  }
+
   /// `place` without the length rule: a system temp dir is long already
   fn at(cwd: &Path, id: &str) -> Option<PathBuf> {
     Some(tmp_root(cwd).join(key(id)?))
@@ -331,14 +416,65 @@ mod tests {
       d
     };
     let (app, long, chat) = (dir("u/app"), dir(&"x".repeat(60)), dir(".acpira/chats/2026-11-04-a1b2c3"));
-    assert_eq!(place(&home, ID, Some(&home)), None);
-    assert_eq!(place(Path::new("/"), ID, Some(&home)), None);
-    assert_eq!(place(Path::new("/usr/.."), ID, Some(&home)), None);
-    assert_eq!(place(&long, ID, Some(&home)), None);
-    assert_eq!(place(&t.path().join("missing"), ID, Some(&home)), None);
-    assert_eq!(place(&app, ID, Some(&home)), Some(app.join(".acpira/tmp/0123abcd")));
+    let data = t.path().join(".acpira");
+    let in_project = |cwd: &Path| place(cwd, ID, Some(&home), &data, Place::Project);
+    assert_eq!(in_project(&home), None);
+    assert_eq!(in_project(Path::new("/")), None);
+    assert_eq!(in_project(Path::new("/usr/..")), None);
+    assert_eq!(in_project(&long), None);
+    assert_eq!(in_project(&t.path().join("missing")), None);
+    assert_eq!(in_project(&app), Some(app.join(".acpira/tmp/0123abcd")));
     // A default chat (`<data root>/chats/<day>-<hex>`) fits
-    assert!(place(&chat, ID, Some(&home)).is_some());
+    assert!(in_project(&chat).is_some());
+    // Under the data root the project's name only goes in shortened, so a long one fits too, and home takes one
+    for cwd in [&app, &long, &chat, &home] {
+      let p = place(cwd, ID, Some(&home), &data, Place::Data).unwrap();
+      assert!(p.starts_with(data.join("tmp")) && p.ends_with("0123abcd"), "{p:?}");
+    }
+  }
+
+  #[test]
+  fn a_project_folder_under_the_data_root_is_named_after_it_and_its_path() {
+    let data = Path::new("/d");
+    let name = |cwd: &str| data_tmp(data, Path::new(cwd)).file_name().unwrap().to_string_lossy().into_owned();
+    let a = name("/w/GunZ-Launcher");
+    assert!(a.starts_with("GunZ-Launcher-") && a.len() == "GunZ-Launcher-".len() + 6, "{a}");
+    assert_ne!(a, name("/x/GunZ-Launcher"), "the same name elsewhere is another project");
+    assert_eq!(a, name("/w/GunZ-Launcher"));
+    assert!(name("/w/.my dots").starts_with("my_dots-"));
+    assert!(name("/w/一个很长很长的项目名字").len() <= NAME_BYTES + 7);
+    assert_eq!(name("/").len(), 6);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn under_the_data_root_nothing_lands_in_the_project() {
+    let (t, data) = (short(), short());
+    let cwd = project(&t);
+    let s = Scratch::new(place(&cwd, ID, None, data.path(), Place::Data), ID, data.path()).sweeping(&cwd);
+    let dir = s.ensure().unwrap();
+    assert!(dir.starts_with(data.path().join("tmp")) && dir.join(OWNER).is_file());
+    assert!(!cwd.join(".acpira").exists());
+    let log = data.path().join("s.jsonl");
+    std::fs::write(&log, format!("{}\n", json!({ "type": "session", "id": ID, "cwd": cwd }))).unwrap();
+    assert!(remove_for_log(&log, data.path()).unwrap());
+    assert!(!data.path().join("tmp").exists(), "the emptied folders go");
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn a_session_keeps_the_folder_it_has_and_old_project_folders_are_swept() {
+    let (t, data) = (short(), short());
+    let cwd = project(&t);
+    // A session from before the switch: its folder in the project stays its own
+    let old = Scratch::new(place(&cwd, ID, None, data.path(), Place::Project), ID, data.path()).ensure().unwrap();
+    assert_eq!(place(&cwd, ID, None, data.path(), Place::Data), Some(old.clone()));
+    // Once its session is gone, a new session's first sweep takes the folder and `.acpira` with it
+    let other = "bbbbbbbb-0000-0000-0000-000000000002";
+    let own = place(&cwd, other, None, data.path(), Place::Data).unwrap();
+    std::fs::create_dir_all(&own).unwrap();
+    sweep_around(&own, data.path(), Some(&cwd), SystemTime::now() + ORPHAN_AGE + Duration::from_secs(60));
+    assert!(!cwd.join(".acpira").exists());
   }
 
   #[test]

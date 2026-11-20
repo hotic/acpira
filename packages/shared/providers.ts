@@ -75,8 +75,10 @@ export interface ProvidersView {
   approval?: string;
   // Raw mode is offered in the mode picker
   rawMode?: boolean;
-  // New sessions keep temp files in the system's temp folder instead of a scratch folder in the project (absent: on)
+  // New sessions keep temp files in the system's temp folder instead of a scratch folder (absent: on)
   scratchFolderOff?: boolean;
+  // Where new sessions keep temp files (`SCRATCH_PLACES`); absent from an engine that still puts them in the project
+  scratchPlace?: string;
   // The model for quick side jobs such as naming a session (`<provider id>/<model id>`), or FAST_MODEL_OFF; absent picks
   // one (`fastModelAuto`)
   fastModel?: string;
@@ -105,6 +107,16 @@ export type CompactionStrategy = typeof COMPACTION_STRATEGIES[number];
 // The view's strategy, unknown or absent values reading as the default
 export function compactionOf(view?: ProvidersView): CompactionStrategy {
   return COMPACTION_STRATEGIES.find(c => c === view?.compaction) ?? COMPACTION_STRATEGIES[0];
+}
+
+// Where the built-in agent's sessions keep temp files (`SCRATCH_PLACES` in acpira-shared/src/providers.rs), the default
+// first: a folder per project under Acpira's data folder, the project's `.acpira/tmp`, or the system's temp folder
+export const SCRATCH_PLACES = ['data', 'project', 'off'] as const;
+export type ScratchPlace = typeof SCRATCH_PLACES[number];
+
+// The view's place; an engine without `scratchPlace` keeps them in the project unless switched off
+export function scratchPlaceOf(view?: ProvidersView): ScratchPlace {
+  return SCRATCH_PLACES.find(p => p === view?.scratchPlace) ?? (view?.scratchFolderOff ? 'off' : 'project');
 }
 
 // The built-in agent's search backends (`WEB_SEARCH_BACKENDS` in acpira-shared/src/providers.rs), the default first:
@@ -165,6 +177,7 @@ export type ProviderAction =
   | { kind: 'approval'; level: ApprovalLevel }
   | { kind: 'rawMode'; on: boolean }
   | { kind: 'scratchFolder'; on: boolean }
+  | { kind: 'scratchPlace'; place: ScratchPlace }
   // pick: a usable `<provider id>/<model id>` or FAST_MODEL_OFF; absent picks one automatically
   | { kind: 'fastModel'; pick?: string }
   // key: that backend's; absent keeps the stored key, empty removes it. via: the model source DeepSeek-shaped search goes

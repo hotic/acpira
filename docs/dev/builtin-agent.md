@@ -5,7 +5,7 @@ Acpira's own agent (`acpira`) for models without an official harness: OpenAI-com
 ## Layout
 
 - `<root>/providers.json` (contract `acpira-shared/src/providers.rs`); keys live only in `secrets.json`, never in it or the view.
-- Scratch folders (`scratch.rs`): only `.owner` proves ownership, for the engine's delete (via the log header) and the sibling sweep; never delete by a key-shaped name. The path limit is for Unix sockets under TMPDIR. Revived sessions in the same folder keep their recorded prompt, so only new or moved ones learn of it.
+- Scratch folders (`scratch.rs`): the only thing Acpira writes into a project, and only with `scratchPlace: "project"`; by default they sit under `<data root>/tmp/<name>-<hash of the cwd as the log header records it>/`, so the engine's delete finds them again. Only `.owner` proves ownership; never delete by a key-shaped name. A session keeps the folder it has in either place (its recorded prompt names it); the first sweep also covers the project's `.acpira/tmp` and every data-root project folder, so pre-switch folders go with their sessions. `scratchPlace` is apart from `scratchFolder: false` so older engines still parse the file. The path limit is for Unix sockets under TMPDIR. Revived sessions in the same folder keep their recorded prompt, so only new or moved ones learn of it.
 - Trap: background jobs (`tools/jobs.rs`) run in their own process groups, out of the engine's signals, killed on stdin EOF or SIGTERM; the agent's SIGKILL leaves them running.
 
 ## ACP surface

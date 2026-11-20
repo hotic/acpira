@@ -333,8 +333,9 @@ impl Server {
 
   /// A session's scratch folder: none on an SSH host or with the setting off (`scratch.rs`)
   fn scratch_of(&self, cwd: &std::path::Path, id: &str, remote: bool, config: &Config) -> crate::scratch::Scratch {
-    let place = (!remote && config.scratch_folder()).then(|| crate::scratch::place(cwd, id, crate::turn::user_home().as_deref())).flatten();
-    crate::scratch::Scratch::new(place, id, self.config.home())
+    let home = self.config.home();
+    let place = config.scratch_place().filter(|_| !remote).and_then(|at| crate::scratch::place(cwd, id, crate::turn::user_home().as_deref(), home, at));
+    crate::scratch::Scratch::new(place, id, home).sweeping(cwd)
   }
 
   /// The file Plan mode writes its plan to

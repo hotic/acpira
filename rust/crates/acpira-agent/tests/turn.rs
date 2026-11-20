@@ -541,18 +541,37 @@ async fn the_prompt_variant_follows_the_model_and_is_recorded_per_turn() {
 #[cfg(unix)]
 #[tokio::test]
 async fn commands_keep_temp_files_in_the_sessions_scratch_folder() {
-  // A short project path: the system temp dir alone is past the scratch folder's length limit on macOS
-  let cwd = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
-  let h = Harness::start_in(tempfile::tempdir().unwrap(), cwd).await;
+  // Short paths: the system temp dir alone is past the scratch folder's length limit on macOS
+  let short = || tempfile::Builder::new().tempdir_in("/tmp").unwrap();
+  let h = Harness::start_in(short(), short()).await;
   let server = MockModel::start();
   h.providers(&server.base_url(), json!([{ "id": "m1" }]));
-  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
-  server.push(mock::tools(&[("c1", "bash", json!({ "command": "printf %s \"$TMPDIR\" > \"$TMPDIR/where\"" }))]));
-  server.push(mock::text("done"));
-  prompt(&h, &sid, "go").await;
-  let dir = h.cwd().join(".acpira/tmp").join(&sid[..8]);
-  assert_eq!(std::fs::read_to_string(dir.join("where")).unwrap(), dir.display().to_string());
+  // A session writes its TMPDIR into a file there; the folder is the one the prompt names
+  let run = async |h: &Harness| {
+    let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+    let asked = server.requests().len();
+    server.push(mock::tools(&[("c1", "bash", json!({ "command": "printf %s \"$TMPDIR\" > \"$TMPDIR/where\"" }))]));
+    server.push(mock::text("done"));
+    prompt(h, &sid, "go").await;
+    (sid, server.requests()[asked].body.to_string())
+  };
+  let names = |dir: &std::path::Path, first: &str| {
+    assert_eq!(std::fs::read_to_string(dir.join("where")).unwrap(), dir.display().to_string());
+    assert!(first.contains(&format!("Scratch folder: {}", dir.display())), "the prompt names the folder");
+  };
+
+  // By default under the data root, one folder per project, and nothing in the project
+  let (sid, first) = run(&h).await;
+  let project = std::fs::read_dir(h.home().join("tmp")).unwrap().flatten().find(|e| e.path().is_dir()).unwrap().path();
+  names(&project.join(&sid[..8]), &first);
+  assert!(!h.cwd().join(".acpira").exists());
+
+  // In the project when picked, git-ignored there
+  let path = h.home().join("providers.json");
+  let mut file: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+  file["scratchPlace"] = json!("project");
+  std::fs::write(&path, file.to_string()).unwrap();
+  let (sid, first) = run(&h).await;
+  names(&h.cwd().join(".acpira/tmp").join(&sid[..8]), &first);
   assert_eq!(std::fs::read_to_string(h.cwd().join(".acpira/tmp/.gitignore")).unwrap(), "*\n");
-  let first = server.requests()[0].body.to_string();
-  assert!(first.contains(&format!("Scratch folder: {}", dir.display())), "the prompt names the folder");
 }
