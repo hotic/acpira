@@ -408,6 +408,96 @@ async fn a_kimi_agent_receipt_creates_the_node_and_its_completed_text_becomes_th
   expect_match(root_blocks(&s).into_iter().find(|b| b["id"] == "0:tool_01").unwrap(), json!({ "subagentId": node["id"], "verbKey": "verb.delegate" }));
 }
 
+// droid 1.14.0's Task names its child session on the call and ends the turn while the child works: one session/load of
+// that id streams the child into the receipt node, which outlives the prompt and keeps its process on a restore
+#[tokio::test(flavor = "multi_thread")]
+async fn a_droid_task_streams_its_child_session_after_one_load() {
+  let fake = fake_or_skip!();
+  let logs = tempfile::tempdir().unwrap();
+  let meta_log = logs.path().join("meta.log");
+  let h = Harness::for_agent(&fake, "droid", json!({ "env": { "FAKE_META_LOG": meta_log } }));
+  let s = session(&h).await;
+  prompt(&s, "droid-task").await;
+  until(|| sub(&s, "toolCallId", "task-1").is_some_and(|n| n["state"] == "completed"), 8000).await;
+  let node = sub(&s, "toolCallId", "task-1").unwrap();
+  expect_match(&node, json!({ "visibility": "receipt", "title": "List i18n files", "role": "explorer", "task": "List the files inside i18n.",
+    "hasProcess": true, "result": "i18n holds 2 files", "stateSource": "agent" }));
+  let child = node["peer"]["sessionId"].as_str().unwrap().to_owned();
+  assert!(child.ends_with(":droid-child:1"), "{child}");
+  let id = node["id"].as_str().unwrap().to_owned();
+  let blocks = child_blocks(&s, &id);
+  assert!(has(&blocks, |b| b["type"] == "tool_call" && b["target"] == "i18n" && b["status"] == "completed"), "{blocks:?}");
+  assert!(has(&blocks, |b| b["type"] == "text" && b["markdown"] == "Child report: 2 files"), "{blocks:?}");
+  // The replayed task is the node's task card, never a line of the child's transcript
+  assert!(child_turns(&s, &id).as_array().unwrap().iter().all(|t| t["role"] == "agent"));
+  expect_match(root_blocks(&s).into_iter().find(|b| b["id"] == "task-1").unwrap(), json!({ "subagentId": id, "status": "completed" }));
+  // One load, of the child, in the parent's folder; nothing else ever goes to the child
+  let loads: Vec<Value> = std::fs::read_to_string(&meta_log).unwrap().lines().map(|l| serde_json::from_str::<Value>(l).unwrap())
+    .filter(|l| l["method"] == "load").collect();
+  assert_eq!(loads.len(), 1, "{loads:?}");
+  assert_eq!(loads[0]["cwd"], "/tmp");
+  // A restore keeps the child's process from the record
+  let restored = Disposing(AcpSession::new(s.to_record(), h.deps.clone()));
+  assert!(has(&child_blocks(&restored, &id), |b| b["type"] == "text" && b["markdown"] == "Child report: 2 files"));
+  expect_match(sub(&restored, "toolCallId", "task-1").unwrap(), json!({ "hasProcess": true, "state": "completed" }));
+}
+
+// A Task the model sent to the background answers with droid's "Running in background" receipt and closes with no text:
+// the child's own last words are the result
+#[tokio::test(flavor = "multi_thread")]
+async fn a_background_droid_task_takes_the_child_last_words_as_its_result() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "droid", json!({}));
+  let s = session(&h).await;
+  prompt(&s, "droid-task-background").await;
+  until(|| sub(&s, "toolCallId", "task-1").is_some_and(|n| n["state"] == "completed"), 8000).await;
+  expect_match(sub(&s, "toolCallId", "task-1").unwrap(), json!({ "hasProcess": true, "result": "Child report: 2 files" }));
+}
+
+// A Task still running when the prompt answers runs on in the background like a Claude background agent: its row stays
+// running instead of failing, the session lists as background work, and the reply droid writes once the Task ends runs
+// in the same turn again rather than after it
+#[tokio::test(flavor = "multi_thread")]
+async fn a_droid_task_outliving_its_turn_runs_in_the_background_and_its_reply_rejoins_the_turn() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "droid", json!({}));
+  let s = session(&h).await;
+  prompt(&s, "droid-task").await;
+  let turns = view(&s)["turns"].as_array().unwrap().len();
+  expect_match(root_blocks(&s).into_iter().find(|b| b["id"] == "task-1").unwrap(),
+    json!({ "status": "in_progress", "background": true, "asyncTask": { "taskType": "local_agent", "state": "running" } }));
+  expect_match(sub(&s, "toolCallId", "task-1").unwrap(), json!({ "state": "running", "background": true }));
+  assert_eq!(s.list_state(), Some(acpira_shared::transcript::SummaryState::Background));
+  until(|| root_blocks(&s).iter().any(|b| b["type"] == "text" && b["markdown"] == "2"), 8000).await;
+  // The reply opened the same turn again; it ends once the session stands still
+  until(|| !s.is_running(), 20000).await;
+  let vw = view(&s);
+  let all = vw["turns"].as_array().unwrap();
+  assert_eq!(all.len(), turns);
+  expect_match(all.last().unwrap(), json!({ "stop": "end_turn" }));
+  let blocks = root_blocks(&s);
+  let texts: Vec<&str> = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["markdown"].as_str()).map(str::trim).collect();
+  assert_eq!(texts, ["Handed to a subagent.", "2"]);
+  expect_match(root_blocks(&s).into_iter().find(|b| b["id"] == "task-1").unwrap(), json!({ "status": "completed", "asyncTask": { "state": "completed" } }));
+  expect_match(sub(&s, "toolCallId", "task-1").unwrap(), json!({ "state": "completed", "result": "i18n holds 2 files" }));
+  assert_eq!(s.list_state(), None);
+}
+
+// A child session droid will not load leaves the node as a plain receipt: the result alone, no process
+#[tokio::test(flavor = "multi_thread")]
+async fn a_droid_child_session_that_does_not_load_keeps_the_result_alone() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "droid", json!({}));
+  let s = session(&h).await;
+  prompt(&s, "droid-task-gone").await;
+  until(|| sub(&s, "toolCallId", "task-1").is_some_and(|n| n["state"] == "completed"), 8000).await;
+  let node = sub(&s, "toolCallId", "task-1").unwrap();
+  expect_match(&node, json!({ "visibility": "receipt", "result": "i18n holds 2 files" }));
+  expect_absent(&node, "hasProcess");
+  assert!(child_blocks(&s, node["id"].as_str().unwrap()).is_empty());
+  assert!(h.logs().iter().any(|l| l.contains("not loaded")), "{:?}", h.logs());
+}
+
 // A finished receipt child of an earlier turn does not swallow a later call that reuses its tool call id (a fresh agent
 // session after a historical edit numbers its calls again): each row opens and links its own child
 #[tokio::test(flavor = "multi_thread")]

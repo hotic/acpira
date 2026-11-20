@@ -117,6 +117,8 @@ enum Dialect {
   Workflow,
   /// A round of Devin Fusion's sidekick (`fusion.rs`)
   Fusion,
+  /// A droid `Task` whose child runs as a session of its own, named on the call (`link_child_session`)
+  Droid,
 }
 
 struct PendingDelegation {
@@ -251,6 +253,8 @@ pub struct SubagentTree {
   send_calls: Vec<SendCall>,
   /// The model and reasoning effort of the agent's own sidekick (`fusion.rs`), as the session's model pair names them
   native_sidekick: (Option<String>, Option<String>),
+  /// Child session ids a delegation named since the last drain, for the session to load (`take_child_loads`)
+  child_loads: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -309,6 +313,7 @@ impl SubagentTree {
       resumed_logs,
       send_calls: vec![],
       native_sidekick: (None, None),
+      child_loads: vec![],
     };
     for r in records.unwrap_or_default() {
       let mut c = r.core;
@@ -551,8 +556,13 @@ impl SubagentTree {
       if prompt_returned && (n.dialect == Some(Dialect::Workflow) || Self::summoned(n).is_some() || n.log_ends) {
         continue;
       }
-      // Sealing it here would drop the rest of its stream and leave a late terminal word on a cut transcript
-      if prompt_returned && native_outlive && n.visibility == SubagentVisibility::Session && n.peer.session_id.is_some() {
+      // Sealing it here would drop the rest of its stream and leave a late terminal word on a cut transcript. A droid
+      // `Task` runs past the turn that launched it and ends with its call's result
+      if prompt_returned
+        && native_outlive
+        && (n.visibility == SubagentVisibility::Session || n.dialect == Some(Dialect::Droid))
+        && n.peer.session_id.is_some()
+      {
         continue;
       }
       if prompt_returned
@@ -769,8 +779,8 @@ fn seal_node(n: &mut Node, state: SubagentState) {
   if n.ended_at.is_none() {
     n.ended_at = Some(now_ms());
   }
-  // A native child's result is what the child last said
-  if n.visibility == SubagentVisibility::Session && n.result.is_none() {
+  // A native child's result is what the child last said, and so is a droid child's when its call closed without text
+  if (n.visibility == SubagentVisibility::Session || n.dialect == Some(Dialect::Droid)) && n.result.is_none() {
     n.result = last_text(&n.state.turns);
   }
   if matches!(n.state.turns.last(), Some(Turn::Agent(a)) if a.stop.is_none()) {
@@ -800,8 +810,20 @@ fn seal_launch_receipt(block: &mut ToolCallBlock) {
 }
 
 fn result_text(u: &Value, block: &ToolCallBlock) -> Option<String> {
+  update_text(u).or_else(|| match &block.content {
+    Some(ToolContent::Text { text }) => Some(text.clone()),
+    _ => None,
+  })
+}
+
+/// The text a tool call update carries itself: its raw output (a string, text parts, or droid's `{ text }`), else its
+/// text content
+fn update_text(u: &Value) -> Option<String> {
   match u.get("rawOutput") {
     Some(Value::String(x)) if !x.trim().is_empty() => return Some(x.clone()),
+    Some(Value::Object(o)) if o.get("text").and_then(Value::as_str).is_some_and(|x| !x.trim().is_empty()) => {
+      return o.get("text").and_then(Value::as_str).map(str::to_owned);
+    }
     Some(Value::Array(items)) => {
       let parts: Vec<&str> = items
         .iter()
@@ -828,10 +850,7 @@ fn result_text(u: &Value, block: &ToolCallBlock) -> Option<String> {
       return Some(parts.join("\n"));
     }
   }
-  match &block.content {
-    Some(ToolContent::Text { text }) => Some(text.clone()),
-    _ => None,
-  }
+  None
 }
 
 #[cfg(test)]

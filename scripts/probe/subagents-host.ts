@@ -7,15 +7,16 @@ import type { SubagentSummary } from '@acpira/shared/subagents';
 import { Host } from '../lib/host';
 
 // Subagent end-to-end through the production host path (the Rust sidecar over the envelope protocol → real CLI):
-//   pnpm exec tsx scripts/probe/subagents-host.ts <claude|codex|devin>
+//   pnpm exec tsx scripts/probe/subagents-host.ts <claude|codex|devin|droid>
 // claude and codex run through the built-in registry (the official adapters resolve from PATH — point it at the
 // local install, e.g. PATH=/tmp/acp-adapters/node_modules/.bin:$PATH); devin runs through the account layer,
-// binding the local CLI login.
+// binding the local CLI login; droid runs through the registry on its own login, and its Tasks outlive the prompt, so
+// the probe waits for them to settle.
 // One prompt asks for two parallel subagents; the script then observes each node's transcript, prints summaries and
 // transcripts, and re-opens the transcript store to verify the persisted node states. Permission cards — root or child —
 // are auto-allowed like a click.
 const [agentId = 'claude'] = process.argv.slice(2);
-if (agentId !== 'claude' && agentId !== 'codex' && agentId !== 'devin') { console.error('usage: probe-subagents-host.ts <claude|codex|devin>'); process.exit(1); }
+if (!['claude', 'codex', 'devin', 'droid'].includes(agentId)) { console.error('usage: probe-subagents-host.ts <claude|codex|devin|droid>'); process.exit(1); }
 // The temp project keeps the old src/ layout the prompts name: two real directories of known size
 const repo = fileURLToPath(new URL('../..', import.meta.url));
 const project = mkdtempSync(join(tmpdir(), `acpira-sub-${agentId}-project-`));
@@ -65,7 +66,9 @@ const approver = setInterval(() => {
 }, 100);
 
 const deadline = setTimeout(() => { console.log('deadline: 300 s budget spent'); void m.dispose().finally(() => process.exit(2)); }, 300_000);
-const PROMPT = agentId === 'codex'
+const PROMPT = agentId === 'droid'
+  ? 'Use the Task tool to delegate two subagents in parallel (pick available subagent types from your catalog; do not do the work yourself): 1) one lists the files directly inside the `src/shared` directory and reports the count; 2) one lists the files directly inside the `src/host/store` directory and reports the count. Do not modify any files. When both report back, reply with the two counts on one line.'
+  : agentId === 'codex'
   ? 'Spawn two subagents in parallel (use your agent-spawning / collaboration capability, not sequential work): 1) one lists the files directly inside the `src/shared` directory and reports the count; 2) one lists the files directly inside the `src/host/store` directory and reports the count. Do not modify any files. When both report back, reply with the two counts on one line.'
   : 'Use two subagents in parallel, each with a short task: 1) list the files directly inside the `src/shared` directory and report how many there are; 2) list the files directly inside the `src/host/store` directory and report how many there are. Do not modify any files. When both return, reply with the two counts on one line.';
 let sessionId: string | undefined;
@@ -81,6 +84,21 @@ try {
   if (v.status !== 'ready') throw new Error('not ready');
 
   await viewer.handle({ type: 'send', text: PROMPT });
+  // droid's Tasks run on after the prompt answers like Claude background agents: sample what the user would see meanwhile
+  const seen = { failed: new Set<string>(), background: false, parked: false };
+  const sampler = setInterval(() => {
+    const cur = viewer.active();
+    if (!cur) return;
+    for (const n of cur.subagents ?? []) if (n.state === 'failed') seen.failed.add(n.id);
+    if (viewer.sessions().find(x => x.id === cur.id)?.state === 'background') seen.background = true;
+    if ((lastAgent(cur)?.blocks ?? []).some(b => b.type === 'tool_call' && b.asyncTask?.taskType === 'local_agent' && b.asyncTask.state === 'running')) seen.parked = true;
+  }, 50);
+  if (agentId === 'droid') {
+    await until(() => { const ns = viewer.active()?.subagents ?? []; return ns.length >= 2 && ns.every(n => n.state !== 'running'); }, 240_000, 'droid tasks to settle');
+    // The reply droid writes once its Tasks end reopens the turn; it closes after the session stands still
+    await until(() => viewer.active()?.running === false, 120_000, 'the late reply to settle');
+  }
+  clearInterval(sampler);
   v = viewer.active()!;
   const nodes: SubagentSummary[] = v.subagents ?? [];
   liveNodes = nodes;
@@ -133,6 +151,27 @@ try {
     // A generation reopen must land as a fresh node, never an orphan or a wrongly-failed one
     const gens = nodes.filter(n => /:generation:\d+$/.test(n.peer.sessionId ?? ''));
     if (gens.length) check('generation reopen nodes are well-formed', gens.every(n => n.state !== 'failed' || n.stateSource === 'agent'), gens.map(n => `${n.peer.sessionId}:${n.state}`).join(' '));
+  } else if (agentId === 'droid') {
+    // A receipt node whose child session the engine loaded: the child's own steps are its process
+    check('all nodes receipt visibility', nodes.every(n => n.visibility === 'receipt'), nodes.map(n => n.visibility).join(' '));
+    check('all nodes peer.sessionId', nodes.every(n => n.peer.sessionId !== undefined));
+    check('all nodes hasProcess', nodes.every(n => n.hasProcess === true), nodes.map(n => `${n.id}:${n.hasProcess}`).join(' '));
+    check('all nodes completed', nodes.every(n => n.state === 'completed'), nodes.map(n => `${n.id}:${n.state}`).join(' '));
+    check('all nodes result', nodes.every(n => n.result !== undefined));
+    const delegations = rootTools.filter(b => b.verbKey === 'verb.delegate');
+    check('delegation rows carry subagentId', delegations.length >= nodes.length && delegations.every(b => b.subagentId !== undefined), delegations.map(b => `${b.id}:${b.subagentId}`).join(' '));
+    check('no node ever showed failed', seen.failed.size === 0, [...seen.failed].join(' '));
+    check('a Task outliving the prompt ran as background work', seen.parked, 'no running local_agent async task seen');
+    check('the session listed as background meanwhile', seen.background);
+    const agentTurns = v.turns.filter(t => t.role === 'agent').length;
+    const blocks = root?.blocks ?? [];
+    const lastDelegation = blocks.map(b => b.type === 'tool_call' && b.verbKey === 'verb.delegate').lastIndexOf(true);
+    check('one agent turn', agentTurns === 1, String(agentTurns));
+    check('the late reply follows the Tasks in that turn', blocks.slice(lastDelegation + 1).some(b => b.type === 'text'), JSON.stringify(blocks.map(b => blockTag(b))));
+    check('Task rows completed', delegations.every(b => b.status === 'completed' && b.asyncTask?.state !== 'running'), delegations.map(b => `${b.id}:${b.status}:${b.asyncTask?.state}`).join(' '));
+    const reopened = m.logs.filter(l => /late reply streams/.test(l)).length;
+    check('the late reply opened the turn once', reopened === 1, `${reopened} reopenings`);
+    check('the session no longer lists as background', viewer.sessions().find(x => x.id === v.id)?.state !== 'background', viewer.sessions().find(x => x.id === v.id)?.state);
   } else {
     check('all nodes nested visibility', nodes.every(n => n.visibility === 'nested'), nodes.map(n => n.visibility).join(' '));
     check('all nodes role', nodes.every(n => n.role !== undefined), nodes.map(n => n.role).join(' '));

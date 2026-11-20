@@ -22,6 +22,8 @@ import { builtinAgent, type SpawnSpec } from '../lib/sidecarBin';
 // --claude-raw: ask claude-agent-acp for the raw SDK task frames (`_meta.claudeCode.emitRawSDKMessages`: system task_started /
 //   task_progress / task_notification) as `_claude/sdkMessage` ext notifications — where a Workflow's per-agent progress lives
 // --config ID=VALUE: session/set_config_option after session/new (repeatable), e.g. --config effort=low to keep a probe cheap
+// --load-children: `session/load` every child session id a tool call names in `_meta.subagent_session_info` (droid 1.14.0), once each,
+//   while the prompt runs, so the child's replay and live updates show up under its own session id
 // --wait MS: keep listening this long after the prompt response (terminal updates may trail it); default 4000
 // --out FILE: where the redacted JSONL log goes; default ~/.acpira/probe/subagents-<agent>-<iso>.jsonl
 //
@@ -90,6 +92,10 @@ function collectMeta(v: unknown, path = '') {
   }
 }
 
+// --load-children: child ids already loaded, and when each load was sent / answered
+const loadedChildren = new Map<string, { sentAt: number; doneAt?: number; result?: unknown; error?: string }>();
+let loadChild: (id: string) => void = () => {};
+
 const short = (id: unknown) => (typeof id === 'string' ? id.slice(0, 12) : String(id));
 
 const agent = new RawAgent(spec, process.cwd(), agentEnv, {
@@ -120,6 +126,11 @@ const agent = new RawAgent(spec, process.cwd(), agentEnv, {
       const foreign = rootSessionId !== undefined && sid !== rootSessionId;
       const ext = /subagent|async_task|child|chain/i.test(kind);
       if (ext) extensionUpdates.push({ sessionId: sid, update: redact(u) });
+      const childInfo = ((u._meta ?? {}) as Record<string, { session_id?: unknown }>).subagent_session_info;
+      if (typeof childInfo?.session_id === 'string') {
+        console.log(`\n\x1b[32;1m[subagent_session_info]\x1b[0m on ${kind} ${String(u.toolCallId)} status=${String(u.status)} → ${childInfo.session_id}`);
+        if (flag('--load-children')) loadChild(childInfo.session_id);
+      }
       if (kind === 'agent_message_chunk' && !foreign) {
         const c = u.content as { type?: string; text?: string } | undefined;
         if (c?.type === 'text') process.stdout.write(c.text ?? '');
@@ -146,6 +157,7 @@ async function finish(exitCode: number) {
     requestMethods: Object.fromEntries(requestMethods),
     metaKeys: [...metaKeys].sort(),
     extensionUpdates,
+    loadedChildren: Object.fromEntries(loadedChildren),
   };
   log.push(JSON.stringify({ t: Date.now(), dir: 'summary', summary }));
   await writeFile(outFile, log.join('\n') + '\n');
@@ -185,6 +197,15 @@ try {
     : {};
   const s = await agent.request<{ sessionId: string; [k: string]: unknown }>('session/new', { cwd: process.cwd(), mcpServers: [], ...sessionMeta });
   rootSessionId = s.sessionId;
+  loadChild = id => {
+    if (loadedChildren.has(id)) return;
+    const entry: { sentAt: number; doneAt?: number; result?: unknown; error?: string } = { sentAt: Date.now() };
+    loadedChildren.set(id, entry);
+    agent.request('session/load', { sessionId: id, cwd: process.cwd(), mcpServers: [] }).then(
+      r => { entry.doneAt = Date.now(); entry.result = redact(r); console.log(`\n\x1b[32;1m[session/load ${short(id)} ok]\x1b[0m ${JSON.stringify(redact(r)).slice(0, 300)}`); },
+      e => { entry.doneAt = Date.now(); entry.error = String(e); console.log(`\n\x1b[31m[session/load ${short(id)} failed]\x1b[0m ${String(e)}`); },
+    );
+  };
   console.log(`session/new → ${s.sessionId}`);
   for (const { value } of configOpts) {
     const [configId = '', v = ''] = value.split('=');

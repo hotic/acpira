@@ -308,6 +308,8 @@ impl AcpSession {
         let Core { tree, state, replaying, .. } = &mut *c;
         tree.annotate_root(&u, !*replaying, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
       }
+      // A delegation that named its child session: the CLI streams the child once it is loaded (`child_sessions.rs`)
+      self.load_child_sessions(&mut c);
       // A run the engine opened from a SendMessage result is read from its sidechain log (`workflow_logs.rs`)
       self.schedule_workflow_logs(&mut c);
       self.relay_annotate(&mut c, &u, turn_index);

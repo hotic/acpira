@@ -10,6 +10,7 @@
 pub mod access;
 pub mod account_switch;
 pub mod attachments;
+pub mod child_sessions;
 pub mod compaction;
 pub mod context;
 pub mod context_claude;
@@ -45,7 +46,7 @@ pub mod usage;
 pub mod view;
 pub mod workflow_logs;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
 
 use anyhow::Result;
@@ -317,6 +318,8 @@ pub(crate) struct Core {
   pub access: crate::acp::session::access::AccessState,
   /// Claude workflow agents' sidechain logs being read into their nodes (`workflow_logs.rs`)
   pub workflow_logs: crate::acp::session::workflow_logs::WorkflowLogs,
+  /// Child sessions already loaded, by process generation (`child_sessions.rs`)
+  pub child_loads: HashSet<(u64, String)>,
   /// The project's workspace hooks: the running turn's snapshot, rejected edits and the gate's rounds (`hooks.rs`)
   pub hooks: crate::acp::session::hooks::HookState,
   /// What the plugins' processes were last told about each tool row (`plugin_events.rs`)
@@ -521,11 +524,15 @@ impl AcpSession {
           },
           rev: 0,
           switching: false,
+          reauth_due: false,
+          reauth_at: None,
           adapter_stale: false,
           relays: Default::default(),
+          droid_core: Default::default(),
           ultracode,
           sidekick,
           workflow_logs: Default::default(),
+          child_loads: Default::default(),
           access: Default::default(),
           hooks: Default::default(),
           plugin_events: Default::default(),

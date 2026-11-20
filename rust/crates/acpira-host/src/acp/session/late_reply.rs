@@ -71,12 +71,17 @@ enum Read {
   Failed,
 }
 
-fn command_task(tool_call_id: &str, state: Option<AsyncTaskState>) -> AsyncTaskEvent {
+/// The task a droid `Task` row carries while its child runs past the turn, before the call's id: a `local_agent` like
+/// Claude's background agents, so the row stays running and the session lists as background work
+const DELEGATION_TASK: &str = "droid-task:";
+
+/// The synthetic task a parked row carries (`park_background_commands`): spawned, or moved to `state`
+fn parked_task(task: &str, task_type: Option<&str>, tool_call_id: &str, state: Option<AsyncTaskState>) -> AsyncTaskEvent {
   AsyncTaskEvent {
     event: if state.is_some() { TaskEventKind::State } else { TaskEventKind::Spawned },
-    async_task_id: format!("{}{tool_call_id}", antigravity::COMMAND_TASK),
+    async_task_id: task.to_owned(),
     name: None,
-    task_type: Some("shell".into()),
+    task_type: task_type.map(str::to_owned),
     description: None,
     show_in_transcript: false,
     can_stop: Some(false),
@@ -113,12 +118,27 @@ fn waits_on_call(c: &Core) -> bool {
   turn.blocks.iter().any(|b| matches!(b, AgentBlock::ToolCall(tc) if tc.kind != ToolKind::Execute && matches!(tc.status, ToolStatus::InProgress | ToolStatus::Pending) && tc.async_task.is_none()))
 }
 
-/// The calls whose background command is still running, as far as the transcript knows
-fn live_commands(c: &Core) -> Vec<String> {
+/// A row a turn left running (`park_background_commands`), by the synthetic task it carries
+struct Parked {
+  call: String,
+  task: String,
+  task_type: Option<String>,
+}
+
+/// The parked rows whose command or delegation still runs, as far as the transcript knows
+fn parked(c: &Core) -> Vec<Parked> {
   tool_rows(&c.state.turns)
-    .filter(|tc| async_task_live(tc) && tc.async_task.as_ref().is_some_and(|a| a.id.starts_with(antigravity::COMMAND_TASK)))
-    .map(|tc| tc.id.clone())
+    .filter_map(|tc| {
+      let a = tc.async_task.as_ref().filter(|a| a.id.starts_with(antigravity::COMMAND_TASK) || a.id.starts_with(DELEGATION_TASK))?;
+      async_task_live(tc).then(|| Parked { call: tc.id.clone(), task: a.id.clone(), task_type: a.task_type.clone() })
+    })
     .collect()
+}
+
+/// Whether a command or delegation sent to the background still runs, so its late reply is still owed (`after_prompt`
+/// holds the auto /compact for it)
+pub(crate) fn has_background_commands(c: &Core) -> bool {
+  !parked(c).is_empty()
 }
 
 fn closed_state(row: &Value) -> AsyncTaskState {
@@ -136,37 +156,49 @@ fn ends_on_reply(c: &Core) -> bool {
 }
 
 impl AcpSession {
-  /// Before a turn that ended on its own is sealed: a command of it still running went to the background, and its row
-  /// becomes that task's instead of a failed call
+  /// Before a turn that ended on its own is sealed: a command of it still running went to the background (agy), or a
+  /// delegation still runs its child (droid's asynchronous `Task`), and its row becomes that task's instead of a failed
+  /// call
   pub(crate) fn park_background_commands(&self, c: &mut Core) {
-    if !self.vendor.stores_late_replies() {
+    if !self.vendor.late_replies() {
       return;
     }
     let Some(peer) = c.acp_session_id.clone() else { return };
+    let delegations = if self.vendor.parks_delegations() { c.tree.outliving_delegations() } else { vec![] };
     let Some(Turn::Agent(turn)) = c.state.turns.last() else { return };
-    let ids: Vec<String> = turn
+    let commands = self.vendor.stores_late_replies();
+    let rows: Vec<(String, &str)> = turn
       .blocks
       .iter()
       .filter_map(|b| match b {
-        AgentBlock::ToolCall(tc) if tc.kind == ToolKind::Execute && tc.status == ToolStatus::InProgress && tc.async_task.is_none() => Some(tc.id.clone()),
+        AgentBlock::ToolCall(tc) if tc.async_task.is_some() => None,
+        AgentBlock::ToolCall(tc) if commands && tc.kind == ToolKind::Execute && tc.status == ToolStatus::InProgress => Some((tc.id.clone(), "command")),
+        AgentBlock::ToolCall(tc) if tc.status.is_open() && delegations.contains(&tc.id) => Some((tc.id.clone(), "delegation")),
         _ => None,
       })
       .collect();
-    for id in ids {
-      self.log(&format!("background command {id} outlives its turn"));
-      self.async_task_update(c, &peer, &command_task(&id, None));
+    for (id, what) in rows {
+      self.log(&format!("background {what} {id} outlives its turn"));
+      let task = if what == "command" {
+        parked_task(&format!("{}{id}", antigravity::COMMAND_TASK), Some("shell"), &id, None)
+      } else {
+        // droid streams what follows the delegation: no replay is ever read for it
+        c.late.streams = Some(c.proc_gen);
+        parked_task(&format!("{DELEGATION_TASK}{id}"), Some("local_agent"), &id, None)
+      };
+      self.async_task_update(c, &peer, &task);
     }
   }
 
   /// After a prompt's turn: watch for what the background commands leave behind
   pub(crate) fn watch_late_replies(self: &Arc<Self>) {
-    if !self.vendor.stores_late_replies() {
+    if !self.vendor.late_replies() {
       return;
     }
     let mut c = self.core.lock();
     // A prompt's turn came after the stop
     c.late.stopped = false;
-    if !live_commands(&c).is_empty() {
+    if !parked(&c).is_empty() {
       self.start_watch(&mut c);
     }
   }
@@ -191,16 +223,17 @@ impl AcpSession {
   /// reply it wakes the model for opens the late reply's detached turn, with a watcher to end it. False when the update
   /// is dropped: what still streams of a late reply a stop ended
   pub(crate) fn late_live(self: &Arc<Self>, c: &mut Core, session_id: &str, kind: &str, u: &Value) -> bool {
-    if !self.vendor.stores_late_replies() || c.replaying || c.acp_session_id.as_deref() != Some(session_id) || !antigravity::REPLAY_AGENT_KINDS.contains(&kind) {
+    if !self.vendor.late_replies() || c.replaying || c.acp_session_id.as_deref() != Some(session_id) || !antigravity::REPLAY_AGENT_KINDS.contains(&kind) {
       return true;
     }
     if kind == "tool_call_update"
       && matches!(u.get("status").and_then(Value::as_str), Some("completed" | "failed" | "cancelled"))
-      && let Some(id) = u.get("toolCallId").and_then(Value::as_str).filter(|id| live_commands(c).iter().any(|l| l == id))
+      && let Some(id) = u.get("toolCallId").and_then(Value::as_str)
+      && let Some(p) = parked(c).into_iter().find(|p| p.call == id)
     {
       // The task first: its row then takes the update like any closed call
-      self.async_task_update(c, session_id, &command_task(id, Some(closed_state(u))));
-      self.log(&format!("background command {id} ended"));
+      self.async_task_update(c, session_id, &parked_task(&p.task, p.task_type.as_deref(), id, Some(closed_state(u))));
+      self.log(&format!("background task {id} ended"));
       c.late.streams = Some(c.proc_gen);
       return true;
     }
@@ -263,17 +296,23 @@ impl AcpSession {
         if c.phase.running && !c.late.open {
           return;
         }
-        (self.late_free(&c), !live_commands(&c).is_empty())
+        (self.late_free(&c), !parked(&c).is_empty())
       };
       let moved = if free {
-        let Some(now) = self.listed_time(&proc, &acp_id, &cwd).await else {
-          self.log("late replies: the session is not in session/list, giving up");
-          self.close_late();
-          return;
-        };
-        let moved = seen.as_ref().is_some_and(|s| *s != now);
-        seen = Some(now);
-        moved
+        match self.listed_time(&proc, &acp_id, &cwd).await {
+          Some(now) => {
+            let moved = seen.as_ref().is_some_and(|s| *s != now);
+            seen = Some(now);
+            moved
+          }
+          // A process that streams its late replies still ends one once nothing streamed for a while
+          None if self.core.lock().late.streams == Some(proc_gen) => false,
+          None => {
+            self.log("late replies: the session is not in session/list, giving up");
+            self.close_late();
+            return;
+          }
+        }
       } else {
         false
       };
@@ -365,8 +404,20 @@ impl AcpSession {
       || c.late.capture.is_some())
   }
 
-  /// The session's `updatedAt` as `session/list` has it
+  /// The session's `updatedAt` as `session/list` has it. droid 1.14.0 files a session under its folder's resolved path
+  /// and lists by exact match, so a folder reached through a symlink (`/var` → `/private/var`) is asked for both ways
   async fn listed_time(&self, proc: &AgentProcess, acp_id: &str, cwd: &str) -> Option<String> {
+    if let Some(at) = self.listed_time_in(proc, acp_id, cwd).await {
+      return Some(at);
+    }
+    let resolved = std::fs::canonicalize(cwd).ok()?.to_string_lossy().into_owned();
+    if resolved == cwd {
+      return None;
+    }
+    self.listed_time_in(proc, acp_id, &resolved).await
+  }
+
+  async fn listed_time_in(&self, proc: &AgentProcess, acp_id: &str, cwd: &str) -> Option<String> {
     let mut cursor: Option<String> = None;
     for _ in 0..LIST_PAGES {
       let mut params = json!({ "cwd": cwd });
@@ -454,7 +505,7 @@ impl AcpSession {
         self.flush_queue();
         return false;
       }
-      (live_commands(&c), if c.late.open { open_calls(&c) } else { vec![] })
+      (parked(&c), if c.late.open { open_calls(&c) } else { vec![] })
     };
     // The receipt first, as the update the wire never sent
     let close = |id: &str| {
@@ -464,13 +515,13 @@ impl AcpSession {
       self.on_update(json!({ "sessionId": acp_id, "update": update, REPLAYED: true }));
       Some(closed_state(row))
     };
-    for id in live {
+    for p in live {
       // The row's status is its task's
-      let Some(state) = close(&id) else { continue };
+      let Some(state) = close(&p.call) else { continue };
       let mut c = self.core.lock();
-      self.async_task_update(&mut c, acp_id, &command_task(&id, Some(state)));
+      self.async_task_update(&mut c, acp_id, &parked_task(&p.task, p.task_type.as_deref(), &p.call, Some(state)));
       self.touch(&mut c);
-      self.log(&format!("background command {id} ended"));
+      self.log(&format!("background task {} ended", p.call));
     }
     // A call read while it ran may be closed in place, before `known`, instead of by an update after it
     for id in calls {
