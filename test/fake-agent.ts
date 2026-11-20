@@ -307,6 +307,8 @@ let compactions = 0;
 // tests can place a follow-up between the RPC acknowledgement and status events.
 const backgroundStyle = process.env.FAKE_COMPACTION;
 const grokUsage = process.env.FAKE_GROK_USAGE;
+// FAKE_COMPACTION=antigravity is agy acp 1.5.13's `/compact`: it compacts with nothing on the wire but one usage_update
+// carrying the compaction request's own (pre-compaction) size, then an empty end_turn
 // FAKE_COMPACTION_SILENT_USAGE: background compaction reports no context afterwards (Devin 3000.11.3); the next ordinary reply does
 const silentCompactionUsage = !!process.env.FAKE_COMPACTION_SILENT_USAGE;
 let background: ((status: 'start' | 'completed' | 'cancelled') => Promise<void>) | undefined;
@@ -1515,6 +1517,11 @@ const app = acp.agent({ name: 'fake-agent' })
     // the first compaction drops usage to 20%; afterwards "nothing left to compact" leaves usage unchanged — simulating a compaction that can't shrink
     if (text.trim() === '/compact') {
       const id = `cp${++compactions}`;
+      if (backgroundStyle === 'antigravity') {
+        await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
+        usedTokens = Math.round(usedTokens * 0.2);
+        return { stopReason: 'end_turn' };
+      }
       if (backgroundStyle) {
         background = async status => {
           if (backgroundStyle === 'structured') {

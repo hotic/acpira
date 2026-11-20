@@ -17,6 +17,7 @@
 
 use std::sync::LazyLock;
 
+use acpira_shared::transcript::AgentBlock;
 use regex::Regex;
 use serde_json::Value;
 
@@ -76,6 +77,13 @@ pub fn cancel_note(text: &str) -> Option<usize> {
   let at = body.rfind(CANCEL_NOTE)?;
   let (before, line) = body.split_at_checked(at)?;
   ((before.is_empty() || before.ends_with('\n')) && !line.contains('\n')).then_some(at)
+}
+
+/// `agy acp` 1.5.13 compacts on `/compact` with nothing on the wire: no `compaction_update`, no words, only `end_turn`
+/// (its own transcript logs the checkpoint). A `/compact` turn that holds nothing but empty words is that compaction;
+/// one with anything else (a failure line, a reply) is left as the CLI sent it
+pub fn compacted_silently(blocks: &[AgentBlock]) -> bool {
+  blocks.iter().all(|b| matches!(b, AgentBlock::Text(t) if t.markdown.trim().is_empty()))
 }
 
 /// `agy acp` 1.5.9 finishes a `run_command` row with a receipt as its text (and `rawOutput.output`): `Created At: …`,
@@ -180,6 +188,19 @@ mod tests {
     assert!(at("1.5.0") && at("1.5.12") && at("2.0.0"));
     assert!(!at("1.2.1") && !at("1.4.12"));
     assert!(!steers_by_prompt(&serde_json::json!({})));
+  }
+
+  #[test]
+  fn only_a_compact_turn_with_nothing_but_empty_words_compacted_silently() {
+    use acpira_shared::transcript::{CompactionBlock, CompactionStatus, TextBlock};
+    let text = |m: &str| AgentBlock::Text(TextBlock { id: None, phase: None, markdown: m.into(), streaming: None, images: None });
+    assert!(compacted_silently(&[]));
+    assert!(compacted_silently(&[text(""), text("\n")]));
+    // A failure line or a reply is the CLI's own word on it
+    assert!(!compacted_silently(&[text("\n⚠ Individual quota reached.\n")]));
+    // A compaction the CLI reported itself needs no stand-in
+    let row = AgentBlock::Compaction(CompactionBlock { id: "c1".into(), status: CompactionStatus::Completed, error: None });
+    assert!(!compacted_silently(&[row]));
   }
 
   #[test]

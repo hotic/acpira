@@ -34,6 +34,30 @@ fn auto_compaction() -> Option<acpira_host::acp::session::CompactionPolicy> {
   Some(acpira_host::acp::session::CompactionPolicy { at_tokens: 300_000.0, auto: true })
 }
 
+// agy acp 1.5.13 compacts on /compact with nothing on the wire but a usage report (the compaction request's own,
+// pre-compaction size) and an empty end_turn: the turn gets the compaction row instead of reading as an empty receipt,
+// and that usage is marked stale until the next report
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravitys_silent_compact_counts_as_a_finished_compaction() {
+  let fake = fake_or_skip!();
+  let mut h = Harness::for_agent(&fake, "antigravity", json!({ "env": { "FAKE_COMPACTION": "antigravity", "FAKE_COMPACTION_SILENT_USAGE": "1" } }));
+  h.deps.policy = Arc::new(TestPolicy { compaction: Some(Arc::new(|| auto_compaction().unwrap())), ..TestPolicy::default() });
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "big").await;
+  until(|| turn_count(&s) == 4 && !s.is_running(), 5000).await;
+  let vw = view(&s);
+  expect_eq(&vw["turns"][2], json!({ "role": "user", "text": "/compact", "auto": true }));
+  expect_match(&vw["turns"][3], json!({ "stop": "end_turn", "blocks": [{ "type": "compaction", "status": "completed" }] }));
+  assert_eq!(vw["turns"][3]["blocks"].as_array().unwrap().len(), 1, "{}", vw["turns"][3]);
+  let used = vw["usage"]["used"].as_f64().unwrap();
+  assert!(used > 300_000.0);
+  assert_eq!(vw["usage"]["compactedFrom"].as_f64(), Some(used));
+  // The next report replaces the stale snapshot
+  prompt(&s, "hi").await;
+  let usage = view(&s)["usage"].clone();
+  assert!(usage.get("compactedFrom").is_none() && usage["used"].as_f64().unwrap() < 300_000.0, "{usage}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn auto_compaction_sends_an_auto_turn_over_the_threshold_and_does_not_repeat_without_growth() {
   let fake = fake_or_skip!();
