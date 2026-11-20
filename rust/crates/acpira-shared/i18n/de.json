@@ -1299,6 +1299,7 @@
   "settings.fact.searched": "Durchsucht",
   "settings.fact.bundled": "mitgeliefert",
   "settings.fact.nativeMissing": "native Binärdatei fehlt ({package})",
+  "settings.fact.versionUnknown": "Version unbekannt",
   "settings.fact.nativeMissingHint": "Das Plattformpaket {package} (eine optionale npm-Abhängigkeit) wurde nicht installiert, daher schlägt der Agent beim Start einer Sitzung fehl. Den Adapter mit npm install -g --include=optional neu installieren oder die Override-Variable auf eine funktionierende ausführbare Datei zeigen lassen.",
   "settings.health.ready": "Sitzungen starten normal",
   "settings.health.spawnFailed": "Ausführbare Datei gefunden, aber der Prozess startet nicht",

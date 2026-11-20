@@ -36,6 +36,7 @@ pub struct ScanInput {
   pub agent: String,
   pub ext: Option<&'static AgentExt>,
   pub binary: Option<String>,
+  pub cli_version: Option<String>,
   pub runtime: Option<AgentRuntimeInfo>,
   pub adapter: Option<AdapterInfo>,
   pub health: Option<AgentHealth>,
@@ -45,6 +46,7 @@ pub async fn scan_inventory(input: ScanInput, env: &ScanEnv) -> AgentInventory {
   let mut out = AgentInventory {
     agent: input.agent,
     binary: input.binary,
+    cli_version: input.cli_version,
     runtime: input.runtime,
     adapter: input.adapter,
     health: input.health,

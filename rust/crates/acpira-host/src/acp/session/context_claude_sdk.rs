@@ -183,7 +183,7 @@ async fn probe(l: Launch) -> Option<Split> {
   #[cfg(not(windows))]
   let mut child = cmd.spawn().ok()?;
   #[cfg(unix)]
-  let mut group = crate::acp::vendors::claude_auth::ProbeGroup(child.id());
+  let mut group = crate::acp::agents::launch::ProbeGroup(child.id());
   let mut stdout = child.stdout.take()?.take(OUTPUT_LIMIT + 1);
   let mut out = Vec::new();
   tokio::time::timeout(TIMEOUT, async {

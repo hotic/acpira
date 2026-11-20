@@ -1319,6 +1319,7 @@ export const es = {
   'settings.fact.status': 'Estado',
   'settings.fact.searched': 'Buscado en',
   'settings.fact.bundled': 'incluido',
+  'settings.fact.versionUnknown': 'Versión desconocida',
   'settings.fact.nativeMissing': 'falta el binario nativo ({package})',
   'settings.fact.nativeMissingHint': 'El paquete de plataforma {package} (una dependencia opcional de npm) no se instaló, así que el agente falla al iniciar una sesión. Reinstala el adaptador con npm install -g --include=optional o apunta la variable de reemplazo a un ejecutable que funcione.',
   'settings.health.ready': 'Las sesiones se inician con normalidad',

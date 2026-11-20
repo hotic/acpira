@@ -71,3 +71,17 @@ pub fn command(binary: &str, args: &[String]) -> tokio::process::Command {
   crate::net_proxy::apply(&mut cmd);
   cmd
 }
+
+/// A probe's process group, killed when dropped unless the probe was reaped (cleared).
+#[cfg(unix)]
+pub(crate) struct ProbeGroup(pub(crate) Option<u32>);
+
+#[cfg(unix)]
+impl Drop for ProbeGroup {
+  fn drop(&mut self) {
+    if let Some(pid) = self.0.and_then(|p| i32::try_from(p).ok()) {
+      // SAFETY: the negated pid names the group created by this probe's unreaped child.
+      unsafe { libc::kill(-pid, libc::SIGKILL) };
+    }
+  }
+}

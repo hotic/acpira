@@ -1294,6 +1294,7 @@
   "settings.fact.engine": "엔진",
   "settings.fact.status": "상태",
   "settings.fact.searched": "검색한 위치",
+  "settings.fact.versionUnknown": "버전 확인 불가",
   "settings.fact.bundled": "번들 포함",
   "settings.fact.nativeMissing": "네이티브 바이너리 없음 ({package})",
   "settings.fact.nativeMissingHint": "플랫폼 패키지 {package}(npm 선택적 의존성)가 설치되지 않아 세션을 시작할 때 에이전트가 실패합니다. npm install -g --include=optional로 어댑터를 다시 설치하거나, 재정의 변수가 동작하는 실행 파일을 가리키도록 하세요.",

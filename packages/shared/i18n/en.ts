@@ -1352,6 +1352,7 @@ export const en = {
   'settings.fact.status': 'Status',
   'settings.fact.searched': 'Searched',
   'settings.fact.bundled': 'bundled',
+  'settings.fact.versionUnknown': 'Version unknown',
   'settings.fact.nativeMissing': 'native binary missing ({package})',
   'settings.fact.nativeMissingHint': 'The platform package {package} (an npm optional dependency) was not installed, so the agent fails when a session starts. Reinstall the adapter with npm install -g --include=optional, or point the override variable at a working executable.',
   'settings.fact.engineOverride': '{name} ｜ {env} {path}',
