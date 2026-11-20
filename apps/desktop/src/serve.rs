@@ -6,10 +6,16 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use acpira_desktop::page::{ByteRange, PLUGIN_FRAME_HTML, PageConfig, PageHost, Route, THEME_CSS, byte_range, mime, page_html, route, unpack};
+use tauri::http::header::{CACHE_CONTROL, HeaderValue};
 use tauri::http::{Request, Response, StatusCode};
 
 /// The most a media response carries: a player asking for the rest of a long video gets this much and asks on
 const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
+
+/// Session blobs are named by their content hash (`blob_name`), so a blob URL never changes bytes. Chromium (WebView2)
+/// refetches a `no-store` image for every new `<img>`, so a fold moving a shown image in or out of its panel drew an
+/// empty frame; cached, the remounted image paints in the same frame
+const BLOB_CACHE: &str = "private, max-age=31536000, immutable";
 
 fn respond(status: StatusCode, mime: &str, body: Vec<u8>) -> Response<Vec<u8>> {
   // The status and headers are the shell's own constants; a builder error leaves an empty 200 rather than a panic
@@ -128,9 +134,16 @@ pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
     Route::Theme => responder.respond(respond(StatusCode::OK, "text/css; charset=utf-8", THEME_CSS.as_bytes().to_vec())),
     Route::PluginFrame => responder.respond(respond(StatusCode::OK, "text/html; charset=utf-8", PLUGIN_FRAME_HTML.as_bytes().to_vec())),
     Route::File(file) => {
+      let blob = path.starts_with("/blobs/");
       // Off the main thread: the bundle is megabytes, a blob can be more
       std::thread::spawn(move || match std::fs::read(&file) {
-        Ok(body) => reply(&main, responder, respond(StatusCode::OK, mime(&file), body)),
+        Ok(body) => {
+          let mut response = respond(StatusCode::OK, mime(&file), body);
+          if blob {
+            response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static(BLOB_CACHE));
+          }
+          reply(&main, responder, response)
+        }
         Err(_) => reply(&main, responder, respond(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec())),
       });
     }
