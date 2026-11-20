@@ -208,8 +208,8 @@ const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uff00-\uffef]/;
 export const CARET_TURN = 'transition-transform duration-(--dur-open) ease-out group-data-[open]/chip:rotate-180 group-data-[popup-open]/chip:rotate-180';
 
 // An icon-only chip at the end of a popup's head or search line: square (py-1.5 matching px-1.5) rather than --ctl-sm
-// high, so with its -mr-1.5 bleed and the line's pt-0.5 (or h-search-line) its box stands as far from the popup's top
-// edge as from its side
+// high, so with its -mr-1.5 bleed and a head's pt-0.5 its box stands as far from the popup's top edge as from its side
+// (h-search-line, a little shorter, leaves it 2px nearer the top)
 export const CORNER_CHIP = 'h-auto py-1.5';
 
 export function Chip({ className, children, variant = 'quiet', caret = true, icon, meta, tags, tagsKey, trail, narrow, ...rest }: ChipProps) {
