@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useSyncExternalStore } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type DependencyList, type RefObject } from 'react';
 import type { DesktopMenu, HostMsg, ShellCommand, UpdateState, WebviewMsg, WindowControl } from '@acpira/shared/protocol';
 import { vscodeApi } from './vscodeApi';
 
@@ -115,4 +115,38 @@ export function postMenuCommand(id: string) {
 
 export function postWindowControl(op: WindowControl) {
   vscodeApi().postMessage({ type: 'windowControl', op });
+}
+
+// The room the title row leaves the traffic lights beyond their left edge (desktop.css --lights-w less --lights-x): the
+// three lights' span and a breath. The lights' left edge as the shell builds a window (apps/desktop mac.rs LIGHTS_X):
+// the cards' line at the default density
+const LIGHTS_ROOM = 67;
+const LIGHTS_X = 22;
+// How long the lights' x is read after a change: the title row's padding eases for --sidebar-duration
+const LIGHTS_EASE_MS = 500;
+
+function postWindowLights(x: number) {
+  vscodeApi().postMessage({ type: 'windowLights', x });
+}
+
+// macOS: keeps the traffic lights on the line the page draws under them (desktop.css --lights-x), for the shell whose
+// root this is. Their left edge is the title row's padding less their room, read again whenever `deps` change and
+// posted each frame while that padding eases, so the lights glide with the row's buttons. A mount always posts (a
+// reloaded page finds them wherever the last one left them); unmounting puts them back where a window is built
+export function useWindowLights(root: RefObject<HTMLElement | null>, on: boolean, deps: DependencyList) {
+  const at = useRef<number>(undefined);
+  useLayoutEffect(() => {
+    const row = on && desktopOS === 'mac' ? root.current?.querySelector<HTMLElement>('[data-title-row]') : undefined;
+    if (!row) return;
+    const until = performance.now() + LIGHTS_EASE_MS;
+    let frame = 0;
+    const tick = () => {
+      const x = Number.parseFloat(getComputedStyle(row).paddingLeft) - LIGHTS_ROOM;
+      if (Number.isFinite(x) && x !== at.current) postWindowLights(at.current = x);
+      frame = performance.now() < until ? requestAnimationFrame(tick) : 0;
+    };
+    tick();
+    return () => cancelAnimationFrame(frame);
+  }, [on, ...deps]);
+  useEffect(() => () => { if (at.current !== undefined && at.current !== LIGHTS_X) postWindowLights(LIGHTS_X); }, []);
 }

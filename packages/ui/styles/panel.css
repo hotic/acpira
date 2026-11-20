@@ -54,6 +54,10 @@
    no toggle above it and keeps its own gaps (FileTree.tsx). The filter starts at the tab's top, where the chat's pinned
    prompt card starts under the sheet's header, so the two boxes share a top line across the panes */
 .acp-shell[data-desktop] [data-files-tab] { --tree-lead: var(--start-x); --tree-trail: calc(var(--start-x) + var(--sheet-inset)); --tree-top: 0px; }
+/* A narrow window: the panel is a page over the whole window, title row included, so its tabs start after the traffic
+   lights with half a gap's breath (the tree's line where there are none). A token the tab row reads: the row's padding
+   is a utility, which a rule in the components layer never overrides */
+.acp-shell[data-desktop][data-narrow] [data-panel-tabs] { --tabs-lead: max(var(--start-x), calc(var(--lights-w) + var(--gap) / 2)); }
 @theme inline {
   --spacing-tool-panel: var(--tool-panel-w);
   --spacing-tree-chevron: var(--tree-chevron);
@@ -101,8 +105,6 @@
   [data-tool-panel-wrap]:is([data-moving], :not([data-shown])) > [data-tool-panel] { width: var(--tool-panel-open, auto); }
   .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet] { transition: margin var(--sidebar-duration) var(--sidebar-ease); }
   .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet-header] { transition: padding var(--sidebar-duration) var(--sidebar-ease); }
-  /* A narrow window: the panel is a page over the window, its tabs after the traffic lights */
-  .acp-shell[data-desktop][data-narrow] [data-panel-tabs] { padding-left: calc(max(var(--gap), var(--lights-w)) + var(--gap) / 2); }
 
   /* The files layout: the explorer lies on the canvas like the session column, folding the same way (its content keeps its
      open width, --explorer-open, clipped while the width eases); it and the session column give the stage room down to

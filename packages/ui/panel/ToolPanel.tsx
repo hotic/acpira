@@ -428,8 +428,9 @@ function ToolPanel(p: ToolPanelProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col pt-[var(--title-top)]" data-tool-panel>
       {/* The tabs on the window's title line, the line moves the window; the pinned toggle sits at its end. The first tab starts
-          on the Files tree's leading edge (panel.css --tree-lead), so the tab and the filter under it line up */}
-      <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pr-[calc(var(--start-x)+var(--ctl)+var(--gap)+var(--caps-w,0px))] pl-[var(--start-x)]">
+          on the Files tree's leading edge (panel.css --tree-lead), so the tab and the filter under it line up; a narrow
+          window's panel covers the title row, and --tabs-lead (panel.css) starts the tabs after the traffic lights */}
+      <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pr-[calc(var(--start-x)+var(--ctl)+var(--gap)+var(--caps-w,0px))] pl-[var(--tabs-lead,var(--start-x))]">
         <PanelTabList>
           {s.tabs.map(tab => {
             const Icon = TAB_ICON[tab.kind];
