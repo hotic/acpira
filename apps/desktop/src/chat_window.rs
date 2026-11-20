@@ -121,6 +121,13 @@ impl ChatWindow {
           });
         });
       }
+      // macOS: where the traffic lights' left edge goes, the line of whatever the page has under them
+      "windowLights" => {
+        #[cfg(target_os = "macos")]
+        if let Some(x) = serde_json::from_str::<Value>(message.get()).ok().and_then(|v| v["x"].as_f64()) {
+          crate::mac::set_lights_x(&self.window, x);
+        }
+      }
       "panelBrowserOpen" | "panelBrowser" | "panelBrowserClose" | "panelHistory" => {
         if let Ok(v) = serde_json::from_str::<Value>(message.get()) {
           self.panel_message(&kind, v);
