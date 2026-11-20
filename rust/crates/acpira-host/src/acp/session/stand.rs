@@ -40,11 +40,22 @@ pub(crate) struct RemoteCall {
   streamed: bool,
   /// Fired by the user's stop: drops the call, which kills its process group on the host
   stop: Cancel,
+  /// A permission request named the call: the CLI's own, or the engine's for a CLI that asks nothing (`ask_remote`)
+  asked: bool,
 }
 
 impl RemoteCall {
   fn new(name: &'static str) -> Self {
-    Self { seq: next_call_seq(), name, input: Value::Null, parent: None, claimed: false, card: None, streamed: false, stop: Cancel::new() }
+    Self { seq: next_call_seq(), name, input: Value::Null, parent: None, claimed: false, card: None, streamed: false, stop: Cancel::new(), asked: false }
+  }
+}
+
+/// Takes a call out of a session's list when its holder goes, a dropped one too (the CLI cancelled its `tools/call`)
+struct Listed<'a, V>(&'a parking_lot::Mutex<std::collections::HashMap<String, V>>, &'a str);
+
+impl<V> Drop for Listed<'_, V> {
+  fn drop(&mut self) {
+    self.0.lock().remove(self.1);
   }
 }
 
@@ -62,6 +73,9 @@ pub(crate) enum RemotePerm {
   /// A native tool that would write, read or run on this machine instead of the host (`stand::blocked_native`): always
   /// denied, full access included
   BlockedLocalTool,
+  /// A native tool the engine cannot tell safe, in a stand-in no gate guards (`stand::unjudged`): its card stays under
+  /// the engine's own full access
+  Unjudged,
 }
 
 impl AcpSession {
@@ -95,12 +109,20 @@ impl AcpSession {
     crate::acp::session::controls::is_full_access(controls, id) && self.remote_stand().is_some_and(|s| s.profile.gates.is_empty())
   }
 
-  /// Makes the stand-in folder if it is missing (`Stand::make`). A failure is only logged: the process that then cannot
-  /// start there names the folder itself (`AgentSpawnError`)
+  /// Makes the stand-in folder if it is missing (`Stand::make`). A failure is only logged: `gated_remote_stand` stops
+  /// the start that needs it
   pub(crate) fn make_remote_stand(&self, stand: &Stand) {
     if let Err(e) = stand.make(&self.data_root()) {
       self.log(&format!("remote: the stand-in folder {} could not be made: {e}", stand.local.display()));
     }
+  }
+
+  /// The session's stand-in with its gate files in place, before a process starts or is borrowed there: a CLI whose
+  /// hook or configuration could not be written would run its native tools on this machine
+  pub(crate) fn gated_remote_stand(&self) -> anyhow::Result<Option<Stand>> {
+    let Some(stand) = self.remote_stand() else { return Ok(None) };
+    stand.make(&self.data_root()).map_err(|e| anyhow::anyhow!("the stand-in folder {} could not be made: {e}", stand.local.display()))?;
+    Ok(Some(stand))
   }
 
   /// The session request of such a session (`local_run::brief`), with the host's instructions read now; the stand-in
@@ -185,9 +207,13 @@ impl AcpSession {
       Ok(x) => x,
       Err(e) => return Ok(tools::mcp_result(&Output::error(e))),
     };
+    let known = acpira_shared::host_tools::REMOTE.iter().find(|t| **t == name).copied();
     let mut stop = Cancel::new();
     let mut bound_id = tool_use_id;
-    if let Some(static_name) = acpira_shared::host_tools::REMOTE.iter().find(|t| **t == name).copied() {
+    // The row is this very call's: named by its id, or found by its arguments. One found by its tool alone is good for
+    // the row's looks, never for what was approved on it
+    let mut sure = bound_id.is_some();
+    if let Some(static_name) = known {
       let mut calls = self.remote_calls.lock();
       if let Some(id) = &bound_id {
         let entry = calls.entry(id.clone()).or_insert_with(|| RemoteCall::new(static_name));
@@ -206,6 +232,7 @@ impl AcpSession {
           })
           .min_by_key(|(_, c)| c.seq)
           .map(|(id, _)| id.clone());
+        sure = exact.is_some();
         let matched = exact.or_else(|| {
           calls
             .iter()
@@ -223,14 +250,28 @@ impl AcpSession {
       }
     }
     let call = bound_id.clone().unwrap_or_else(crate::util::random_uuid);
-    let loose = bound_id.is_none() && !here;
-    if loose {
+    // A call no row names is the stop's by this list, from before its question to its end
+    let _loose = (bound_id.is_none() && !here).then(|| {
       self.loose_calls.lock().insert(call.clone(), stop.clone());
+      Listed(&self.loose_calls, &call)
+    });
+    // A CLI that calls an MCP tool without asking would write and run on the host with no card at all
+    let asked = stand.profile.own_cards || tools::READ_ONLY.contains(&name) || (sure && self.remote_calls.lock().get(&call).is_some_and(|c| c.asked));
+    if !asked {
+      // A call without a row is held as claimed while its card shows: the request makes an entry for it, which another
+      // call of the same tool would else take for its row, approval and all. No row will ever complete it
+      let _held = known.filter(|_| bound_id.is_none()).map(|n| {
+        self.remote_calls.lock().insert(call.clone(), RemoteCall { claimed: true, stop: stop.clone(), ..RemoteCall::new(n) });
+        Listed(&self.remote_calls, &call)
+      });
+      if !self.ask_remote(name, &args, &call, stop.clone()).await || stop.is_cancelled() {
+        return Ok(tools::mcp_result(&Output::error("The user declined this call. Do not repeat it unless they ask.")));
+      }
+    }
+    if bound_id.is_some() {
+      self.remote_started(&call);
     }
     let mut out = if here { self.run_here(tool, call_args, &call).await } else { self.run_on_host(tool, call_args, &call, stop).await };
-    if loose {
-      self.loose_calls.lock().remove(&call);
-    }
     if name == "Bash" {
       tools::name_job_tools(&mut out, &stand.profile.prefix);
     }
@@ -240,6 +281,29 @@ impl AcpSession {
       c.card = Some((out.content.clone(), out.raw_output.clone()));
     }
     Ok(tools::mcp_result(&out))
+  }
+
+  /// The engine's own permission request for a remote tool's write or command the CLI did not ask about: decided like
+  /// one of the CLI's (`on_permission`), so full access and accept-edits answer it and anything else shows a card. In a
+  /// task of its own: a caller that goes away mid-question (the CLI cancelled its `tools/call`) drops this future, and
+  /// the card would stay up with no one to answer to
+  async fn ask_remote(self: &Arc<Self>, name: &str, args: &Value, call: &str, stop: Cancel) -> bool {
+    struct Fire(Cancel);
+    impl Drop for Fire {
+      fn drop(&mut self) {
+        self.0.cancel();
+      }
+    }
+    let sid = self.core.lock().acp_session_id.clone();
+    let req = json!({
+      "sessionId": sid,
+      "toolCall": { "toolCallId": call, "title": format!("{}{name}", crate::acp::local_run::DEFAULT_PREFIX), "rawInput": args },
+      "options": [{ "optionId": "allow", "name": "Allow", "kind": "allow_once" }, { "optionId": "reject", "name": "Reject", "kind": "reject_once" }],
+    });
+    let gone = Fire(stop.child());
+    let (me, cancel) = (self.clone(), gone.0.clone());
+    let answer = tokio::spawn(async move { me.on_permission(req, cancel).await }).await;
+    matches!(answer, Ok(Ok(v)) if v.pointer("/outcome/optionId").and_then(Value::as_str) == Some("allow"))
   }
 
   /// Prepare and run a call on the host's helper (`on_remote_tool`, the built-in agent's path): the edit gate asks
@@ -305,6 +369,18 @@ impl AcpSession {
     action.run(ctx).await
   }
 
+  /// The row of a call the engine starts now reads as running: Droid and Grok leave theirs pending until the result,
+  /// which showed a command at work on the host as one still waiting
+  fn remote_started(self: &Arc<Self>, call: &str) {
+    let Some(parent) = self.remote_calls.lock().get(call).map(|c| c.parent.clone()) else { return };
+    let mut u = json!({ "sessionUpdate": "tool_call_update", "toolCallId": call, "status": "in_progress" });
+    if let Some(p) = parent {
+      u["_meta"]["claudeCode"]["parentToolUseId"] = p;
+    }
+    let sid = self.core.lock().acp_session_id.clone();
+    self.on_update(json!({ "sessionId": sid, "update": u }));
+  }
+
   /// A running command's output (`{ _meta: { terminal_output_delta } }`) onto its row, as the adapter's own deltas would
   fn remote_progress(self: &Arc<Self>, call: &str, mut u: Value) {
     if !u.is_object() {
@@ -346,7 +422,7 @@ impl AcpSession {
     };
     let entry = calls.entry(id.clone()).or_insert_with(|| RemoteCall::new(name));
     if let Some(raw) = u.get("rawInput").or_else(|| u.get("args")).filter(|r| r.as_object().is_some_and(|o| !o.is_empty())) {
-      entry.input = tools::clean_input(raw);
+      entry.input = tools::clean_input(tools::call_input(raw));
     }
     if let Some(p) = u.pointer("/_meta/claudeCode/parentToolUseId") {
       entry.parent = Some(p.clone());
@@ -461,10 +537,17 @@ impl AcpSession {
     let home = home_dir();
     let data_root = self.data_root();
     if !self.is_remote_call(&stand, tool_call) {
-      return if stand_in::blocked_native(&stand, tool_call, &home, &data_root) { RemotePerm::BlockedLocalTool } else { RemotePerm::None };
+      return if stand_in::blocked_native(&stand, tool_call, &home, &data_root) {
+        RemotePerm::BlockedLocalTool
+      } else if stand_in::unjudged(&stand, tool_call) {
+        RemotePerm::Unjudged
+      } else {
+        RemotePerm::None
+      };
     }
-    let calls = self.remote_calls.lock();
-    let Some(c) = calls.get(tool_call_id) else { return RemotePerm::None };
+    let mut calls = self.remote_calls.lock();
+    let Some(c) = calls.get_mut(tool_call_id) else { return RemotePerm::None };
+    c.asked = true;
     if tools::READ_ONLY.contains(&c.name) {
       return RemotePerm::ReadOnly;
     }

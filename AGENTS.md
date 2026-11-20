@@ -65,7 +65,7 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 | Edits and retries, model identity, plans, permissions, controls, queue, workspace hooks, scope / deletion, prefs, compaction and context usage, questions, to-dos | `docs/dev/protocol-gotchas.md` |
 | The built-in agent (`acpira-agent`): providers, ACP surface, MCP, Plan mode, goals, compaction, session records | `docs/dev/builtin-agent.md` |
 | Plugins: manifest, runtime, hooks, activation, safe mode | `docs/dev/plugins.md` |
-| SSH remote workspaces: helper, deploy, connections, remote run | `docs/dev/remote.md` |
+| SSH remote workspaces: helper, deploy, connections, remote run | `docs/dev/remote.md`; CLIs under local run: `docs/dev/local-run.md` |
 | Eval benches | `docs/dev/evals.md` |
 | Anything specific to one agent CLI | `docs/dev/agent-quirks.md` (Claude: `agent-quirks-claude.md`, Codex: `agent-quirks-codex.md`, Devin: `agent-quirks-devin.md`), then `docs/acp-agents-compat.md` (the compatibility matrix) |
 | `apps/intellij/` | `docs/dev/intellij.md` |

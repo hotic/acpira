@@ -48,6 +48,11 @@ impl Stand {
   /// everything from `<data root>/remote` down is the engine's own. A profile with a hook gets its hook file here, so
   /// the CLI denies its built-in project tools before running them
   pub fn make(&self, data_root: &Path) -> std::io::Result<()> {
+    // A host path Windows reads as a drive (`/C:/x`) or a climbing one would put the stand-in, and the files written
+    // into it, somewhere among this machine's own
+    if !self.local.starts_with(data_root.join("remote")) || self.local.components().any(|c| c == std::path::Component::ParentDir) {
+      return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{} is outside the stand-in folders", self.local.display())));
+    }
     match std::fs::create_dir_all(&self.local) {
       Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
         self.open_to_owner(data_root);
@@ -58,6 +63,9 @@ impl Stand {
     }
     if let Some(format) = self.profile.hook() {
       write_hooks(&self.local, &self.profile, format)?;
+    }
+    for (rel, text) in &self.profile.files {
+      write_changed(&self.local.join(rel), text.as_bytes())?;
     }
     Ok(())
   }
@@ -217,16 +225,34 @@ pub fn own_file(profile: &StandProfile, args: &Value, home: &Path) -> bool {
   own_paths(profile, tool_paths(args), home)
 }
 
+/// Where a CLI names the tool of a permission request: the top-level `name`, Grok's and Devin's `_meta`, else the title
+fn native_names(tc: &Value) -> Vec<&str> {
+  ["/name", "/_meta/x.ai~1tool/name", "/_meta/cognition.ai~1inferenceToolName", "/title"]
+    .iter()
+    .filter_map(|at| tc.pointer(at)?.as_str())
+    .map(|s| s.strip_prefix("Run ").unwrap_or(s))
+    .collect()
+}
+
+/// A request the engine cannot tell safe in a stand-in whose CLI no gate stops: a tool of kind `other` that is no MCP
+/// server's (a CLI may file its shell there, as DSH does). `blocked_native` lets it by, so it must not ride the
+/// engine's own full access past the user
+pub fn unjudged(stand: &Stand, tc: &Value) -> bool {
+  stand.profile.gates.is_empty()
+    && tc.get("kind").and_then(Value::as_str) == Some("other")
+    && !native_names(tc).first().is_some_and(|n| n.starts_with("mcp_"))
+}
+
 /// The engine's refusal under every profile: a permission request of a native tool (not one of Acpira's, `caller`
 /// tells those apart) that runs a command, searches or lists, or that writes, reads or moves files other than the CLI's
 /// own. A tool of an MCP server (`mcp__…`, `mcp_…`) is that server's business
 pub fn blocked_native(stand: &Stand, tc: &Value, home: &Path, data_root: &Path) -> bool {
-  let name = tc.get("name").and_then(Value::as_str).or_else(|| tc.get("title").and_then(Value::as_str)).map(|s| s.strip_prefix("Run ").unwrap_or(s)).unwrap_or("");
-  if name.starts_with("mcp_") {
+  let names = native_names(tc);
+  if names.first().is_some_and(|n| n.starts_with("mcp_")) {
     return false;
   }
   let native = &stand.profile.native;
-  if native.shell.iter().any(|t| t == name) {
+  if names.iter().any(|n| native.shell.iter().any(|t| t == n)) {
     return true;
   }
   let kind = tc.get("kind").and_then(Value::as_str).unwrap_or("");
@@ -234,7 +260,7 @@ pub fn blocked_native(stand: &Stand, tc: &Value, home: &Path, data_root: &Path) 
   if kind.is_empty() && native.shell.is_empty() && native.files.is_empty() {
     return true;
   }
-  let file_tool = native.files.iter().any(|t| t == name);
+  let file_tool = names.iter().any(|n| native.files.iter().any(|t| t == n));
   if !file_tool && !matches!(kind, "edit" | "delete" | "move") {
     return kind == "execute";
   }
@@ -358,9 +384,6 @@ fn write_hooks(local: &Path, profile: &StandProfile, format: &HookFormat) -> std
     // Claude Code's matchers are regular expressions: anchored, so `Read` is not also `ReadMcpResource`
     HookFormat::Claude(rel) => (local.join(rel), format!("^({})$", profile.native.shell.join("|")), format!("^({})$", profile.native.files.join("|"))),
   };
-  if let Some(dir) = file.parent() {
-    std::fs::create_dir_all(dir)?;
-  }
   let doc = json!({
     "hooks": {
       "PreToolUse": [
@@ -369,11 +392,25 @@ fn write_hooks(local: &Path, profile: &StandProfile, format: &HookFormat) -> std
       ]
     }
   });
-  let bytes = serde_json::to_vec_pretty(&doc).unwrap_or_default();
-  if std::fs::read(&file).ok().as_deref() == Some(bytes.as_slice()) {
+  write_changed(&file, &serde_json::to_vec_pretty(&doc).unwrap_or_default())
+}
+
+/// Writes one of the stand-in's own files, with its folders, unless it already reads so. Renamed into place: a CLI
+/// starting in the same stand-in meanwhile never reads half a gate
+fn write_changed(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+  if std::fs::read(file).ok().as_deref() == Some(bytes) {
     return Ok(());
   }
-  std::fs::write(&file, bytes)
+  if let Some(dir) = file.parent() {
+    std::fs::create_dir_all(dir)?;
+  }
+  let mut tmp = file.as_os_str().to_owned();
+  tmp.push(format!(".{}.tmp", crate::util::random_uuid()));
+  let tmp = PathBuf::from(tmp);
+  std::fs::write(&tmp, bytes)?;
+  std::fs::rename(&tmp, file).inspect_err(|_| {
+    let _ = std::fs::remove_file(&tmp);
+  })
 }
 
 #[cfg(test)]
@@ -419,6 +456,20 @@ mod tests {
     assert!(rules[0]["matcher"].as_str().unwrap().contains("run_command"));
     assert!(rules[1]["matcher"].as_str().unwrap().contains("read_file"));
     assert!(rules[1]["hooks"][0]["command"].as_str().unwrap().ends_with(&format!(" {GUARD_COMMAND} antigravity")));
+  }
+
+  #[test]
+  fn a_profiles_own_files_land_in_the_stand_in() {
+    let root = tempfile::tempdir().unwrap();
+    let s = Stand::new(profile("dsh"), "gen1", "/mnt/proj", root.path());
+    s.make(root.path()).unwrap();
+    let patch = std::fs::read_to_string(s.local.join(".acpira/dsh.patch.yml")).unwrap();
+    assert!(patch.starts_with("- id: tool-bash\n  disabled: true\n"), "{patch}");
+    assert!(s.profile.args().any(|a| a == ".acpira/dsh.patch.yml"));
+    let droid = Stand::new(profile("droid"), "gen1", "/mnt/proj", root.path());
+    droid.make(root.path()).unwrap();
+    let hooks: Value = serde_json::from_slice(&std::fs::read(droid.local.join(".factory/settings.json")).unwrap()).unwrap();
+    assert_eq!(hooks["hooks"]["PreToolUse"][0]["matcher"], "^(Execute|Grep|Glob|LS)$");
   }
 
   #[test]
@@ -478,6 +529,11 @@ mod tests {
     assert_eq!((v.code, serde_json::from_str::<Value>(&v.stdout).unwrap()["decision"].clone()), (0, json!("deny")));
     // An agent with no hook here is denied everything
     assert!(guard("kimi", &payload(json!({ "AbsolutePath": format!("{me}/.gemini/x.md") })), home).is_some());
+    // Claude Code's payload, as Droid and Grok send it: a deny is exit code 2
+    let claude = |tool: &str, input: Value| guard("droid", &json!({ "tool_name": tool, "tool_input": input }).to_string(), home);
+    assert_eq!(claude("Execute", json!({ "command": "ls" })).map(|v| v.code), Some(2));
+    assert!(claude("Create", json!({ "file_path": "/etc/hosts", "content": "x" })).is_some());
+    assert!(claude("Read", json!({ "file_path": format!("{me}/.factory/skills/a/SKILL.md") })).is_none());
   }
 
   #[test]
@@ -560,5 +616,19 @@ mod tests {
     assert!(!blocked_native(&mine, &json!({ "title": "Fetch", "kind": "fetch" }), home, data));
     assert!(!blocked_native(&mine, &json!({ "title": "mcp__acpira__ask_agent", "kind": "execute" }), home, data));
     assert!(blocked_native(&mine, &json!({ "toolCallId": "t1", "title": "Terminal" }), home, data), "no kind, no way to tell it safe");
+    // Kind `other` is let by, and keeps its card under the engine's full access where no gate stands behind it
+    let other = json!({ "title": "shell", "kind": "other", "rawInput": { "cmd": "ls" } });
+    assert!(!blocked_native(&mine, &other, home, data) && unjudged(&mine, &other));
+    assert!(!unjudged(&mine, &json!({ "title": "mcp__github__create_issue", "kind": "other" })));
+    assert!(!unjudged(&mine, &json!({ "title": "Read a.rs", "kind": "read" })));
+
+    // Grok names the tool in `_meta`, under a title that is the command; DSH files every tool under `other`
+    let grok = Stand::new(profile("grok"), "gen1", "/home/u/proj", data);
+    let run = json!({ "title": "Execute `hostname`", "kind": "other", "_meta": { "x.ai/tool": { "name": "run_terminal_command" } } });
+    assert!(blocked_native(&grok, &run, home, data));
+    let dsh = Stand::new(profile("dsh"), "gen1", "/home/u/proj", data);
+    assert!(blocked_native(&dsh, &json!({ "title": "write", "kind": "other", "rawInput": { "file_path": "/tmp/x", "content": "x" } }), home, data));
+    assert!(!blocked_native(&dsh, &json!({ "title": "todo_write", "kind": "other" }), home, data));
+    assert!(!unjudged(&dsh, &json!({ "title": "todo_write", "kind": "other" })), "its gate took the shell away");
   }
 }

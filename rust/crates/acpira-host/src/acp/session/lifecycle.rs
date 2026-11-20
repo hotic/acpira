@@ -261,7 +261,7 @@ impl AcpSession {
     let def = if launched { crate::acp::session::plugin_hooks::plugin_launch(self.deps.plugin_runtime.as_ref(), &def, &self.id, &dir).await } else { def };
     // A stand-in CLI starts with its gate's arguments and environment (`StandProfile::launch`), after any plugin's, so no
     // launch hook can drop them
-    let stand = self.remote_stand();
+    let stand = self.gated_remote_stand()?;
     let def = match &stand {
       Some(s) => s.profile.launch(&def),
       None => def,

@@ -9,8 +9,9 @@ use serde_json::{Map, Value, json};
 use super::StandProfile;
 use super::stand::{Stand, path_arg, runs_here};
 
-/// How the two built-in stand-in CLIs name a tool of Acpira's server: claude-agent-acp, `agy acp`
-const KNOWN_PREFIXES: [&str; 2] = [super::DEFAULT_PREFIX, "mcp_acpira_"];
+/// Words a CLI puts around the server and the tool when it names a call (`Run mcp_acpira_Read`, Devin's
+/// `Calling Bash from acpira`)
+const NAME_FILLERS: [&str; 6] = ["mcp", "run", "calling", "called", "call", "from"];
 
 /// The remote tools allowed without a permission request, as the native ones are: the read-only ones, and the two that
 /// only reach a background command the session started itself
@@ -308,17 +309,47 @@ pub fn tool_defs(alias: &str) -> Vec<Value> {
   ]
 }
 
-/// The native name of a remote tool the update (or a permission request's toolCall) names: claude-agent-acp's
-/// `_meta.claudeCode.toolName`, the top-level `name`, else the title, under the profile's prefix or a built-in CLI's
-/// (`mcp__acpira__<Tool>`, `mcp_acpira_<Tool>`, Antigravity's `Run mcp_acpira_<Tool>`)
+/// The remote tool a CLI's name for a call means. Every CLI spells a server's tool its own way (`mcp__acpira__Edit`,
+/// `mcp_acpira_Edit`, `acpira___Edit`, `acpira_Edit`, `acpira: Edit`, `Calling Edit from acpira`), so the name is read
+/// by its words: Acpira's server, exactly one remote tool, and nothing else but the fillers. A search for tools
+/// (`Search tools: acpira Edit`) or another server's `Edit` is none, and a hyphen keeps a word whole, so the server
+/// `acpira-tool` is not Acpira's
+fn tool_named(profile: &StandProfile, s: &str) -> Option<&'static str> {
+  let remote = |n: &str| acpira_shared::host_tools::REMOTE.iter().find(|t| **t == n).copied();
+  if let Some(n) = Some(profile.prefix.as_str()).filter(|p| !p.is_empty()).and_then(|p| s.strip_prefix(p)).and_then(remote) {
+    return Some(n);
+  }
+  let (mut server, mut tool) = (false, None);
+  for w in s.split(|c: char| !c.is_ascii_alphanumeric() && c != '-').filter(|w| !w.is_empty()) {
+    if w.eq_ignore_ascii_case(crate::host_mcp::SERVER_NAME) {
+      server = true;
+    } else if !NAME_FILLERS.iter().any(|f| w.eq_ignore_ascii_case(f)) {
+      if tool.is_some() {
+        return None;
+      }
+      tool = Some(remote(w)?);
+    }
+  }
+  tool.filter(|_| server)
+}
+
+/// Where a CLI names the tool of a call: claude-agent-acp's and Devin's `_meta`, the top-level `name` (Antigravity,
+/// Droid), the model's own argument when the CLI calls MCP tools through one of its own (Grok's `use_tool`), the title
+const NAME_AT: [&str; 5] = ["/_meta/claudeCode/toolName", "/_meta/cognition.ai~1toolName", "/name", "/rawInput/tool_name", "/title"];
+
+/// The native name of a remote tool the update (or a permission request's toolCall) names (`tool_named`)
 pub fn remote_name(profile: &StandProfile, u: &Value) -> Option<&'static str> {
-  let named = |s: Option<&str>| {
-    let s = s?;
-    let s = s.strip_prefix("Run ").unwrap_or(s);
-    let n = std::iter::once(profile.prefix.as_str()).chain(KNOWN_PREFIXES).filter(|p| !p.is_empty()).find_map(|p| s.strip_prefix(p))?;
-    acpira_shared::host_tools::REMOTE.iter().find(|t| **t == n).copied()
-  };
-  ["/_meta/claudeCode/toolName", "/name", "/title"].iter().find_map(|at| named(u.pointer(at).and_then(Value::as_str)))
+  // An argument called `tool_name` names the call only where the model's arguments sit beside it (`call_input`)
+  let wrapped = u.pointer("/rawInput/tool_input").is_some_and(Value::is_object);
+  NAME_AT.iter().filter(|at| wrapped || **at != "/rawInput/tool_name").find_map(|at| tool_named(profile, u.pointer(at)?.as_str()?))
+}
+
+/// The model's arguments of a call: a CLI that calls MCP tools through a tool of its own (Grok's `use_tool`) nests them
+pub fn call_input(raw: &Value) -> &Value {
+  match (raw.get("tool_name"), raw.get("tool_input")) {
+    (Some(Value::String(_)), Some(input)) if input.is_object() => input,
+    _ => raw,
+  }
 }
 
 /// How the adapter reports the native tool for this input: kind, title, locations, and a write's diffs from the input
@@ -459,6 +490,23 @@ mod tests {
     assert_eq!(remote_name(&mine, &json!({ "title": "acpira_Grep" })), Some("Grep"));
     mine.prefix = String::new();
     assert_eq!(remote_name(&mine, &json!({ "title": "Grep" })), None);
+    // Each CLI's own spelling: Droid, OpenCode, Devin, Grok's wrapper
+    assert_eq!(remote_name(&mine, &json!({ "title": "acpira: Bash", "name": "acpira___Bash" })), Some("Bash"));
+    assert_eq!(remote_name(&mine, &json!({ "title": "acpira_Write" })), Some("Write"));
+    assert_eq!(remote_name(&mine, &json!({ "title": "Calling Edit from acpira" })), Some("Edit"));
+    assert_eq!(remote_name(&mine, &json!({ "title": "Called Edit from acpira" })), Some("Edit"));
+    let wrapped = json!({ "title": "use_tool", "rawInput": { "tool_name": "acpira__MultiEdit", "tool_input": { "file_path": "a" } } });
+    assert_eq!(remote_name(&mine, &wrapped), Some("MultiEdit"));
+    assert_eq!(call_input(&wrapped["rawInput"]), &json!({ "file_path": "a" }));
+    assert_eq!(call_input(&json!({ "file_path": "a" })), &json!({ "file_path": "a" }));
+    // A search for the tools, another server's tool of the same name and a native tool are none
+    assert_eq!(remote_name(&mine, &json!({ "title": "Search tools: \"acpira Edit\"" })), None);
+    assert_eq!(remote_name(&mine, &json!({ "title": "Search tools: acpira___Bash, acpira___Write" })), None);
+    assert_eq!(remote_name(&mine, &json!({ "title": "github__Read" })), None);
+    assert_eq!(remote_name(&mine, &json!({ "title": "mcp__acpira-tool__Read" })), None);
+    assert_eq!(remote_name(&mine, &json!({ "name": "lookup", "rawInput": { "tool_name": "acpira__Bash" } })), None);
+    assert_eq!(remote_name(&mine, &json!({ "title": "Listed MCP tools for acpira" })), None);
+    assert_eq!(remote_name(&mine, &json!({ "title": "mcp__acpira__read_session" })), None);
     let v = view("Edit", &json!({ "file_path": "src/a.rs", "old_string": "a", "new_string": "b", "toolSummary": "Edit a.rs" }), &s, data, &[]);
     assert_eq!((v.kind, v.title.as_str()), ("edit", "Edit src/a.rs"));
     assert_eq!(v.locations, vec![json!({ "path": "/home/u/proj/src/a.rs" })]);

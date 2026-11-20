@@ -150,6 +150,9 @@ impl ClientHandlers for SessionHandlers {
     let s = self.live();
     Box::pin(async move {
       match s {
+        // The built-in agent's own request, which carries its approval already: any other CLI's project tools go
+        // through `acpira mcp`, where the engine asks (`on_mcp_remote_tool`)
+        Some(s) if s.local_run() != Some(crate::acp::local_run::LocalRun::Native) => Err(RpcError::new(-32601, "method not found")),
         Some(s) => {
           let me = Arc::downgrade(&s);
           let notify: crate::acp::session::remote::Notify = Arc::new(move |method: &str, params: Value| {
