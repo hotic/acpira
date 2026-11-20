@@ -1232,6 +1232,7 @@ async fn a_droid_core_swap_moves_the_turn_to_the_next_account_on_the_picked_mode
 
 /// A plugin listing Droid accounts (`LISTER` under `droid`, `accounts` replacing its one entry) beside a saved account
 /// of the user's, and a manager whose Droid session runs the fake with two models to pick from
+#[cfg(unix)]
 async fn droid_plugin_setup(fake: &crate::support::FakeAgent, accounts: Option<&str>) -> (tempfile::TempDir, Arc<AccountManager>, Arc<acpira_host::plugins::runtime::Runtimes>, Mgr) {
   let dir = tempfile::tempdir().unwrap();
   let init_log = dir.path().join("init.log");
@@ -1268,6 +1269,7 @@ async fn droid_plugin_setup(fake: &crate::support::FakeAgent, accounts: Option<&
 }
 
 /// Bind the session to `id` and pick Fable on it
+#[cfg(unix)]
 async fn droid_on(mgr: &Mgr, id: &str) {
   mgr.handle(json!({ "type": "selectAccount", "id": id })).await;
   until(|| mgr.active().is_some_and(|a| a["status"] == "ready" && a["accountId"] == id), 10_000).await;
@@ -1275,6 +1277,7 @@ async fn droid_on(mgr: &Mgr, id: &str) {
   until(|| model_of(mgr) == "claude-fable-5.2", 5000).await;
 }
 
+#[cfg(unix)]
 fn last_of(mgr: &Mgr) -> Value {
   mgr.active().unwrap()["turns"].as_array().unwrap().last().cloned().unwrap()
 }
@@ -1341,7 +1344,7 @@ async fn the_local_login_is_listed_by_itself_follows_a_relogin_and_stays_removed
   let dir = tempfile::tempdir().unwrap();
   let store = Arc::new(store_in(dir.path()));
   store.load().await.unwrap();
-  let provider = Arc::new(FakeProvider { auto: true, ..FakeProvider::default() });
+  let provider = Arc::new(FakeProvider { auto: true, agent: "fake", ..FakeProvider::default() });
   let accounts = AccountManager::new(store.clone(), vec![provider.clone()], log(), Arc::new(|_, _, _, _| {}), Arc::new(|_: &str, _: &str| {}));
   let pushed = Arc::new(AtomicUsize::new(0));
   let p = pushed.clone();
