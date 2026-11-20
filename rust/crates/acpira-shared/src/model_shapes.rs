@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::composer_controls::is_reasoning_control;
+use crate::composer_controls::{is_model_config_control, is_reasoning_control};
 use crate::models::group_models;
 use crate::transcript::{ConfigControl, SessionControls, SessionModel};
 
@@ -57,13 +57,13 @@ impl ModelMemory {
   }
 }
 
-/// The values of the controls that belong to the model: its reasoning level and its `model_config` parameters. The
+/// The values of the controls that belong to the model: its reasoning level and its `model_config` / `speed` parameters. The
 /// approval level, the sidekick selects and modes are the session's, never a model's
 pub fn model_params(controls: &SessionControls) -> BTreeMap<String, String> {
   controls
     .options
     .iter()
-    .filter(|c| is_reasoning_control(c) || c.category.as_deref() == Some("model_config"))
+    .filter(|c| is_reasoning_control(c) || is_model_config_control(c))
     .filter_map(|c| Some((c.id.clone(), c.value.clone()?)))
     .collect()
 }

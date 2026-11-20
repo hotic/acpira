@@ -247,7 +247,7 @@ export function composerControls(options: ConfigControl[]) {
     else if (c.category === SIDEKICK_CATEGORY && c.type !== 'boolean') sidekick.push(c);
     else if (c.category === SIDEKICK_EFFORT_CATEGORY && c.type !== 'boolean') sidekickEffort.push(c);
     else if (c.category === SIDEKICK_FAST_CATEGORY) sidekickFast.push(c);
-    else if (c.category === 'model_config') modelConfig.push(c);
+    else if (c.category === 'model_config' || c.category === 'speed') modelConfig.push(c);
     // A boolean's synthetic Off/On pair is not a model family even under a `model` category; it chips in `other`
     else if (c.type !== 'boolean' && (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length)))) models.push(c);
     else other.push(c);

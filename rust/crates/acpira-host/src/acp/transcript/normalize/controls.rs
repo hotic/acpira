@@ -35,7 +35,7 @@ pub(super) fn apply_modes(controls: &mut SessionControls, modes: &[Value]) {
     .collect();
 }
 
-const CATEGORY_ORDER: [&str; 3] = ["model", "thought_level", "model_config"];
+const CATEGORY_ORDER: [&str; 4] = ["model", "thought_level", "model_config", "speed"];
 
 fn bool_options() -> Vec<SessionOption> {
   vec![

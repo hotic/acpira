@@ -47,10 +47,12 @@ describe('shared composer controls', () => {
   it('every Fast shape reads as one "Fast" switch: Devin speed select, codex fast-mode and claude fast booleans', () => {
     const fast: ConfigControl = { id: 'fast-mode', name: 'Fast mode', category: 'model_config', type: 'boolean', value: 'true',
       options: [{ id: 'false', name: 'Off' }, { id: 'true', name: 'On' }] };
-    const claude: ConfigControl = { ...fast, id: 'fast', name: 'Fast mode' };
+    // claude-agent-acp 0.108.1+ classifies Fast mode under the unstable ACP `speed` category
+    const claude: ConfigControl = { ...fast, id: 'fast', name: 'Fast mode', category: 'speed' };
     const speed: ConfigControl = { id: 'speed', name: 'Speed', category: 'model_config', value: 'fast', options: [
       { id: 'standard', name: 'Standard' }, { id: 'fast', name: 'Fast' },
     ] };
+    expect(composerControls([claude]).modelConfig).toEqual([claude]);
     for (const c of [fast, claude, speed]) {
       expect(isFastControl(c)).toBe(true);
       expect(fastOn(c)).toBe(true);

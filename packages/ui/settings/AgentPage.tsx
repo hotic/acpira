@@ -63,10 +63,11 @@ export interface AgentSettingsProps {
   onShared?: () => void;
 }
 
-// Reasoning levels belong to the current model's picker, not agent-wide visibility settings; a boolean's synthetic
-// Off/On pair is not a family either, nor are the built-in agent's sidekick pick, its levels and its Fast (a plugin agent
-// running it shows this tab)
-const modelControlsOf = (controls?: ConfigControl[]) => controls?.filter(c => !isReasoningControl(c) && c.type !== 'boolean'
+// Reasoning levels belong to the current model's picker, not agent-wide visibility settings; permission levels
+// (`_permission_mode`), Fast switches (booleans or Devin's Standard / Fast select), and the built-in agent's sidekick
+// controls are not model lists either (a plugin agent running it shows this tab)
+export const modelControlsOf = (controls?: ConfigControl[]) => controls?.filter(c => !isReasoningControl(c) && c.type !== 'boolean'
+  && c.category !== '_permission_mode' && !isFastControl(c)
   && c.category !== SIDEKICK_CATEGORY && c.category !== SIDEKICK_EFFORT_CATEGORY && c.category !== SIDEKICK_FAST_CATEGORY);
 
 // The tabs an agent's dialog offers, with their counts once known. The built-in agent shows its prompts, skills and MCP

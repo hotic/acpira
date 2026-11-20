@@ -219,15 +219,21 @@ impl Vendor {
     self == Vendor::Kimi
   }
 
-  /// Drop leaked built-in subagents from Claude's `agent` persona select, and drop the select itself when only
-  /// `default` remains: claude-agent-acp 0.108.1's `BUILTIN_AGENT_NAMES` misses Claude Code 2.1.299's built-in
-  /// `web-fetch` subagent, so the picker appears even with no custom agents configured. Keep an entry if it is the
-  /// session's current value so an already-selected session can still switch back to `default`.
+  /// Tidy Claude's session controls at every boundary (probes, startup previews, live sessions, reopened records):
+  /// - Drop `ultracode`: claude-agent-acp 0.97.0+ publishes its own boolean, while the host's Ultra effort level stands
+  ///   for it (`session/ultracode.rs`).
+  /// - Drop leaked built-in subagents (`web-fetch`) from Claude's `agent` persona select, and drop the select itself
+  ///   when only `default` remains: claude-agent-acp 0.108.1's `BUILTIN_AGENT_NAMES` misses Claude Code 2.1.299's
+  ///   built-in `web-fetch` subagent. Keep an entry while it is the session's current value so an already-selected
+  ///   session can still switch back to `default`.
   pub fn tidy_controls(self, options: &mut Vec<ConfigControl>) {
     if self != Vendor::Claude {
       return;
     }
     options.retain_mut(|ctl| {
+      if self.ultracode() && ctl.id == claude_ultracode::SETTINGS_KEY {
+        return false;
+      }
       if ctl.id != "agent" {
         return true;
       }
@@ -294,5 +300,27 @@ mod tests {
     Vendor::Codex.tidy_controls(&mut options);
     assert_eq!(options.len(), 1);
     assert_eq!(options[0].options.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["default", "web-fetch"]);
+  }
+
+  #[test]
+  fn claude_drops_ultracode_boolean_control_while_other_vendors_keep_it() {
+    let ultracode = ConfigControl {
+      id: claude_ultracode::SETTINGS_KEY.into(),
+      name: "Ultracode".into(),
+      category: Some("model_config".into()),
+      kind: Some(acpira_shared::transcript::ControlType::Boolean),
+      options: vec![
+        SessionOption { id: "false".into(), name: "Off".into(), ..Default::default() },
+        SessionOption { id: "true".into(), name: "On".into(), ..Default::default() },
+      ],
+      value: Some("false".into()),
+    };
+    let mut claude_opts = vec![model_control(), ultracode.clone()];
+    Vendor::Claude.tidy_controls(&mut claude_opts);
+    assert_eq!(claude_opts.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["model"]);
+
+    let mut other_opts = vec![model_control(), ultracode];
+    Vendor::Codex.tidy_controls(&mut other_opts);
+    assert_eq!(other_opts.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(), ["model", "ultracode"]);
   }
 }

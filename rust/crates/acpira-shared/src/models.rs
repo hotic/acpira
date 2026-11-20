@@ -89,7 +89,8 @@ fn parse_effort_tokens<'a>(tokens: &[&'a str]) -> (Vec<&'a str>, String) {
 fn strip_trailing_flags(t: &mut Vec<&str>, fast: &mut bool, long: &mut bool) {
   loop {
     let last = t.last().map(|s| s.to_lowercase()).unwrap_or_default();
-    if t.len() > 1 && last == "fast" {
+    if t.len() > 1 && last == "fast" && !t[t.len() - 2].eq_ignore_ascii_case("ultra") {
+      // Keep compound names like Droid's "GPT-6.2 Sol Ultra Fast" intact rather than mutating them into "... Ultra" + Fast
       *fast = true;
       t.pop();
     } else if t.len() > 2 && last == "mode" && t[t.len() - 2].eq_ignore_ascii_case("fast") {
@@ -357,6 +358,8 @@ mod tests {
     assert_eq!(parse_model_name("Gemini 3.1 Pro (Low thinking)"), ParsedModel { family: "Gemini 3.1 Pro".into(), effort: "Low".into(), ..Default::default() });
     assert_eq!(parse_model_name("[OAuth] GPT-5.1-Codex-Max (Extra High)"), ParsedModel { family: "[OAuth] GPT-5.1-Codex-Max".into(), effort: "XHigh".into(), ..Default::default() });
     assert_eq!(parse_model_name("Claude Haiku 4.5 (latest)"), ParsedModel { family: "Claude Haiku 4.5 (latest)".into(), ..Default::default() });
+    assert_eq!(parse_model_name("GPT-6.2 Sol Fast Mode"), ParsedModel { family: "GPT-6.2 Sol".into(), fast: true, ..Default::default() });
+    assert_eq!(parse_model_name("GPT-6.2 Sol Ultra Fast"), ParsedModel { family: "GPT-6.2 Sol Ultra Fast".into(), ..Default::default() });
     let f = parse_fusion_name("Fusion (GPT-6 Astra High Thinking Fast + GPT-5.6 Luna High Thinking Fast)").unwrap();
     assert_eq!(f.lead.as_deref(), Some("GPT-6 Astra"));
     assert_eq!(f.sidekick.as_deref(), Some("GPT-5.6 Luna High"));
