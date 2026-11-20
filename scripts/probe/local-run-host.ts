@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, hostname as localHostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionBlock, SessionView, ToolCallBlock } from '@acpira/shared/transcript';
@@ -49,6 +49,9 @@ console.log(`agent ${agent}, host ${alias} (${hostname}) project ${project}, cod
 const store = mkdtempSync(join(tmpdir(), 'acpira-local-run-store-'));
 copyFileSync(join(homedir(), '.acpira', 'connections.json'), join(store, 'connections.json'));
 for (const f of withAccounts ? ['accounts.json', 'secrets.json'] : []) copyFileSync(join(homedir(), '.acpira', f), join(store, f));
+// The host's helper build as this machine already fetched it, so a run does not download it again
+const builds = join(homedir(), '.acpira', 'run', 'remote', 'builds');
+if (existsSync(builds)) cpSync(builds, join(store, 'run', 'remote', 'builds'), { recursive: true });
 const local = mkdtempSync(join(tmpdir(), 'acpira-local-run-cwd-'));
 // A built-in id whose launcher the entry repeats keeps its definition, with the entry's `localRun` over it
 const defs: Record<string, string> = { droid: 'droid', grok: 'grok', devin: 'devin', kimi: 'kimi', opencode: 'opencode', hermes: 'hermes', pi: 'pi-acp', dsh: 'dsh' };
@@ -86,10 +89,17 @@ const send = async (prompt: string) => {
 
 try {
   const folder = `ssh://${alias}${project}`;
-  await m.handle({ type: 'newSession', agent, cwd: folder });
-  await until(() => m.active()?.cwd === folder && ['ready', 'error', 'auth_required', 'readonly'].includes(m.active()!.status), 180_000, 'session start');
+  // The host may still be connecting when the first request lands, and a session asked for then never opens
+  const opened = () => m.active()?.cwd === folder && ['ready', 'error', 'auth_required', 'readonly'].includes(m.active()!.status);
+  for (let i = 0; i < 9 && !opened(); i++) {
+    await m.handle({ type: 'newSession', agent, cwd: folder });
+    await until(opened, 20_000, 'session start').catch(() => undefined);
+  }
+  await until(opened, 1000, 'session start');
   let v = m.active()!;
   check('session ready', v.status === 'ready', v.error ?? v.status);
+  // A level that never asks (the CLI's own remembered mode) explains a turn without cards
+  console.log(`mode: ${v.controls?.modeId ?? 'none'}; ${v.controls?.options.map(o => `${o.id}=${o.value}`).join(', ')}`);
   const standLine = host.logs.find(l => l.includes(' runs in ') && l.includes('remote:'));
   console.log(standLine ?? 'no stand-in log line');
   const stand = standLine?.match(/ runs in (.+?) for /)?.[1];
@@ -97,6 +107,12 @@ try {
   const note = stand && existsSync(join(stand, 'AGENTS.md')) ? readFileSync(join(stand, 'AGENTS.md'), 'utf8') : undefined;
   console.log(note ? `stand-in AGENTS.md: ${note.length} bytes` : 'no AGENTS.md in the stand-in (the note travels on the request)');
   if (startOnly) throw new StartOnly();
+  // The CLI's remembered level may never ask (Claude Code's `auto` rules by its own classifier): the card checks need `ask`
+  const level = () => m.active()!.controls.options.find(o => o.id === 'approval');
+  if (level()?.options.some(o => o.id === 'ask') && level()!.value !== 'ask') {
+    await m.handle({ type: 'setConfig', sessionId: v.id, configId: 'approval', value: 'ask' });
+    await until(() => level()?.value === 'ask', 20_000, 'the ask level');
+  }
 
   v = await send('Without using any tools: what is the project code word? Reply with the word only.');
   check('the note reaches the model', text(v).includes(word), text(v).slice(0, 80));
@@ -110,8 +126,13 @@ try {
   const notes = ssh(`cat ${project}/notes.txt 2>&1`);
   check('host file written and edited', notes === 'hi from the probe', notes);
   check('command ran on the host', rows.some(b => b.kind === 'execute' && JSON.stringify(b).includes(hostname)), hostname);
-  check('rows read as native tools', rows.length >= 5 && rows.every(b => !b.mcpServer && !/acpira|mcp_/i.test(`${b.verb} ${b.target ?? ''}`)), rows.map(row).join(' | '));
-  check('write and command asked', cards.length >= 2, cards.map(c => c.title).join(' | '));
+  // A CLI that loads MCP tools late shows its own lookup rows (Droid's ToolSearch, Grok's search_tool, Devin's listing),
+  // which name the server: the five calls themselves must read as native rows
+  const native = rows.filter(b => ['execute', 'edit', 'search', 'read'].includes(b.kind) && !b.mcpServer && !/acpira|mcp_|use_tool/i.test(`${b.verb} ${b.target ?? ''}`));
+  const called = rows.filter(b => /^(mcp_+)?acpira[_:]+ ?(Bash|Write|Edit|Grep|Glob)$|^Call(ing|ed) |^use_tool$/.test(b.target ?? ''));
+  check('rows read as native tools', native.length >= 5 && called.length === 0, rows.map(row).join(' | '));
+  // One card each for the command, the write and the edit; a CLI that asks before reads too shows more
+  check('write and command asked', cards.length >= 3, cards.map(c => c.title).join(' | '));
 
   // The CLI's own tools would act on this machine: refused by its gate, or by the engine when it asks
   cards.length = 0;
@@ -123,10 +144,14 @@ try {
   check('no native command ran on this machine', !leaked, tools(v).map(row).join(' | ') || 'no rows');
   check('no native write landed here', !existsSync(marker), marker);
   console.log(`  cards for native tools: ${cards.map(c => c.title).join(' | ') || 'none'}`);
+  // No row and no card proves nothing by itself: the model may not have tried, or its gate took the tools off its list
+  if (!tools(v).length && !cards.length) console.log('  UNVERIFIED native side: no native call was attempted, read the reply above');
 
   // Stop ends the command on the host
-  const stopped = m.handle({ type: 'send', text: 'Run `sleep 271 && echo done` with the acpira Bash tool in the foreground and wait for it.' });
-  const sleeping = () => ssh(`pgrep -f '[s]leep 271' | wc -l`);
+  // A length of its own, so probes running side by side on one host do not count each other's
+  const nap = 200 + Math.floor(Math.random() * 700);
+  const stopped = m.handle({ type: 'send', text: `Run \`sleep ${nap} && echo done\` with the acpira Bash tool in the foreground and wait for it.` });
+  const sleeping = () => ssh(`pgrep -f '[s]leep ${nap}' | wc -l`);
   await until(() => tools(m.active()!).some(b => b.kind === 'execute' && b.status === 'in_progress'), 180_000, 'the running command row');
   await new Promise(r => setTimeout(r, 2000));
   check('sleep runs on the host', sleeping() !== '0');
@@ -136,7 +161,8 @@ try {
   for (let i = 0; i < 20 && !gone; i++) { gone = sleeping() === '0'; if (!gone) await new Promise(r => setTimeout(r, 500)); }
   check('stop ends it on the host', gone);
 
-  const left = stand && existsSync(stand) ? readdirSync(stand).filter(f => f !== 'AGENTS.md' && f !== '.agents') : [];
+  // Dot folders are the profile's own (its hook file, a patch) or the CLI's
+  const left = stand && existsSync(stand) ? readdirSync(stand).filter(f => f !== 'AGENTS.md' && !f.startsWith('.')) : [];
   check('nothing else lands in the stand-in', left.length === 0, left.join(','));
 } catch (e) {
   if (!(e instanceof StartOnly)) {

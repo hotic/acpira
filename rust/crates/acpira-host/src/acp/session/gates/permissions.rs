@@ -179,7 +179,10 @@ impl AcpSession {
       let synth = c.perms.auto_approve;
       // The built-in agent rechecks waiting actions after a live mode/approval change. It has already applied its
       // mode denies and configuration guard; the host's hooks above still get the final say.
-      let full_access = root && !insist && (synth || in_full_access(&c.state.controls) || Self::access_native_full(&c) || auto_rechecked);
+      let full_access = root
+        && !insist
+        && remote_perm != crate::acp::session::stand::RemotePerm::Unjudged
+        && (synth || in_full_access(&c.state.controls) || Self::access_native_full(&c) || auto_rechecked);
       // A summoned child in a bypass round: answered without a card, preferring the one-time allow so nothing lasting
       // lands in that CLI's own settings; a request with no plain allow still gets a card
       let bypass = matches!(&target, Target::Node(id) if c.tree.relay_bypass(id));

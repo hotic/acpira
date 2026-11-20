@@ -129,6 +129,15 @@ impl SessionManager {
         return Err(anyhow!(t("host.noProject")));
       };
       let id = agent.unwrap_or_else(|| me.default_agent());
+      // A folder on an SSH host starts a session here only for an agent the user runs here (`sshLocalAgents`). Any other
+      // starts in the host's engine (`host_action`), and one that got this far found no engine there to ask: it never
+      // falls back to this machine's login
+      if let Some(f) = acpira_shared::remote::parse_remote_folder(&cwd)
+        && !me.runs_here_on_ssh(&id)
+      {
+        let name = me.registry().try_get(&id).map(|d| d.name.clone()).unwrap_or_else(|| id.clone());
+        return Err(anyhow!(tp("host.remoteBuiltinOnly", &[("agent", &name), ("host", &f.alias)])));
+      }
       let acc = if me.deps.accounts.as_ref().is_some_and(|a| a.supports(&id)) { account.or_else(|| me.default_account(&id)) } else { None };
       // "New session in this category": filed on the session itself before anything awaits, so a switch made while it
       // spawns can never move the filing onto whichever session the viewer shows by then

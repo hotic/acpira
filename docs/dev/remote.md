@@ -35,7 +35,7 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 
 ## Built-in agent
 
-An agent runs here in an `ssh://` folder only when `sshLocalAgents` names it and its definition carries a `LocalRun` (`acp/local_run/mod.rs` `builtin`, or a custom entry's `localRun`, shown to pages as `AgentInfo.sshLocal`); else it runs on the host, or fails with `host.remoteBuiltinOnly`. Engine side `acp/session/remote.rs`, agent side `acpira_agent::remote`.
+An agent runs here in an `ssh://` folder only when `sshLocalAgents` names it and its definition carries a `LocalRun` (`acp/local_run/mod.rs`, shown to pages as `AgentInfo.sshLocal`); else it runs on the host, or fails with `host.remoteBuiltinOnly`. Engine side `acp/session/remote.rs`, agent side `acpira_agent::remote`.
 
 - Session requests carry the host path as `cwd` and `_meta["acpira/remote"] = { alias, places }`; prompt files, commands and skills come only from `places`, never this disk.
 - File and command tools go to the host as `_acpira/remoteTool` and run in the helper with the same `acpira_agent::tools` code. Paths under the local data root (session outputs, plan, staged attachments) stay local.
@@ -43,17 +43,7 @@ An agent runs here in an `ssh://` folder only when `sshLocalAgents` names it and
 
 ## Stand-in agents
 
-Other CLIs start in an empty stand-in folder here, native project tools stopped, Acpira's host tools instead: `acp/local_run/`, `acp/session/stand.rs`. Codex's own tools run on the host: `agent-quirks-codex.md`.
-
-- Stand-ins live under `<data root>/remote/`: `hosts/` for Claude Code (it keys sessions by folder), `antigravity/`, else `stand/<agent>/`. The pool warms the next process there, unless the profile adds launch arguments or environment.
-- Gates, strongest first: launch arguments or Claude's `disallowedTools` (off the model's list); a stand-in `PreToolUse` hook running `acpira tool-guard <agent>`; always, the engine refusing a native write or command's permission request (`stand::blocked_native`, ahead of full access).
-- Admission: a built-in profile needs a gate of its own, checked with `scripts/probe/local-run-host.ts`, and wins over a custom `localRun`. Otherwise that gets the generic profile: note in the stand-in's `AGENTS.md`, only the engine's refusal by the request's or its row's kind (none: refused), so it holds only while the CLI asks. A full-access pick stays the engine's (`hosts_full_access`); a CLI configured to start in its own bypass mode runs native tools here unasked.
-- The hook guard reads only the call's arguments: every `agy` payload names its `~/.gemini` transcript, so matching the whole payload let every call through.
-- `agy` injects a `toolSummary` field into tool inputs, stripped from rows and calls.
-- Host writes pass `beforeEdit` too (allow-once under acceptEdits); the CLI's own folders (`OwnFiles`) and the data root stay here.
-- A cancelled MCP request closes the hub socket, killing the host process group; a stop cancels every running call, a row's or not (a host command outlived a stop on Claude Code 2.1.300).
-- Observed on claude-agent-acp 0.93.0 / Claude Code 2.1.300: the adapter spreads `_meta.claudeCode.options` into the SDK options and takes `systemPrompt: { mode: "append" }` on new / load / resume; a `tools/call` carries its row's id in `_meta["claudecode/toolUseId"]`. A row names the MCP call in a top-level `name` and an AIR permission request repeats it in `_meta.jetbrains.air.permission.title`; both are rewritten, or the row reads "Call Acpira".
-- Limits: a slash command's inline `!` shell finds no Bash (the turn ends silently); no Monitor, NotebookEdit, LSP or worktrees; the host's `.claude/` / `.gemini/` is unread; a summoned child other than the built-in agent is refused (`relay/round.rs`).
+A CLI with a stand-in profile starts in an empty stand-in folder here, its native project tools stopped and Acpira's host tools in their place; which CLIs, and the ones withheld: `local-run.md`. Codex's own tools run on the host: `agent-quirks-codex.md`.
 
 ## Workspace seam
 
