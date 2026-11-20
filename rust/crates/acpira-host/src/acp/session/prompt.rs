@@ -757,6 +757,7 @@ impl AcpSession {
       if let Some(e) = failed {
         let error = self.reply_error(&mut c, e);
         self.log(&format!("prompt failed in the reply: {}", error.message));
+        self.reserve_reauth(&mut c, &error, accepted.compacting);
         self.settle(&mut c, TurnStop::Cancelled, Some(error));
         return Some(Settled { stop: TurnStop::Cancelled, exhausted });
       }
@@ -863,6 +864,7 @@ impl AcpSession {
         (tp(key, &[("name", &server), ("reason", &reason), ("agent", &self.def().name)]), "mcp_failed")
       }
       ReplyError::Region => (tp("host.regionUnsupported", &[("agent", &self.def().name)]), "region_unsupported"),
+      ReplyError::AuthExpired(text) => (text, "auth_expired"),
       ReplyError::Other(text) => (text, "agent_error"),
     };
     TurnError { message, kind: Some(kind.into()), retryable: Some(true), ..Default::default() }
@@ -888,6 +890,10 @@ impl AcpSession {
     }
     if settled.exhausted {
       tokio::spawn(self.clone().switch_after_exhaustion(turn.agent_idx, turn.started_at));
+      return;
+    }
+    if std::mem::take(&mut self.core.lock().reauth_due) {
+      tokio::spawn(self.clone().reauth_after_expiry(turn.agent_idx, turn.started_at));
       return;
     }
     // The queue flushes once the new connection is ready

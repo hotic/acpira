@@ -539,6 +539,7 @@ impl AcpSession {
     if autonomous && stop == TurnStop::Cancelled {
       c.peer.autonomous_blocked = true;
     }
+    self.note_expired_detached(c);
     if c.phase.running {
       self.settle(c, stop, None);
     }

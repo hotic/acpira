@@ -1,5 +1,7 @@
 //! The automatic account switch when a turn runs out of quota: reserve the session, move to the fallback account and
-//! continue the task there, or put the error back when the hand-off fails
+//! continue the task there, or put the error back when the hand-off fails. A turn that failed on a sign-in its process
+//! holds expired reconnects on the same account the same way, and a session whose saved account was removed moves to
+//! another before its process starts
 
 use std::sync::Arc;
 
@@ -9,10 +11,22 @@ use crate::acp::session::errors::is_quota_exhausted;
 use crate::acp::session::prompt::{Origin, agent_turn_mut};
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transport::rpc::BoxFuture;
+use crate::acp::vendors::antigravity::ReplyError;
 use crate::i18n::{t, tp};
-use crate::util::random_uuid;
+use crate::util::{now_ms, random_uuid};
 
-/// What the exhausted turn looked like before the switch rewrote it, so a failed switch can put the error back
+/// The least time between two reconnects on an expired sign-in: one sooner means the stored credential is stale as well
+const REAUTH_GAP_MS: i64 = 5 * 60_000;
+
+/// The notice row a hand-off leaves on the failed turn, and the continue prompt that follows it
+struct Handoff {
+  title: String,
+  category: FailureCategory,
+  info: bool,
+  prompt_key: &'static str,
+}
+
+/// What the failed turn looked like before the hand-off rewrote it, so a failed hand-off can put the error back
 struct ExhaustedTurn {
   stop: Option<TurnStop>,
   error: Option<TurnError>,
@@ -21,11 +35,11 @@ struct ExhaustedTurn {
 }
 
 impl AcpSession {
-  /// The hidden follow-up after an automatic account switch, in the host language: the native session came back on the
-  /// new account, so the agent picks the task up from its own context
-  fn continue_after_switch(self: &Arc<Self>) -> BoxFuture<()> {
+  /// The hidden follow-up after an automatic hand-off, in the host language: the native session came back on a fresh
+  /// process, so the agent picks the task up from its own context
+  fn continue_after_switch(self: &Arc<Self>, prompt_key: &'static str) -> BoxFuture<()> {
     let me = self.clone();
-    Box::pin(async move { me.prompt_inner(t("host.autoContinuePrompt"), vec![], Origin::Continue, None, None).await })
+    Box::pin(async move { me.prompt_inner(t(prompt_key), vec![], Origin::Continue, None, None).await })
   }
 
   /// A turn that ran out of account quota reserves the session for the automatic switch (under the same lock that settles
@@ -36,6 +50,61 @@ impl AcpSession {
       c.switching = true;
     }
     yes
+  }
+
+  /// A turn that failed on a sign-in its process holds expired reserves the session to reconnect on the stored
+  /// credential, which may have been renewed since (a plugin's account may rewrite its token file). Only a session bound to an
+  /// account qualifies, and not again within `REAUTH_GAP_MS`, so a credential expired in the store too shows its error.
+  /// A `/compact` is no task to continue: it keeps its error and the next prompt (a retried `/compact` too) reconnects first
+  pub(crate) fn reserve_reauth(&self, c: &mut Core, error: &TurnError, compacting: bool) {
+    let now = now_ms();
+    if self.deps.accounts.is_none() || c.account_id.is_none() || c.switching || error.kind.as_deref() != Some("auth_expired") {
+      return;
+    }
+    if compacting {
+      self.drop_stale_process(c);
+      return;
+    }
+    if c.reauth_at.is_some_and(|at| now - at < REAUTH_GAP_MS) {
+      return;
+    }
+    self.drop_warm();
+    c.switching = true;
+    c.reauth_due = true;
+    c.reauth_at = Some(now);
+  }
+
+  /// A detached run (a background command's exit woke the model, `late_reply.rs`) that ended on an expired sign-in: the
+  /// next prompt waits for a fresh process, which reads the stored credential again, instead of failing the same way
+  pub(crate) fn note_expired_detached(&self, c: &mut Core) {
+    let expired = self.deps.accounts.is_some()
+      && c.account_id.is_some()
+      && matches!(c.state.turns.last(), Some(Turn::Agent(t)) if matches!(t.blocks.last(),
+        Some(AgentBlock::Text(x)) if matches!(self.vendor.reply_error(&x.markdown), Some((_, ReplyError::AuthExpired(_))))));
+    if expired {
+      self.log("detached run ended on an expired sign-in: the next prompt reconnects first");
+      self.drop_stale_process(c);
+    }
+  }
+
+  fn drop_stale_process(&self, c: &mut Core) {
+    c.adapter_stale = true;
+    self.drop_warm();
+  }
+
+  /// Warm processes of the agent read their token when they started, possibly before the store's was renewed
+  fn drop_warm(&self) {
+    if let Some(pool) = &self.deps.pool {
+      pool.invalidate(Some(&self.agent));
+    }
+  }
+
+  /// Reconnect on the bound account's stored credential and continue the task (`hand_off`)
+  pub(crate) async fn reauth_after_expiry(self: Arc<Self>, agent_idx: usize, started_at: i64) {
+    let Some(account) = self.core.lock().account_id.clone() else { return self.release_switch() };
+    self.log("sign-in expired in the running process: reconnecting on the stored credential");
+    let notice = Handoff { title: t("host.signInRenewed"), category: FailureCategory::Access, info: true, prompt_key: "host.reauthContinuePrompt" };
+    self.hand_off(agent_idx, started_at, &account, notice).await
   }
 
   /// Move to the account the strategy picks and continue the task there: the exhausted turn keeps its output and gets a
@@ -50,6 +119,15 @@ impl AcpSession {
     };
     let from = current.as_ref().and_then(|id| hooks.label(id.clone())).or(current).unwrap_or_default();
     self.log(&format!("quota exhausted: switching {from} → {to}"));
+    let title = tp("host.accountSwitched", &[("from", &from), ("to", &to)]);
+    let notice = Handoff { title, category: FailureCategory::Limit, info: false, prompt_key: "host.autoContinuePrompt" };
+    self.hand_off(agent_idx, started_at, &next, notice).await
+  }
+
+  /// Bind `account` on a fresh process and continue the task there: the failed turn keeps its output and gets a notice
+  /// row instead of the error card, the native session is resumed on the account's credential, and a hidden continue
+  /// prompt picks the work up. With the new process not coming up the error goes back where it was
+  async fn hand_off(self: Arc<Self>, agent_idx: usize, started_at: i64, account: &str, h: Handoff) {
     let saved = {
       let mut c = self.core.lock();
       let saved = agent_turn_mut(&mut c, agent_idx, started_at).map(|turn| {
@@ -62,10 +140,10 @@ impl AcpSession {
         turn.blocks.push(AgentBlock::Notice(NoticeBlock {
           id: switch_notice.clone(),
           revision: acpira_shared::num::Num(1.0),
-          category: FailureCategory::Limit,
+          category: h.category,
           severity: Severity::Warning,
-          info: false,
-          title: tp("host.accountSwitched", &[("from", &from), ("to", &to)]),
+          info: h.info,
+          title: h.title,
           details: None,
           actions: vec![],
           retry: None,
@@ -77,9 +155,9 @@ impl AcpSession {
       self.touch(&mut c);
       saved
     };
-    self.rebind_reserved(&next).await;
+    self.rebind_reserved(account).await;
     if self.status() == SessionStatus::Ready {
-      return self.continue_after_switch().await;
+      return self.continue_after_switch(h.prompt_key).await;
     }
     // The new account did not come up: the session's own error / login state explains it, the turn gets its error back
     if let Some(saved) = saved {
@@ -97,6 +175,23 @@ impl AcpSession {
       }
     }
     self.release_switch();
+  }
+
+  /// The account to start on: the bound one, or, when that saved account was removed, the one the switch strategy picks
+  /// (else the agent's default), which becomes the session's binding. An old session opened after its account was
+  /// deleted carries on with a remaining login instead of stopping on sign-in
+  pub(crate) async fn replace_removed_account(&self, account: Option<String>) -> Option<String> {
+    let (Some(gone), Some(hooks)) = (account.clone(), self.deps.accounts.clone()) else { return account };
+    let Some((next, label)) = hooks.replacement(self.agent.clone(), gone.clone()).await else { return account };
+    let mut c = self.core.lock();
+    // A pick made while the replacement was looked up wins: its own reopen starts on it
+    if c.account_id.as_deref() != Some(gone.as_str()) {
+      return c.account_id.clone();
+    }
+    self.log(&format!("account {} was removed: moving to {label}", gone.chars().take(8).collect::<String>()));
+    c.account_id = Some(next.clone());
+    self.touch(&mut c);
+    Some(next)
   }
 
   fn release_switch(self: &Arc<Self>) {

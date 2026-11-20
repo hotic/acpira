@@ -286,6 +286,7 @@ impl AcpSession {
       c.ultracode.workflows = workflows;
     }
     self.load_host_sidekick().await;
+    let account = self.replace_removed_account(account).await;
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
     // An account its source does not offer now has no variables to start with: no process, warm or new, runs without them

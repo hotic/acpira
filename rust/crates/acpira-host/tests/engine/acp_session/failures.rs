@@ -115,3 +115,51 @@ async fn an_antigravity_failure_reply_becomes_the_turn_error() {
   prompt(&s, "say:Agent execution error: boom").await;
   expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn" }));
 }
+
+// agy reads its token once per process: a credential renewed in the token file reaches only a new one, so a turn that
+// failed on the expired ticket reconnects on the account and goes on; a second expiry right after is the error
+#[tokio::test(flavor = "multi_thread")]
+async fn an_expired_antigravity_sign_in_reconnects_once_and_continues_the_task() {
+  use acpira_host::acp::session::SessionAccountHooks;
+  use acpira_host::acp::transport::{process::AgentProcess, rpc::BoxFuture};
+  use acpira_shared::transcript::StrMap;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  /// A saved account whose hand-off always goes through, counted once per process
+  struct SignIns(AtomicUsize);
+  impl SessionAccountHooks for SignIns {
+    fn spawn_env(&self, _: String, _: String) -> BoxFuture<Option<StrMap>> {
+      Box::pin(async { None })
+    }
+    fn authenticate(&self, _: String, _: String, _: Arc<AgentProcess>) -> BoxFuture<anyhow::Result<()>> {
+      self.0.fetch_add(1, Ordering::SeqCst);
+      Box::pin(async { Ok(()) })
+    }
+  }
+
+  let fake = fake_or_skip!();
+  let mut h = Harness::for_agent(&fake, "antigravity", json!({}));
+  let sign_ins = Arc::new(SignIns(AtomicUsize::new(0)));
+  h.deps.accounts = Some(sign_ins.clone());
+  let s = Disposing(AcpSession::fresh("antigravity", "/tmp", h.deps.clone(), Some("acct".into())));
+  s.start().await;
+  let expired = "say:Running the tests.||\n⚠ Authentication expired. Please log back in.\n";
+  prompt(&s, expired).await;
+  until(|| turns_in(&view(&s)) == 4 && view(&s)["running"] == false && view(&s)["status"] == "ready", 10_000).await;
+  let t = view(&s)["turns"].as_array().unwrap().clone();
+  // The failed turn keeps its output and gets a quiet row instead of the error card
+  expect_match(&t[1], json!({ "stop": "end_turn", "error": null }));
+  assert_eq!(t[1]["blocks"][0]["markdown"], "Running the tests.");
+  let notices: Vec<&Value> = t[1]["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == "notice").collect();
+  expect_match(notices, json!([{ "category": "access", "info": true, "title": acpira_host::i18n::t("host.signInRenewed") }]));
+  // A fresh process signed in again, and the hidden continue went to it
+  assert_eq!(sign_ins.0.load(Ordering::SeqCst), 2);
+  expect_match(&t[2], json!({ "role": "user", "auto": true, "text": acpira_host::i18n::t("host.reauthContinuePrompt") }));
+  expect_match(&t[3], json!({ "stop": "end_turn", "error": null }));
+
+  // The stored credential ran out as well: no second reconnect, the error stays
+  prompt(&s, expired).await;
+  expect_match(last_turn(&view(&s)), json!({ "stop": "error", "error": { "kind": "auth_expired", "message": "Authentication expired. Please log back in." } }));
+  assert_eq!(sign_ins.0.load(Ordering::SeqCst), 2);
+  expect_match(view(&s), json!({ "status": "ready", "running": false }));
+}
