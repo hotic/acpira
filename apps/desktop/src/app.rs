@@ -211,6 +211,9 @@ pub struct App {
   page_menu: Mutex<Option<Value>>,
   /// When each page's WebContent process last ended (page_process_ended), by window label
   page_ended: Mutex<HashMap<String, Instant>>,
+  /// Recent WebView2 render-process exits per window label, to bound automatic reloads (page_process_failed)
+  #[cfg(windows)]
+  page_crashes: Mutex<HashMap<String, Vec<Instant>>>,
   /// The data folder was missing at launch and the user has not said yes yet (acpira_desktop::first_run): no engine runs
   first_run: AtomicBool,
   /// A new desktop profile still needs its intro and tour, independently of the shared data folder
@@ -287,6 +290,8 @@ impl App {
       update_phase: Mutex::new(Phase::Idle),
       page_menu: Mutex::new(None),
       page_ended: Mutex::new(HashMap::new()),
+      #[cfg(windows)]
+      page_crashes: Mutex::new(HashMap::new()),
       first_run: AtomicBool::new(first_run),
       welcome_pending: AtomicBool::new(welcome_pending),
       env_ready: AtomicBool::new(false),
@@ -300,6 +305,10 @@ impl App {
       app.paths.data_home.display(),
       app.paths.user_data.display()
     ));
+    #[cfg(windows)]
+    if let Some(version) = crate::win::webview2_version() {
+      log(&format!("webview2 runtime {version}"));
+    }
     let _ = app.client.set(app.make_client());
     let updater = app.make_updater();
     // A check a minute after launch, then every six hours; the smoke run drives its checks itself so no toast lands

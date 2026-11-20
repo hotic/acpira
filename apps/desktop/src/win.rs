@@ -284,18 +284,148 @@ fn toast(xml: &str) -> windows::core::Result<()> {
   ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(acpira_desktop::registry::AUMID))?.Show(&toast)
 }
 
+/// Details from WebView2's `ProcessFailed` event, logged to desktop.log and used to decide whether the shell reloads the page
+pub struct ProcessFailed {
+  pub kind: &'static str,
+  pub reason: Option<&'static str>,
+  pub exit_code: Option<i32>,
+  pub description: Option<String>,
+  pub module: Option<String>,
+  /// Only a top-level renderer exit replaces the app's frameless document with Edge's sad-tab page
+  pub reloadable: bool,
+}
+
+impl ProcessFailed {
+  pub fn summary(&self) -> String {
+    let mut parts = vec![format!("kind={}", self.kind)];
+    if let Some(reason) = self.reason {
+      parts.push(format!("reason={reason}"));
+    }
+    if let Some(code) = self.exit_code {
+      parts.push(format!("exit=0x{:08X}", code as u32));
+    }
+    if let Some(desc) = &self.description
+      && !desc.is_empty()
+    {
+      parts.push(format!("desc={desc}"));
+    }
+    if let Some(module) = &self.module
+      && !module.is_empty()
+    {
+      parts.push(format!("module={module}"));
+    }
+    parts.join(" ")
+  }
+}
+
+fn process_failed_kind(kind: webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND) -> &'static str {
+  use webview2_com::Microsoft::Web::WebView2::Win32::{
+    COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED, COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_GPU_PROCESS_EXITED, COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_BROKER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_PLUGIN_PROCESS_EXITED, COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE, COREWEBVIEW2_PROCESS_FAILED_KIND_SANDBOX_HELPER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED, COREWEBVIEW2_PROCESS_FAILED_KIND_UTILITY_PROCESS_EXITED,
+  };
+  match kind {
+    COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED => "browser-process-exited",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED => "render-process-exited",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => "render-process-unresponsive",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED => "frame-render-process-exited",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_UTILITY_PROCESS_EXITED => "utility-process-exited",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_SANDBOX_HELPER_PROCESS_EXITED => "sandbox-helper-process-exited",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_GPU_PROCESS_EXITED => "gpu-process-exited",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_PLUGIN_PROCESS_EXITED => "ppapi-plugin-process-exited",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_BROKER_PROCESS_EXITED => "ppapi-broker-process-exited",
+    COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED => "unknown-process-exited",
+    _ => "other",
+  }
+}
+
+fn process_failed_reason(reason: webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_REASON) -> &'static str {
+  use webview2_com::Microsoft::Web::WebView2::Win32::{
+    COREWEBVIEW2_PROCESS_FAILED_REASON_CRASHED, COREWEBVIEW2_PROCESS_FAILED_REASON_LAUNCH_FAILED,
+    COREWEBVIEW2_PROCESS_FAILED_REASON_OUT_OF_MEMORY, COREWEBVIEW2_PROCESS_FAILED_REASON_PROFILE_DELETED,
+    COREWEBVIEW2_PROCESS_FAILED_REASON_TERMINATED, COREWEBVIEW2_PROCESS_FAILED_REASON_UNEXPECTED,
+    COREWEBVIEW2_PROCESS_FAILED_REASON_UNRESPONSIVE,
+  };
+  match reason {
+    COREWEBVIEW2_PROCESS_FAILED_REASON_UNEXPECTED => "unexpected",
+    COREWEBVIEW2_PROCESS_FAILED_REASON_UNRESPONSIVE => "unresponsive",
+    COREWEBVIEW2_PROCESS_FAILED_REASON_TERMINATED => "terminated",
+    COREWEBVIEW2_PROCESS_FAILED_REASON_CRASHED => "crashed",
+    COREWEBVIEW2_PROCESS_FAILED_REASON_LAUNCH_FAILED => "launch-failed",
+    COREWEBVIEW2_PROCESS_FAILED_REASON_OUT_OF_MEMORY => "out-of-memory",
+    COREWEBVIEW2_PROCESS_FAILED_REASON_PROFILE_DELETED => "profile-deleted",
+    _ => "other",
+  }
+}
+
+fn read_process_failed(args: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2ProcessFailedEventArgs) -> ProcessFailed {
+  use webview2_com::Microsoft::Web::WebView2::Win32::{
+    COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED, COREWEBVIEW2_PROCESS_FAILED_REASON,
+    ICoreWebView2ProcessFailedEventArgs2, ICoreWebView2ProcessFailedEventArgs3,
+  };
+  use webview2_com::take_pwstr;
+  use windows::core::Interface;
+  let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+  // SAFETY: COM call on live event args on the webview's thread
+  let _ = unsafe { args.ProcessFailedKind(&mut kind) };
+  let (mut reason, mut exit_code, mut description, mut module) = (None, None, None, None);
+  if let Ok(args2) = args.cast::<ICoreWebView2ProcessFailedEventArgs2>() {
+    let mut r = COREWEBVIEW2_PROCESS_FAILED_REASON::default();
+    // SAFETY: COM calls on live Args2 interface on the webview's thread
+    if unsafe { args2.Reason(&mut r) }.is_ok() {
+      reason = Some(process_failed_reason(r));
+    }
+    let mut code = 0i32;
+    // SAFETY: as above
+    if unsafe { args2.ExitCode(&mut code) }.is_ok() {
+      exit_code = Some(code);
+    }
+    let mut desc = PWSTR::null();
+    // SAFETY: as above; the returned string is CoTaskMemAlloc'd and freed by take_pwstr
+    if unsafe { args2.ProcessDescription(&mut desc) }.is_ok() && !desc.is_null() {
+      let s = take_pwstr(desc);
+      if !s.is_empty() {
+        description = Some(s);
+      }
+    }
+  }
+  if let Ok(args3) = args.cast::<ICoreWebView2ProcessFailedEventArgs3>() {
+    let mut path = PWSTR::null();
+    // SAFETY: COM call on live Args3 interface; string freed by take_pwstr
+    if unsafe { args3.FailureSourceModulePath(&mut path) }.is_ok() && !path.is_null() {
+      let s = take_pwstr(path);
+      if !s.is_empty() {
+        module = Some(s);
+      }
+    }
+  }
+  ProcessFailed {
+    kind: process_failed_kind(kind),
+    reason,
+    exit_code,
+    description,
+    module,
+    reloadable: kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+  }
+}
+
 /// What the app's pages get from WebView2 itself, on every webview the shell creates:
 /// - clipboard reads (a paste with files, `navigator.clipboard.read`) without WebView2's permission prompt, for the app's
 ///   own pages only: wry's switch for this grants every page, the loopback dev pages the browser shows included;
 /// - the path of a dropped file or folder: `init.js` posts it with `postMessageWithAdditionalObjects` as
 ///   `acpira-drop:<id>`, and the path goes back to `window.__acpiraDropPath(id, path)` (empty when there is none).
-///   Tauri's own handler on the same event ignores the message, which is not one of its requests
+///   Tauri's own handler on the same event ignores the message, which is not one of its requests;
+/// - process failure diagnostics and controlled reload when a top-level renderer crashes (`ProcessFailed`), so a
+///   frameless window does not stay stranded on Edge's built-in error page
 pub fn hook_webview(window: &tauri::WebviewWindow, log: Log) {
+  let label = window.label().to_owned();
   let _ = window.with_webview(move |w| {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
       COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
     };
-    use webview2_com::{PermissionRequestedEventHandler, WebMessageReceivedEventHandler, take_pwstr};
+    use webview2_com::{PermissionRequestedEventHandler, ProcessFailedEventHandler, WebMessageReceivedEventHandler, take_pwstr};
     let permission = PermissionRequestedEventHandler::create(Box::new(|_, args| {
       let Some(args) = args else { return Ok(()) };
       let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
@@ -333,12 +463,22 @@ pub fn hook_webview(window: &tauri::WebviewWindow, log: Log) {
       unsafe { sender.ExecuteScript(&windows::core::HSTRING::from(script), None)? };
       Ok(())
     }));
-    let (mut a, mut b) = (0i64, 0i64);
+    let failed_label = label.clone();
+    let process_failed = ProcessFailedEventHandler::create(Box::new(move |_, args| {
+      let Some(args) = args else { return Ok(()) };
+      let info = read_process_failed(&args);
+      if let Some(a) = crate::app::try_app() {
+        a.page_process_failed(&failed_label, info);
+      }
+      Ok(())
+    }));
+    let (mut a, mut b, mut c) = (0i64, 0i64, 0i64);
     // SAFETY: the controller's webview, on its own thread (with_webview runs there)
     let added = unsafe {
       w.controller().CoreWebView2().and_then(|core| {
         core.add_PermissionRequested(&permission, &mut a)?;
-        core.add_WebMessageReceived(&message, &mut b)
+        core.add_WebMessageReceived(&message, &mut b)?;
+        core.add_ProcessFailed(&process_failed, &mut c)
       })
     };
     if let Err(e) = added {
@@ -383,16 +523,25 @@ fn dropped_path(args: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebVi
   }
 }
 
-/// Whether a WebView2 Runtime is installed (or Edge's own copy can serve as one)
-pub fn webview2_available() -> bool {
+/// The installed WebView2 Runtime version string (or Edge's own copy when it serves as one)
+pub fn webview2_version() -> Option<String> {
   use webview2_com::Microsoft::Web::WebView2::Win32::GetAvailableCoreWebView2BrowserVersionString;
   let mut version = PWSTR::null();
   // SAFETY: the version string is CoTaskMemAlloc'd and freed by take_pwstr
-  let found = unsafe { GetAvailableCoreWebView2BrowserVersionString(windows::core::PCWSTR::null(), &mut version) }.is_ok() && !version.is_null();
-  if !version.is_null() {
-    let _ = webview2_com::take_pwstr(version);
+  let ok = unsafe { GetAvailableCoreWebView2BrowserVersionString(windows::core::PCWSTR::null(), &mut version) }.is_ok();
+  if !ok || version.is_null() {
+    if !version.is_null() {
+      let _ = webview2_com::take_pwstr(version);
+    }
+    return None;
   }
-  found
+  let v = webview2_com::take_pwstr(version);
+  (!v.trim().is_empty()).then_some(v)
+}
+
+/// Whether a WebView2 Runtime is installed (or Edge's own copy can serve as one)
+pub fn webview2_available() -> bool {
+  webview2_version().is_some()
 }
 
 /// No WebView2 Runtime: a system dialog says what is missing and offers Microsoft's download page; the app then ends
