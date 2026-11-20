@@ -246,7 +246,7 @@ impl Places {
   }
 
   /// Override directories, the later winning: the user's (`~/.acpira/prompts`), the plugins', the project's
-  /// (`.acpira/prompts` at its root, beside the scratch folders)
+  /// (`.acpira/prompts` at its root, read only: Acpira never makes it)
   pub(crate) fn prompt_dirs(&self) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = self.user_prompts().into_iter().collect();
     out.extend(self.layers.iter().cloned());
@@ -429,7 +429,7 @@ fn environment(places: &Places) -> String {
   }
   if let Some(s) = &places.scratch {
     text.push_str(&format!(
-      "- Scratch folder: {}; TMPDIR, TEMP and TMP point at it. It is git-ignored and deleted with the session: put temp files and throwaway scripts there, not in /tmp or elsewhere in the project\n",
+      "- Scratch folder: {}; TMPDIR, TEMP and TMP point at it. It is out of git and deleted with the session: put temp files and throwaway scripts there, not in /tmp or among the project's files\n",
       s.display()
     ));
   }

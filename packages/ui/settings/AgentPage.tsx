@@ -29,7 +29,10 @@ import {
 } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
-import { BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, FAST_MODEL_OFF, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type CompactionStrategy, type WebSearchBackend } from '@acpira/shared/providers';
+import {
+  BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, FAST_MODEL_OFF, SCRATCH_PLACES, scratchPlaceOf, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type CompactionStrategy,
+  type ScratchPlace, type WebSearchBackend,
+} from '@acpira/shared/providers';
 
 // One agent's settings, opened from its tile on the Plugins page as a tabbed dialog. A CLI agent: Overview (runtime facts,
 // install, permissions, its config files), Models (the option families shown in the composer menus), Accounts (when it
@@ -312,13 +315,22 @@ function RawModeField({ state, on }: { state: ProvidersState; on: SettingsHandle
   );
 }
 
-// Temp files in the project (`scratchFolder`): on by default, each session's in `.acpira/tmp/<key>`, gone with the
-// session. Off is for projects on a synced or slow disk; sessions opened from then on follow it
+// Where sessions keep temp files (`scratchPlace`): a folder per project under Acpira's data folder by default, so nothing
+// lands in the project; the project's `.acpira/tmp`; or the system's temp folder, for a synced or slow disk. Each
+// session's folder goes with it, and one that has a folder keeps it; sessions opened from then on follow a pick
+const SCRATCH_KEYS: Record<ScratchPlace, { label: MsgKey; desc: MsgKey }> = {
+  data: { label: 'settings.agent.scratchFolder.data', desc: 'settings.agent.scratchFolder.data.desc' },
+  project: { label: 'settings.agent.scratchFolder.project', desc: 'settings.agent.scratchFolder.project.desc' },
+  off: { label: 'settings.agent.scratchFolder.off', desc: 'settings.agent.scratchFolder.off.desc' },
+};
+
 function ScratchFolderField({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
-  const [shown, pick] = usePick(state, !state.view.scratchFolderOff);
+  const [place, pick] = usePick(state, scratchPlaceOf(state.view));
   return (
-    <Field label={t('settings.agent.scratchFolder')} desc={t('settings.agent.scratchFolder.desc')}>
-      <Switch checked={shown} onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'scratchFolder', on: v }); }} label={t('settings.agent.scratchFolder')} />
+    // Every description is laid out, so a pick never changes the row's height
+    <Field label={t('settings.agent.scratchFolder')} desc={<StableText current={place} items={SCRATCH_PLACES.map(v => ({ key: v, text: t(SCRATCH_KEYS[v].desc) }))} />}>
+      <Select options={SCRATCH_PLACES.map(v => ({ value: v, label: t(SCRATCH_KEYS[v].label) }))} value={place} label={t('settings.agent.scratchFolder')}
+        onChange={v => { if (pick(v)) on.providerAction?.({ kind: 'scratchPlace', place: v }); }} />
     </Field>
   );
 }

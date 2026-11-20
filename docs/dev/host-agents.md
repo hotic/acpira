@@ -73,7 +73,7 @@ Rounds, threads, duties and delivery: `transcript-pipeline.md` (Cross-harness su
 
 ## Prompt library
 
-- Every model-facing text with behaviour in it is a named file under `acpira-agent/src/prompt/builtin/` (`prompt/library.rs`), the engine's own too (MCP instructions, edit / fork leads, relay briefs). Override folders, later winning: `<data home>/prompts` (read from this disk even for an SSH folder), the plugins' `prompts`, the project's `.acpira/prompts` (beside the scratch folders, which stay unprotected).
+- Every model-facing text with behaviour in it is a named file under `acpira-agent/src/prompt/builtin/` (`prompt/library.rs`), the engine's own too (MCP instructions, edit / fork leads, relay briefs). Override folders, later winning: `<data home>/prompts` (read from this disk even for an SSH folder), the plugins' `prompts`, the project's `.acpira/prompts` (read only, never made by Acpira; a project-mode scratch folder beside it stays unprotected).
 - Read once per session: the built-in agent at open and load, the engine at use (`AcpSession::prompts`). The agent's `prompt` event records `overrides` (name → digest) so evals tell overridden runs apart.
 - `name@family` versions apply where a family is known: the agent's notes take the session's, compaction the writer's, titles the fast model's. Engine texts and `sidekick/lead` take none, since the engine lists the sidekick without knowing the agent's family.
 - Kept in code on purpose: chunk compaction's checkpoint rules (`store::load` rebuilds them before a session's prompts exist), tool descriptions and parameters, status lines and bracketed markers. Duty presets are not prompts: the settings page copies them into a persona's own brief (`packages/shared/subagents.ts`).

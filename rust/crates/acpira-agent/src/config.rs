@@ -44,9 +44,13 @@ impl Config {
     self.providers.raw_mode == Some(true)
   }
 
-  /// Sessions take a scratch folder in the project (`scratch.rs`)
-  pub fn scratch_folder(&self) -> bool {
-    self.providers.scratch_folder != Some(false)
+  /// Where sessions take a scratch folder (`scratch.rs`); None leaves them the system's temp folder
+  pub fn scratch_place(&self) -> Option<crate::scratch::Place> {
+    match self.providers.scratch_place_of() {
+      "off" => None,
+      "project" => Some(crate::scratch::Place::Project),
+      _ => Some(crate::scratch::Place::Data),
+    }
   }
 
   /// Chunk compaction is picked on the settings page (`chunk.rs`); otherwise the summary
