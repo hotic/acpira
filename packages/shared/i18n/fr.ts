@@ -738,6 +738,8 @@ export const fr = {
   'host.remoteFileFailed': 'Impossible de récupérer {path} depuis {host}',
   'host.remoteUnreachable': '{host} est injoignable pour le moment ; réessayez une fois la connexion rétablie',
   'host.exited': 'Le processus {agent} s’est terminé ({code})',
+  'host.droidStandardExhausted': 'L’usage Standard de Factory est épuisé, donc {model} ne peut pas tourner avant sa réinitialisation. Droid a tenté de basculer cette session sur {core} (Droid Core) de lui-même : le tour a été arrêté et {model} conservé. Attendez la réinitialisation ou choisissez vous-même un autre modèle pour continuer.',
+  'host.droidStandardExhaustedUntil': 'L’usage Standard de Factory est épuisé, donc {model} ne peut pas tourner avant sa réinitialisation à {at}. Droid a tenté de basculer cette session sur {core} (Droid Core) de lui-même : le tour a été arrêté et {model} conservé. Attendez jusque-là ou choisissez vous-même un autre modèle pour continuer.',
   'host.droidGeminiThinkingOnly': 'Gemini n’a renvoyé que du raisonnement, sans réponse ni appel d’outil. Droid réessaie.',
   'host.droidGeminiCut': 'Gemini a terminé deux fois la même requête sans réponse, avec seulement du raisonnement. Droid ne réessaiera plus. Pour continuer, réduisez l’effort de raisonnement, divisez la tâche ou changez de modèle.',
   'host.emptyResponse': 'La CLI a terminé la requête sans réponse ni détail d’erreur (ACP: end_turn). Réessayez ou consultez les journaux de la CLI.',

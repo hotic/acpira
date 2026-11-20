@@ -456,6 +456,42 @@ async fn droid_stops_a_repeated_thinking_only_cut_but_keeps_the_native_session()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn droid_refuses_its_own_switch_to_droid_core_but_not_the_users() {
+  let fake = fake_or_skip!();
+  let home = tempfile::tempdir().unwrap();
+  let log = home.path().join("config.log");
+  let h = Harness::for_agent(&fake, "droid", json!({ "env": {
+    "FACTORY_HOME_OVERRIDE": home.path(), "FAKE_MODELS": "claude-opus-5-5,kimi-k3", "FAKE_CONFIG_ECHO": "1", "FAKE_CONFIG_LOG": log,
+  } }));
+  let s = started(&h, home.path().to_str().unwrap()).await;
+  let model = |s: &_| view(s)["controls"]["options"].as_array().unwrap().iter().find(|o| o["id"] == "model").unwrap()["value"].clone();
+  let model_sets = || std::fs::read_to_string(&log).unwrap_or_default().lines().filter(|l| l.contains(r#""configId":"model""#)).map(str::to_owned).collect::<Vec<_>>();
+  s.set_config("model".into(), "claude-opus-5-5".into()).await.unwrap();
+  assert_eq!(model(&s), "claude-opus-5-5");
+
+  // Droid moving onto a Droid Core model by itself stops the turn as quota exhaustion and never shows the swap
+  let p = spawn_prompt(&s, "droid core swap");
+  until(|| last_turn(&view(&s))["stop"] == "error", 7000).await;
+  p.await.unwrap();
+  let turn = last_turn(&view(&s));
+  expect_match(&turn["error"], json!({ "kind": "resource_exhausted", "retryable": false }));
+  let message = turn["error"]["message"].as_str().unwrap();
+  assert!(message.contains("claude-opus-5-5") && message.contains("kimi-k3"), "{message}");
+  assert_eq!(model(&s), "claude-opus-5-5");
+  // The picked model is set back on the agent as well
+  until(|| model_sets().len() == 2, 5000).await;
+  assert!(model_sets()[1].contains("claude-opus-5-5"), "{:?}", model_sets());
+  prompt(&s, "hi").await;
+  assert_eq!(last_turn(&view(&s))["stop"], "end_turn");
+
+  // The user's own pick of a Droid Core model, echoed ahead of its answer, is no swap
+  s.set_config("model".into(), "kimi-k3".into()).await.unwrap();
+  prompt(&s, "hi").await;
+  assert_eq!(model(&s), "kimi-k3");
+  assert_eq!(model_sets().len(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn droid_turn_usage_is_the_native_counter_delta_not_the_context_or_last_model_call() {
   let fake = fake_or_skip!();
   let home = tempfile::tempdir().unwrap();

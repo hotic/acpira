@@ -737,6 +737,8 @@ export const es = {
   'host.remoteFileFailed': 'No se pudo obtener {path} de {host}',
   'host.remoteUnreachable': 'No se puede conectar con {host} ahora; inténtalo de nuevo cuando esté conectado',
   'host.exited': 'El proceso de {agent} terminó ({code})',
+  'host.droidStandardExhausted': 'El uso Standard de Factory se ha agotado, así que {model} no puede ejecutarse hasta que se restablezca. Droid intentó cambiar esta sesión a {core} (Droid Core) por su cuenta: se detuvo el turno y se mantuvo {model}. Espera al restablecimiento o elige tú otro modelo para continuar.',
+  'host.droidStandardExhaustedUntil': 'El uso Standard de Factory se ha agotado, así que {model} no puede ejecutarse hasta que se restablezca a las {at}. Droid intentó cambiar esta sesión a {core} (Droid Core) por su cuenta: se detuvo el turno y se mantuvo {model}. Espera hasta entonces o elige tú otro modelo para continuar.',
   'host.droidGeminiThinkingOnly': 'Gemini solo devolvió razonamiento, sin respuesta ni llamada a herramientas. Droid está reintentando.',
   'host.droidGeminiCut': 'Gemini terminó dos veces la misma solicitud con razonamiento pero sin respuesta. Se detuvieron los reintentos de Droid. Reduce el esfuerzo de razonamiento, divide la tarea o cambia de modelo antes de continuar.',
   'host.emptyResponse': 'El CLI terminó la solicitud sin respuesta ni detalles del error (ACP: end_turn). Reintenta o revisa los registros del CLI.',

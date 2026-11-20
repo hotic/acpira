@@ -243,8 +243,21 @@ impl AcpSession {
       for (k, v) in config_option_set_value(Some(&control), &value) {
         params[k] = v;
       }
-      let r = proc.request("session/set_config_option", params).await?;
-      me.adopt_config_response(&r);
+      // The model this request sets is the user's (or the host's) own: its echo is no swap of the agent's
+      // (`droid_core.rs`). The answer's controls land before the count drops, so a late echo matches them
+      let model_pick = control.category.as_deref() == Some("model");
+      if model_pick {
+        me.core.lock().droid_core.own_picks += 1;
+      }
+      let answer = proc.request("session/set_config_option", params).await;
+      if let Ok(r) = &answer {
+        me.adopt_config_response(r);
+      }
+      if model_pick {
+        let mut c = me.core.lock();
+        c.droid_core.own_picks = c.droid_core.own_picks.saturating_sub(1);
+      }
+      answer?;
       for (id, prev) in reasoning {
         let Some(prev) = prev else { continue };
         let restore = {

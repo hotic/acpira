@@ -1,13 +1,16 @@
 //! Observe the retries the Droid ACP adapter drops without changing the ownership of the live prompt.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use acpira_shared::transcript::{AgentBlock, SessionStatus, TurnError, TurnRetry, TurnStop};
 use serde_json::json;
 
-use super::{AcpSession, AgentProcess, OpenTurn, agent_turn_mut};
+use super::{AcpSession, AgentProcess, OpenTurn, Settled, agent_turn_mut};
+use crate::acp::session::Core;
 use crate::acp::transcript::normalize::{RetryReport, RetryText, report_retry};
+use crate::acp::vendors::droid_core::{self, Swap};
 use crate::acp::vendors::droid_retry::Cursor;
 use crate::i18n::t;
 
@@ -72,5 +75,55 @@ impl AcpSession {
         return true;
       }
     }
+  }
+}
+
+impl AcpSession {
+  /// Droid moved the session onto a Droid Core model on its own (`droid_core.rs`): a running turn stops and settles with
+  /// the exhaustion as its error (`settle_core_swap`), and the model the user picked is set back either way, so neither
+  /// the composer nor the remembered settings ever take the Droid Core model
+  pub(crate) fn refuse_core_swap(self: &Arc<Self>, c: &mut Core, swap: Swap) {
+    let running = c.phase.running && c.status == SessionStatus::Ready;
+    self.log(&format!(
+      "Droid moved the session from {} to the Droid Core model {} on its own (Standard usage used up): {}",
+      swap.from.0,
+      swap.to.0,
+      if running { "stopping the turn" } else { "setting the model back" }
+    ));
+    if running && c.droid_core.blocked.is_none() {
+      if let (Some(proc), Some(sid)) = (c.proc.as_ref(), c.acp_session_id.as_deref()) {
+        proc.notify("session/cancel", json!({ "sessionId": sid }));
+      }
+      c.droid_core.blocked = Some(swap.clone());
+    }
+    let Some(config_id) = c.state.controls.options.iter().find(|o| o.category.as_deref() == Some("model")).map(|o| o.id.clone()) else { return };
+    let me = self.clone();
+    tokio::spawn(async move {
+      if let Err(e) = me.set_config_wire(config_id, swap.from.0.clone()).await {
+        me.log(&format!("Droid: setting {} back after the Droid Core swap failed: {e}", swap.from.0));
+      }
+    });
+  }
+
+  /// The turn that met the swap settles as an error naming the used-up model and, when the bound account's quota tells,
+  /// when Standard usage comes back. None = no swap was refused in it, or the session moved on meanwhile
+  pub(super) async fn settle_core_swap(&self, turn: &OpenTurn) -> Option<Settled> {
+    let (swap, account) = {
+      let c = self.core.lock();
+      (c.droid_core.blocked.clone()?, c.account_id.clone())
+    };
+    let quota = match (account, self.deps.accounts.as_ref()) {
+      (Some(id), Some(hooks)) => tokio::time::timeout(Duration::from_secs(5), hooks.quota(id)).await.ok().flatten(),
+      _ => None,
+    };
+    let error = droid_core::turn_error(&swap, quota.as_ref().and_then(droid_core::reset_at));
+    let mut c = self.core.lock();
+    c.droid_core.blocked = None;
+    if !turn.live(&c) {
+      return None;
+    }
+    let exhausted = self.reserve_switch(&mut c, &error);
+    self.settle(&mut c, TurnStop::Error, Some(error));
+    Some(Settled { stop: TurnStop::Error, exhausted })
   }
 }
