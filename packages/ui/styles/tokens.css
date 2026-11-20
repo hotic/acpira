@@ -603,9 +603,9 @@
      8px in from the field's outline ring) plus the 2px optical step bare text over a box takes (card-corner-text) */
   --spacing-composer-text: calc(8px + 2px);
   /* A popup's ruled search line (ui/Command.tsx), its rule included, pulled up over the popup's p-1: the glyphs at its ends
-     (the glass, the model panel's +) stand as far from the popup's top edge and from the rule as from its sides (p-1, the
-     line's px-2, half an icon), so the + box keeps one gap on three sides */
-  --spacing-search-line: calc(2 * (12px + var(--icon) / 2) + 1px);
+     (the glass, the model panel's +) sit 10px from the popup's top edge and from the rule, a little under their 12px side
+     inset, so the line reads as tall as the model panel's PairSwitch band at its foot (4px, a 26px track, 4px) */
+  --spacing-search-line: calc(2 * (10px + var(--icon) / 2) + 1px);
   /* A model row's trailing box (the arrow into its parameters): as far from the row's top and bottom as from its end (the
      row's px-2 less the box's -mx-1), while the glyph stays in the check column */
   --spacing-row-trail: calc(var(--row) - 8px);

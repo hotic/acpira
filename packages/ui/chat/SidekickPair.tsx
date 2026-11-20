@@ -17,8 +17,10 @@ export interface PairSide { name?: string; brand?: string; level?: string }
 // Picked in lab/sidekick-focus.preview.html (2026-10-21)
 export function PairSwitch({ role, lead, sidekick, onRole }: { role: PairRole; lead: PairSide; sidekick: PairSide; onRole: (role: PairRole) => void }) {
   return (
-    // Ruled off from the list above it, as the search line is from the list below it
-    <div className="mt-1 shrink-0 border-t border-line pt-1">
+    // Ruled off from the list above it, as the search line is from the list below it, and as tall: the same h-search-line
+    // band (its rule included) taking back the popup's bottom padding as the search line takes back the top (-mb-1 / -mt-1),
+    // with the track centred in it (4px either side of the default 26px track)
+    <div className="-mb-1 mt-1 flex h-search-line shrink-0 flex-col justify-center border-t border-line">
       <div className="flex gap-0.5 rounded-md bg-hover p-0.5">
         <Side role="lead" side={lead} on={role === 'lead'} onClick={() => onRole('lead')} />
         <Side role="sidekick" side={sidekick} on={role === 'sidekick'} onClick={() => onRole('sidekick')} />
