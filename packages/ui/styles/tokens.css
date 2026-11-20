@@ -453,6 +453,9 @@
   --group-head-gap: 12px;
   /* The group name and the head's action sit this far in from the card's outer edges, one mirrored step */
   --group-head-inset: 4px;
+  /* Bare form labels and form-row text over rounded-md controls (inputs, buttons) sit a quarter of that corner radius
+     further in, mirroring --group-head-inset over rounded-lg cards so text does not look outdented past the corner */
+  --form-label-inset: calc(var(--r-md) / 4);
   --rule-color: var(--line);
   --rule-out: calc(-1 * var(--pad));
   --hover-out: calc(-1 * var(--pad));
