@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.6] - 2026-11-20
+
+### Added
+
+- **Plugin accounts.** A plugin can list accounts in an agent's account menu beside the saved ones, with its badge. A session on one starts with the environment the plugin gives it and stays tied to the plugin's process: a changed environment reopens idle sessions on it, and an account the plugin drops, or a plugin that exits, stops the session instead of letting it run on the CLI's own login. Removing one goes to the plugin, and the automatic switch never picks one or moves off it. The plugin SDKs and guide cover `accounts/set`.
+- **Saved Antigravity and Droid accounts on Linux and Windows.** Antigravity's login is read from the Windows credential store, and saved Droid logins keep a file pair every system can read.
+- **Claude's agent select.** Claude Code's custom agents show as a select beside the modes, on desktop and the phone apps. Claude Code's built-in web-fetch no longer makes it appear when there are no custom agents.
+- Settings show an agent's installed CLI version before any session has started, and tell probing, unknown and not installed apart.
+- Droid 1.14 streams a Task's child session into its row. A Task still running when the turn answers continues as a background task, Droid's reply after it arrives as a turn of its own, and a background Task closed without text takes the child's last words as its result.
+- A turn that fails because the CLI's sign-in expired mid-session (agy 1.5.13 reads its token once) reconnects on the stored credential and continues the task.
+- The context report of a session on an SSH host is answered by the host engine, and the context card asks again on open when an earlier report came back empty.
+
+### Changed
+
+- **Local run for any ACP agent.** An agent without a built-in profile runs locally for an SSH folder behind a generic one, while Pi, Hermes and Kimi Code stay on the host. A gate file that cannot be written stops the start, and an SSH folder never falls back to this machine's login when the host engine is missing.
+- **The built-in agent's temp files leave the project.** Session temp folders now sit under Acpira's data folder by default. The Temp files setting picks the data folder, the project's `.acpira/tmp` or the system temp folder, existing sessions keep the folder they have, and leftover folders of removed sessions are swept in both places.
+- Phone apps group sidekick models into families with their own effort and Fast, and the account sheet's quota bars match desktop. A saved account whose usage read fails greys its last-known bars.
+- Empty states and sign-in notices say what is missing in a few words, without step-by-step hints.
+- Form labels sit inside rounded controls' corners, dialog footers pad evenly, and the popup search line is as tall as the model panel's sidekick band.
+
+### Fixed
+
+- Fast on claude-agent-acp 0.108.1 and codex-acp 2.8.0, which file it under ACP's speed category, works as a model setting again. Ultra Fast tiers stay their own model family, and the models page no longer lists approval levels or Fast selects as model catalogs.
+- When Droid's Standard usage runs out, Droid's own switch to a Droid Core model is refused: the turn stops with the exhaustion as its error and the picked model is set back, or, with another saved account, the account switch carries the turn on with the picked model.
+- Antigravity 1.5.13's silent `/compact` shows as a finished compaction instead of an empty reply.
+- A session whose saved account was removed opens on the account strategy's pick, or the agent's default, instead of asking to sign in.
+- On Windows, a WebView2 renderer crash reloads the desktop page instead of leaving Edge's error page, and a toggled fold no longer blanks its image.
+- Hosts on Chromium before 138 no longer crash the renderer when stylesheets rebuild during a transition.
+- On paired phones, a request past the gateway's stream cap reads busy instead of failing.
+- Droid's automatic `/compact` waits for a background command's late reply.
+- On Android, the session list keeps its scroll position and filter across navigation.
+
 ## [2.1.5] - 2026-11-19
 
 ### Added
