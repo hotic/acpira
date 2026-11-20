@@ -53,6 +53,11 @@
 /* macOS: the header line is 40 px, so its controls get a breath above and below inside the sheet; the lights' centre
    sits on the line's centre (the sheet's inset and half the line, 28 off the window's top, apps/desktop windows.rs) */
 .acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; --hdr: 40px; }
+/* The session column and the settings rail in its place: the side padding that puts a row's icon (the row's own 8 px,
+   then the icon's inset in its lead cell) on the cards' line, so the column reads on the line the sheet takes once it
+   is folded. Both sides, so a row's fill keeps equal margins. macOS only: where the page draws the caption, the rows'
+   fills stay under the title row's first button (--title-lead), half a gap in */
+.acp-shell[data-desktop][data-os="mac"] :is([data-session-panel], [data-settings-rail]) { --column-pad: calc(var(--sheet-inset) + var(--start-x) - 8px - (var(--lead) - var(--icon)) / 2); }
 /* Windows and Linux (data-caption: the page draws the window's caption and menu): no lights; the title row also holds
    the menu button (chat/DesktopFrame.tsx AppMenus). The header line is the window's title bar (as Codex draws it on Windows): it sits at the window's top on the canvas, the raised
    card begins under it (below), and the caption's three buttons (WindowCaption, 46 px each as Windows 11 draws them) take

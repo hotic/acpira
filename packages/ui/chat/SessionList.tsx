@@ -1018,7 +1018,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
             to the window's foot, so the list fades out at its bottom edge, and under the rows on top once it scrolled (rows
             cut off by a hard edge there read as sliced). No top margin of its own: the first section label's mt-gap is the
             step, the same one as between later sections */}
-        <div ref={listRoot} className={cn('scroll-thin scroll-stable -mx-gap-half flex min-h-0 flex-col overflow-y-auto pl-gap-half pr-list-gutter', desktop ? 'flex-1 pb-gap list-fade' : 'pb-1')}
+        <div ref={listRoot} className={cn('scroll-thin scroll-stable -mx-column-pad flex min-h-0 flex-col overflow-y-auto pl-column-pad pr-list-gutter', desktop ? 'flex-1 pb-gap list-fade' : 'pb-1')}
           role="listbox" aria-label={t('session.listAria')}
           style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
           onDragOver={onDragOver} onDrop={onDrop}>
@@ -1126,10 +1126,10 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
         {viewMenu(ROW_ACT)}
       </div>
       {summary}
-      {/* The scroller bleeds through its container's padding (docked panel p-gap-half, popover p-1) and pads it back, so the
+      {/* The scroller bleeds through its container's padding (docked panel px-column-pad, popover p-1) and pads it back, so the
           thumb rides the panel edge, the divider runs edge to edge and the rows stay where they were. The gutter stays
           reserved, so a search that ends the overflow does not shift the times */}
-      <div ref={clockRoot} className={cn('scroll-thin scroll-stable mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1', fill ? '-mx-gap-half pl-gap-half pr-list-gutter' : '-mx-1 pl-1 pr-0')} role="listbox" aria-label={t('session.listAria')}
+      <div ref={clockRoot} className={cn('scroll-thin scroll-stable mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1', fill ? '-mx-column-pad pl-column-pad pr-list-gutter' : '-mx-1 pl-1 pr-0')} role="listbox" aria-label={t('session.listAria')}
         style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
         onDragOver={onDragOver} onDrop={onDrop}>
         <LazyPanelContext.Provider value>
