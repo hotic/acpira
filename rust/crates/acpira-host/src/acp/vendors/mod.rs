@@ -202,6 +202,11 @@ impl Vendor {
     if self == Vendor::Antigravity { antigravity::reply_error(text) } else { None }
   }
 
+  /// A finished `/compact` sends nothing but an empty `end_turn` (`antigravity::compacted_silently`)
+  pub fn compacted_silently(self, blocks: &[acpira_shared::transcript::AgentBlock]) -> bool {
+    self == Vendor::Antigravity && antigravity::compacted_silently(blocks)
+  }
+
   /// Where the note a cancelled turn's reply ends on starts (`antigravity::cancel_note`)
   pub fn cancel_note(self, text: &str) -> Option<usize> {
     if self == Vendor::Antigravity { antigravity::cancel_note(text) } else { None }

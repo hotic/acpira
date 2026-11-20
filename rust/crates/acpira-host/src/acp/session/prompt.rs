@@ -716,7 +716,8 @@ impl AcpSession {
         {
           u.used = num(after);
         }
-        self.mark_compacted_usage(&mut c, turn, auto || accepted.compacting, after.is_some());
+        let silent = accepted.compacting && self.mark_silent_compaction(&mut c, turn);
+        self.mark_compacted_usage(&mut c, turn, auto || accepted.compacting, after.is_some(), silent);
       }
       if !auto && accepted.command_name.is_none() && self.wait_for_late_usage(turn.usage_before).await {
         stop = TurnStop::Cancelled;
@@ -1077,9 +1078,11 @@ fn take_cancel_note(vendor: Vendor, turn: &mut AgentTurn) {
 impl AcpSession {
   /// A /compact that completed while the agent reported no context (Devin sends neither `usage_update` nor a token
   /// count with it): the snapshot is marked stale so the ring can drop at once, and the next report replaces it.
-  /// Agents whose usage is polled get a fresh read right after this, so they are left alone
-  fn mark_compacted_usage(&self, c: &mut Core, turn: &OpenTurn, compact: bool, counted: bool) {
-    if !compact || counted || c.usage.revision != turn.usage_before || self.polls_usage(c) {
+  /// Agents whose usage is polled get a fresh read right after this, so they are left alone. A silent compaction
+  /// (`mark_silent_compaction`) is marked whatever came in during it: agy's usage then is the size the compaction
+  /// request itself sent, from before it
+  fn mark_compacted_usage(&self, c: &mut Core, turn: &OpenTurn, compact: bool, counted: bool, silent: bool) {
+    if !compact || counted || (!silent && (c.usage.revision != turn.usage_before || self.polls_usage(c))) {
       return;
     }
     let done = agent_turn_mut(c, turn.agent_idx, turn.started_at)
@@ -1089,6 +1092,27 @@ impl AcpSession {
     }
   }
 }
+
+impl AcpSession {
+  /// A `/compact` that ended on its own with nothing on the wire (`Vendor::compacted_silently`): the turn gets the
+  /// completed compaction row the CLI never sent. Errors and stops never reach here (only an `end_turn` does)
+  fn mark_silent_compaction(&self, c: &mut Core, turn: &OpenTurn) -> bool {
+    let vendor = self.vendor;
+    let Some(t) = agent_turn_mut(c, turn.agent_idx, turn.started_at) else { return false };
+    if t.error.is_some() || !vendor.compacted_silently(&t.blocks) {
+      return false;
+    }
+    // Nothing but empty words: the row stands in for them
+    t.blocks.clear();
+    let id = format!("{SILENT_COMPACTION}{}", turn.started_at);
+    t.blocks.push(AgentBlock::Compaction(CompactionBlock { id, status: CompactionStatus::Completed, error: None }));
+    self.log("/compact ended with nothing on the wire: counted as a finished compaction");
+    true
+  }
+}
+
+/// Id prefix of the compaction row a silent `/compact` gets (`mark_silent_compaction`)
+const SILENT_COMPACTION: &str = "silent-compaction-";
 
 pub(crate) fn agent_turn_mut(c: &mut Core, idx: usize, started_at: i64) -> Option<&mut AgentTurn> {
   match c.state.turns.get_mut(idx) {
