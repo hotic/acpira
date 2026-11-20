@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local run for any ACP agent.** An agent without a built-in profile runs locally for an SSH folder behind a generic one, while Pi, Hermes and Kimi Code stay on the host. A gate file that cannot be written stops the start, and an SSH folder never falls back to this machine's login when the host engine is missing.
 - **The built-in agent's temp files leave the project.** Session temp folders now sit under Acpira's data folder by default. The Temp files setting picks the data folder, the project's `.acpira/tmp` or the system temp folder, existing sessions keep the folder they have, and leftover folders of removed sessions are swept in both places.
 - Phone apps group sidekick models into families with their own effort and Fast, and the account sheet's quota bars match desktop. A saved account whose usage read fails greys its last-known bars.
+- On the macOS desktop app, the traffic lights stand on the cards' line with the session column's and the settings rail's icons, so they stay put as the column folds or the window narrows. They glide to the explorer's line in the files layout and to the panel's over a narrow window.
 - Empty states and sign-in notices say what is missing in a few words, without step-by-step hints.
 - Form labels sit inside rounded controls' corners, dialog footers pad evenly, and the popup search line is as tall as the model panel's sidekick band.
 
