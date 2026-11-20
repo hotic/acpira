@@ -1349,6 +1349,7 @@ export const ru = {
   'settings.fact.status': 'Состояние',
   'settings.fact.searched': 'Где искали',
   'settings.fact.bundled': 'встроенный',
+  'settings.fact.versionUnknown': 'Версия неизвестна',
   'settings.fact.nativeMissing': 'нет нативного бинарника ({package})',
   'settings.fact.nativeMissingHint': 'Платформенный пакет {package} (необязательная зависимость npm) не установлен, поэтому агент падает при запуске сессии. Переустановите адаптер командой npm install -g --include=optional или укажите в переменной переопределения рабочий исполняемый файл.',
   'settings.health.ready': 'Сессии запускаются нормально',

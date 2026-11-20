@@ -65,6 +65,8 @@ pub struct AgentDef {
   pub login: Option<LoginDef>,
   pub install: Option<InstallDef>,
   pub adapter: Option<AdapterDef>,
+  /// A known CLI's label on `--version`; absent for adapters and arbitrary commands
+  pub version_prefix: Option<&'static str>,
   pub env: Option<StrMap>,
   /// Modes the protocol doesn't advertise but the CLI supports; descriptions may be i18n keys
   pub modes: Option<Vec<SessionOption>>,
@@ -210,6 +212,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     },
     AgentDef {
       login: login("grok", &["login"]),
+      version_prefix: Some("grok"),
       install: install(
         "curl -fsSL https://x.ai/cli/install.sh | bash",
         "irm https://x.ai/cli/install.ps1 | iex",
@@ -233,6 +236,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     },
     AgentDef {
       login: login("devin", &["auth", "login"]),
+      version_prefix: Some("devin"),
       install: install(
         "curl -fsSL https://cli.devin.ai/install.sh | bash",
         // Keep the displayed/copied command identical to the terminal action. Strip full-line comments before joining:
@@ -265,6 +269,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       // Kimi Code 2.2.0 `kimi login` runs the device-code flow its ACP terminal-auth method names
       login: login("kimi", &["login"]),
+      version_prefix: Some("kimi"),
       install: install(
         "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
         "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
@@ -280,6 +285,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     },
     AgentDef {
       login: login("opencode", &["auth", "login"]),
+      version_prefix: Some("opencode"),
       install: install("curl -fsSL https://opencode.ai/install | bash", "npm install -g --include=optional opencode-ai", "https://opencode.ai/docs/acp/"),
       ..base(
         "opencode",
@@ -326,6 +332,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       // No login subcommand: the interactive `droid` signs in on first run (ACP also offers a device-pairing method)
       login: login("droid", &[]),
+      version_prefix: Some("droid"),
       install: install(
         "curl -fsSL https://app.factory.ai/cli | sh",
         "irm https://app.factory.ai/cli/windows | iex",
@@ -349,6 +356,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       // Provider and model setup; ACP also offers it as a terminal auth method (`hermes acp --setup`)
       login: login("hermes", &["model"]),
+      version_prefix: Some("Hermes Agent"),
       install: install(
         "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
         "iex (irm https://hermes-agent.nousresearch.com/install.ps1)",
@@ -365,6 +373,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
 pub fn antigravity() -> AgentDef {
   AgentDef {
     login: login("agy", &["acp", "--login"]),
+    version_prefix: Some("agy"),
     // agy 1.5.9 has no full-access mode over ACP (`--dangerously-skip-permissions` is a process flag): full access runs
     // in `accept-edits` with the host approving every command. Not `auto`: that mode never asks, runs commands in agy's
     // own sandbox (a repository's `.git` is read-only, so `git pull` / `commit` fail) and refuses a sandbox bypass itself
@@ -572,6 +581,7 @@ impl AgentRegistry {
         login: login.split_first().map(|(cmd, rest)| LoginDef { command: cmd.clone(), args: rest.to_vec() }),
         install: (command.is_some() || docs.is_some()).then(|| InstallDef { posix: command.clone(), windows: command, docs }),
         adapter: None,
+        version_prefix: None,
         vendor: c.vendor.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()),
         mark: c.mark.as_ref().and_then(|m| mark_paths(m).ok()),
         local_run,

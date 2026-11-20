@@ -13,6 +13,7 @@ use acpira_shared::settings::{SettingsView, sanitize_setting};
 
 use crate::acp::agents::adapter_info::read_adapter_info;
 use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::agents::version;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::agent_ext::agent_ext;
 use crate::inventory::{ScanEnv, ScanInput, scan_inventory};
@@ -143,9 +144,9 @@ impl SettingsCenter {
   pub async fn inventory(&self, agent: &str, cwd: &str) -> AgentInventory {
     let registry = (self.deps.registry)();
     let binary = registry.resolve_binary(agent).await;
-    let adapter = match (&binary, registry.try_get(agent)) {
-      (Some(b), Some(def)) => read_adapter_info(b, def).await,
-      _ => None,
+    let (adapter, cli_version) = match (&binary, registry.try_get(agent)) {
+      (Some(b), Some(def)) => tokio::join!(read_adapter_info(b, def), version::installed_version(b, def)),
+      _ => (None, None),
     };
     let env = ScanEnv::new((self.deps.home)(), cwd.to_owned());
     scan_inventory(
@@ -153,6 +154,7 @@ impl SettingsCenter {
         agent: agent.to_owned(),
         ext: agent_ext(agent),
         binary,
+        cli_version,
         runtime: (self.deps.runtime_info)(agent),
         adapter,
         health: (self.deps.health)(agent),

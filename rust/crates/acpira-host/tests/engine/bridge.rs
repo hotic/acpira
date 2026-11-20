@@ -116,6 +116,33 @@ fn deps(store: Store) -> SettingsDeps {
   }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn inventory_reports_the_resolved_cli_version_without_an_acp_session() {
+  use std::os::unix::fs::PermissionsExt;
+
+  let dir = tempfile::tempdir().unwrap();
+  let droid = dir.path().join("droid");
+  let custom = dir.path().join("custom");
+  for (path, script) in [
+    (&droid, "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] || exit 1\nprintf 'droid 1.14.0\\n' >&2\n"),
+    (&custom, "#!/bin/sh\ntouch \"$0.ran\"\necho 9.9.9\n"),
+  ] {
+    std::fs::write(path, script).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+  }
+  let registry = Arc::new(AgentRegistry::new(&json!({ "droid": { "command": droid }, "grok": { "command": custom } })));
+  let center = SettingsCenter::new(SettingsDeps { registry: Arc::new(move || registry.clone()), ..deps(Default::default()) });
+  let cwd = dir.path().to_str().unwrap();
+  let inventory = center.inventory("droid", cwd).await;
+  assert_eq!(inventory.binary.as_deref(), droid.to_str());
+  assert_eq!(v(inventory)["cliVersion"], "1.14.0");
+  let inventory = center.inventory("grok", cwd).await;
+  assert_eq!(inventory.binary.as_deref(), custom.to_str());
+  assert!(inventory.cli_version.is_none());
+  assert!(!dir.path().join("custom.ran").exists());
+}
+
 // Two windows on one engine: each page hears its own window's shell keys, and a background window's change reaches only
 // its own pages
 #[test]

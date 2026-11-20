@@ -1300,6 +1300,7 @@
   "settings.fact.status": "État",
   "settings.fact.searched": "Emplacements cherchés",
   "settings.fact.bundled": "fourni",
+  "settings.fact.versionUnknown": "Version inconnue",
   "settings.fact.nativeMissing": "binaire natif manquant ({package})",
   "settings.fact.nativeMissingHint": "Le paquet de plateforme {package} (une dépendance npm facultative) n’a pas été installé, l’agent échoue donc au démarrage d’une session. Réinstallez l’adaptateur avec npm install -g --include=optional, ou pointez la variable de remplacement vers un exécutable fonctionnel.",
   "settings.health.ready": "Les sessions démarrent normalement",

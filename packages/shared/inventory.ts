@@ -64,6 +64,8 @@ export interface AgentInventory {
   agent: AgentId;
   // Resolved executable; null when not found
   binary: string | null;
+  // Version reported by the resolved CLI executable before any ACP handshake
+  cliVersion?: string;
   runtime?: AgentRuntimeInfo;
   adapter?: AdapterInfo;
   health?: AgentHealth;
@@ -74,4 +76,8 @@ export interface AgentInventory {
   skills: InventorySkill[];
   rules: InventoryFile[];
   scannedAt: string;
+}
+
+export function inventoryVersion(inventory?: AgentInventory): string | undefined {
+  return inventory?.cliVersion || inventory?.runtime?.version || inventory?.adapter?.adapter?.version;
 }

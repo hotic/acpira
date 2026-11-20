@@ -9,3 +9,4 @@ pub mod npm_latest;
 pub mod pool;
 pub mod probe_controls;
 pub mod registry;
+pub(crate) mod version;

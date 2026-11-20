@@ -1362,6 +1362,7 @@ export const zhCN = {
   'settings.fact.status': '状态',
   'settings.fact.searched': '已查找',
   'settings.fact.bundled': '随附',
+  'settings.fact.versionUnknown': '未读取到版本',
   'settings.fact.nativeMissing': '缺少原生二进制（{package}）',
   'settings.fact.nativeMissingHint': '平台包 {package}（npm 可选依赖）没有装上，会话启动时会失败。用 npm install -g --include=optional 重装适配器，或用覆盖变量指向可用的可执行文件。',
   'settings.fact.engineOverride': '{name} ｜ {env} {path}',

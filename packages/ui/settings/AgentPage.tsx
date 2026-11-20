@@ -2,11 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, LoaderCircle, LockKeyhole, LogIn, Plus, RefreshCw, Settings2, SquareTerminal, WandSparkles, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { AccountAction, AgentInstallProgress } from '@acpira/shared/protocol';
-import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventoryScope, InventorySkill } from '@acpira/shared/inventory';
+import { inventoryVersion, type AgentHealthStage, type AgentInventory, type InventoryFile, type InventoryMcp, type InventoryScope, type InventorySkill } from '@acpira/shared/inventory';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
 import { canRunHere } from '@acpira/shared/remote';
-import { familyLabel, isReasoningControl, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_FAST_CATEGORY } from '@acpira/shared/composerControls';
+import { familyLabel, isFastControl, isReasoningControl, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_FAST_CATEGORY } from '@acpira/shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
 import { Button, IconButton } from '../ui/Button';
@@ -106,7 +106,7 @@ export function AgentDialog(p: AgentSettingsProps & {
   const [tab, setTab] = useState<AgentTab>(p.initialTab ?? tabs[0]!.value);
   // A tab that went away (the built-in agent's skills emptied) falls back to the first
   const shown = tabs.some(x => x.value === tab) ? tab : tabs[0]!.value;
-  const version = inventory?.runtime?.version ?? inventory?.adapter?.adapter?.version;
+  const version = inventoryVersion(inventory);
   const sub = agent.id === BUILTIN_AGENT_ID ? t('settings.plugins.bundled') : agent.available === false ? t('settings.plugins.notInstalled') : version;
   const refresh = t('settings.agent.refresh');
   // Counts clicks on the refresh: the sources tab asks every source for its model list on each
@@ -432,15 +432,16 @@ function AgentFacts({ agent, inventory: live, env, on }: { agent: AgentInfo; inv
   const inventory = live ?? settled?.inventory;
   const searched = live ? agent.searched : settled?.searched ?? agent.searched;
   const sep = t('common.metaSep');
-  const version = inventory?.runtime?.version ? t('settings.agent.version', { name: inventory.runtime.name ?? agent.name, version: inventory.runtime.version }) : undefined;
   const adapter = inventory?.adapter?.adapter;
+  const version = inventoryVersion(inventory);
+  const versionName = inventory?.cliVersion ? agent.name : inventory?.runtime?.version ? inventory.runtime.name ?? agent.name : adapter?.name ?? agent.name;
   const engine = inventory?.adapter?.engine;
   const health = inventory?.health;
   const missingExecutable = agent.missing?.length
     ? t('settings.agent.notInstalled', { command: agent.missing.join(', ') })
     : t('settings.agent.executableMissing');
-  // The adapter package version duplicates the live runtime line when initialize already reported the same number
-  const adapterText = adapter && inventory?.runtime?.version !== adapter.version
+  // The adapter version can already be the one shown in the version row.
+  const adapterText = adapter && version !== adapter.version
     ? (adapter.version ? t('settings.agent.version', { name: adapter.name, version: adapter.version }) : adapter.name)
     : undefined;
   const engineText = engine
@@ -469,7 +470,10 @@ function AgentFacts({ agent, inventory: live, env, on }: { agent: AgentInfo; inv
           <span className="truncate">{engineText}</span>
         </FactRow>
       )}
-      <FactRow label={t('settings.fact.version')}>{version ?? t('settings.fact.noLive')}</FactRow>
+      <FactRow label={t('settings.fact.version')}>
+        {version ? t('settings.agent.version', { name: versionName, version })
+          : t(inventory?.binary === null ? 'settings.plugins.notInstalled' : inventory ? 'settings.fact.versionUnknown' : 'settings.agent.probing')}
+      </FactRow>
       {/* Always a row, like Version: the first probe's reply only replaces its text. A row that appeared with the reply
           grew the card and pushed the page down about a third of a second after it opened (reported 2026-10-14 on the
           README's built-in agent clip) */}

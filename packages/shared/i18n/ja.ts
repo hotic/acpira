@@ -1318,6 +1318,7 @@ export const ja = {
   'settings.fact.status': '状態',
   'settings.fact.searched': '検索した場所',
   'settings.fact.bundled': '同梱',
+  'settings.fact.versionUnknown': 'バージョン不明',
   'settings.fact.nativeMissing': 'ネイティブバイナリがありません（{package}）',
   'settings.fact.nativeMissingHint': 'プラットフォームパッケージ {package}（npm のオプション依存）がインストールされていないため、セッションの開始時にエージェントが失敗します。npm install -g --include=optional でアダプターを入れ直すか、上書き用の環境変数を動作する実行ファイルに向けてください。',
   'settings.health.ready': 'セッションは正常に開始できます',

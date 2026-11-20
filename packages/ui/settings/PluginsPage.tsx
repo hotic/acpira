@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type 
 import { Settings2 } from 'lucide-react';
 import { pluginKinds, PLUGIN_KINDS, type PluginInfo, type PluginKind } from '@acpira/shared/plugins';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
-import type { AgentInventory } from '@acpira/shared/inventory';
+import { inventoryVersion, type AgentInventory } from '@acpira/shared/inventory';
 import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import { moveAgent } from '@acpira/shared/agentOrder';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
@@ -41,7 +41,7 @@ export interface ModelsPageProps {
   onDisabled: (ids: AgentId[]) => void;
   // A tile's gear: the agent's dialog
   onOpen: (id: AgentId) => void;
-  // Ask for an agent's inventory (its version for the tile's foot); a file scan, no process is started
+  // Ask for an agent's inventory, including its installed version
   onInventory: (id: AgentId) => void;
   // Each agent's latest in-app install: an update running on a tile shows there
   installs?: AgentInstallProgress[];
@@ -51,11 +51,17 @@ export interface ModelsPageProps {
 
 export function ModelsPage({ agents, inventories, onReorder, onDisabled, onOpen, onInventory, installs, onUpdate }: ModelsPageProps) {
   const [query, setQuery] = useState('');
-  // The versions on the tiles' feet: every agent not scanned yet, once per visit
-  const asked = useRef(new Set<AgentId>());
+  // Ask once per missing inventory, including when an install invalidates the previous result.
+  const pending = useRef(new Set<AgentId>());
   useEffect(() => {
-    for (const a of agents) if (!inventories[a.id] && !asked.current.has(a.id)) { asked.current.add(a.id); onInventory(a.id); }
-  });
+    for (const { id } of agents) {
+      if (inventories[id]) pending.current.delete(id);
+      else if (!pending.current.has(id)) {
+        pending.current.add(id);
+        onInventory(id);
+      }
+    }
+  }, [agents, inventories, onInventory]);
   const q = query.trim().toLowerCase();
   const match = (a: AgentInfo) => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q);
   return <>
@@ -289,7 +295,7 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
 }
 
 // One agent: its mark in a square, name and what it is, the switch; the foot names where the module comes from, the
-// gear and the version (or that it is not installed). A click anywhere on the tile but its switch opens the dialog too
+// gear and the version or detection state. A click anywhere on the tile but its switch opens the dialog too
 function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate, onToggle, onOpen, onKeyDown }: {
   agent: AgentInfo;
   updating?: boolean;
@@ -304,7 +310,9 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate
 }) {
   const vendor = VENDOR[a.id] ?? a.vendor;
   const desc = a.id === BUILTIN_AGENT_ID ? t('settings.plugins.builtinDesc') : vendor ? t('settings.plugins.officialCli', { vendor }) : t('settings.plugins.acpAgent');
-  const version = a.available === false ? t('settings.plugins.notInstalled') : inventory?.runtime?.version ?? inventory?.adapter?.adapter?.version;
+  const missing = a.available === false || inventory?.binary === null;
+  const version = missing ? undefined : inventoryVersion(inventory);
+  const versionStatus = missing ? 'settings.plugins.notInstalled' : inventory ? 'settings.fact.versionUnknown' : 'settings.agent.probing';
   const settings = t('settings.plugins.settings', { name: a.name });
   return (
     <Card onClick={e => { if (!(e.target as Element).closest('[data-no-drag]')) onOpen(); }}
@@ -328,7 +336,7 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate
       <div className="mt-auto flex h-(--tile-foot) items-center justify-between gap-gap border-t border-line px-pad">
         <span className="flex min-w-0 items-baseline gap-2 text-3 text-fg-3">
           {a.id === BUILTIN_AGENT_ID && <span className="shrink-0">{t('settings.plugins.bundled')}</span>}
-          {version && <span className="truncate font-mono tabular-nums">{version}</span>}
+          <span className={cn('truncate', version && 'font-mono tabular-nums')} title={version}>{version ?? t(versionStatus)}</span>
         </span>
         <span data-no-drag className="-mr-ctl-sm-bleed flex shrink-0 items-center">
           {/* A newer pinned adapter: the update action beside the gear, its dot breathing like an unread session; while the

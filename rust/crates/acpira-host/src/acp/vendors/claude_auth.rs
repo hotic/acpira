@@ -43,7 +43,7 @@ pub async fn authenticated(def: &AgentDef, binary: &str, cwd: &str, account_env:
   #[cfg(not(windows))]
   let mut child = cmd.spawn()?;
   #[cfg(unix)]
-  let mut group = ProbeGroup(child.id());
+  let mut group = launch::ProbeGroup(child.id());
   let mut stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("Claude auth status stdout is not piped"))?.take(OUTPUT_LIMIT + 1);
   let mut output = Vec::new();
   tokio::time::timeout(PROBE_TIMEOUT, async {
@@ -60,22 +60,6 @@ pub async fn authenticated(def: &AgentDef, binary: &str, cwd: &str, account_env:
   .await??;
   // A signed-out CLI exits 1 with valid JSON, so the exit code is deliberately not used as the login state.
   Ok(serde_json::from_slice::<Value>(&output).ok().and_then(|v| status_of(&v)))
-}
-
-/// A probe's process group, killed when dropped unless the probe was reaped (cleared): a timed-out wrapper's native
-/// child goes with it
-#[cfg(unix)]
-pub(crate) struct ProbeGroup(pub(crate) Option<u32>);
-
-#[cfg(unix)]
-impl Drop for ProbeGroup {
-  fn drop(&mut self) {
-    if let Some(pid) = self.0.and_then(|p| i32::try_from(p).ok()) {
-      // The unreaped leader owns this process group; cancellation/timeout must also terminate the wrapped CLI.
-      // SAFETY: kill takes plain integers; the negated pid names the group this probe's leader created
-      unsafe { libc::kill(-pid, libc::SIGKILL) };
-    }
-  }
 }
 
 fn status_of(v: &Value) -> Option<bool> {

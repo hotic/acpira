@@ -125,6 +125,9 @@ pub struct AgentHealth {
 pub struct AgentInventory {
   pub agent: AgentId,
   pub binary: Option<String>,
+  /// Version reported by the resolved CLI executable before any ACP handshake.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cli_version: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub runtime: Option<AgentRuntimeInfo>,
   #[serde(default, skip_serializing_if = "Option::is_none")]

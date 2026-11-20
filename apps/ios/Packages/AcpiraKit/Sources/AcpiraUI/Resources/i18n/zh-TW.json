@@ -1301,6 +1301,7 @@
   "settings.fact.status": "狀態",
   "settings.fact.searched": "已查詢",
   "settings.fact.bundled": "隨附",
+  "settings.fact.versionUnknown": "未讀取到版本",
   "settings.fact.nativeMissing": "缺少原生二進位（{package}）",
   "settings.fact.nativeMissingHint": "平台套件 {package}（npm 選用相依套件）沒有裝上，工作階段啟動時會失敗。用 npm install -g --include=optional 重新安裝轉接器，或用覆蓋變數指向可用的執行檔。",
   "settings.fact.engineOverride": "{name} ｜ {env} {path}",
