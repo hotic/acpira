@@ -712,8 +712,8 @@ function ModelsSection({ agent, controls, probing, settings, on }: { agent: Agen
     return parts.join(sep);
   };
   // An empty list under a probe in flight (the first one an unused agent gets on opening) loads rather than says none
-  if (controls === undefined || (probing && !controls.length)) return <Section desc={t('settings.models.desc')}><Note shimmer>{t('settings.loading')}</Note></Section>;
-  if (!controls.length) return <Section desc={t('settings.models.desc')}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
+  if (controls === undefined || (probing && !controls.length)) return <Section><Note shimmer>{t('settings.loading')}</Note></Section>;
+  if (!controls.length) return <Section><Note>{t('settings.models.none')}</Note></Section>;
   // One block per group
   const groups = visible.flatMap(({ control: c, all, families, found }) => {
     if (!families.length) return [];
@@ -850,7 +850,7 @@ function McpTab(p: SourcesProps) {
 function ConfigSection({ agent, files, env, on }: { agent: AgentInfo; files?: InventoryFile[]; env: SettingsEnv; on: SettingsHandlers }) {
   const sorted = useMemo(() => [...(files ?? [])].sort((a, b) => Number(b.exists) - Number(a.exists)), [files]);
   return (
-    <Section title={t('settings.agent.configFiles')} count={files ? files.filter(f => f.exists).length : undefined} desc={t('settings.config.desc', { agent: agent.name })}>
+    <Section title={t('settings.agent.configFiles')} count={files ? files.filter(f => f.exists).length : undefined}>
       {!files && <Note shimmer>{t('settings.loading')}</Note>}
       {files && sorted.length === 0 && <Note>{t('settings.config.none')}</Note>}
       {sorted.map(f => (
