@@ -22,6 +22,11 @@ pub fn is_reasoning_control(control: &ConfigControl) -> bool {
   is_reasoning_select(&control.id, control.category.as_deref())
 }
 
+/// Model-scoped parameter controls (`model_config`, plus ACP's unstable `speed` category used by claude-agent-acp 0.108.1+ for Fast mode)
+pub fn is_model_config_control(control: &ConfigControl) -> bool {
+  matches!(control.category.as_deref(), Some("model_config" | "speed"))
+}
+
 /// `is_reasoning_control` on a select's raw id and category, for code reading an agent's answer as JSON (the summon
 /// relay), so the effort a persona sets is the select the composer shows as effort
 pub fn is_reasoning_select(id: &str, category: Option<&str>) -> bool {

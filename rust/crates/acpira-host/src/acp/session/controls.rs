@@ -702,7 +702,7 @@ pub(crate) fn picked_controls(c: &Core, shapes: Option<&ModelShapes>) -> Session
       out = controls_for_turn(&out, Some(&capture_turn_settings(&c.state.controls)));
     } else {
       // An unseen model's scale is not known yet. Do not advertise the previous model's effort or Fast meanwhile.
-      out.options.retain(|o| !is_reasoning_control(o) && o.category.as_deref() != Some("model_config"));
+      out.options.retain(|o| !is_reasoning_control(o) && !acpira_shared::composer_controls::is_model_config_control(o));
     }
   }
   for (i, shape) in c.picks.shapes.iter().enumerate() {

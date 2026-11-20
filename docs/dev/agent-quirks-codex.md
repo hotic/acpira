@@ -5,7 +5,7 @@ How codex-acp and the bundled codex behave on the ACP wire, with the version obs
 ## Codex (codex-acp)
 
 - codex-acp 1.13.0 (bundled codex 0.155.1, `CODEX_PATH` overrides): `loadSession` + list / resume / close / delete / fork; auth `api-key` and `chat-gpt` with no terminal methods, so sign-in goes through `authenticate`. Terminal fallback is `codex-acp cli login`; bare `codex-acp login` needs a separate `codex`.
-- Controls: modes read-only / agent / agent-full-access (2.1.1 adds `workspace-write`), `model`, `reasoning_effort` (low … ultra), a `fast-mode` boolean, `collaboration_mode` (default / plan). Skills appear as `/$<name>` commands. Hidden models are not listed.
+- Controls: modes read-only / agent / agent-full-access (2.1.1 adds `workspace-write`), `model`, `reasoning_effort` (low … ultra), a `fast-mode` boolean (2.8.0 moves its category from `model_config` to `speed`), `collaboration_mode` (default / plan). Skills appear as `/$<name>` commands. Hidden models are not listed.
 - A thread on a model no longer listed: the adapter lists it first but drops `reasoning_effort` and `fast-mode`, and an effort set fails invalid params until a listed model is picked (1.13.0 source).
 - List / resume work only on the canonical cwd: the adapter canonicalizes (`/var` → `/private/var`) and string-compares per page, so `native_sessions.rs` retries with `realpath`.
 - 2.1.1: a rollout is written only after the thread's first user message; once the process is replaced, resuming an unprompted thread fails `Internal error` with `data.details "no rollout found for thread id"`, meaning gone.
