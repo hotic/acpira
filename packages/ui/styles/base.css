@@ -31,8 +31,8 @@
    sized from the inset, so widening moves nothing. A transparent border would be simpler, but Chromium floors border widths to whole
    CSS pixels, which turned the 2 → 4px hover of thin bars into a single jump; background sizes interpolate. --scrollbar-gutter is set
    on the pseudo-element, never inherited, so a thin scroller's width cannot leak into one nested in it. */
-@property --scrollbar-thumb { syntax: '<color>'; inherits: false; initial-value: transparent; }
-@property --scrollbar-inset { syntax: '<length>'; inherits: false; initial-value: 3.5px; }
+/* --scrollbar-thumb (<color>, transparent) and --scrollbar-inset (<length>, 3.5px) are registered via
+   CSS.registerProperty in registerProperties.ts rather than CSS @property (avoids Chromium < 138 CVE-2025-6555 UAF). */
 /* :hover is listed so the host's own thumb:hover colour never applies; the pointer is tracked by useScrollReveal instead */
 .acp-shell ::-webkit-scrollbar-thumb, .acp-shell ::-webkit-scrollbar-thumb:hover {
   --scrollbar-thumb: inherit; --scrollbar-inset: inherit; --scrollbar-gutter: var(--scrollbar);

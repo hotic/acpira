@@ -73,8 +73,8 @@
   --container-bar-stat: 300px;
 }
 
-/* The tree rows' hover / selection tint, eased as a colour (registered at the top level, outside any layer) */
-@property --tint { syntax: '<color>'; inherits: false; initial-value: transparent; }
+/* The tree rows' hover / selection tint (--tint, <color>, transparent) is registered via CSS.registerProperty in
+   registerProperties.ts rather than CSS @property (avoids Chromium < 138 CVE-2025-6555 UAF). */
 
 @layer components {
   /* The panel lies on the canvas: sticky rows and the line numbers paint that, not the sheet's colour */

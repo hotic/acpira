@@ -1,5 +1,6 @@
 // First: its request starts before the rest of the bundle evaluates
 import './fontPreload';
+import { registerCssProperties } from './registerProperties';
 import { createRoot } from 'react-dom/client';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/geist';
@@ -9,6 +10,8 @@ import { App, bootReady } from './App';
 import { BrowserPanel } from './browser/BrowserPanel';
 import { fixSpacedPinyinCommits } from './ui/ime';
 
+// Register custom properties before any stylesheet transition runs (avoids Chromium < 138 CVE-2025-6555 UAF)
+registerCssProperties();
 fixSpacedPinyinCommits();
 
 // The browser panel runs the same bundle in its own webview (apps/vscode/src/bridge.ts BrowserPanel)
