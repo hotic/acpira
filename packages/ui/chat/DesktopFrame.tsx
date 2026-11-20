@@ -286,7 +286,7 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: 
     <span className="absolute -top-1 -right-1 flex"><UpdateDot /></span>
   );
   return (
-    <div className="flex shrink-0 items-center px-gap-half pt-gap-half pb-(--foot-bottom)">
+    <div className="flex shrink-0 items-center px-column-pad pt-gap-half pb-(--foot-bottom)">
       <DropdownMenu.Root>
         <DropdownMenu.Trigger render={<button type="button" data-land="settings" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_START : GEAR}>
           {row

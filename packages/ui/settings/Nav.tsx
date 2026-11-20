@@ -88,9 +88,9 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
       <span className="truncate settings-narrow:hidden">{t('settings.back')}</span>
     </button>
   );
-  // The inset lives on the nav in the desktop frame, under the title row's strip: the session column's (half a gap, also
-  // the step under the strip), so the rows' fills line up with its rows. Its widths come from desktop.css there, where the folded rail must still sit under the lights
-  const inset = desktop ? 'px-gap-half' : 'px-pad settings-narrow:px-2';
+  // The inset lives on the nav in the desktop frame, under the title row's strip: the session column's (column-pad,
+  // desktop.css), so the rows line up with its rows. Its widths come from desktop.css there, where the folded rail must still sit under the lights
+  const inset = desktop ? 'px-column-pad' : 'px-pad settings-narrow:px-2';
   return (
     <aside data-settings-rail data-opening={opening || undefined} style={width ? { '--rail-w': width } as CSSProperties : undefined} className={cn('flex shrink-0 flex-col', desktop ? 'gap-gap-half pb-(--foot-bottom)' : cn('gap-(--section-gap)', inset, 'w-(--settings-nav-w) py-pad-y settings-narrow:w-(--settings-rail-w)'))}>
       {/* Desktop: the window's pinned title row sits here; Back to chat leads the list below */}

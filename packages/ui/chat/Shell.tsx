@@ -1426,9 +1426,9 @@ export function Shell(p: ShellProps) {
                   </div>
                 )}
                 {/* Docked nav: the first action row is centred on the chat header's line (desktop: the title row holds that line) */}
-                <div className={cn('flex min-h-0 flex-1 flex-col p-gap-half', nav && canDock && !desktop && 'pt-[calc((var(--hdr)-var(--row))/2)]', desktop && 'pb-0')}>{sessionsPanel}</div>
+                <div className={cn('flex min-h-0 flex-1 flex-col px-column-pad py-gap-half', nav && canDock && !desktop && 'pt-[calc((var(--hdr)-var(--row))/2)]', desktop && 'pb-0')}>{sessionsPanel}</div>
                 {/* Plugin pieces at the column's foot (plugins/Pieces.tsx), full width, above the settings gear */}
-                <SlotPieces slot="sidebar" className="flex shrink-0 flex-col gap-gap-half px-gap-half pt-gap-half" pieceClassName="w-full" />
+                <SlotPieces slot="sidebar" className="flex shrink-0 flex-col gap-gap-half px-column-pad pt-gap-half" pieceClassName="w-full" />
                 {!files && gear}
                 {!desktop && nav && p.onOpenSettings && (
                   <div className="shrink-0 border-t border-line p-gap-half">
