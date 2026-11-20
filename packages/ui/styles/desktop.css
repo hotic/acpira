@@ -31,6 +31,8 @@
      rounded box), and the last button ends on their trailing edge */
   --sheet-lead: calc(var(--start-x) + 2px);
   --sheet-trail: var(--line-end);
+  /* The title row's leading inset (its first button's box): the lights' room on macOS, a gap elsewhere (Windows below) */
+  --title-lead: max(var(--gap), var(--lights-w));
   /* The pinned title row's width (chat/DesktopFrame.tsx TitleRow): the lights' room, back, forward and the column's
      toggle 2 px apart, then a breath */
   /* The gear at the column's foot (chat/DesktopFrame.tsx AppMenu): a size up from the rows' icons */
@@ -38,14 +40,14 @@
   /* The column foot's and the settings rail's bottom inset (AppMenu, settings/Nav.tsx): a pixel under the sheet's, since
      the sheet's 1 px ring is drawn outside its box; a row's fill (hover, the current page) then ends on the ring's outer edge */
   --foot-bottom: calc(var(--sheet-inset) - 1px);
-  --title-w: calc(max(var(--gap), var(--lights-w)) + 3 * var(--ctl) + 4px + var(--gap));
+  --title-w: calc(var(--title-lead) + 3 * var(--ctl) + 4px + var(--gap));
   /* The edge a narrow window's list page casts over the chat as it slides */
   --page-edge: 0 0 40px rgb(0 0 0 / 0.45);
 }
 .acp-shell[data-desktop][data-theme="light"] { --canvas: color-mix(in srgb, var(--bg-0) 92%, #000); --page-edge: 0 0 32px rgb(0 0 0 / 0.14); }
 /* A narrow window (data-narrow): the title row keeps the lights and the column's toggle only, so the header gains two
    buttons' width. Scoped to the header/tabs/rail consumers so crossing the tier never invalidates inherited vars on the whole shell. */
-.acp-shell[data-desktop][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(max(var(--gap), var(--lights-w)) + var(--ctl) + var(--gap)); }
+.acp-shell[data-desktop][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--title-lead) + var(--ctl) + var(--gap)); }
 /* The lights span x 17-77 (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath of about 15 px
    to its icon */
 /* macOS: the header line is 40 px, so its controls get a breath above and below inside the sheet; the lights' centre
@@ -61,10 +63,13 @@
   --title-top: 0px;
   --caps-w: calc(3 * var(--caption-w) + var(--gap) - var(--sheet-inset) - var(--start-x));
   --title-menu-w: 0px;
-  --title-w: calc(var(--gap) + 3 * var(--ctl) + 4px + var(--title-menu-w) + var(--gap));
+  /* The line is the window's top edge here, so the first button's fill stands as far from the window's left edge as
+     from its top: the line's half slack beside the button, whatever the density makes the button */
+  --title-lead: calc((var(--hdr) - var(--ctl)) / 2);
+  --title-w: calc(var(--title-lead) + 3 * var(--ctl) + 4px + var(--title-menu-w) + var(--gap));
 }
 .acp-shell[data-desktop][data-caption]:has(> [data-title-row] > [data-app-menus]) { --title-menu-w: calc(var(--ctl) + 2px); }
-.acp-shell[data-desktop][data-caption][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + var(--ctl) + var(--title-menu-w) + var(--gap)); }
+.acp-shell[data-desktop][data-caption][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--title-lead) + var(--ctl) + var(--title-menu-w) + var(--gap)); }
 /* A sheet header that ends at the window's edge leaves the caption its room; beside a shown tool panel it does not */
 .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):not([data-subagent-docked]) [data-sheet-header] { --sheet-trail: calc(var(--line-end) + var(--caps-w)); }
 .acp-shell[data-desktop][data-caption]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--line-end); }
@@ -185,7 +190,7 @@
   /* The title row is pinned at the window's top-left (absolute, over the column or the sheet's header) and never moves
      with the column; the column and the settings rail leave a strip of its height under it */
   .acp-shell[data-desktop] :is([data-title-row], [data-title-space]) { margin-top: var(--title-top); }
-  .acp-shell[data-desktop] [data-title-row] { padding-left: max(var(--gap), var(--lights-w)); }
+  .acp-shell[data-desktop] [data-title-row] { padding-left: var(--title-lead); }
   /* The column folds away (its title row's first button) and back. Only while it moves (data-column-moving, never under the
      drag that resizes it) its width eases, and the sheet's left inset and its header's room for the lights with it. The
      column's content keeps its open width meanwhile (--column-w, which Shell measures), clipped instead of re-wrapped. The

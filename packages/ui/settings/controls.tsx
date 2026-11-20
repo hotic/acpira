@@ -110,6 +110,9 @@ export const inputBox = 'min-w-0 rounded-md border border-line bg-chip px-3 text
 // Settings rows share typography and vertical padding. Detail rows reserve two text lines; wrapped content can grow.
 // Inside a Group (or as a section header) the surface owns the horizontal inset, so the row drops its own.
 const GroupContext = createContext(false);
+// Inside FormRows (bare rows stacked between a FormGrid and a dialog footer of rounded-md controls), row text takes
+// the same optical inset as FormField labels so bare text does not look outdented past the rounded boxes above and below
+const FormRowsContext = createContext(false);
 const settingRow = 'min-h-(--setting-row) py-(--setting-row-pad) text-2 data-[detail]:min-h-(--setting-row-detail)';
 // A settings row's padding and leading: its own side padding only outside a Group (whose block pads it)
 export function useSettingRow() {
@@ -321,7 +324,8 @@ export function SettingsDialog({ title, sub, icon, control, wide, tall, pinTop, 
             <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose} className="text-fg-2"><X strokeWidth={1.5} /></IconButton>
           </header>
           <DialogContext.Provider value={true}>{children}</DialogContext.Provider>
-          {footer && <div className="flex shrink-0 items-center gap-2 border-t border-line px-pad py-gap">{footer}</div>}
+          {/* Equal padding on all sides: corner buttons stand on the body's pad line and the same distance from the rule and bottom edge */}
+          {footer && <div className="flex shrink-0 items-center gap-2 border-t border-line p-pad">{footer}</div>}
         </div>
       </Dialog.Popup>
     </Dialog.Portal>
@@ -358,7 +362,7 @@ export function FooterNote({ children, className }: { children: ReactNode; class
 export function FormField({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-1', className)}>
-      <span className="text-3 text-fg-3" title={hint}>{label}</span>
+      <span className="px-(--form-label-inset) text-3 text-fg-3" title={hint}>{label}</span>
       {children}
     </div>
   );
@@ -372,14 +376,17 @@ export function FormGrid({ children, className }: { children: ReactNode; classNa
 
 // Setting rows under a dialog's form, bare (no block): they start on the form labels' edge, a rule above the first
 export function FormRows({ children }: { children: ReactNode }) {
-  return <GroupContext.Provider value={true}><div className={cn('relative flex flex-col px-pad before:pointer-events-none before:absolute before:top-0 before:inset-x-0 before:h-px before:bg-line', rowRules)}>{children}</div></GroupContext.Provider>;
+  return <GroupContext.Provider value={true}><FormRowsContext.Provider value={true}>
+    <div className={cn('relative flex flex-col px-pad before:pointer-events-none before:absolute before:top-0 before:inset-x-0 before:h-px before:bg-line', rowRules)}>{children}</div>
+  </FormRowsContext.Provider></GroupContext.Provider>;
 }
 
 // One setting: label + description on the left, the control on the right. `stack` puts the control under the text (wide controls)
 export function Field({ label, desc, htmlFor, stack: stacked, children }: { label?: ReactNode; desc?: ReactNode; htmlFor?: string; stack?: boolean; children?: ReactNode }) {
+  const inForm = useContext(FormRowsContext);
   return (
     <div className={cn(useSettingRow(), 'flex flex-wrap gap-x-pad gap-y-2', stacked ? 'flex-col' : 'items-center')} data-detail={!!desc || undefined}>
-      <div className={cn(stack, stacked ? 'w-full' : 'flex-[1_1_var(--setting-header-copy)]')}>
+      <div className={cn(stack, stacked ? 'w-full' : 'flex-[1_1_var(--setting-header-copy)]', inForm && 'pl-(--form-label-inset)')}>
         {label !== undefined && <label htmlFor={htmlFor} className="block text-2 text-fg-1">{label}</label>}
         {desc && <div className={cn(second, '[overflow-wrap:anywhere]')}>{desc}</div>}
       </div>
