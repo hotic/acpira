@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type AnimationEvent, type CSSProperties, 
 // Full notice in THIRD_PARTY_NOTICES.md.
 // Animated border beam: a port of border-beam limited to the sizes, colours and
 // themes the composer uses. Gradients and tuning are the library's own; what changed is the plumbing: every custom
-// property is registered once in styles/beam.css (the library injected a <style> with per-instance @property rules,
+// property is registered once in registerProperties.ts (the library injected a <style> with per-instance @property rules,
 // and WebKit restyles the whole document whenever that registry changes), the pulse oscillators run as CSS
 // animations instead of a 30 fps rAF loop writing inline styles, and the fade lives on an inner layer so the
 // wrapped children never restyle with it.

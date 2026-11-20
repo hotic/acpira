@@ -33,29 +33,25 @@
 }
 
 /* Bottom follow's sub-pixel pad (useBottomFollow.ts writes it on a transcript's content element), read only there.
-   Non-inherited like the fades' below: unregistered, each change restyled every element of the transcript. An engine
-   without @property still gets the pad, at that cost */
-@property --follow-lead { syntax: '<length>'; inherits: false; initial-value: 0px; }
+   Non-inherited like the fades' below (registered via CSS.registerProperty in registerProperties.ts): unregistered, each
+   change restyled every element of the transcript. An engine without registerProperty still gets the pad, at that cost */
 /* A following transcript's content: its top padding (pt-pad-y; --pad-y itself, the --spacing- alias reads the root
    density) plus the pad */
 @utility follow-pad {
   padding-top: calc(var(--pad-y) + var(--follow-lead, 0px));
 }
 
-/* The fades' edge sizes are read only by the scroller that sets them. Non-inherited, so an edge flag flipping (the session
-   list leaving its top, the transcript its bottom) restyles that one element instead of every row inside it */
-@property --fade-top { syntax: '<length>'; inherits: false; initial-value: 0px; }
-@property --fade-bottom { syntax: '<length>'; inherits: false; initial-value: 0px; }
-@property --thread-fade-clear { syntax: '<length>'; inherits: false; initial-value: 0px; }
-@property --thread-fade-span { syntax: '<length>'; inherits: false; initial-value: 0px; }
+/* The fades' edge sizes (--fade-top, --fade-bottom, --thread-fade-clear, --thread-fade-span) are registered as
+   non-inherited <length> properties in registerProperties.ts, so an edge flag flipping (the session list leaving its
+   top, the transcript its bottom) restyles that one element instead of every row inside it */
 
 /* The connecting row (chat/Notice.tsx ConnectingNotice) floats over the transcript's tail instead of taking a slot, so
    the tail must leave it room: the whole row (its --row plus the dock's half-gap under it) and a row gap above it. The
    room is reserved always, never only while starting, so the history does not move when the row comes or goes. Every
    tail ends at the same distance from the dock: a reply's action row (TurnActions) already holds part of the room and
    gets the rest, so a reply finishing (a running tail has no action row) does not shift the thread either. Read by the
-   body's tail clearance (threadClearance in chat/Shell.tsx); one rule on the thread body, so no kind of tail misses it. */
-@property --thread-tail-room { syntax: '<length>'; inherits: false; initial-value: 0px; }
+   body's tail clearance (threadClearance in chat/Shell.tsx); one rule on the thread body, so no kind of tail misses it.
+   --thread-tail-room is registered as a non-inherited <length> property in registerProperties.ts. */
 @layer components {
   [data-thread-body] {
     --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--msg-gap));

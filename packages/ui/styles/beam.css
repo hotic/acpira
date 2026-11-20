@@ -1,41 +1,11 @@
 /* Credit: ported from border-beam 1.3.0 by Jakub Antalik (https://beam.jakubantalik.com), MIT License, Copyright (c) 2026
    Jakub Antalik. Full notice in THIRD_PARTY_NOTICES.md.
-   effects/Beam.tsx: the composer focus beam. Every animated custom property is
-   registered here once: WebKit restyles every element whenever the @property registry changes, so nothing may
-   register one per instance. Per-instance values come inline: --bb-r, --bb-strength, --bb-bri, --bb-sat, --bb-shadow
-   on the root, the gradients and --bb-k (layer opacity) on each layer. Base values are the final state, so the motion
-   kill switch leaves a still beam rather than none. */
-
-@property --bb-fade { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-angle { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
-/* line: travel position / width, breathing height, spikes, edge fade */
-@property --bb-x { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-w { syntax: "<number>"; inherits: true; initial-value: 1; }
-@property --bb-h { syntax: "<number>"; inherits: true; initial-value: 1; }
-@property --bb-spike { syntax: "<number>"; inherits: true; initial-value: 1; }
-@property --bb-spike2 { syntax: "<number>"; inherits: true; initial-value: 1; }
-@property --bb-edge { syntax: "<number>"; inherits: true; initial-value: 1; }
-/* md / line hue swing, animated on each layer itself */
-@property --bb-swing { syntax: "<number>"; inherits: false; initial-value: 0; }
-/* pulse-inner: hue turn and the 17 oscillator phases (0-1, mapped to values in Beam.tsx) */
-@property --bb-hue { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
-@property --bb-o0 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o1 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o2 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o3 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o4 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o5 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o6 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o7 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o8 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o9 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o10 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o11 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o12 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o13 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o14 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o15 { syntax: "<number>"; inherits: true; initial-value: 0; }
-@property --bb-o16 { syntax: "<number>"; inherits: true; initial-value: 0; }
+   effects/Beam.tsx: the composer focus beam. Every animated custom property (--bb-fade, --bb-angle, --bb-x/w/h,
+   --bb-spike/spike2/edge, --bb-swing, --bb-hue, --bb-o0..o16) is registered once at boot via CSS.registerProperty in
+   registerProperties.ts (WebKit restyles every element whenever the @property registry changes, and Chromium < 138
+   invalidates CSS @property registrations on stylesheet rebuilds — CVE-2025-6555). Per-instance values come inline:
+   --bb-r, --bb-strength, --bb-bri, --bb-sat, --bb-shadow on the root, the gradients and --bb-k (layer opacity) on each
+   layer. Base values are the final state, so the motion kill switch leaves a still beam rather than none. */
 
 @layer components {
   .bb { position: relative; overflow: hidden; border-radius: var(--bb-r); --bb-r-in: max(0px, calc(var(--bb-r) - 1px)); }
