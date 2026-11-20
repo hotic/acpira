@@ -7,7 +7,7 @@ use acpira_shared::subagents::{SubagentPeer, SubagentState, SubagentVisibility};
 
 use super::{
   Dialect, PendingDelegation, PendingLaunch, Route, RouteCtx, SEND_CALLS_MAX, SendCall, SubagentTree, native_sidekick_call, rec, result_text,
-  run_of, s, seal_launch_receipt, terminal,
+  run_of, s, seal_launch_receipt, terminal, update_text,
 };
 use crate::i18n::t;
 
@@ -265,6 +265,15 @@ impl SubagentTree {
     } else if n.is_none() && s(raw.and_then(|r| r.get("subagent_type"))).is_some() && s(raw.and_then(|r| r.get("prompt"))).is_some() {
       n = self.upsert_call_node(&tool_call_id, SubagentVisibility::Receipt, ctx);
     }
+    // droid names the child session of a `Task` on the call (`subagent_session_info`, usually the update right after
+    // the announce): once the session loads it, the child's own updates stream under that id
+    if let Some(i) = n
+      && let Some(child) = meta.and_then(|m| rec(m.get("subagent_session_info"))).and_then(|info| s(info.get("session_id")))
+    {
+      let id = self.nodes[i].id.clone();
+      self.link_child_session(i, &child, ctx);
+      n = self.idx(&id);
+    }
     let Some(i) = n else { return };
     let id = self.nodes[i].id.clone();
     let Some(block) = ctx.root_tool(&tool_call_id) else { return };
@@ -306,7 +315,8 @@ impl SubagentTree {
           self.transition(&id, SubagentState::Running);
         } else {
           let Some(block) = ctx.root_tool(&tool_call_id) else { return };
-          let result = result_text(u, block);
+          // droid closes a background Task with no text: its row's "Running in background" receipt is no result
+          let result = if self.nodes[i].dialect == Some(Dialect::Droid) { update_text(u) } else { result_text(u, block) };
           if result.is_some() {
             self.nodes[i].result = result;
           }
@@ -416,6 +426,44 @@ impl SubagentTree {
     self.nodes[i].peer.tool_call_id = Some(call.to_owned());
     self.by_tool.insert(call.to_owned(), id.clone());
     self.bump(&id);
+  }
+
+  /// A receipt node whose child is a session of its own: its updates route by that id, so the node gains a process
+  /// (`has_process`) and keeps only its result when nothing arrives. A resumed delegation names the same child again,
+  /// and the new run is the new node's
+  fn link_child_session(&mut self, i: usize, child: &str, ctx: &mut RouteCtx) {
+    let n = &mut self.nodes[i];
+    if n.peer.session_id.as_deref() == Some(child) {
+      return;
+    }
+    n.peer.session_id = Some(child.to_owned());
+    n.dialect = Some(Dialect::Droid);
+    let id = n.id.clone();
+    self.by_session.insert(child.to_owned(), id.clone());
+    self.child_loads.push(child.to_owned());
+    self.replay_orphans(child, &id, ctx);
+    self.bump(&id);
+  }
+
+  /// The prompt returned while droid `Task`s still run their children: each such node runs on in the background, like a
+  /// Claude background agent, and the session parks its call's row (`park_background_commands`)
+  pub fn outliving_delegations(&mut self) -> Vec<String> {
+    let mut calls = vec![];
+    for n in &mut self.nodes {
+      if n.dialect == Some(Dialect::Droid) && n.status == SubagentState::Running && let Some(call) = n.peer.tool_call_id.clone() {
+        if !n.background {
+          n.background = true;
+          n.rev += 1;
+        }
+        calls.push(call);
+      }
+    }
+    calls
+  }
+
+  /// Child sessions named since the last call: the session asks the CLI to stream each one (`load_child_sessions`)
+  pub fn take_child_loads(&mut self) -> Vec<String> {
+    std::mem::take(&mut self.child_loads)
   }
 
   fn upsert_call_node(&mut self, tool_call_id: &str, visibility: SubagentVisibility, ctx: &mut RouteCtx) -> Option<usize> {

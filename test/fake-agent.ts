@@ -198,8 +198,20 @@ const sessionDir = process.env.FAKE_SESSION_DIR;
 // replays the conversation as it stands (the row closed with its receipt, then the reply). A "late-steps" prompt has the
 // model write that reply in steps, the time moving at each: a thought and a call still running, then (two <ms> later,
 // so a client polling sees the step between) the call closed and the words. FAKE_LATE_LIVE is agy acp 1.5.12: the same
-// exit and reply also stream as they happen, with no prompt running (the replay still answers a load)
+// exit and reply also stream as they happen, with no prompt running (the replay still answers a load). "late-big" is a
+// "late-command" whose turn also leaves the context over budget ("big"'s usage and /compact advertised)
 const lateMs = Number(process.env.FAKE_LATE_REPLY) || 0;
+// "droid-task" is droid 1.14.0's Task: the call names its child session in `_meta.subagent_session_info` on the update
+// after its announce, the turn ends at once while the Task runs on, and the child streams only after a `session/load` of
+// its id, which answers first and replays the child's task after. The call then completes with the child's report and
+// the parent writes one more reply with no prompt running. "droid-task-gone" refuses that load: the call still completes.
+// "droid-task-background" is a Task the model sent to the background: its call answers `in_progress` with the
+// "Running in background" receipt, and once the child is done droid closes it `completed` with no content
+const droidChildren = new Map<string, { task: string; loaded: () => void }>();
+const droidGone = new Set<string>();
+let droidTasks = 0;
+// When each session with a droid Task last streamed: its `session/list` time
+const droidTimes = new Map<string, number>();
 const lateLive = !!process.env.FAKE_LATE_LIVE;
 // When each session's late-command turn ended
 const lateTurns = new Map<string, number>();
@@ -470,8 +482,11 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.list, ({ params }) => {
     // FAKE_LATE_REPLY: the sessions with a background command, their time moving as it exits and is answered
-    if (lateMs && !sessionDir) {
-      return { sessions: [...lateTurns.keys()].map(id => ({ sessionId: id, cwd: params.cwd ?? '', title: 'Late', updatedAt: new Date(lateStage(id) * 1000).toISOString() })) };
+    if ((lateMs || droidTimes.size) && !sessionDir) {
+      return { sessions: [
+        ...[...lateTurns.keys()].map(id => ({ sessionId: id, cwd: params.cwd ?? '', title: 'Late', updatedAt: new Date(lateStage(id) * 1000).toISOString() })),
+        ...[...droidTimes].map(([id, at]) => ({ sessionId: id, cwd: params.cwd ?? '', title: 'Droid', updatedAt: new Date(at).toISOString() })),
+      ] };
     }
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.list);
     const all = readdirSync(sessionDir).filter(f => f.endsWith('.json'))
@@ -509,6 +524,15 @@ const app = acp.agent({ name: 'fake-agent' })
       }
       return {};
     }
+    const droidChild = droidChildren.get(params.sessionId);
+    if (droidChild) {
+      setTimeout(() => {
+        void client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
+          update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: droidChild.task } } }).then(droidChild.loaded);
+      }, 0);
+      return {};
+    }
+    if (droidGone.has(params.sessionId)) throw acp.RequestError.invalidParams({ sessionId: params.sessionId }, 'Unknown session identifier');
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
     const restored = restoreSession(params.sessionId, params.cwd);
     // Native load replays content; an existing local transcript must not duplicate it.
@@ -1227,9 +1251,57 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
 
-    if (lateMs && (text === 'late-command' || text === 'late-steps')) {
+    if (text === 'droid-task' || text === 'droid-task-gone' || text === 'droid-task-background') {
+      const background = text === 'droid-task-background';
+      const child = `${sid}:droid-child:${++droidTasks}`;
+      const call = `task-${droidTasks}`;
+      const task = 'List the files inside i18n.';
+      let loaded = () => {};
+      const streamed = new Promise<void>(resolve => { loaded = resolve; });
+      if (text !== 'droid-task-gone') droidChildren.set(child, { task, loaded });
+      else droidGone.add(child);
+      const toChild = (update: Record<string, unknown>) =>
+        client.notify(acp.methods.client.session.update, { sessionId: child, update } as unknown as acp.SessionNotification);
+      droidTimes.set(sid, Date.now());
+      await send({ sessionUpdate: 'tool_call', toolCallId: call, title: 'Explorer: List i18n files', kind: 'other', status: 'pending',
+        rawInput: { subagent_type: 'explorer', description: 'List i18n files', prompt: task } });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: call,
+        _meta: { subagent_session_info: { session_id: child, message_start_index: 0 } } } as acp.SessionUpdate);
+      await send(background
+        ? { sessionUpdate: 'tool_call_update', toolCallId: call, status: 'in_progress', rawOutput: { text: 'Running in background' },
+          content: [{ type: 'content', content: { type: 'text', text: 'Running in background' } }] } as acp.SessionUpdate
+        : { sessionUpdate: 'tool_call_update', toolCallId: call, status: 'in_progress' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Handed to a subagent.' } });
+      void (async () => {
+        if (text !== 'droid-task-gone') {
+          await streamed;
+          // Long enough for a client to see the Task outlive the turn
+          await new Promise(r => setTimeout(r, 600));
+          await toChild({ sessionUpdate: 'tool_call', toolCallId: `${child}-1`, title: 'List i18n', kind: 'read', status: 'pending', rawInput: { directory_path: 'i18n' } });
+          await toChild({ sessionUpdate: 'tool_call_update', toolCallId: `${child}-1`, status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text: 'en.ts\nzh-CN.ts' } }] });
+          await toChild({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Child report: 2 files' } });
+        }
+        await new Promise(r => setTimeout(r, 150));
+        await send(background
+          ? { sessionUpdate: 'tool_call_update', toolCallId: call, status: 'completed', content: [] }
+          : { sessionUpdate: 'tool_call_update', toolCallId: call, status: 'completed', rawOutput: { text: 'i18n holds 2 files' },
+            content: [{ type: 'content', content: { type: 'text', text: 'i18n holds 2 files' } }] } as acp.SessionUpdate);
+        droidTimes.set(sid, Date.now());
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '2' } });
+        droidTimes.set(sid, Date.now());
+      })();
+      return { stopReason: 'end_turn' };
+    }
+
+    if (lateMs && (text === 'late-command' || text === 'late-steps' || text === 'late-big')) {
       if (text === 'late-steps') lateSteps.add(sid);
       await send(lateCommand(false));
+      if (text === 'late-big') {
+        usedTokens += 400_000;
+        await send({ sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'compact', description: 'compact it' }] });
+        await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
+      }
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started ' } });
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'it.' } });
       lateTurns.set(sid, Date.now());

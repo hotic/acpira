@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 
 use acpira_shared::transcript::{SessionStatus, TurnStop};
 
+use crate::acp::session::late_reply::has_background_commands;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::t;
@@ -168,18 +169,25 @@ impl AcpSession {
     c.compaction.at.is_none_or(|last| used >= last + at / 10.0)
   }
 
-  /// Compact before flushing so a queued follow-up is not the request that runs over budget
+  /// Compact before flushing so a queued follow-up is not the request that runs over budget. While a command the turn
+  /// sent to the background still runs, its late reply is still owed (`late_reply.rs`): compacting now would cut the
+  /// model off from the history it wakes up to, so the turn boundary waits for the detached turn of that reply, whose
+  /// end comes back here. A prompt sent meanwhile still compacts first (`claim`), so a command that never exits cannot
+  /// hold compaction off for good
   pub(crate) fn after_prompt(self: &Arc<Self>, auto: bool, stop: TurnStop) {
     let compact = {
       let c = self.core.lock();
       if c.pending_prompt.is_some() {
         return;
       }
-      let yes = !auto && stop == TurnStop::EndTurn && self.should_auto_compact(&c);
-      if yes {
+      let due = !auto && stop == TurnStop::EndTurn && self.should_auto_compact(&c);
+      let deferred = due && has_background_commands(&c);
+      if deferred {
+        self.log_usage_threshold(&c, "auto compaction waits for background commands");
+      } else if due {
         self.log_usage_threshold(&c, "auto /compact");
       }
-      yes
+      due && !deferred
     };
     if compact {
       let me = self.clone();

@@ -136,9 +136,16 @@ impl Vendor {
 
   /// A native subagent still running when its parent's prompt returns keeps streaming under its own session id and ends
   /// with the adapter's own state update: the next prompt's hand-off settles a held turn early, and a child launched in
-  /// an autonomous cycle holds nothing (`agent-quirks-claude.md`)
+  /// an autonomous cycle holds nothing (`agent-quirks-claude.md`). A droid `Task` runs past the turn that launched it
+  /// and ends with its call's result (`load_child_sessions`)
   pub fn children_outlive_prompt(self) -> bool {
-    self == Vendor::Claude
+    matches!(self, Vendor::Claude | Vendor::Droid)
+  }
+
+  /// A delegation names its child session on the call (`_meta.subagent_session_info`), and the child streams only after
+  /// a `session/load` of that id on the parent's process (`load_child_sessions`)
+  pub fn loads_child_sessions(self) -> bool {
+    self == Vendor::Droid
   }
 
   /// A `SendMessage` resume of a finished native subagent arrives as an announced run with no content of its own: the
@@ -170,6 +177,18 @@ impl Vendor {
   /// the session reads it back from a replay (`session/late_reply.rs`)
   pub fn stores_late_replies(self) -> bool {
     self == Vendor::Antigravity
+  }
+
+  /// A delegation outlives the turn that launched it (droid's asynchronous `Task`), and the reply its end wakes the
+  /// model for streams with no prompt running: its row carries a background task like Claude's background agents, and
+  /// the reply runs as a detached turn (`session/late_reply.rs`)
+  pub fn parks_delegations(self) -> bool {
+    self == Vendor::Droid
+  }
+
+  /// Something a turn left running is followed past it (`session/late_reply.rs`)
+  pub fn late_replies(self) -> bool {
+    self.stores_late_replies() || self.parks_delegations()
   }
 
   /// A steer is a `session/prompt` of its own sent while the turn runs, which takes the turn over from the running one

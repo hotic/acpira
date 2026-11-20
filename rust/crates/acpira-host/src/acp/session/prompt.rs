@@ -944,7 +944,8 @@ impl AcpSession {
     let failed = error.is_some();
     let ended = !failed && stop == TurnStop::EndTurn;
     self.emit_turn_ended(c, stop, error.as_ref());
-    // A command Antigravity sent to the background keeps its row past the turn (`late_reply.rs`)
+    // A command Antigravity sent to the background, or a droid `Task` still running its child, keeps its row past the
+    // turn (`late_reply.rs`)
     if ended {
       self.park_background_commands(c);
     }
