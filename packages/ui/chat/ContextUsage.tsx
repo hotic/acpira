@@ -25,7 +25,7 @@ export function ContextRing({ sessionId, usage, turns = EMPTY_TURNS, compacting:
   const shown = useMemo(() => liveUsage(usage, turns, running), [usage, turns, running]);
   const stale = shown.compactedFrom !== undefined;
   // The agent's own split of what it last sent, when it reports one; a stale figure has none to match
-  const fetched = useContextSplit(sessionId, shown.used, shown.size);
+  const fetched = useContextSplit(sessionId, shown.used, shown.size, open);
   const split = stale ? undefined : fetched;
   const fill = usageFill(shown);
   const pct = Math.min(1, shown.used / shown.size);
@@ -74,7 +74,7 @@ const SPLIT_SETTLE_MS = 300;
 
 // The split for the card, refreshed after every change of the figure; the last one per session shows meanwhile, so the
 // card opens with its parts and keeps its size. Nothing for an agent that reports none
-function useContextSplit(sessionId: string | undefined, used: number, size: number): ContextReport | undefined {
+function useContextSplit(sessionId: string | undefined, used: number, size: number, open: boolean): ContextReport | undefined {
   const [split, setSplit] = useState(() => (sessionId ? lastSplit.get(sessionId) ?? undefined : undefined));
   useEffect(() => {
     setSplit(sessionId ? lastSplit.get(sessionId) ?? undefined : undefined);
@@ -88,6 +88,16 @@ function useContextSplit(sessionId: string | undefined, used: number, size: numb
     }, SPLIT_SETTLE_MS);
     return () => { live = false; clearTimeout(timer); };
   }, [sessionId, used, size]);
+  // Retry once on open if an earlier ask returned nothing (e.g. a remote host reconnecting or a mirror catching up)
+  useEffect(() => {
+    if (!open || !sessionId || split) return;
+    let live = true;
+    void contextApi.report(sessionId).then(r => {
+      lastSplit.set(sessionId, r ?? null);
+      if (live && r) setSplit(r);
+    });
+    return () => { live = false; };
+  }, [open, sessionId, split]);
   return split;
 }
 

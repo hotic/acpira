@@ -24,6 +24,9 @@ impl SessionManager {
           Some("sessionHits") => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("search-{seq}")),
           Some("controls") if view_id == LIST_VIEW => msg.get("agent").and_then(Value::as_str).map(|a| format!("controls-{a}")),
           Some("sessionMarkdown") if view_id == LIST_VIEW => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("record-{seq}")),
+          Some("sessionContext") if view_id == LIST_VIEW => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("context-{seq}")),
+          Some("sessionContextItem") if view_id == LIST_VIEW => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("context-item-{seq}")),
+          Some("sessionContextRaw") if view_id == LIST_VIEW => msg.get("seq").and_then(Value::as_u64).map(|seq| format!("context-raw-{seq}")),
           Some("editTurnResult") if view_id == LIST_VIEW => msg.get("requestId").and_then(Value::as_str).map(str::to_owned),
           _ => None,
         };
