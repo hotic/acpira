@@ -377,6 +377,26 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
     m.active().is_some_and(|v| v["turns"][0]["text"] == "hello from here" && v["turns"][0]["edited"] == true && v["running"] == false)
   }).await;
 
+  // Context split and leaf reads forward to the host engine once the session has a usage figure.
+  m.handle(json!({ "type": "send", "sessionId": id, "text": "usage-devin" })).await;
+  wait(&m, "the usage turn on the host", 30_000, || {
+    m.active().is_some_and(|v| v["turns"].as_array().is_some_and(|t| t.len() >= 4) && v["running"] == false && v["usage"]["used"] == 5000)
+  }).await;
+  let summary = m.m.session_context(&id, false).await.expect("host session context summary");
+  assert_eq!((summary.used, summary.size, summary.estimated), (5000, 100_000, true));
+  assert!(!summary.categories.is_empty());
+  assert!(summary.categories.iter().all(|c| c.nodes.is_none()));
+  let detailed = m.m.session_context(&id, true).await.expect("host session context detail");
+  let chat = detailed.categories.iter().find(|c| c.id == acpira_shared::context::ContextCategory::Chat).expect("chat category");
+  let msg = chat
+    .nodes
+    .as_ref()
+    .and_then(|turns| turns.iter().find_map(|t| t.children.as_ref()?.iter().find(|n| n.kind == acpira_shared::context::ContextNodeKind::Message)))
+    .expect("user message leaf");
+  let item = m.m.session_context_item(&id, &detailed.rev, &msg.id).await.expect("host context leaf content");
+  assert!(matches!(item, acpira_shared::context::ContextContent::Text { ref text, .. } if text == "hello from here"), "{item:?}");
+  assert_eq!(m.m.session_context_raw(&id).await, Ok(None));
+
   // Another page (a paired phone) opens the cached host view. Selecting it must read the host's mark too, even when
   // a desktop page keeps that view alive and the mark was explicitly kept while it was on screen.
   m.handle(json!({ "type": "setSessionUnread", "id": id, "unread": true })).await;
@@ -412,6 +432,12 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   assert!(m.sessions().iter().any(|s| s["id"] == id.as_str() && s["title"] == "On the host"), "the cached list stays");
   let error = m.m.edit_turn(edit).await.expect_err("an offline host must reject an edit");
   assert_eq!(error.to_string(), acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "gen1")]));
+  assert!(m.m.session_context(&id, false).await.is_none(), "an offline host has no context report");
+  assert_eq!(
+    m.m.session_context_raw(&id).await,
+    Err(acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "gen1")])),
+    "an offline host reports unreachable for raw context"
+  );
   m.dispose().await;
   for (_, pid) in engines {
     // SAFETY: SIGTERM to the host engine this test started

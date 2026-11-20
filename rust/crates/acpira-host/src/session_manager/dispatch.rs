@@ -128,11 +128,14 @@ impl SessionManager {
     self.live(session_id).or_else(|| self.mirror_of(session_id)).is_some_and(|s| s.shows_file(path))
   }
 
-  /// The session's context split (`acp::session::context`); a session not open here (another engine's copy, or one only
-  /// on disk) is estimated from its transcript (`context_estimate.rs`)
+  /// The session's context split (`acp::session::context`); a host session asks its host engine, and a local session
+  /// not open here (another engine's copy, or one only on disk) is estimated from its transcript (`context_estimate.rs`)
   pub async fn session_context(&self, session_id: &str, detail: bool) -> Option<acpira_shared::context::ContextReport> {
     if let Some(s) = self.live(session_id).or_else(|| self.mirror_of(session_id)) {
       return s.context_report(detail).await;
+    }
+    if let Some(report) = self.host_context(session_id, detail).await {
+      return report;
     }
     let record = self.deps.store.load_detailed(session_id).await.ok()?;
     let known = record_known(self.registry(), &record).await;
@@ -143,6 +146,9 @@ impl SessionManager {
     if let Some(s) = self.live(session_id).or_else(|| self.mirror_of(session_id)) {
       return s.context_item(rev, id).await;
     }
+    if let Some(content) = self.host_context_item(session_id, rev, id).await {
+      return content;
+    }
     let record = self.deps.store.load_detailed(session_id).await.ok()?;
     let known = if id.starts_with("summary") || id.starts_with(crate::acp::session::context_estimate::DOC_PREFIX) { record_known(self.registry(), &record).await } else { None };
     if let Some(doc) = crate::acp::session::context_estimate::doc_content(known.as_ref(), id).await {
@@ -152,10 +158,13 @@ impl SessionManager {
   }
 
   pub async fn session_context_raw(&self, session_id: &str) -> Result<Option<acpira_shared::context::ContextRaw>, String> {
-    match self.live(session_id) {
-      Some(s) => s.context_raw().await,
-      None => Ok(None),
+    if let Some(s) = self.live(session_id) {
+      return s.context_raw().await;
     }
+    if let Some(raw) = self.host_context_raw(session_id).await {
+      return raw;
+    }
+    Ok(None)
   }
 
   /// The files the session's own edits touched with their text before its first edit of each (`AcpSession::edit_bases`);

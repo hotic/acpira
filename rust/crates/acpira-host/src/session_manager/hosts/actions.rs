@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
+use acpira_shared::context::{ContextContent, ContextRaw, ContextReport};
 use acpira_shared::protocol::{EditTurnRequest, HostMsg, SessionHit, WebviewMsg};
 use acpira_shared::remote::parse_remote_folder;
 use acpira_shared::transcript::SessionSummary;
@@ -18,6 +19,24 @@ impl SessionManager {
   pub(crate) async fn edit_on_host(&self, edit: &EditTurnRequest) -> Option<Result<()>> {
     let run = self.host_of(&edit.session_id)?;
     Some(run.edit(edit.clone()).await)
+  }
+
+  /// A host session's context split, asked of the host engine that owns it; None when the session is not a host's
+  pub(crate) async fn host_context(&self, id: &str, detail: bool) -> Option<Option<ContextReport>> {
+    let run = self.host_of(id)?;
+    Some(run.context(id, detail).await)
+  }
+
+  /// One leaf's content in a host session's context report; None when the session is not a host's
+  pub(crate) async fn host_context_item(&self, id: &str, rev: &str, item_id: &str) -> Option<Option<ContextContent>> {
+    let run = self.host_of(id)?;
+    Some(run.context_item(id, rev, item_id).await)
+  }
+
+  /// A host session's raw request payload; None when the session is not a host's
+  pub(crate) async fn host_context_raw(&self, id: &str) -> Option<Result<Option<ContextRaw>, String>> {
+    let run = self.host_of(id)?;
+    Some(run.context_raw(id).await)
   }
 
   fn host_of(&self, id: &str) -> Option<Arc<HostRun>> {

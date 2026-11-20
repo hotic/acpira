@@ -18,6 +18,7 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+use acpira_shared::context::{ContextContent, ContextRaw, ContextReport};
 use acpira_shared::protocol::{EditTurnRequest, HostMsg, SessionHit};
 use acpira_shared::remote::{ConnectionView, format_remote_folder, parse_remote_folder};
 use acpira_shared::session_patch::{LastTurnParts, ViewParts};
@@ -161,6 +162,64 @@ impl HostRun {
     let _pending = HostRequest { run: self, key };
     send();
     tokio::time::timeout(QUERY_WAIT, rx).await.ok().and_then(Result::ok)
+  }
+
+  /// Request on the host's list view, failing immediately when the link is down rather than waiting for `QUERY_WAIT`.
+  async fn request_list(&self, key: String, message: Value) -> Option<Value> {
+    if !*self.up.borrow() {
+      return None;
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _pending = HostRequest { run: self, key: key.clone() };
+    {
+      // Register under `out.lock()` so a concurrent disconnect clears it instead of stranding the waiter.
+      let out = self.out.lock();
+      let out = out.as_ref()?;
+      self.requests.lock().insert(key.clone(), tx);
+      if out.send(json!({ "type": "webviewMessage", "viewId": LIST_VIEW, "message": message })).is_err() {
+        return None;
+      }
+    }
+    tokio::time::timeout(QUERY_WAIT, rx).await.ok().and_then(Result::ok)
+  }
+
+  async fn context(&self, id: &str, detail: bool) -> Option<ContextReport> {
+    let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+    let reply = self
+      .request_list(
+        format!("context-{seq}"),
+        json!({ "type": "sessionContext", "sessionId": id, "seq": seq, "detail": detail }),
+      )
+      .await?;
+    reply.get("report").and_then(|r| serde_json::from_value(r.clone()).ok())
+  }
+
+  async fn context_item(&self, id: &str, rev: &str, item_id: &str) -> Option<ContextContent> {
+    let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+    let reply = self
+      .request_list(
+        format!("context-item-{seq}"),
+        json!({ "type": "sessionContextItem", "sessionId": id, "rev": rev, "id": item_id, "seq": seq }),
+      )
+      .await?;
+    reply.get("content").and_then(|c| serde_json::from_value(c.clone()).ok())
+  }
+
+  async fn context_raw(&self, id: &str) -> Result<Option<ContextRaw>, String> {
+    let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+    let Some(reply) = self
+      .request_list(
+        format!("context-raw-{seq}"),
+        json!({ "type": "sessionContextRaw", "sessionId": id, "seq": seq }),
+      )
+      .await
+    else {
+      return Err(crate::i18n::tp("host.remoteUnreachable", &[("host", &self.alias)]));
+    };
+    if let Some(error) = reply.get("error").and_then(Value::as_str) {
+      return Err(error.to_owned());
+    }
+    Ok(reply.get("raw").and_then(|r| serde_json::from_value(r.clone()).ok()))
   }
 
   /// An edit answers only after the host accepted or rejected it. A lost link cannot tell whether it ran.
