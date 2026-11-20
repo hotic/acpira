@@ -17,8 +17,8 @@ use super::{App, ChatWindowOpen, allowed_navigation, app, first_url, log, log_ar
 use crate::browser::BrowserPanelWindow;
 use crate::chat_window::{ChatWindow, page_url};
 
-// Only the macOS content-process recovery times its repeats
-#[cfg(target_os = "macos")]
+// Content-process recovery times its repeats on macOS and Windows
+#[cfg(any(target_os = "macos", windows))]
 use std::time::Instant;
 
 impl App {
@@ -242,8 +242,61 @@ impl App {
     self.reload(label);
   }
 
+  /// Windows: WebView2 reported a child process failure (`ICoreWebView2::ProcessFailed`). Every failure goes to
+  /// desktop.log with kind, reason, exit code and module. A top-level renderer exit (`render-process-exited`) replaces
+  /// the frameless app document with Edge's sad-tab page (hiding caption buttons and drag regions), so the shell
+  /// triggers a clean reload outside the COM callback, capped per window so a deterministic crash cannot loop forever
+  #[cfg(windows)]
+  pub fn page_process_failed(&self, label: &str, info: crate::win::ProcessFailed) {
+    const CRASH_WINDOW: Duration = Duration::from_secs(60);
+    const MAX_AUTO_RELOADS: usize = 3;
+    log(&format!("page {label}: webview2 process failed ({})", info.summary()));
+    if !info.reloadable || self.quitting.load(Ordering::SeqCst) {
+      return;
+    }
+    if self.window_by_label(label).is_none() && self.browser_by_label(label).is_none() {
+      return;
+    }
+    let now = Instant::now();
+    let count = {
+      let mut crashes = self.page_crashes.lock();
+      let times = crashes.entry(label.to_owned()).or_default();
+      times.retain(|t| now.duration_since(*t) < CRASH_WINDOW);
+      times.push(now);
+      times.len()
+    };
+    if count > MAX_AUTO_RELOADS {
+      log(&format!(
+        "page {label}: render process failed {count} times in {}s; skipping auto-reload",
+        CRASH_WINDOW.as_secs()
+      ));
+      return;
+    }
+    let delay = match count {
+      1 => Duration::from_millis(100),
+      2 => Duration::from_secs(1),
+      _ => Duration::from_secs(2),
+    };
+    log(&format!("page {label}: reloading after render process exit ({count}/{MAX_AUTO_RELOADS})"));
+    let label = label.to_owned();
+    let handle = self.handle.clone();
+    // Queue from a worker thread so the reload never re-enters WebView2's ProcessFailed COM callback
+    tauri::async_runtime::spawn(async move {
+      tokio::time::sleep(delay).await;
+      let _ = handle.run_on_main_thread(move || {
+        if let Some(a) = crate::app::try_app()
+          && !a.quitting.load(Ordering::SeqCst)
+        {
+          a.reload(&label);
+        }
+      });
+    });
+  }
+
   pub fn window_closed(&self, label: &str) {
     self.page_ended.lock().remove(label);
+    #[cfg(windows)]
+    self.page_crashes.lock().remove(label);
     if let Some(b) = self.browser_by_label(label) {
       b.relay.dispose();
       self.browsers.lock().retain(|x| x.label != label);
