@@ -201,7 +201,7 @@ export function openTurnControls(live: SessionControls, settings: TurnSettings |
   if (model === undefined || value === undefined || value === model.value) {
     return next;
   }
-  next.options = next.options.filter((c: ConfigControl) => c.category !== 'thought_level' && c.category !== 'model_config');
+  next.options = next.options.filter((c: ConfigControl) => c.category !== 'thought_level' && c.category !== 'model_config' && c.category !== 'speed');
   return next;
 }
 

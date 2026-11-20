@@ -108,7 +108,8 @@ object ModelCatalog {
       while (t.size > 1) {
         val last = t.last().lowercase()
         when {
-          last == "fast" -> { fast = true; t.removeAt(t.lastIndex) }
+          // Keep compound "Ultra Fast" tiers ("GPT-6.2 Sol Ultra Fast") intact as their own family
+          last == "fast" && t[t.size - 2].lowercase() != "ultra" -> { fast = true; t.removeAt(t.lastIndex) }
           // Droid / Factory spells it "Opus 5.5 Fast Mode"
           t.size > 2 && last == "mode" && t[t.size - 2].lowercase() == "fast" -> {
             fast = true; t.removeAt(t.lastIndex); t.removeAt(t.lastIndex)
@@ -430,6 +431,7 @@ object ComposerControls {
   data class Split(
     val models: List<ConfigControl>, val reasoning: List<ConfigControl>, val modelConfig: List<ConfigControl>,
     val collaboration: List<ConfigControl>, val permission: List<ConfigControl>,
+    val agent: List<ConfigControl> = emptyList(),
     val sidekick: List<ConfigControl> = emptyList(), val sidekickEffort: List<ConfigControl> = emptyList(),
     val sidekickFast: List<ConfigControl> = emptyList(),
   )
@@ -440,6 +442,7 @@ object ComposerControls {
     val modelConfig = mutableListOf<ConfigControl>()
     val collaboration = mutableListOf<ConfigControl>()
     val permission = mutableListOf<ConfigControl>()
+    val agent = mutableListOf<ConfigControl>()
     val sidekick = mutableListOf<ConfigControl>()
     val sidekickEffort = mutableListOf<ConfigControl>()
     val sidekickFast = mutableListOf<ConfigControl>()
@@ -448,15 +451,16 @@ object ComposerControls {
         isReasoning(c) -> reasoning.add(c)
         c.category == "collaboration_mode" && c.type != "boolean" -> collaboration.add(c)
         c.category == permissionCategory && c.type != "boolean" -> permission.add(c)
+        c.type != "boolean" && (c.category == "agent" || (c.category == null && c.id == "agent")) -> agent.add(c)
         c.category == sidekickCategory && c.type != "boolean" -> sidekick.add(c)
         c.category == sidekickEffortCategory && c.type != "boolean" -> sidekickEffort.add(c)
         c.category == sidekickFastCategory -> sidekickFast.add(c)
-        c.category == "model_config" -> modelConfig.add(c)
+        c.category == "model_config" || c.category == "speed" -> modelConfig.add(c)
         c.type != "boolean" && (c.category == "model" ||
           (c.category == null && (c.id == "model" || ModelCatalog.group(c.options, brandOf).size < c.options.size))) -> models.add(c)
       }
     }
-    return Split(models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, sidekickFast)
+    return Split(models, reasoning, modelConfig, collaboration, permission, agent, sidekick, sidekickEffort, sidekickFast)
   }
 }
 
@@ -487,6 +491,7 @@ class ModelChoices(
   val modes: List<SessionOption>
   val collaboration: ConfigControl?
   val access: ConfigControl?
+  val agent: ConfigControl?
   /** The sidekick select, its level and its Fast (the last bean opens them as beans of their own) */
   val sidekick: ConfigControl?
   val sidekickCur: ModelFamily?
@@ -510,6 +515,7 @@ class ModelChoices(
     modes = if (controls.modes.size > 1 && ComposerControls.workingModes(controls) == null) controls.modes else emptyList()
     collaboration = split.collaboration.firstOrNull { it.options.size > 1 }
     access = split.permission.firstOrNull { it.options.size > 1 }
+    agent = split.agent.firstOrNull { it.options.size > 1 }
     sidekick = split.sidekick.firstOrNull()
     val skPicked = sidekick?.let { ComposerControls.findSidekickFamily(it.options, it.value, brandOf) }
     sidekickCur = skPicked?.family

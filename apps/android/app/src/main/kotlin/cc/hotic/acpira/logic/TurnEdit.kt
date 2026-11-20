@@ -55,7 +55,7 @@ private fun reshape(fallback: SessionControls, settings: TurnSettings, live: Ses
   if (shape != null) return controlsForTurn(live.copy(options = live.options.filter(::isModelControl) + shape), settings)
   if (value == model.value) return controlsForTurn(live, settings)
   // Until this model's shape is known, do not offer another model's effort or Fast as though it belonged to it
-  return fallback.copy(options = fallback.options.filterNot { ComposerControls.isReasoning(it) || it.category == "model_config" })
+  return fallback.copy(options = fallback.options.filterNot { ComposerControls.isReasoning(it) || it.category == "model_config" || it.category == "speed" })
 }
 
 /** openTurnControls: the editor's selections when it opens on a sent prompt */

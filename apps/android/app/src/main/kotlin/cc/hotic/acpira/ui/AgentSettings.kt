@@ -283,14 +283,13 @@ fun AgentSettingsScreen(model: AppModel, id: String) {
  *  one group per control (official / custom models apart where the adapter says which is which) */
 @Composable
 fun ModelsSettingsScreen(model: AppModel, id: String) {
-  val agent = model.agent(id)
   var query by remember { mutableStateOf("") }
   LaunchedEffect(id) { model.loadControls(id) }
   val hidden = model.settings.hiddenOptions[id].orEmpty()
   val catalogs = ModelSettings.catalogs(model.agentControls[id])
   FormPage(
     model, t("settings.models.selection"),
-    // The desktop's refresh: the engine asks the agent again (a fresh probe), as the empty state says
+    // The desktop's refresh: the engine asks the agent again (a fresh probe)
     actions = {
       IconButton(onClick = { model.refreshControls(id) }, modifier = Modifier.testTag("models.refresh")) {
         Lucide("refreshCw", Palette.fg1, size = Metrics.iconCtl, contentDescription = t("common.refresh"))
@@ -300,7 +299,7 @@ fun ModelsSettingsScreen(model: AppModel, id: String) {
   ) {
     when {
       catalogs == null -> FormCard { Note(t("settings.loading")) }
-      catalogs.isEmpty() -> FormCard { Note(t("settings.models.none", "agent" to agent.name)) }
+      catalogs.isEmpty() -> FormCard { Note(t("settings.models.none")) }
       else -> {
         if (query.isEmpty()) {
           val (shown, total) = ModelSettings.count(catalogs, hidden)

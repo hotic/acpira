@@ -771,6 +771,24 @@ struct LiquidControls: View {
     }
     if !c.modes.isEmpty { out.append(modeBean(c)) }
     if let access = c.access { out.append(accessBean(access)) }
+    if let agent = c.agent {
+      let current = agent.options.first { $0.id == agent.value } ?? agent.options.first
+      out.append(GooBean(key: "agent", title: agent.name,
+                         glyph: AnyView(Icon(current.map(modeIcon) ?? .circleDashed, size: Metrics.barIcon, strokeWidth: 1.75)
+                           .foregroundStyle(Palette.fg1)),
+                         caption: AnyView(GooCaption(text: current?.name ?? agent.name)), rows: agent.options.count,
+                         panel: AnyView(GooList(current: current?.id) {
+                           ForEach(agent.options) { o in
+                             GooRow(name: o.name, checked: o.id == current?.id) {
+                               Icon(modeIcon(o), size: Metrics.icon, strokeWidth: 1.75)
+                             } action: {
+                               onSetConfig(agent.id, o.id)
+                               fold()
+                             }
+                             .id(o.id)
+                           }
+                         })))
+    }
     if c.fusion != nil {
       let picked = SessionOption(id: c.curVar?.sidekick ?? "", name: c.curVar?.sidekick ?? "")
       out.append(GooBean(key: "sidekick", title: t("composer.sidekick"),
@@ -1144,6 +1162,8 @@ struct ModelChoices {
   let collaboration: ConfigControl?
   /// The approval level offered as a config option (the built-in agent's), its own bean after the modes
   let access: ConfigControl?
+  /// Main-thread agent persona (e.g. Claude `.claude/agents`), shown only when custom agents are configured
+  let agent: ConfigControl?
   /// The built-in agent's sidekick select, its level and its Fast (the last bean opens them as beans of their own)
   let sidekick: ConfigControl?
   let sidekickCur: ModelFamily?
@@ -1171,6 +1191,7 @@ struct ModelChoices {
     self.modes = controls.modes.count > 1 && ComposerControls.workingModes(controls) == nil ? controls.modes : []
     self.collaboration = split.collaboration.first { $0.options.count > 1 }
     self.access = split.permission.first { $0.options.count > 1 }
+    self.agent = split.agent.first { $0.options.count > 1 }
     let sidekick = Self.sidekick(split, hidden: hidden)
     let skCur = sidekick.flatMap { ComposerControls.findSidekickFamily($0.select.options, value: $0.select.value) }
     let nativeSkFast = split.sidekickFast.first.map { c in nativeFastState(c) { onSetConfig(c.id, $0) } }
@@ -1208,7 +1229,7 @@ struct ModelChoices {
   /// the modes, the approval level
   var hasModel: Bool { cur != nil && modelId != nil }
   var hasEffort: Bool { effort.map { $0.levels.count > 1 || $0.thinking != nil } ?? false }
-  var hasModes: Bool { !modes.isEmpty || access != nil }
+  var hasModes: Bool { !modes.isEmpty || access != nil || agent != nil }
 
   /// Fast, when the model in use can switch it at the level in force, or while it is on (the bolt on the chip says
   /// so). A family with Fast at other levels only offers none here, rather than a switch that cannot move

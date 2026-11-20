@@ -215,13 +215,12 @@ struct ModelsSettingsPage: View {
   @State private var query = ""
 
   var body: some View {
-    let agent = model.agent(id)
     let hidden = model.settings?.hiddenOptions[id] ?? [:]
     let catalogs = ModelSettings.catalogs(model.agentControls[id])
     Form {
       if let catalogs {
         if catalogs.isEmpty {
-          Section { Text(web: t("settings.models.none", ["agent": agent.name])).foregroundStyle(Palette.fg3) }
+          Section { Text(web: t("settings.models.none")).foregroundStyle(Palette.fg3) }
         } else {
           let total = catalogs.reduce(0) { $0 + $1.families.count }
           let shown = catalogs.reduce(0) { n, c in n + c.families.filter { !ModelCatalog.hidden($0, in: hidden[c.control.id] ?? []) }.count }
@@ -289,11 +288,14 @@ enum ModelSettings {
   struct Catalog { var control: ConfigControl; var families: [ModelFamily] }
   struct Group { var control: ConfigControl; var key: String; var title: String; var rows: [ModelFamily]; var sources: [String] }
 
-  /// The controls whose options are models (no reasoning levels, no switches, not the built-in agent's sidekick pick,
-  /// its levels and its Fast), their families newest first; nil before the engine answered
+  /// The controls whose options are models (no reasoning levels, no switches / Fast selects, no approval levels, not
+  /// the built-in agent's sidekick pick, its levels and its Fast), their families newest first; nil before the engine answered
   static func catalogs(_ controls: [ConfigControl]?) -> [Catalog]? {
-    let sidekick = [ComposerControls.sidekickCategory, ComposerControls.sidekickEffortCategory, ComposerControls.sidekickFastCategory]
-    return controls?.filter { !ComposerControls.isReasoning($0) && $0.type != "boolean" && !sidekick.contains($0.category ?? "") }
+    let skip = [
+      ComposerControls.permissionCategory,
+      ComposerControls.sidekickCategory, ComposerControls.sidekickEffortCategory, ComposerControls.sidekickFastCategory,
+    ]
+    return controls?.filter { !ComposerControls.isReasoning($0) && $0.type != "boolean" && !ComposerControls.isFast($0) && !skip.contains($0.category ?? "") }
       .map { Catalog(control: $0, families: ModelCatalog.prioritize(ModelCatalog.group($0.options))) }
   }
 

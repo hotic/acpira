@@ -106,7 +106,8 @@ enum ModelCatalog {
     func stripTrailingFlags() {
       while t.count > 1 {
         let last = t[t.count - 1].lowercased()
-        if last == "fast" { fast = true; t.removeLast() }
+        // Keep compound "Ultra Fast" tiers ("GPT-6.2 Sol Ultra Fast") intact as their own family
+        if last == "fast", t[t.count - 2].lowercased() != "ultra" { fast = true; t.removeLast() }
         // Droid / Factory spells it "Opus 5.5 Fast Mode"
         else if t.count > 2, last == "mode", t[t.count - 2].lowercased() == "fast" { fast = true; t.removeLast(2) }
         else if last == "1m" { long = true; t.removeLast() }
@@ -500,7 +501,7 @@ enum ComposerControls {
   /// sidekick, the rest
   struct Split {
     var models: [ConfigControl] = []; var reasoning: [ConfigControl] = []; var modelConfig: [ConfigControl] = []; var collaboration: [ConfigControl] = []
-    var permission: [ConfigControl] = []
+    var permission: [ConfigControl] = []; var agent: [ConfigControl] = []
     var sidekick: [ConfigControl] = []; var sidekickEffort: [ConfigControl] = []; var sidekickFast: [ConfigControl] = []
     var other: [ConfigControl] = []
   }
@@ -511,10 +512,11 @@ enum ComposerControls {
       if isReasoning(c) { s.reasoning.append(c) }
       else if c.category == "collaboration_mode" && c.type != "boolean" { s.collaboration.append(c) }
       else if c.category == permissionCategory && c.type != "boolean" { s.permission.append(c) }
+      else if c.type != "boolean" && (c.category == "agent" || (c.category == nil && c.id == "agent")) { s.agent.append(c) }
       else if c.category == sidekickCategory && c.type != "boolean" { s.sidekick.append(c) }
       else if c.category == sidekickEffortCategory && c.type != "boolean" { s.sidekickEffort.append(c) }
       else if c.category == sidekickFastCategory { s.sidekickFast.append(c) }
-      else if c.category == "model_config" { s.modelConfig.append(c) }
+      else if c.category == "model_config" || c.category == "speed" { s.modelConfig.append(c) }
       else if c.type != "boolean" && (c.category == "model" || (c.category == nil && (c.id == "model" || ModelCatalog.group(c.options).count < c.options.count))) { s.models.append(c) }
       else { s.other.append(c) }
     }

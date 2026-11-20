@@ -114,15 +114,18 @@ object ModelVisibility {
 
 /** The settings' models page data (Settings/EngineSettings.swift ModelSettings, AgentPage.tsx ModelsSection) */
 object ModelSettings {
-  private val sidekick = setOf(ComposerControls.sidekickCategory, ComposerControls.sidekickEffortCategory, ComposerControls.sidekickFastCategory)
+  private val hiddenCategories = setOf(
+    ComposerControls.permissionCategory,
+    ComposerControls.sidekickCategory, ComposerControls.sidekickEffortCategory, ComposerControls.sidekickFastCategory,
+  )
 
   data class Catalog(val control: ConfigControl, val families: List<ModelFamily>)
   data class Group(val control: ConfigControl, val key: String, val title: String, val rows: List<ModelFamily>, val sources: List<String>)
 
-  /** The controls whose options are models (no reasoning levels, no switches, not the built-in agent's sidekick pick,
-   *  its levels and its Fast), their families newest first; null before the engine answered */
+  /** The controls whose options are models (no reasoning levels, no switches / Fast selects, no approval levels, not
+   *  the built-in agent's sidekick pick, its levels and its Fast), their families newest first; null before the engine answered */
   fun catalogs(controls: List<ConfigControl>?): List<Catalog>? =
-    controls?.filter { !ComposerControls.isReasoning(it) && it.type != "boolean" && it.category !in sidekick }
+    controls?.filter { !ComposerControls.isReasoning(it) && it.type != "boolean" && !ComposerControls.isFast(it) && it.category !in hiddenCategories }
       ?.map { Catalog(it, ModelVisibility.prioritize(ModelCatalog.group(it.options) { null })) }
 
   /** Families shown and listed over every catalog */

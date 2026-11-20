@@ -423,6 +423,7 @@ private let fusionOptions: [SessionOption] = [
     #expect(ModelCatalog.parse("SWE-1.7 Lightning Medium") == parsed("SWE-1.7 Lightning", "Medium"))
     #expect(ModelCatalog.parse("SWE-1.6 Fast") == parsed("SWE-1.6", fast: true))
     #expect(ModelCatalog.parse("Opus 5.5 Fast Mode") == parsed("Opus 5.5", fast: true))
+    #expect(ModelCatalog.parse("GPT-6.2 Sol Ultra Fast") == parsed("GPT-6.2 Sol Ultra Fast"))
     #expect(ModelCatalog.parse("Adaptive") == parsed("Adaptive"))
     #expect(ModelCatalog.parse("Max") == parsed("Max"))
   }
@@ -504,12 +505,17 @@ private let fusionOptions: [SessionOption] = [
 
   @Test func everyFastShapeIsOneSwitch() {
     let fast = control(#"{"id":"fast-mode","name":"Fast mode","category":"model_config","type":"boolean","value":"true","options":[{"id":"false","name":"Off"},{"id":"true","name":"On"}]}"#)
+    let fastSpeed = control(#"{"id":"fast","name":"Fast mode","category":"speed","type":"boolean","value":"true","options":[{"id":"false","name":"Off"},{"id":"true","name":"On"}]}"#)
     let speed = control(#"{"id":"speed","name":"Speed","category":"model_config","value":"fast","options":[{"id":"standard","name":"Standard"},{"id":"fast","name":"Fast"}]}"#)
-    for c in [fast, speed] {
+    for c in [fast, fastSpeed, speed] {
       #expect(ComposerControls.isFast(c))
       #expect(ComposerControls.fastOn(c))
       #expect(ComposerControls.modelConfigChip(c) == "Fast")
     }
+    let agent = control(#"{"id":"agent","name":"Agent","value":"default","options":[{"id":"default","name":"Default"},{"id":"reviewer","name":"reviewer"}]}"#)
+    let split = ComposerControls.split([fastSpeed, agent])
+    #expect(split.modelConfig.map(\.id) == ["fast"])
+    #expect(split.agent.map(\.id) == ["agent"])
     #expect(ComposerControls.fastValue(fast, on: false) == "false")
     #expect(ComposerControls.fastValue(speed, on: false) == "standard")
     let breakfast = control(#"{"id":"breakfast","name":"Breakfast","type":"boolean","value":"true","options":[]}"#)

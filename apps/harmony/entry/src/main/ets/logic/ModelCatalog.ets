@@ -185,7 +185,8 @@ export class ModelCatalog {
     const stripFlags = () => {
       while (tk.length > 1) {
         const last = tk[tk.length - 1].toLowerCase();
-        if (last === 'fast') {
+        // Keep compound "Ultra Fast" tiers ("GPT-6.2 Sol Ultra Fast") intact as their own family
+        if (last === 'fast' && tk[tk.length - 2].toLowerCase() !== 'ultra') {
           fast = true;
           tk.pop();
         } else if (tk.length > 2 && last === 'mode' && tk[tk.length - 2].toLowerCase() === 'fast') {
@@ -426,6 +427,7 @@ export interface ControlSplit {
   modelConfig: ConfigControl[];
   collaboration: ConfigControl[];
   permission: ConfigControl[];
+  agent: ConfigControl[];
   sidekick: ConfigControl[];
   sidekickEffort: ConfigControl[];
   sidekickFast: ConfigControl[];
@@ -715,7 +717,7 @@ export class ComposerControls {
 
   static split(options: ConfigControl[]): ControlSplit {
     const s: ControlSplit = {
-      models: [], reasoning: [], modelConfig: [], collaboration: [], permission: [], sidekick: [], sidekickEffort: [],
+      models: [], reasoning: [], modelConfig: [], collaboration: [], permission: [], agent: [], sidekick: [], sidekickEffort: [],
       sidekickFast: []
     };
     for (const c of options) {
@@ -726,13 +728,15 @@ export class ComposerControls {
         s.collaboration.push(c);
       } else if (c.category === ComposerControls.permissionCategory && plain) {
         s.permission.push(c);
+      } else if (plain && (c.category === 'agent' || (c.category === undefined && c.id === 'agent'))) {
+        s.agent.push(c);
       } else if (c.category === ComposerControls.sidekickCategory && plain) {
         s.sidekick.push(c);
       } else if (c.category === ComposerControls.sidekickEffortCategory && plain) {
         s.sidekickEffort.push(c);
       } else if (c.category === ComposerControls.sidekickFastCategory) {
         s.sidekickFast.push(c);
-      } else if (c.category === 'model_config') {
+      } else if (c.category === 'model_config' || c.category === 'speed') {
         s.modelConfig.push(c);
       } else if (plain && (c.category === 'model' ||
         (c.category === undefined && (c.id === 'model' || ModelCatalog.group(c.options).length < c.options.length)))) {
@@ -806,6 +810,7 @@ export class ModelChoices {
   modes: SessionOption[] = [];
   collaboration: ConfigControl | undefined = undefined;
   access: ConfigControl | undefined = undefined;
+  agent: ConfigControl | undefined = undefined;
   sidekick: ConfigControl | undefined = undefined;
   sidekickCur: ModelFamily | undefined = undefined;
   sidekickCurVar: ModelVariant | undefined = undefined;
@@ -838,6 +843,7 @@ export class ModelChoices {
     this.modes = controls.modes.length > 1 && ComposerControls.workingModes(controls) === undefined ? controls.modes : [];
     this.collaboration = split.collaboration.find((c: ConfigControl) => c.options.length > 1);
     this.access = split.permission.find((c: ConfigControl) => c.options.length > 1);
+    this.agent = split.agent.find((c: ConfigControl) => c.options.length > 1);
     // Host-owned cross-CLI sidekicks are already filtered per CLI by the engine (`host_sidekick.rs`), so only a native
     // single-agent sidekick takes the lead's hidden list here
     this.sidekick = split.sidekick.length > 0
@@ -883,7 +889,7 @@ export class ModelChoices {
   /** Any bean at all: the chip shows only for an agent that offers something to pick */
   get any(): boolean {
     return this.hasModel || this.hasEffort || this.fast !== undefined || this.collaboration !== undefined ||
-      this.modes.length > 0 || this.access !== undefined || this.sidekick !== undefined;
+      this.modes.length > 0 || this.access !== undefined || this.agent !== undefined || this.sidekick !== undefined;
   }
 
   /** Keep the lead's effort and the other side where possible; the nearest offered pair wins */

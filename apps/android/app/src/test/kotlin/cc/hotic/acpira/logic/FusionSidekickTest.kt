@@ -182,4 +182,22 @@ class FusionSidekickTest {
     c.sidekickFast?.set(false)
     assertEquals(listOf("model=opus-5-5-fast", "host_sidekick=droid/opus-5-5"), sets)
   }
+
+  @Test fun ultraFastKeepsNameSpeedJoinsModelConfigAndAgentJoinsLeftControls() {
+    val ultra = ModelCatalog.parse("GPT-6.2 Sol Ultra Fast")
+    assertEquals("GPT-6.2 Sol Ultra Fast", ultra.family)
+    assertEquals(false, ultra.fast)
+
+    val model = ConfigControl("model", "Model", "model", options = options("opus" to "Opus 5.5"), value = "opus")
+    val fast = ConfigControl("fast", "Fast mode", "speed", type = "boolean", options = options("false" to "Off", "true" to "On"), value = "true")
+    val approval = ConfigControl("approval", "Approval", "_permission_mode", options = options("ask" to "Manual", "full" to "Bypass"), value = "full")
+    val speed = ConfigControl("speed", "Speed", "model_config", options = options("standard" to "Standard", "fast" to "Fast"), value = "standard")
+    val agent = ConfigControl("agent", "Agent", null, options = options("default" to "Default", "reviewer" to "reviewer"), value = "default")
+
+    val split = ComposerControls.split(listOf(model, fast, approval, agent)) { null }
+    assertEquals(listOf("fast"), split.modelConfig.map { it.id })
+    assertEquals(listOf("agent"), split.agent.map { it.id })
+    assertEquals("agent", choices(listOf(model, fast, approval, agent)).agent?.id)
+    assertEquals(listOf("model", "agent"), ModelSettings.catalogs(listOf(model, fast, approval, speed, agent))!!.map { it.control.id })
+  }
 }

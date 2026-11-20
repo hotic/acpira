@@ -135,7 +135,7 @@ fun AccountSheet(
           if (local.quota != null) Footnote(t("quota.local.desc"))
         } else {
           Column(section) {
-            if (accounts.isEmpty()) AccountRow(t("settings.agent.accounts.none"), caption = t("composer.noAccounts"), now = now)
+            if (accounts.isEmpty()) AccountRow(t("settings.agent.accounts.none"), now = now)
             accounts.forEachIndexed { i, a ->
               if (i > 0) Box(Modifier.fillMaxWidth().padding(start = Metrics.pad + Metrics.avatar + Metrics.s3).height(Metrics.hairline).background(Palette.line))
               // A plugin's account carries its tag, with the plugin named under it; a failed read replaces the tag and dims last-known bars
