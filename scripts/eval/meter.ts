@@ -2,6 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gatewayUrl } from './keys';
 
 // A local metering proxy for the harness comparison: every harness under test points its provider at
 // http://127.0.0.1:<port>/r/<run>/<upstream>/..., the proxy forwards to the upstream as-is and reads each answer's token
@@ -41,7 +42,8 @@ export interface Meter {
 // then on 2026-10-21 (a sidekick round that ended on it left its lead waiting for nothing)
 export const OUTAGE = /no eligible upstream channel|no route configured for model|rate limited or quota exhausted|usage limit has been reached|Upstream request failed/;
 
-const UPSTREAMS: Record<string, string> = { gw: 'https://gateway.example.com', ds: 'https://api.deepseek.com' };
+// By route. The gateway's address is resolved on a call, so a dry run needs none
+const UPSTREAMS: Record<string, () => string> = { gw: gatewayUrl, ds: () => 'https://api.deepseek.com' };
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
@@ -133,7 +135,7 @@ export function startMeter(opts: { log?: string; keys?: Record<string, string>; 
   const calls: Call[] = [];
   const server = http.createServer((req, res) => {
     const m = /^\/r\/([^/]+)\/([^/]+)(\/.*)$/.exec(req.url ?? '');
-    const upstream = m && UPSTREAMS[m[2]!];
+    const upstream = m && UPSTREAMS[m[2]!]?.();
     if (!m || !upstream) { res.writeHead(404).end('unknown route'); return; }
     const [, run, route, path] = m as unknown as [string, string, string, string];
     const key = keys?.[route];

@@ -1,5 +1,5 @@
 import type { Bug, Target } from './bench';
-import { GATEWAY, gatewayKey } from '../keys';
+import { gatewayKey, gatewayUrl } from '../keys';
 
 // Review bench scoring (docs/dev/evals.md). A review's findings are listed, each matched against the target's
 // known bugs, and only a finding that names one of a bug's files (or names no file at all) can count as that bug's hit.
@@ -103,7 +103,7 @@ export async function modelJudge(target: Target, review: string, model = JUDGE_M
   let last = '';
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const r = await fetch(`${GATEWAY}/v1/chat/completions`, {
+      const r = await fetch(`${gatewayUrl()}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${gatewayKey()}` },
         body: JSON.stringify(body),
