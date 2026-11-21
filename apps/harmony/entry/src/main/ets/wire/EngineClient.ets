@@ -130,7 +130,7 @@ interface MessageEnvelope {
 }
 
 export interface EngineListener {
-  connected: () => void;
+  connected: (features: string[]) => void;
   host: (message: HostMsg) => void;
   closed: (reason: string | undefined) => void;
 }
@@ -321,7 +321,7 @@ export class EngineClient {
         for (const m of queued) {
           this.post(m);
         }
-        this.listener.connected();
+        this.listener.connected(message.features ?? []);
         break;
       }
       case 'helloReject':

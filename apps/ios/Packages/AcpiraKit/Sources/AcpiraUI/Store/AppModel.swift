@@ -128,6 +128,8 @@ final class AppModel {
   var providersError: String?
   /// Source changes in order, one at a time: the engine's answers carry no request id
   var providerWrites = ProviderWrites()
+  /// Usage across every session as the engine last sent it (Settings → Usage), nil until asked
+  var usageView: UsageView?
   /// The history search's content hits, for the query they answered
   var hits: SessionHits?
   /// Projects folded open in the by-project view

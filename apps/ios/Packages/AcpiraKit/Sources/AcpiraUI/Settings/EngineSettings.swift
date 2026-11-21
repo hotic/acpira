@@ -15,6 +15,7 @@ enum SettingsRoute: Hashable {
   case providers
   /// The step kinds a turn's process lists (`ProcessPrefs`)
   case steps
+  case usage
   case developer
 
   /// The pages down to a launch argument's page
@@ -25,6 +26,7 @@ enum SettingsRoute: Hashable {
     case ("agent", let id?): [.agent(id)]
     case ("models", let id?): [.agent(id), .models(id)]
     case ("providers", _): [.agent(AppModel.builtinAgent), .providers]
+    case ("usage", _): [.usage]
     case ("developer", _): [.developer]
     case ("steps", _): [.steps]
     default: []

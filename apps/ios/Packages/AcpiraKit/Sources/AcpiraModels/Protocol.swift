@@ -745,6 +745,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case providers
   case providerAction(action: ProviderAction)
   case providerProbe(id: String, probe: ProviderProbe)
+  /// Usage statistics across every session, answered with `usage`; only where helloOk.features has `usage`
+  case usage
   /// A type this build does not know (decoding only)
   case unknown(String)
 
@@ -758,7 +760,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     "cancelSubagent", "stopAsyncTask", "stopCommand", "goal", "searchFiles", "setSetting", "controls", "projectDir", "projectStatus",
     "projectFile", "sessionChanges", "diffSource", "imageBlob", "stageFile", "openPlan", "terminalOpen", "terminalInput",
     "terminalResize", "terminalAck", "terminalClose", "terminalKill", "connections", "localDir", "providers", "providerAction",
-    "providerProbe",
+    "providerProbe", "usage",
   ]
 
   /// The wire `type`
@@ -790,6 +792,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case .providers: "providers"
     case .providerAction: "providerAction"
     case .providerProbe: "providerProbe"
+    case .usage: "usage"
     case .searchSessions: "searchSessions"
     case .forkSession: "forkSession"
     case .selectAccount: "selectAccount"
@@ -889,6 +892,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "providers": self = .providers
     case "providerAction": self = .providerAction(action: try c.decode(ProviderAction.self, forKey: .action))
     case "providerProbe": self = .providerProbe(id: try str(.id), probe: try c.decode(ProviderProbe.self, forKey: .probe))
+    case "usage": self = .usage
     case "searchSessions": self = .searchSessions(query: try str(.query), seq: try c.decode(Int.self, forKey: .seq))
     case "forkSession":
       self = .forkSession(sessionId: try str(.sessionId), turnIndex: try c.decode(Int.self, forKey: .turnIndex), agent: try opt(.agent))
@@ -1150,7 +1154,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case let .providerProbe(id, probe):
       try c.encode(id, forKey: .id)
       try c.encode(probe, forKey: .probe)
-    case .resync, .resyncSessions, .markAllRead, .connections, .providers, .unknown:
+    case .resync, .resyncSessions, .markAllRead, .connections, .providers, .usage, .unknown:
       break
     }
   }
@@ -1229,6 +1233,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
   case providers(view: ProvidersView, error: String? = nil)
   /// The answer to the providerProbe with the same id
   case providerProbed(id: String, outcome: ProbeOutcome)
+  /// Usage statistics across every session, answering `usage`
+  case usage(view: UsageView)
   /// A push this build does not mirror; carries the type for diagnostics
   case unknown(String)
 
@@ -1237,7 +1243,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     "init", "agents", "sessions", "categories", "noSession", "session", "sessionPatch", "sessionsPatch", "accounts", "accountActions",
     "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource", "imageBlob", "stagedFile", "sessionMarkdown",
     "projectDir", "projectStatus", "projectFile", "sessionChanges", "terminalOutput", "terminalState", "editTurnResult",
-    "deleteSessionResult", "appearance", "connections", "localDir", "providers", "providerProbed", "sessionUnavailable",
+    "deleteSessionResult", "appearance", "connections", "localDir", "providers", "providerProbed", "usage", "sessionUnavailable",
     "sessionEarlier",
   ]
 
@@ -1279,6 +1285,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case .localDir: "localDir"
     case .providers: "providers"
     case .providerProbed: "providerProbed"
+    case .usage: "usage"
     case .unknown(let t): t
     }
   }
@@ -1350,6 +1357,7 @@ public enum HostMsg: Codable, Hashable, Sendable {
                        entries: try c.decode([RemoteDirEntry].self, forKey: .entries), error: try opt(.error))
     case "providers": self = .providers(view: try c.decode(ProvidersView.self, forKey: .view), error: try opt(.error))
     case "providerProbed": self = .providerProbed(id: try str(.id), outcome: try c.decode(ProbeOutcome.self, forKey: .outcome))
+    case "usage": self = .usage(view: try c.decode(UsageView.self, forKey: .view))
     case let type: self = .unknown(type)
     }
   }
@@ -1455,6 +1463,8 @@ public enum HostMsg: Codable, Hashable, Sendable {
     case let .providerProbed(id, outcome):
       try c.encode(id, forKey: .id)
       try c.encode(outcome, forKey: .outcome)
+    case .usage(let view):
+      try c.encode(view, forKey: .view)
     case let .sessionUnavailable(id, reason):
       try c.encode(id, forKey: .id)
       try c.encode(reason, forKey: .reason)

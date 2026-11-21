@@ -16,6 +16,18 @@ extension AppModel {
   var browsesFolders: Bool { engineFeatures.contains("localDir") }
   /// The engine lets this device edit the built-in agent's model sources
   var editsProviders: Bool { engineFeatures.contains("providers") }
+  /// The engine lets this device read usage statistics (demo always supports it)
+  var supportsUsage: Bool { !live || engineFeatures.contains("usage") }
+
+  /// Asks the engine for a fresh usage view, or populates the deterministic demo year when offline
+  func loadUsage() {
+    if live {
+      guard supportsUsage else { return }
+      post(.usage)
+    } else if usageView == nil {
+      usageView = UsageStats.sampleView(now: now, chats: chatRoot)
+    }
+  }
 
   /// A folder of the computer (nil: the user's home), its folders by name
   func browse(_ path: String?) async -> LocalListing {

@@ -185,6 +185,12 @@ struct ContractTests {
         let host = try need(hosts.first)
         try checkStruct(host, try need(TS.interface(remote, "ConnectionView")), subset: true)
         try checkStruct(try need(host.error), try need(TS.interface(remote, "ConnectionError")), subset: true)
+      case .usage(let view):
+        let usage = try Self.source("usage.ts")
+        try checkStruct(view, try need(TS.interface(usage, "UsageView")))
+        try checkStruct(try need(view.sessions.first), try need(TS.interface(usage, "UsageSession")))
+        try checkStruct(try need(view.models.first), try need(TS.interface(usage, "UsageModel")))
+        try checkStruct(try need(view.rows.first), try need(TS.interface(usage, "UsageRow")))
       default: break
       }
     }
@@ -626,6 +632,7 @@ enum ContractSamples {
     .providers,
     .providerAction(action: .save(provider: ContractSamples.provider, key: "sk-1")),
     .providerProbe(id: "p1", probe: .models(provider: ContractSamples.provider, key: "sk-1")),
+    .usage,
   ]
 
   /// A source carrying a field this build does not know, which every rewrite must keep
@@ -707,6 +714,7 @@ enum ContractSamples {
     #"{"type":"localDir","seq":31,"path":"/Users/me/code","parent":"/Users/me","entries":[{"name":"acpira","dir":true,"git":true}],"error":"slow"}"#,
     #"{"type":"providers","view":{"providers":[{"id":"gw","name":"Gateway","preset":"custom","format":"openai-chat","baseUrl":"https://gw.example/v1","fullUrl":false,"enabled":true,"hasKey":true,"models":[],"headers":{"X-Team":"a"}}],"families":["generic"]},"error":"locked"}"#,
     #"{"type":"providerProbed","id":"p1","outcome":{"kind":"failed","error":"401"}}"#,
+    #"{"type":"usage","view":{"sessions":[{"agent":"claude","cwd":"/w"}],"models":[{"id":"opus","name":"Opus 5.5"}],"rows":[{"at":1761591600000,"session":0,"model":0,"tokens":12000,"input":10000,"output":2000,"cachedRead":4000,"turns":3,"prompts":2,"workMs":90000,"longestMs":45000,"tools":5,"added":42,"removed":11}]}}"#,
     #"{"type":"sessionUnavailable","id":"s1","reason":"record unreadable"}"#,
     #"{"type":"sessionEarlier","chunk":{"id":"s1","from":{"turns":4,"blocks":2},"turns":[{"role":"user","id":"u4","text":"go"}],"blocks":[{"type":"text","markdown":"x"}],"earlier":{"turns":3,"blocks":0}}}"#,
   ]

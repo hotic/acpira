@@ -88,6 +88,7 @@ struct SettingsScreen: View {
       ProcessSettingsSection()
       // The engine's own settings, shared with the computer
       EngineSettingsSections()
+      UsageSettingsSection()
       if let pairing {
         // Paired remote access: the paired computers take the engine row's place
         PairComputersSection(pairing: pairing)
@@ -128,6 +129,7 @@ struct SettingsScreen: View {
         case .models(let id): ModelsSettingsPage(id: id)
         case .providers: ProvidersPage()
         case .steps: StepsSettingsPage()
+        case .usage: UsagePage()
         case .developer: DeveloperSettingsPage()
         }
       }
@@ -229,6 +231,22 @@ struct NotificationsSection: View {
       #if canImport(UIKit)
       if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
       #endif
+    }
+  }
+}
+
+/// Settings → Usage: usage across every session; an older engine predating paired usage reads stays off
+private struct UsageSettingsSection: View {
+  @Environment(AppModel.self) private var model
+
+  var body: some View {
+    Section {
+      NavigationLink(value: SettingsRoute.usage) {
+        Text(web: t("usagePage.title"), paragraph: false)
+      }
+      .disabled(!model.supportsUsage)
+    } footer: {
+      if !model.supportsUsage { Text(web: t("mobile.outdated")) }
     }
   }
 }

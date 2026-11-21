@@ -52,6 +52,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case copy
   case copySlash
   case crosshair
+  case crown
   case download
   case ellipsis
   case eraser
@@ -250,6 +251,7 @@ extension LucideIcon {
     case .copy: [.rect(x: 8, y: 8, width: 14, height: 14, rx: 2), .path("M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2")]
     case .copySlash: [.line(x1: 12, y1: 18, x2: 18, y2: 12), .rect(x: 8, y: 8, width: 14, height: 14, rx: 2), .path("M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2")]
     case .crosshair: [.circle(cx: 12, cy: 12, r: 10), .line(x1: 22, y1: 12, x2: 18, y2: 12), .line(x1: 6, y1: 12, x2: 2, y2: 12), .line(x1: 12, y1: 6, x2: 12, y2: 2), .line(x1: 12, y1: 22, x2: 12, y2: 18)]
+    case .crown: [.path("M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"), .path("M5 21h14")]
     case .download: [.path("M12 15V3"), .path("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"), .path("m7 10 5 5 5-5")]
     case .ellipsis: [.circle(cx: 12, cy: 12, r: 1), .circle(cx: 19, cy: 12, r: 1), .circle(cx: 5, cy: 12, r: 1)]
     case .eraser: [.path("M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"), .path("m5.082 11.09 8.828 8.828")]

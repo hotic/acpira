@@ -50,7 +50,7 @@ class ContractTest {
     for (method in PlatformRequest.methods) assertTrue(method in platform, "PlatformRequest has no method '$method'")
     // The helloOk features the pages wait for (named in sidecar.ts's comments)
     val raw = source("packages/shared/sidecar.ts")
-    for (feature in listOf("localDir", "providers", "projects")) assertTrue(raw.contains("'$feature'"), "sidecar.ts names no feature '$feature'")
+    for (feature in listOf("localDir", "providers", "projects", "usage")) assertTrue(raw.contains("'$feature'"), "sidecar.ts names no feature '$feature'")
   }
 
   @Test fun everyProviderKindExistsInProvidersTs() {
@@ -136,6 +136,7 @@ class ContractTest {
     assertIs<UserTurn>(chunk.turns.single())
     assertIs<TextBlock>(chunk.blocks!!.single())
     assertEquals(ViewEarlier(2, 0), chunk.earlier)
+    assertEquals(12000L, assertIs<HostMsg.Usage>(push("usage")).view.rows.single().tokens)
   }
 
   /** A session another engine holds is mirrored with revs counted up from -2^40 (session_manager.rs MIRROR_REV_BASE) */
@@ -238,6 +239,11 @@ class ContractTest {
       AccountAction.serializer() to "AccountAction",
     )) check(s, TS.interfaceFields(protocol, name))
     check(ConnectionView.serializer(), TS.interfaceFields(shared("remote.ts"), "ConnectionView"), subset = true)
+    val usage = shared("usage.ts")
+    for ((s, name) in listOf(
+      UsageView.serializer() to "UsageView", UsageSession.serializer() to "UsageSession",
+      UsageModel.serializer() to "UsageModel", UsageRow.serializer() to "UsageRow",
+    )) check(s, TS.interfaceFields(usage, name))
     check(PlatformRequest.ToastOpen.serializer(), TS.interfaceFields(protocol, "ToastOpen"), setOf("reveal"))
     val helloOk = TS.members(TS.alias(shared("sidecar.ts"), "SidecarMsg")!!)["helloOk"]!!
     check(HelloOk.serializer(), helloOk)
@@ -473,6 +479,7 @@ private object Samples {
     WebviewMsg.Providers,
     WebviewMsg.ProviderAction(ProviderAction.Save(provider, "sk-1")),
     WebviewMsg.ProviderProbe("p1", ProviderProbe.Models(provider, "sk-1")),
+    WebviewMsg.Usage,
   )
 
   /** In AgentBlock.S.types order */
@@ -534,6 +541,7 @@ private object Samples {
     """{"type":"localDir","seq":31,"path":"/Users/me/code","parent":"/Users/me","entries":[{"name":"acpira","dir":true,"git":true}],"error":"slow"}""",
     """{"type":"providers","view":{"providers":[{"id":"gw","name":"Gateway","preset":"custom","format":"openai-chat","baseUrl":"https://gw.example/v1","fullUrl":false,"enabled":true,"hasKey":true,"models":[],"headers":{"X-Team":"a"}}],"families":["generic"]},"error":"locked"}""",
     """{"type":"providerProbed","id":"p1","outcome":{"kind":"failed","error":"401"}}""",
+    """{"type":"usage","view":{"sessions":[{"agent":"claude","cwd":"/w"}],"models":[{"id":"opus","name":"Opus 5.5"}],"rows":[{"at":1761591600000,"session":0,"model":0,"tokens":12000,"input":10000,"output":2000,"cachedRead":4000,"turns":3,"prompts":2,"workMs":90000,"longestMs":45000,"tools":5,"added":42,"removed":11}]}}""",
     """{"type":"sessionUnavailable","id":"s1","reason":"record unreadable"}""",
   )
 }

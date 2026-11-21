@@ -24,6 +24,8 @@ export class SettingsRoutes {
   developer: () => void = () => {};
   /** The step kinds a turn's process lists (StepsPage) */
   steps: () => void = () => {};
+  /** Usage statistics across every session (pages/Usage.ets UsagePage) */
+  usage: () => void = () => {};
   coming: (title: string) => void = () => {};
   /** A paired computer's page (pages/Pairing.ets ComputerPage) */
   computer: (id: string) => void = () => {};
@@ -146,6 +148,7 @@ struct ValueRow {
   @Param value: string = '';
   @Param chevron: boolean = false;
   @Param danger: boolean = false;
+  @Param active: boolean = true;
   @Param dot: ResourceColor | undefined = undefined;
   @Param tag: string = '';
   @Event onTap: () => void = () => {};
@@ -154,7 +157,7 @@ struct ValueRow {
     Row({ space: Metrics.s2 }) {
       Text(this.label)
         .fontSize(Type.text1)
-        .fontColor(this.danger ? $r('app.color.danger') : $r('app.color.fg1'))
+        .fontColor(!this.active ? $r('app.color.fg3') : this.danger ? $r('app.color.danger') : $r('app.color.fg1'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -169,7 +172,7 @@ struct ValueRow {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .flexShrink(1)
       }
-      if (this.chevron) {
+      if (this.chevron && this.active) {
         Lucide({ name: 'chevronRight', tint: $r('app.color.fg3'), extent: ListMetrics.chevron })
       }
     }
@@ -177,8 +180,12 @@ struct ValueRow {
     .constraintSize({ minHeight: FormMetrics.row })
     .padding({ left: Metrics.pad, right: Metrics.pad })
     .width('100%')
-    .stateStyles({ pressed: { .backgroundColor($r('app.color.active')) }, normal: { .backgroundColor(Color.Transparent) } })
-    .onClick(() => this.onTap())
+    .stateStyles({ pressed: { .backgroundColor(this.active ? $r('app.color.active') : Color.Transparent) }, normal: { .backgroundColor(Color.Transparent) } })
+    .onClick(() => {
+      if (this.active) {
+        this.onTap();
+      }
+    })
   }
 }
 
@@ -406,6 +413,12 @@ export struct SettingsPage {
             onPick: (v: string) => this.model.setCompactAt(Number(v))
           })
         }
+      }
+      FormSection({ footer: this.model.supportsUsage ? '' : t('mobile.outdated') }) {
+        ValueRow({
+          label: t('usagePage.title'), chevron: true, active: this.model.supportsUsage, tag: 'settings.usage',
+          onTap: () => this.routes.usage()
+        })
       }
       // Paired remote access in place of the engine by address: every computer with how it is reached, then add one
       if (this.model.pairing !== undefined && this.model.engineAddress.length === 0) {

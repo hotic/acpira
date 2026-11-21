@@ -153,6 +153,12 @@ public enum Swatches {
   /// --shadow: the two layers of the pop shadow (a wide drop and a contact line)
   public static let shadowWide = Swatch(.black(0.45), .black(0.12))
   public static let shadowContact = Swatch(.black(0.4), .black(0.08))
+  // Usage page (styles/usage.css): one ink at steps of alpha, bars a step calmer than the lattice
+  public static let usageInk = fg1.alpha(0.76)
+  public static let usageBar = fg1.alpha(0.46)
+  public static let usageDim = fg3.alpha(0.30)
+  public static let usageTrack = fg1.alpha(0.06)
+  public static let usageCell = fg1.alpha(0.04)
 }
 
 extension Swatch {
@@ -225,6 +231,11 @@ public enum Palette {
   public static var popActive: Color { Swatches.popActive.color }
   public static var shadowWide: Color { Swatches.shadowWide.color }
   public static var shadowContact: Color { Swatches.shadowContact.color }
+  public static var usageInk: Color { Swatches.usageInk.color }
+  public static var usageBar: Color { Swatches.usageBar.color }
+  public static var usageDim: Color { Swatches.usageDim.color }
+  public static var usageTrack: Color { Swatches.usageTrack.color }
+  public static var usageCell: Color { Swatches.usageCell.color }
   /// Card surface (surface = tonal): fill and outline
   public static var cardBg: Color { bg2 }
   public static var cardLine: Color { conversationLine }
@@ -481,6 +492,36 @@ public enum Metrics {
   public static let sidekickNotch: CGFloat = 2
   /// The dot on the composer's model mark while the sidekick works a round (the desktop's `.sidekick-pulse`)
   public static let sidekickPulse: CGFloat = 6
+  // Usage page (usage/UsagePage.tsx, styles/usage.css)
+  /// Width below which the four summary tiles stack two by two and breakdown rows stack their share bar underneath
+  public static let usageTilesWide: CGFloat = 520
+  /// Narrowest pitch between columns of the activity dot lattice
+  public static let usageDotPitchMin: CGFloat = 10
+  public static let usageDotGapMin: CGFloat = 2
+  public static let usageDotCornerMax: CGFloat = 3
+  public static let usageMonthGap: CGFloat = 32
+  public static let usageMonthEdge: CGFloat = 16
+  public static let usageFocusOutset: CGFloat = 1.5
+  /// Trend bar chart height, bar bounds and axis label clearance
+  public static let usageTrendH: CGFloat = 88
+  public static let usageBarMax: CGFloat = 20
+  public static let usageBarMin: CGFloat = 3
+  public static let usageBarMinH: CGFloat = 2
+  public static let usageBarRadiusMax: CGFloat = 4
+  public static let usageLabelRoom: CGFloat = 56
+  /// Breakdown row share track, crown badge, dimmed opacity and fixed trailing figure columns
+  public static let usageTrackH: CGFloat = 4
+  public static let usageCrown: CGFloat = 12
+  public static let usageDimRow: Double = 0.45
+  public static let usageNumW: CGFloat = 64
+  public static let usagePctW: CGFloat = 46
+  public static let usageNameWide: CGFloat = 180
+  public static let usageSectionGap: CGFloat = 24
+  public static let usageGroupHeadGap: CGFloat = 8
+  public static let usageCardRadius: CGFloat = 16
+  public static let usageSegPad: CGFloat = 2
+  public static let usageSegPadX: CGFloat = 10
+  public static let usageSegH: CGFloat = 26
 }
 
 // MARK: - Glass

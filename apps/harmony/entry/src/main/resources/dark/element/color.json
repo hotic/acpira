@@ -303,6 +303,26 @@
     {
       "name": "syn_punct",
       "value": "#FF808080"
+    },
+    {
+      "name": "usage_ink",
+      "value": "#C2EDEDED"
+    },
+    {
+      "name": "usage_bar",
+      "value": "#75EDEDED"
+    },
+    {
+      "name": "usage_dim",
+      "value": "#4D767676"
+    },
+    {
+      "name": "usage_track",
+      "value": "#0FEDEDED"
+    },
+    {
+      "name": "usage_cell",
+      "value": "#0AEDEDED"
     }
   ]
 }

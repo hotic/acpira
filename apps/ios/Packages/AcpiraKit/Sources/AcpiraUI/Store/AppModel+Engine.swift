@@ -150,6 +150,8 @@ extension AppModel {
       receiveProviders(view, error: error)
     case let .providerProbed(id, outcome):
       probing.removeValue(forKey: id)?.resume(returning: outcome)
+    case .usage(let view):
+      usageView = view
     case .session(let view):
       // Also the engine's answer to `loadEarlier` when it no longer knows what the page holds
       earlierAnswered(view.id)
@@ -318,6 +320,7 @@ extension AppModel {
     removedProjects = previous.removedProjects
     sections = previous.sections
     chatRoot = previous.chatRoot
+    usageView = previous.usageView
     hits = previous.hits
     openProjects = previous.openProjects
     settingsOpen = previous.settingsOpen

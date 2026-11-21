@@ -513,6 +513,8 @@ sealed interface HostMsg {
   data class Providers(val view: ProvidersView, val error: String?) : HostMsg
   /** The answer to the providerProbe with this id */
   data class ProviderProbed(val id: String, val outcome: ProbeOutcome) : HostMsg
+  /** Usage statistics across every session, answering `usage` */
+  data class Usage(val view: UsageView) : HostMsg
   data class Unknown(val type: String) : HostMsg
 
   companion object {
@@ -522,7 +524,7 @@ sealed interface HostMsg {
       "accounts", "accountActions", "hidden", "settings", "controls", "sessionHits", "subagent", "files", "diffSource",
       "imageBlob", "stagedFile", "sessionMarkdown", "projectDir", "projectStatus", "projectFile", "sessionChanges",
       "terminalOutput", "terminalState", "editTurnResult", "deleteSessionResult", "appearance", "connections", "localDir",
-      "providers", "providerProbed", "sessionUnavailable",
+      "providers", "providerProbed", "usage", "sessionUnavailable",
     )
 
     /**
@@ -586,6 +588,7 @@ sealed interface HostMsg {
         "localDir" -> LocalDir(seq, obj.string("path") ?: "", obj.string("parent"), list("entries", DirEntry.serializer()), obj.string("error"))
         "providers" -> Providers(ProvidersView.decode(obj["view"]), obj.string("error"))
         "providerProbed" -> ProviderProbed(obj.string("id") ?: "", ProbeOutcome.decode(obj["outcome"]))
+        "usage" -> Usage(field("view", UsageView.serializer()))
         else -> Unknown(type)
       }
     }
@@ -780,6 +783,8 @@ sealed interface WebviewMsg {
   data class ProviderAction(val action: cc.hotic.acpira.model.ProviderAction) : WebviewMsg
   /** Answered by providerProbed with the same id */
   data class ProviderProbe(val id: String, val probe: cc.hotic.acpira.model.ProviderProbe) : WebviewMsg
+  /** Usage statistics across every session, answered with `usage` (helloOk.features 'usage') */
+  data object Usage : WebviewMsg
 
   /** The wire `type` */
   val type: String
@@ -855,6 +860,7 @@ sealed interface WebviewMsg {
       Providers -> "providers"
       is ProviderAction -> "providerAction"
       is ProviderProbe -> "providerProbe"
+      Usage -> "usage"
     }
 
   /** The id the engine dedupes this action by; null for actions that carry none */
@@ -883,7 +889,7 @@ sealed interface WebviewMsg {
     when (val m = this@WebviewMsg) {
       is Ready -> { put("patches", m.patches); m.listPatches?.let { put("listPatches", it) }; m.window?.let { put("window", it) } }
       is LoadEarlier -> put("sessionId", m.sessionId)
-      Resync, ResyncSessions, MarkAllRead, Connections, Providers -> {}
+      Resync, ResyncSessions, MarkAllRead, Connections, Providers, Usage -> {}
       is Send -> {
         opt("sessionId", m.sessionId); put("text", m.text)
         m.attachments?.let { put("attachments", drafts(it)) }
@@ -983,7 +989,7 @@ sealed interface WebviewMsg {
       "retryTurn", "editTurn", "observeSubagent", "unobserveSubagent", "cancelSubagent", "stopAsyncTask", "stopCommand", "goal",
       "searchFiles", "setSetting", "controls", "projectDir", "projectStatus", "projectFile", "sessionChanges", "diffSource",
       "imageBlob", "stageFile", "openPlan", "terminalOpen", "terminalInput", "terminalResize", "terminalAck",
-      "terminalClose", "terminalKill", "connections", "localDir", "providers", "providerAction", "providerProbe",
+      "terminalClose", "terminalKill", "connections", "localDir", "providers", "providerAction", "providerProbe", "usage",
     )
   }
 }

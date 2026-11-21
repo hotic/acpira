@@ -97,6 +97,7 @@ fun SettingsScreen(model: AppModel) {
       // The engine's own settings, shared with the computer (AgentSettings.kt)
       AgentsSections(model)
       SessionsSection(model)
+      UsageSettingsSection(model)
       // Paired remote access: the computers in place of the engine row
       val pairing = LocalPairing.current
       if (pairing != null) PairComputersSection(pairing) { model.push(cc.hotic.acpira.store.Screen.Computer(it.id)) }
@@ -175,6 +176,21 @@ private fun notifyState(context: android.content.Context, prefs: android.content
   cc.hotic.acpira.store.Attention.allowed(context) -> "mobile.notify.on"
   android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU && !prefs.getBoolean("asked", false) -> "mobile.notify.ask"
   else -> "mobile.notify.off"
+}
+
+/** Settings → Usage: usage across every session; an older engine predating paired usage reads stays off */
+@Composable
+private fun UsageSettingsSection(model: AppModel) {
+  val enabled = model.supportsUsage
+  FormSection(null, footer = if (enabled) null else t("mobile.outdated")) {
+    FormRow(
+      t("usagePage.title"),
+      Modifier.then(if (enabled) Modifier.clickable { model.push(cc.hotic.acpira.store.Screen.Usage) } else Modifier)
+        .testTag("settings.usage"),
+    ) {
+      if (enabled) Lucide("chevronRight", Palette.fg3, size = Metrics.chevron)
+    }
+  }
 }
 
 /** Developer (apps/ios DeveloperSettingsPage): the on-screen frame-rate and hitch overlay's switches ([PerfHud]) */

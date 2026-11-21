@@ -84,6 +84,12 @@ object Swatches {
   val fast = Swatch(hex(0xf0b440), hex(0xb7791f))
   /** The composer's hint, as the list's search field sets its own */
   val barHint = Swatch(white(0.4f), black(0.42f))
+  // Usage page (styles/usage.css): one ink at steps of alpha, bars a step calmer than the lattice
+  val usageInk = fg1.alpha(0.76f)
+  val usageBar = fg1.alpha(0.46f)
+  val usageDim = fg3.alpha(0.30f)
+  val usageTrack = fg1.alpha(0.06f)
+  val usageCell = fg1.alpha(0.04f)
 }
 
 val LocalDark = staticCompositionLocalOf { false }
@@ -135,6 +141,11 @@ object Palette {
   val gooDim @Composable @ReadOnlyComposable get() = of(Swatches.gooDim)
   val fast @Composable @ReadOnlyComposable get() = of(Swatches.fast)
   val barHint @Composable @ReadOnlyComposable get() = of(Swatches.barHint)
+  val usageInk @Composable @ReadOnlyComposable get() = of(Swatches.usageInk)
+  val usageBar @Composable @ReadOnlyComposable get() = of(Swatches.usageBar)
+  val usageDim @Composable @ReadOnlyComposable get() = of(Swatches.usageDim)
+  val usageTrack @Composable @ReadOnlyComposable get() = of(Swatches.usageTrack)
+  val usageCell @Composable @ReadOnlyComposable get() = of(Swatches.usageCell)
 }
 
 /** Spacing, control and slot sizes (airy density, the phone's reading sizes), `--name` → `Metrics.name` */
@@ -338,6 +349,31 @@ object Metrics {
   /** An HTML widget (tokens.css --widget-placeholder / --widget-max): the room held before its page reports a height, and its cap */
   val widgetPlaceholder = 120.dp
   val widgetMax = 900.dp
+  // Usage page (usage/UsagePage.tsx, styles/usage.css)
+  val usageTilesWide = 520.dp
+  val usageDotPitchMin = 10.dp
+  val usageDotGapMin = 2.dp
+  val usageDotCornerMax = 3.dp
+  val usageMonthGap = 32.dp
+  val usageMonthEdge = 16.dp
+  val usageFocusOutset = 1.5.dp
+  val usageTrendH = 88.dp
+  val usageBarMax = 20.dp
+  val usageBarMin = 3.dp
+  val usageBarMinH = 2.dp
+  val usageBarRadiusMax = 4.dp
+  val usageLabelRoom = 56.dp
+  val usageTrackH = 4.dp
+  val usageCrown = 12.dp
+  const val usageDimRow = 0.45f
+  val usageNumW = 64.dp
+  val usagePctW = 46.dp
+  val usageNameWide = 180.dp
+  val usageSectionGap = 24.dp
+  val usageGroupHeadGap = 8.dp
+  val usageSegPad = 2.dp
+  val usageSegPadX = 10.dp
+  val usageSegH = 26.dp
 }
 
 /** The phone type scale: ui 16 / code 13, as the iOS app and the web reference page */
@@ -373,6 +409,9 @@ object Type {
   /** The first-run intro's headline, at the design page's scale */
   val welcomeHeadline = 34.sp
   val welcomeHeadlineLine = 42.sp
+  /** Usage page summary tile figure */
+  val usageFigure = 24.sp
+  val usageFigureLine = 28.sp
 }
 
 /**

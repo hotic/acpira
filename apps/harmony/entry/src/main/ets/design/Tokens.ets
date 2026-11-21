@@ -57,6 +57,7 @@ export class Type {
   static readonly body: number = 17;
   static readonly bodyLine: number = 26;
   static readonly barTitle: number = 22;
+  static readonly usageFigure: number = 24;
   static readonly mono: number = 14;
   static readonly monoLine: number = 21;
 }
@@ -494,4 +495,33 @@ export class WebMetrics {
   static readonly copiedMs: number = 1500;
   /** An older reply's action row fading in or out on a tap (apps/ios Motion.dur) */
   static readonly revealMs: number = 150;
+}
+
+/** Settings → Usage (packages/ui/usage/UsagePage.tsx, styles/usage.css) */
+export class UsageMetrics {
+  static readonly tilesWide: number = 520;
+  static readonly dotPitchMin: number = 10;
+  static readonly dotGapMin: number = 2;
+  static readonly dotCornerMax: number = 3;
+  static readonly monthGap: number = 32;
+  static readonly monthEdge: number = 16;
+  static readonly focusOutset: number = 1.5;
+  static readonly trendH: number = 88;
+  static readonly barMax: number = 20;
+  static readonly barMin: number = 3;
+  static readonly barMinH: number = 2;
+  static readonly barRadiusMax: number = 4;
+  static readonly labelRoom: number = 56;
+  static readonly trackH: number = 4;
+  static readonly crown: number = 12;
+  static readonly dimRow: number = 0.45;
+  static readonly numW: number = 64;
+  static readonly pctW: number = 46;
+  static readonly nameWide: number = 180;
+  static readonly sectionGap: number = 24;
+  static readonly groupHeadGap: number = 8;
+  static readonly axisH: number = 18;
+  static readonly segPad: number = 2;
+  static readonly segPadX: number = 10;
+  static readonly segH: number = 26;
 }

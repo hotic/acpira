@@ -988,7 +988,7 @@ private fun pressing(sessions: List<SessionSummary>): Pair<SessionState, Boolean
 
 /** RemoteFolderIcon.tsx: the folder with a small globe on its lower right corner, cut out of the folder under it */
 @Composable
-private fun RemoteFolderGlyph(open: Boolean) {
+internal fun RemoteFolderGlyph(open: Boolean) {
   Box(Modifier.size(Metrics.icon)) {
     Lucide(if (open) "folderOpen" else "folder", Palette.fg3)
     Box(

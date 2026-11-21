@@ -146,6 +146,43 @@ export interface InitState {
   chats?: string;
 }
 
+/** A session the usage rows index into; `cwd` is its project folder (packages/shared/usage.ts) */
+export interface UsageSession {
+  agent: string;
+  cwd: string;
+}
+
+/** A model the usage rows index into: wire id and family display name */
+export interface UsageModel {
+  id: string;
+  name: string;
+}
+
+/** One session's turns in one model within one UTC clock hour; zero fields omitted */
+export interface UsageRow {
+  at: number;
+  session: number;
+  model?: number;
+  tokens?: number;
+  input?: number;
+  output?: number;
+  cachedRead?: number;
+  turns?: number;
+  prompts?: number;
+  workMs?: number;
+  longestMs?: number;
+  tools?: number;
+  added?: number;
+  removed?: number;
+}
+
+/** Usage across every session on the engine (`HostMsg.usage`) */
+export interface UsageView {
+  sessions: UsageSession[];
+  models: UsageModel[];
+  rows: UsageRow[];
+}
+
 /** Every HostMsg in one shape: `type` says which fields carry it */
 export interface HostMsg {
   type: string;
@@ -157,6 +194,8 @@ export interface HostMsg {
   /** `sessionUnavailable`: the session picked and the engine's sentence for why it cannot be shown */
   id?: string;
   reason?: string;
+  /** `usage`: hour-bucketed usage across every session */
+  view?: UsageView;
 }
 
 export interface SessionPatchMsg {
@@ -194,6 +233,7 @@ export interface SidecarMsg {
   message?: HostMsg;
   reason?: string;
   protocolVersion?: number;
+  features?: string[];
 }
 
 /** The view a patch leads to, or undefined when the app does not hold the view it was computed against (then resync) */

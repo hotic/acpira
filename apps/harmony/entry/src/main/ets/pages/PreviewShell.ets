@@ -4,6 +4,7 @@ import { initL10n, t } from '../store/L10n';
 import { fixtureView } from '../store/Demo';
 import { SessionList } from './SessionList';
 import { SettingsPage, AgentSettingsPage } from './Settings';
+import { UsagePage } from './Usage';
 import { NewSession } from './NewSession';
 import { ChatPage } from './ChatPage';
 import { WelcomeFlow } from './Welcome';
@@ -74,6 +75,8 @@ export struct Scene {
         .backgroundColor($r('app.color.goo_dim'))
       } else if (this.scene === 'settings') {
         SettingsPage({ model: this.model })
+      } else if (this.scene === 'usage') {
+        UsagePage({ model: this.model })
       } else if (this.scene === 'agent') {
         AgentSettingsPage({ model: this.model, agentId: 'claude' })
       } else if (this.scene === 'new') {
@@ -88,7 +91,7 @@ export struct Scene {
     .width(PHONE)
     .height('100%')
     .clip(true)
-    .backgroundColor(this.scene === 'settings' || this.scene === 'agent' ? $r('app.color.form_page') : $r('app.color.bg0'))
+    .backgroundColor(this.scene === 'settings' || this.scene === 'agent' || this.scene === 'usage' ? $r('app.color.form_page') : $r('app.color.bg0'))
   }
 }
 

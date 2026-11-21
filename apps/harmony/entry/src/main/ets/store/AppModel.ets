@@ -1,7 +1,8 @@
 import {
   AgentInfo, applySessionEarlier, applySessionPatch, applySessionsPatch, earlierTurns, HostMsg, SessionEarlierMsg,
-  SessionPatchMsg, SessionsPatchMsg, SessionSummary, SessionView, Turn
+  SessionPatchMsg, SessionsPatchMsg, SessionSummary, SessionView, Turn, UsageView
 } from '../wire/Wire';
+import { sampleUsageView } from '../logic/UsageStats';
 import { EngineClient, EngineTransport, replayable, WebviewMsg } from '../wire/EngineClient';
 import { demoAgents, demoNow, demoSessions, demoView } from './Demo';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
@@ -117,7 +118,8 @@ export class AppModel implements ListHost {
     this.controlsAsked.clear();
     this.connection = Connection.Connecting;
     const client = new EngineClient(address, token, language, {
-      connected: () => {
+      connected: (features: string[]) => {
+        this.engineFeatures = features;
         this.connection = Connection.Live;
       },
       host: (message: HostMsg) => this.receive(message),
@@ -215,8 +217,9 @@ export class AppModel implements ListHost {
     this.synced = false;
     this.connection = Connection.Connecting;
     const client: EngineClient = new EngineClient('', '', language, {
-      connected: () => {
+      connected: (features: string[]) => {
         if (this.client === client) {
+          this.engineFeatures = features;
           this.connection = Connection.Live;
         }
       },
@@ -537,6 +540,11 @@ export class AppModel implements ListHost {
         }
         break;
       }
+      case 'usage':
+        if (message.view !== undefined) {
+          this.usageView = message.view;
+        }
+        break;
       case 'toast':
         this.toast = message.text;
         break;
@@ -554,6 +562,25 @@ export class AppModel implements ListHost {
   @Trace settings: SettingsView = defaultSettings();
   /** Where chats' folders live (InitState.chats): a session directly inside is a chat, not a project */
   @Trace chatRoot: string | undefined = undefined;
+  /** Engine capability flags from helloOk.features (empty in demo and on older engines) */
+  @Trace engineFeatures: string[] = [];
+  /** Usage statistics across every session (Settings → Usage), undefined until loaded */
+  @Trace usageView: UsageView | undefined = undefined;
+
+  get supportsUsage(): boolean {
+    return !this.live || this.engineFeatures.includes('usage');
+  }
+
+  /** Asks the engine for a fresh usage view, or builds the deterministic demo year when offline */
+  loadUsage(): void {
+    if (this.live) {
+      if (this.supportsUsage) {
+        this.post({ type: 'usage' });
+      }
+    } else if (this.usageView === undefined) {
+      this.usageView = sampleUsageView(this.now(), this.chatRoot);
+    }
+  }
   /** The project order every project shell on the machine shares */
   @Trace projectOrder: string[] = [];
   /** Folders added by hand, the latest first */

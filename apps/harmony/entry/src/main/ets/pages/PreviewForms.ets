@@ -14,7 +14,7 @@ struct PreviewForms {
 
   build() {
     Row() {
-      ForEach(['settings', 'agent', 'new', 'chat', 'intro', 'engine', 'notify'], (scene: string) => {
+      ForEach(['settings', 'usage', 'agent', 'new', 'chat', 'intro', 'engine', 'notify'], (scene: string) => {
         Scene({ scene: scene })
       }, (scene: string) => scene)
     }

@@ -98,6 +98,8 @@ public enum TypeScale {
   public static let field = TextStyle(size: ui + 1, lineHeight: ui + 8)
   /// The session list's bar title: 22 / 28, sized to stand level with the bar's 44 pt glass buttons
   public static let barTitle = TextStyle(size: ui + 6, lineHeight: ui + 12)
+  /// Usage page summary tile figure: 24 / 28, semibold
+  public static let usageFigure = TextStyle(size: ui + 8, lineHeight: ui + 12)
   /// Code: 14 / 21
   public static let mono: TextStyle = TextStyle(size: code + 1, lineHeight: code + 8, mono: true)
   /// Command output lines (--code-output-line-height)

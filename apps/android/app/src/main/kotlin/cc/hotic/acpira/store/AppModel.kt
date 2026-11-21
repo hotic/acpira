@@ -31,8 +31,10 @@ import cc.hotic.acpira.model.SessionView
 import cc.hotic.acpira.model.SettingsView
 import cc.hotic.acpira.model.ShellEnv
 import cc.hotic.acpira.model.SidecarProtocol
+import cc.hotic.acpira.model.UsageView
 import cc.hotic.acpira.model.UserTurn
 import cc.hotic.acpira.model.WebviewMsg
+import cc.hotic.acpira.logic.UsageStats
 import cc.hotic.acpira.sync.EngineClient
 import cc.hotic.acpira.sync.EngineEvent
 import cc.hotic.acpira.sync.EngineTransport
@@ -62,6 +64,8 @@ sealed interface Screen {
   data object Developer : Screen
   /** Settings → Steps: the step kinds a turn's process lists */
   data object Steps : Screen
+  /** Settings → Usage: usage across every session */
+  data object Usage : Screen
   /** The built-in agent's model sources, a source's form (id null: a new one; error: why it opened) and its add-model page */
   data object Providers : Screen
   data class ProviderForm(val id: String?, val error: String? = null) : Screen
@@ -151,6 +155,20 @@ class AppModel(
   val folders = LocalFolders(::post)
   /** The built-in agent's model sources; a saved change asks for fresh controls so the composer's model menu has it */
   val sources = ModelSources(::post) { post(WebviewMsg.Controls(BUILTIN_AGENT, fresh = true)) }
+  /** Usage across every session as the engine last sent it (Settings → Usage), null until asked */
+  var usageView by mutableStateOf<UsageView?>(null)
+    private set
+  /** The engine lets this device read usage statistics (demo always supports it) */
+  val supportsUsage: Boolean get() = !live || "usage" in engineFeatures
+
+  /** Asks the engine for a fresh usage view, or populates the deterministic demo year when offline */
+  fun loadUsage() {
+    if (live) {
+      if (supportsUsage) post(WebviewMsg.Usage)
+    } else if (usageView == null) {
+      usageView = UsageStats.sampleView(now().toEpochMilli(), chatRoot)
+    }
+  }
   /** The chats' images, videos and downloads over this wire (store/MediaLink.kt) */
   val media = MediaLink(context, wire, ::post)
   var connection by mutableStateOf<Connection>(Connection.Demo)
@@ -711,6 +729,10 @@ class AppModel(
       }
       "new" -> path.add(Screen.New())
       "settings" -> path.add(Screen.Settings)
+      "usage" -> {
+        path.add(Screen.Settings)
+        path.add(Screen.Usage)
+      }
     }
     subagentRoute()?.let { path.add(it) }
   }
@@ -886,6 +908,7 @@ class AppModel(
       is HostMsg.LocalDir -> folders.receive(message)
       is HostMsg.Providers -> sources.receive(message)
       is HostMsg.ProviderProbed -> sources.receive(message)
+      is HostMsg.Usage -> usageView = message.view
       is HostMsg.Accounts -> chat.accounts = message.accounts
       is HostMsg.EditTurnResult -> editAnswered(message.requestId, message.error)
       is HostMsg.ImageBlob, is HostMsg.StagedFile -> media.receive(message)
@@ -951,6 +974,7 @@ class AppModel(
     from.outgoing.forEach { (id, o) -> outgoing[id] = o }
     chat.adopt(from.chat)
     chatRoot = from.chatRoot
+    usageView = from.usageView
     home = from.home
     projectOrder = from.projectOrder
     addedProjects = from.addedProjects
