@@ -1,10 +1,11 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useDesktop } from '../desktop';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, COMPACT_AT_MODEL, DEFAULT_SETTINGS, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type FileOpener, type SessionScope, type SettingsView } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n/core';
 import { launchable, pickDefaultAgent } from '@acpira/shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
+import { MarkSvg } from '../chat/marks';
 import { playChime } from '../effects/chime';
 import { t } from '../i18n';
 import { Field, NumberField, Section, Select, Switch } from './controls';
@@ -13,6 +14,18 @@ import { TourSection } from './TourSection';
 
 // The threshold field works in thousands of tokens
 const K = 1000;
+
+// Editor mark ids in chat/marks.tsx; `cursor` is scaled slightly to match the optical inset of the other solid editor marks
+const FILE_OPENER_MARK: Record<FileOpener, string> = {
+  system: 'systemApp', code: 'vscode', cursor: 'cursor', windsurf: 'windsurf', zed: 'zed', subl: 'subl', idea: 'intellij',
+};
+const openerIcon = (o: FileOpener): ReactNode => (
+  <MarkSvg
+    id={FILE_OPENER_MARK[o]}
+    name={o === 'system' ? undefined : FILE_OPENER_NAMES[o]}
+    className={o === 'cursor' ? 'scale-90' : undefined}
+  />
+);
 
 // General: the shell's own knobs. Rendering preferences live on the Appearance page; the LAB appearance axes (bar motion) stay design decisions.
 // The settings shell owns the page heading and content measure. `onTour`: getting started at the foot (VS Code, which has
@@ -25,7 +38,7 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
   const agentOptions = launchable(agents).map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: a.available === false }));
   const scopes = SESSION_SCOPES.map(s => ({ value: s, label: t(`settings.sessionScope.${s}` as const) }));
   const switchStrategies = ACCOUNT_SWITCH_STRATEGIES.map(s => ({ value: s, label: t(`settings.accountSwitch.${s}` as const) }));
-  const fileOpeners = FILE_OPENERS.map(o => ({ value: o, label: o === 'system' ? t('settings.openFilesWith.system') : FILE_OPENER_NAMES[o] }));
+  const fileOpeners = FILE_OPENERS.map(o => ({ value: o, label: o === 'system' ? t('settings.openFilesWith.system') : FILE_OPENER_NAMES[o], icon: openerIcon(o) }));
   return (
     <>
       <Section title={t('settings.group.basic')}>
