@@ -9,7 +9,7 @@ A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives offici
 - Read the area's doc from the table below before changing it; the recorded wire behaviour outranks the ACP spec and memory of it.
 - `docs/dev/` keeps knowledge the source cannot give back: external CLI wire behaviour with the version observed on, invariants and cross-file contracts, the non-obvious why, traps, open questions, where an area lives. A typical change adds nothing there; an entry earns its place only when the next change would go astray without it, and anything a look at the code settles stays out. Never restate code (constants, timings, control flow, field / flag lists, test lists) or describe how the UI looks; point at the source instead. One current entry per topic: when behaviour changes, edit or remove it in place. Terse bullets, no dates, change history, investigation stories, measurements, commit hashes, machine names or personal paths; git keeps the history. A file stays under 16 KB: one over it is pruned before anything is added. `docs/dev/` is published, so anything private or scratch goes in an untracked file under `docs/` (everything there outside the `.gitignore` whitelist stays local).
 - This file stays an index under 12 KB (some hosts truncate at 16 KB); details belong in `docs/dev/`.
-- Long multi-part work keeps its checklist in `docs/TASKS.md` (ignored by git) and ticks items as they finish.
+- Long multi-part work keeps its checklist in `docs/TASKS.md` and ticks items as they finish.
 - A run that changed files closes with a short summary: any decision still needed first, then what changed, the commands actually run, and what was left unverified (and why). Anything not confirmed against code, tests or a real CLI is called out as unverified, with where it was looked for.
 
 ## Commands
@@ -38,6 +38,7 @@ A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives offici
 - The root `tsconfig.json` holds `references` only
 - `~/.acpira` is shared by every window and engine: files are written tmp + rename, and `accounts.json`, `secrets.json`, `settings.json` and `sessions/prefs.json` are edited under the file lock
 - Every stream chunk pushes the session view, as a `sessionPatch` (only the changed tail) to the real webview; nothing may defeat the `shared/reuse.ts` reference reuse and `memo` chain (`docs/dev/webview.md`)
+- Never commit real hosts, IPs, users or paths: use `example.com`, `203.0.113.x`, `/Users/dev`; real endpoints come from the environment
 - Write code comments in English
 - Components must not contain raw numbers: sizes, type scale, spacing, and radii all use token classes (`h-ctl`, `px-pad`, `gap-gap`, `rounded-md`, …)
 - Every "row" (thought / plan / tool / status / session item) uses `ui/Row`; command execution is a row too (command on the row, output card below), not a separate block
@@ -75,4 +76,4 @@ One pnpm workspace: each package declares its own dependencies (versions in the 
 | `apps/harmony/` | `docs/dev/harmony.md` |
 | Windows compatibility boundaries and regression checks | `docs/dev/windows-compatibility.md` |
 
-Public docs: `docs/context-api.md` (the `acpira.context` contract other extensions call), `docs/releasing.md`, `docs/roadmap.md`, `docs/harness-evaluations.md`. The rest of `docs/` is local only and may be absent (`HANDOFF.md`, `TASKS.md`, plans and scratch notes).
+Public docs: `docs/context-api.md` (the `acpira.context` contract other extensions call), `docs/releasing.md`, `docs/roadmap.md`, `docs/harness-evaluations.md`. The rest of `docs/` is local only and may be absent.
