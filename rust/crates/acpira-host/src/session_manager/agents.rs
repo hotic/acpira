@@ -504,12 +504,18 @@ impl SessionManager {
     out
   }
 
-  /// The settings page's refresh button: a throwaway spawn reads the CLI's current configOptions
+  /// The settings page's refresh button: re-read PATH / registry and run a throwaway spawn for the CLI's configOptions
   pub async fn probe_controls(self: &Arc<Self>, agent: &str) -> Vec<ConfigControl> {
     self.pool.invalidate(Some(agent));
+    if login_path::refresh(std::time::Duration::ZERO).await {
+      self.log_login_path();
+    }
     let registry = self.registry();
+    registry.forget_resolved(agent);
     let Ok(def) = registry.get(agent).cloned() else { return self.known_controls(agent).await };
     let Some(bin) = registry.resolve_binary(agent).await else {
+      // Even when availability stayed false, refreshed PATH directories should reach the searched hint
+      self.emit_agents();
       self.log(&format!("probe {agent}: no binary"));
       return self.known_controls(agent).await;
     };

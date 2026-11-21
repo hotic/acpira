@@ -879,13 +879,71 @@ const FALLBACK_DIRS: &[&str] = &[
   "~/.yarn/bin",
 ];
 
+fn is_absolute_for(path: &str, os: Os) -> bool {
+  if os == Os::Windows {
+    let b = path.as_bytes();
+    let drive = b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/');
+    drive || path.starts_with(r"\\")
+  } else {
+    path.starts_with('/')
+  }
+}
+
+fn uses_win_sep(dir: &str, os: Os) -> bool {
+  os == Os::Windows && (cfg!(windows) || dir.contains('\\') || dir.as_bytes().get(1) == Some(&b':'))
+}
+
+fn join_for(dir: &str, leaf: &str, os: Os) -> String {
+  if uses_win_sep(dir, os) {
+    let base = dir.replace('/', "\\").trim_end_matches('\\').to_owned();
+    let tail = leaf.replace('/', "\\").trim_start_matches('\\').to_owned();
+    if base.is_empty() { tail } else { format!("{base}\\{tail}") }
+  } else {
+    let tail = if os == Os::Windows { leaf.replace('\\', "/") } else { leaf.to_owned() };
+    std::path::Path::new(dir).join(tail).to_string_lossy().into_owned()
+  }
+}
+
+fn parent_for(path: &str, os: Os) -> Option<String> {
+  if uses_win_sep(path, os) {
+    let norm = path.replace('/', "\\");
+    let (dir, _) = norm.rsplit_once('\\')?;
+    (!dir.is_empty()).then(|| dir.to_owned())
+  } else {
+    std::path::Path::new(path).parent().map(|d| d.to_string_lossy().into_owned())
+  }
+}
+
+fn dedup_key(path: &str, os: Os) -> String {
+  if os == Os::Windows {
+    path.trim_matches('"').replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase()
+  } else {
+    path.trim_end_matches('/').to_owned()
+  }
+}
+
+fn expand_home_for(p: &str, os: Os, env: &dyn Env) -> String {
+  let Some(rest) = p.strip_prefix("~/") else { return p.to_owned() };
+  if os == Os::Windows {
+    let home = env.get("USERPROFILE").filter(|d| !d.is_empty()).unwrap_or_else(|| home_dir().to_string_lossy().into_owned());
+    join_for(&home, rest, Os::Windows)
+  } else {
+    home_dir().join(rest).to_string_lossy().into_owned()
+  }
+}
+
 /// Every path tried for `command`, in order: the definition's candidates, PATH (which includes what the login shell
 /// adds), then platform-specific install directories; duplicates dropped
 pub fn search_paths(command: &str, candidates: &[String], os: Os, env: &dyn Env) -> Vec<String> {
-  if std::path::Path::new(command).is_absolute() {
+  if is_absolute_for(command, os) || std::path::Path::new(command).is_absolute() {
     return vec![command.to_owned()];
   }
-  let mut out: Vec<String> = candidates.iter().map(|c| expand_home(c)).collect();
+  let mut out: Vec<String> = candidates
+    .iter()
+    // POSIX-only absolute candidates (/opt/homebrew/..., /usr/local/..., /Applications/...) never apply on Windows
+    .filter(|c| os != Os::Windows || !c.starts_with('/'))
+    .map(|c| expand_home_for(c, os, env))
+    .collect();
   let sep = if os == Os::Windows { ';' } else { ':' };
   let path = env.get("PATH").unwrap_or_default();
   let mut dirs: Vec<String> = path.split(sep).filter(|d| !d.is_empty()).map(str::to_owned).collect();
@@ -893,22 +951,48 @@ pub fn search_paths(command: &str, candidates: &[String], os: Os, env: &dyn Env)
     dirs.extend(FALLBACK_DIRS.iter().map(|d| expand_home(d)));
   } else {
     // Windows installers update User PATH and their child shell, not the running IDE's environment. Probe the official
-    // install directory directly so a refresh finds a new install without restarting the IDE (Devin 3000.11.3; Hermes's
-    // directory is the one its install docs give, unverified on Windows)
-    let sub: &[&str] = match command.to_ascii_lowercase().as_str() {
+    // install directories directly so a refresh finds a new install without restarting the IDE (Devin 3000.11.3;
+    // Antigravity's install.ps1 uses %LOCALAPPDATA%\agy\bin; Hermes's directory is from its install docs)
+    let cmd_lower = command.to_ascii_lowercase();
+    let local = env.get("LOCALAPPDATA").filter(|d| !d.is_empty());
+    let appdata = env.get("APPDATA").filter(|d| !d.is_empty());
+    let profile = env.get("USERPROFILE").filter(|d| !d.is_empty());
+    let sub: &[&str] = match cmd_lower.as_str() {
       "devin" => &["devin", "cli", "bin"],
       "hermes" => &["hermes", "bin"],
-      // The Antigravity CLI installer's directory (antigravity.google getting started, unverified on Windows)
       "agy" => &["agy", "bin"],
       _ => &[],
     };
-    if let Some(local) = env.get("LOCALAPPDATA").filter(|d| !d.is_empty() && !sub.is_empty()) {
-      dirs.push(sub.iter().fold(std::path::PathBuf::from(&local), |p, s| p.join(s)).to_string_lossy().into_owned());
+    if let Some(local) = local.as_deref()
+      && !sub.is_empty()
+    {
+      dirs.push(sub.iter().fold(local.to_owned(), |p, s| join_for(&p, s, Os::Windows)));
+    }
+    if matches!(cmd_lower.as_str(), "node" | "npm") {
+      if let Some(pf) = env.get("ProgramFiles").filter(|d| !d.is_empty()) {
+        dirs.push(join_for(&pf, "nodejs", Os::Windows));
+      }
+      if let Some(local) = local.as_deref() {
+        dirs.push(join_for(local, r"Programs\nodejs", Os::Windows));
+      }
+    }
+    // Common Windows global bin folders for npm (including Acpira's private Node.js global prefix), pnpm, scoop, bun, volta, winget
+    if let Some(appdata) = appdata.as_deref() {
+      dirs.push(join_for(appdata, "npm", Os::Windows));
+    }
+    if let Some(local) = local.as_deref() {
+      dirs.push(join_for(local, "pnpm", Os::Windows));
+      dirs.push(join_for(local, r"Microsoft\WinGet\Links", Os::Windows));
+    }
+    if let Some(profile) = profile.as_deref() {
+      dirs.push(join_for(profile, r"scoop\shims", Os::Windows));
+      dirs.push(join_for(profile, r".bun\bin", Os::Windows));
+      dirs.push(join_for(profile, r".volta\bin", Os::Windows));
     }
   }
-  out.extend(dirs.iter().map(|d| std::path::Path::new(d).join(command).to_string_lossy().into_owned()));
+  out.extend(dirs.iter().map(|d| join_for(d, command, os)));
   let mut seen = std::collections::HashSet::new();
-  out.retain(|p| seen.insert(p.clone()));
+  out.retain(|p| seen.insert(dedup_key(p, os)));
   out
 }
 
@@ -917,8 +1001,8 @@ pub fn search_dirs(command: &str, candidates: &[String], os: Os, env: &dyn Env) 
   let mut seen = std::collections::HashSet::new();
   search_paths(command, candidates, os, env)
     .iter()
-    .filter_map(|p| std::path::Path::new(p).parent().map(|d| d.to_string_lossy().into_owned()))
-    .filter(|d| seen.insert(d.clone()))
+    .filter_map(|p| parent_for(p, os))
+    .filter(|d| seen.insert(dedup_key(d, os)))
     .collect()
 }
 
@@ -1079,5 +1163,37 @@ mod tests {
     let custom = AgentRegistry::with_os(&json!({ "acpira": { "command": "/y/other" } }), Os::Posix).with_self_agent("/x/acpira", root);
     assert_eq!(custom.get(SELF_AGENT_ID).unwrap().command, "/y/other");
     assert_ne!(custom.ids()[0], SELF_AGENT_ID);
+  }
+
+  #[test]
+  fn windows_search_paths_drop_posix_candidates_and_cover_windows_bin_dirs() {
+    struct Map(HashMap<String, String>);
+    impl Env for Map {
+      fn get(&self, k: &str) -> Option<String> {
+        self.0.get(k).cloned()
+      }
+    }
+    let env = Map(
+      [
+        ("PATH", r"C:\Windows\System32;c:\users\u\.local\bin"),
+        ("USERPROFILE", r"C:\Users\u"),
+        ("LOCALAPPDATA", r"C:\Users\u\AppData\Local"),
+        ("APPDATA", r"C:\Users\u\AppData\Roaming"),
+        ("ProgramFiles", r"C:\Program Files"),
+      ]
+      .into_iter()
+      .map(|(k, v)| (k.to_owned(), v.to_owned()))
+      .collect(),
+    );
+    let agy = antigravity();
+    let dirs = search_dirs(&agy.command, &agy.candidates, Os::Windows, &env);
+    assert!(!dirs.iter().any(|d| d.starts_with('/')), "POSIX candidates must not leak on Windows: {dirs:?}");
+    assert_eq!(dirs.iter().filter(|d| d.eq_ignore_ascii_case(r"C:\Users\u\.local\bin")).count(), 1, "case-insensitive dedup: {dirs:?}");
+    for expected in [r"C:\Users\u\AppData\Local\agy\bin", r"C:\Users\u\AppData\Roaming\npm", r"C:\Users\u\scoop\shims"] {
+      assert!(dirs.iter().any(|d| d.eq_ignore_ascii_case(expected)), "missing {expected} in {dirs:?}");
+    }
+    let npm_dirs = search_dirs("npm", &[], Os::Windows, &env);
+    assert!(npm_dirs.iter().any(|d| d.eq_ignore_ascii_case(r"C:\Program Files\nodejs")), "{npm_dirs:?}");
+    assert_eq!(search_paths(r"D:\tools\agy.exe", &agy.candidates, Os::Windows, &env), vec![r"D:\tools\agy.exe"]);
   }
 }
