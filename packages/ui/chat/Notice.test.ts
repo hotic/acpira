@@ -80,6 +80,15 @@ describe('Notice missing-CLI and SSH auth UX', () => {
     expect(failed).toContain('Install failed');
     expect(failed).toContain('Exited with code 127');
     expect(failed).toContain('>Install</button>');
+
+    const missingNode = renderNotice({
+      agent: { id: 'codex', name: 'Codex', available: false, install: { command: 'npm install -g @agentclientprotocol/codex-acp' } },
+      onInstall: vi.fn(),
+      onOpenExternal: vi.fn(),
+      install: { agent: 'codex', status: 'failed', error: 'Node.js is not installed', log: [], missingNode: true },
+    });
+    expect(missingNode).toContain('>Install Node.js and continue</button>');
+    expect(missingNode).toContain('Download Node.js manually');
   });
 
   it('promotes terminal auth methods ahead of browser OAuth when remoteAuth is set', () => {

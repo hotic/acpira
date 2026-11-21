@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, LoaderCircle, LockKeyhole, LogIn, Plus, RefreshCw, Settings2, SquareTerminal, WandSparkles, X } from 'lucide-react';
+import { Ban, Check, ChevronDown, ChevronUp, Copy, Download, LockKeyhole, LogIn, Plus, RefreshCw, RotateCcw, Settings2, Terminal, WandSparkles, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { AccountAction, AgentInstallProgress } from '@acpira/shared/protocol';
 import { inventoryVersion, type AgentHealthStage, type AgentInventory, type InventoryFile, type InventoryMcp, type InventoryScope, type InventorySkill } from '@acpira/shared/inventory';
@@ -24,9 +24,10 @@ import { localLoginNeeded } from '../chat/AccountPanel';
 import { remoteOffered } from '../remote/api';
 import { ModelMark } from '../chat/ModelMark';
 import {
-  DialogBody, Dot, FactRow, Field, Group, ItemRow, Meta, Note, PathText, SearchRow, Section, SectionAction, Select, SettingsDialog,
+  DialogBody, Dot, FactRow, Field, FormField, Group, inputBox, ItemRow, Meta, Note, PathText, SearchRow, Section, SectionAction, Select, SettingsDialog,
   Switch, Tabs, TextBox, pathSep, shortPath,
 } from './controls';
+import { NODEJS_DOWNLOAD_URL, NodeInstallDialog } from './NodeInstallDialog';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
 import {
@@ -442,6 +443,8 @@ function AgentFacts({ agent, inventory: live, env, on }: { agent: AgentInfo; inv
   if (live && (settled?.inventory !== live || settled.searched !== agent.searched)) setSettled({ inventory: live, searched: agent.searched });
   const inventory = live ?? settled?.inventory;
   const searched = live ? agent.searched : settled?.searched ?? agent.searched;
+  const [editingBinary, setEditingBinary] = useState(false);
+  const canSetBinary = !!on.setAgentBinary && agent.id !== BUILTIN_AGENT_ID;
   const sep = t('common.metaSep');
   const adapter = inventory?.adapter?.adapter;
   const version = inventoryVersion(inventory);
@@ -460,24 +463,27 @@ function AgentFacts({ agent, inventory: live, env, on }: { agent: AgentInfo; inv
       ? t('settings.fact.engineOverride', { name: engine.name, env: engine.overrideEnv ?? '', path: engine.override })
       : `${engine.version ? t('settings.agent.version', { name: engine.name, version: engine.version }) : engine.name}${sep}${engine.nativeMissing ? t('settings.fact.nativeMissing', { package: engine.nativeMissing }) : t('settings.fact.bundled')}`
     : undefined;
-  return (
-    // A status of "sign-in required" carries the sign-in where the engine can start one without a session: the account
-    // layer's import / terminal login, or the official account's CLI login. Other agents sign in from the chat's notice,
-    // with the methods their ACP handshake offers
+  return <>
+    {/* A status of "sign-in required" carries the sign-in where the engine can start one without a session: the account
+        layer's import / terminal login, or the official account's CLI login. Other agents sign in from the chat's notice,
+        with the methods their ACP handshake offers */}
     <Section title={t('settings.agent.runtime')} desc={t('settings.agent.runtime.desc')}
       action={health?.stage === 'auth_required' && (agent.accounts || agent.localAccount) && <SectionAction icon={<LogIn />} onClick={() => on.addAccount(agent.id)}>{t('notice.goLogin')}</SectionAction>}>
-      <FactRow label={t('settings.fact.binary')}>
+      <FactRow label={t('settings.fact.binary')} trailing={canSetBinary && (
+        <SectionAction onClick={() => setEditingBinary(true)}>
+          {t(inventory?.customBinary ? 'settings.agent.binaryChange' : 'settings.agent.binarySet')}
+        </SectionAction>
+      )}>
         {live === undefined
           ? <Shimmer className="font-sans">{t('settings.agent.probing')}</Shimmer>
           : live.binary
-            ? <><Dot ok /><PathText path={live.binary} env={env} /></>
-            : <><Dot ok={false} /><span className="truncate" title={missingExecutable}>{missingExecutable}</span></>}
+            ? <PathText path={live.binary} env={env} />
+            : <span className="truncate" title={missingExecutable}>{missingExecutable}</span>}
       </FactRow>
       {!inventory?.binary && searched?.length ? <SearchedDirs dirs={searched} env={env} /> : null}
       {adapterText && <FactRow label={t('settings.fact.adapter')} title={adapter?.root}><span className="truncate">{adapterText}</span></FactRow>}
       {engineText && (
         <FactRow label={t('settings.fact.engine')} title={engine?.nativeMissing ? t('settings.fact.nativeMissingHint', { package: engine.nativeMissing }) : engine?.override}>
-          {engine?.nativeMissing && <Dot ok={false} />}
           <span className="truncate">{engineText}</span>
         </FactRow>
       )}
@@ -489,18 +495,86 @@ function AgentFacts({ agent, inventory: live, env, on }: { agent: AgentInfo; inv
           grew the card and pushed the page down about a third of a second after it opened (reported 2026-10-14 on the
           README's built-in agent clip) */}
       <FactRow label={t('settings.fact.status')} title={health ? [health.at, health.error].filter(Boolean).join('\n') : undefined}>
-        {health ? <>
-          <Dot ok={health.stage === 'ready'} />
+        {health ? (
           <span className="truncate">{t(HEALTH_LABEL[health.stage])}{health.error && health.stage !== 'ready' ? `${sep}${health.error}` : ''}</span>
-        </> : t('settings.fact.noLive')}
+        ) : t('settings.fact.noLive')}
       </FactRow>
     </Section>
+    {editingBinary && on.setAgentBinary && (
+      <BinaryPathDialog
+        agent={agent}
+        current={inventory?.binary ?? null}
+        custom={inventory?.customBinary}
+        onBrowse={on.pickFile}
+        onSave={path => on.setAgentBinary!(agent.id, path)}
+        onClose={() => setEditingBinary(false)}
+      />
+    )}
+  </>;
+}
+
+// Manual executable path override (written to ~/.acpira/agents.json). Built-in agents can reset back to automatic
+// PATH / official-directory discovery; the desktop app also offers a native file picker via `onBrowse`
+export function BinaryPathDialog({ agent, current, custom, onBrowse, onSave, onClose }: {
+  agent: AgentInfo;
+  current: string | null;
+  custom?: string;
+  onBrowse?: () => Promise<string | undefined>;
+  onSave: (path?: string) => void;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(custom ?? current ?? '');
+  const [picking, setPicking] = useState(false);
+  const browse = () => {
+    if (!onBrowse || picking) return;
+    setPicking(true);
+    void onBrowse().then(path => {
+      if (path) setValue(path);
+    }).finally(() => setPicking(false));
+  };
+  const trimmed = value.trim();
+  const save = () => {
+    if (trimmed || custom) onSave(trimmed || undefined);
+    onClose();
+  };
+  const reset = () => {
+    onSave(undefined);
+    onClose();
+  };
+  return (
+    <SettingsDialog icon={<AgentMark id={agent.id} name={agent.name} />} title={t('settings.agent.binaryDialogTitle')} sub={agent.name} onClose={onClose}
+      footer={<>
+        {custom && (
+          <Button onClick={reset} className="shrink-0 [&_svg]:size-icon">
+            <RotateCcw strokeWidth={1.75} />{t('settings.agent.binaryReset')}
+          </Button>
+        )}
+        <span className="flex-1" />
+        <Button onClick={onClose}>{t('common.cancel')}</Button>
+        <Button variant="primary" onClick={save}>{t('common.save')}</Button>
+      </>}>
+      <DialogBody>
+        <FormField label={t('settings.fact.binary')}>
+          <div className="flex min-w-0 items-center gap-2">
+            <input autoFocus value={value} aria-label={t('settings.fact.binary')}
+              placeholder={current ?? agent.missing?.[0] ?? agent.id}
+              spellCheck={false}
+              onChange={e => setValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) save(); }}
+              className={cn(inputBox, 'h-ctl flex-1 bg-hover font-mono')} />
+            {onBrowse && <Button disabled={picking} onClick={browse}>{t('settings.agent.binaryBrowse')}</Button>}
+          </div>
+        </FormField>
+        <p className="m-0 px-(--form-label-inset) text-3 text-fg-3 [overflow-wrap:anywhere]">{t('settings.agent.binaryNote')}</p>
+      </DialogBody>
+    </SettingsDialog>
   );
 }
 
-// Where the host looked for a CLI it did not find: an install outside these directories needs its directory on the login shell's PATH
+// Where the host looked for a CLI it did not find: an install outside these directories needs its directory on PATH
 function SearchedDirs({ dirs, env }: { dirs: string[]; env: SettingsEnv }) {
-  const title = `${dirs.join('\n')}\n\n${t('settings.agent.searchedHint')}`;
+  const win = dirs.some(d => pathSep(d) === '\\') || pathSep(env.home) === '\\';
+  const title = `${dirs.join('\n')}\n\n${t(win ? 'settings.agent.searchedHintWin' : 'settings.agent.searchedHint')}`;
   return (
     <FactRow label={t('settings.fact.searched')} title={title}>
       <span className="truncate">{dirs.map(d => shortPath(d, env)).join('  ')}</span>
@@ -514,28 +588,64 @@ function SearchedDirs({ dirs, env }: { dirs: string[]; env: SettingsEnv }) {
 function InstallSection({ agent, install, env, on }: { agent: AgentInfo; install?: AgentInstallProgress; env: SettingsEnv; on: SettingsHandlers }) {
   const { command, docs } = agent.install!;
   const running = install?.status === 'running';
+  const [nodePrompt, setNodePrompt] = useState(false);
+  const [askedFrom, setAskedFrom] = useState<AgentInstallProgress | null | undefined>(undefined);
+  const [lastStatus, setLastStatus] = useState(install?.status);
+  if (lastStatus !== install?.status) {
+    const wasRunning = lastStatus === 'running';
+    setLastStatus(install?.status);
+    if (wasRunning && install?.status === 'failed' && install.missingNode) setNodePrompt(true);
+    if (install?.status === 'running' || install?.status === 'success') setNodePrompt(false);
+  }
+  if (askedFrom !== undefined && install !== askedFrom) {
+    if (install?.status === 'failed' && install.missingNode) {
+      setAskedFrom(undefined);
+      setNodePrompt(true);
+    } else if (install?.status === 'success' || install?.status === 'cancelled' || install?.status === 'failed') {
+      setAskedFrom(undefined);
+    }
+  }
+  const startInstall = () => {
+    setAskedFrom(install ?? null);
+    on.installAgent(agent.id);
+  };
   const action = command && (running
     ? <SectionAction icon={<X />} onClick={() => on.cancelInstall?.(agent.id)} disabled={!on.cancelInstall}>{t('settings.install.cancel')}</SectionAction>
-    : <SectionAction icon={<Download />} onClick={() => on.installAgent(agent.id)}>{t('settings.install.run')}</SectionAction>);
-  return (
+    : <SectionAction icon={<Download />} onClick={startInstall}>{t('settings.install.run')}</SectionAction>);
+  return <>
     <Section title={t('settings.install.title', { agent: agent.name })} desc={command ? t('settings.install.desc') : undefined} action={action}>
-      {command && install && <InstallProgressRow install={install} env={env} />}
+      {command && install && (
+        <InstallProgressRow
+          install={install}
+          env={env}
+          onPromptNode={install.status === 'failed' && install.missingNode ? () => setNodePrompt(true) : undefined}
+        />
+      )}
       {command && (
         <ItemRow
-          title={<span className="font-mono text-mono text-fg-1" title={command}>{command}</span>}
-          trailing={<>
+          title={t('settings.install.command')}
+          desc={<span title={command}>{command}</span>}
+          trailing={<span className="flex items-center gap-1">
             {on.installInTerminal && (
-              <IconButton title={t('settings.install.terminal')} aria-label={t('settings.install.terminal')} onClick={() => on.installInTerminal?.(agent.id)} disabled={running} className="text-fg-2">
-                <SquareTerminal strokeWidth={1.5} />
+              <IconButton size="sm" title={t('settings.install.terminal')} aria-label={t('settings.install.terminal')} onClick={() => on.installInTerminal?.(agent.id)} disabled={running} className="text-fg-2">
+                <Terminal strokeWidth={1.75} />
               </IconButton>
             )}
             <CopyButton text={command} />
-          </>}
+          </span>}
         />
       )}
       {docs && <ItemRow title={t('settings.install.docs')} desc={hostOf(docs)} onOpen={() => on.openExternal(docs)} />}
     </Section>
-  );
+    {nodePrompt && (
+      <NodeInstallDialog
+        agentName={agent.name}
+        onConfirm={() => on.installAgent(agent.id, true)}
+        onManual={() => on.openExternal(NODEJS_DOWNLOAD_URL)}
+        onClose={() => setNodePrompt(false)}
+      />
+    )}
+  </>;
 }
 
 const INSTALL_STATUS: Record<AgentInstallProgress['status'], MsgKey> = {
@@ -550,7 +660,7 @@ const INSTALL_STATUS: Record<AgentInstallProgress['status'], MsgKey> = {
 // prefix) there instead. The whole log waits behind a toggle in a box of fixed height and opens by itself when the
 // install fails; a success has no log. Reported 2026-10-14: the log used to grow under the row line by line, up to the
 // output cap, and fold away on success
-function InstallProgressRow({ install, env }: { install: AgentInstallProgress; env: SettingsEnv }) {
+function InstallProgressRow({ install, env, onPromptNode }: { install: AgentInstallProgress; env: SettingsEnv; onPromptNode?: () => void }) {
   const { status } = install;
   const running = status === 'running';
   const [open, setOpen] = useState(status === 'failed');
@@ -560,10 +670,6 @@ function InstallProgressRow({ install, env }: { install: AgentInstallProgress; e
     setSeen(status);
     if (status === 'running' || status === 'failed') setOpen(status === 'failed');
   }
-  const lead = running ? <LoaderCircle strokeWidth={1.5} className="animate-spin live-spin" />
-    : status === 'success' ? <Check strokeWidth={1.5} className="text-ok" />
-    : status === 'failed' ? <CircleAlert strokeWidth={1.5} className="text-danger" />
-    : <Ban strokeWidth={1.5} className="text-fg-2" />;
   const label = t(INSTALL_STATUS[status]);
   const facts = [
     install.proxy && t('settings.install.proxy', { proxy: install.proxy }),
@@ -571,30 +677,32 @@ function InstallProgressRow({ install, env }: { install: AgentInstallProgress; e
   ].filter(Boolean).join(t('common.metaSep'));
   const log = status !== 'success' && install.log.length > 0;
   const newest = running ? newestLine(install.log) : undefined;
+  const detail = running ? newest || facts || undefined : status === 'failed' && install.error ? undefined : facts || undefined;
   return (
     <Collapsible.Root open={log && open} onOpenChange={setOpen}>
       <ItemRow
-        // Top-aligned only under an error, so the status icon stays on the status line
-        className={cn(install.error && 'items-start')}
-        lead={lead}
-        title={<span className="flex min-w-0 items-baseline gap-2">
-          {running ? <Shimmer className="shrink-0 font-sans text-2">{label}</Shimmer> : <span className={cn('shrink-0 text-2', status === 'failed' ? 'text-danger' : 'text-fg-1')}>{label}</span>}
-          {newest ? <span className="min-w-0 truncate font-mono text-mono text-fg-3" title={newest}>{newest}</span>
-            : status === 'success' && facts && <span className="min-w-0 truncate text-2 text-fg-3" title={facts}>{facts}</span>}
-        </span>}
-        extra={install.error && <p className="m-0 pt-1 text-2 text-danger [overflow-wrap:anywhere]">{install.error}</p>}
+        // Top-aligned only under an error, so the status line stays anchored above multi-line error copy; when a wide
+        // prompt action shares the title line, extraWide lets the error span the card's full width under it
+        className={cn(install.error && !onPromptNode && 'items-start')}
+        title={running ? <Shimmer>{label}</Shimmer> : <span className={cn(status === 'failed' ? 'text-danger' : status === 'cancelled' ? 'text-fg-2' : 'text-fg-1')}>{label}</span>}
+        desc={detail && <span title={detail}>{detail}</span>}
+        extra={install.error && <p className="m-0 text-3 text-danger [overflow-wrap:anywhere]">{install.error}</p>}
+        extraWide={!!(install.error && onPromptNode)}
         // One text line tall: the button overflows into the row's padding, so the row keeps its height when a success
         // drops the toggle, and under an error it stays on the status line
-        trailing={log && (
-          <span className="flex h-(--text-2-lh) items-center">
-            <IconButton title={t('settings.install.log')} aria-label={t('settings.install.log')} aria-expanded={open} onClick={() => setOpen(v => !v)} className="-mr-ctl-bleed text-fg-2">
-              {open ? <ChevronUp strokeWidth={1.5} /> : <ChevronDown strokeWidth={1.5} />}
-            </IconButton>
+        trailing={(onPromptNode || log) && (
+          <span className={cn('flex h-(--text-2-lh) items-center', log && 'gap-3')}>
+            {onPromptNode && <SectionAction icon={<Download />} onClick={onPromptNode}>{t('settings.install.nodeConfirm')}</SectionAction>}
+            {log && (
+              <IconButton title={t('settings.install.log')} aria-label={t('settings.install.log')} aria-expanded={open} onClick={() => setOpen(v => !v)} className="-mr-ctl-bleed text-fg-2">
+                {open ? <ChevronUp strokeWidth={1.75} /> : <ChevronDown strokeWidth={1.75} />}
+              </IconButton>
+            )}
           </span>
         )}
       />
       {log && <Collapsible.Panel>
-        <div className="flex flex-col gap-2 pb-(--setting-row-pad) pl-indent">
+        <div className="flex flex-col gap-2 pb-(--setting-row-pad)">
           {facts && <p className="m-0 text-3 text-fg-3 [overflow-wrap:anywhere]">{facts}</p>}
           <InstallLog lines={install.log} fixed={running} />
         </div>
@@ -650,7 +758,7 @@ function CopyButton({ text }: { text: string }) {
   }, [copied]);
   const Icon = copied ? Check : Copy;
   return (
-    <IconButton title={t('common.copy')} aria-label={t('common.copy')} onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }} className="-mr-ctl-bleed text-fg-2">
+    <IconButton size="sm" title={t('common.copy')} aria-label={t('common.copy')} onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }} className="-mr-ctl-sm-bleed text-fg-2">
       <Icon strokeWidth={1.5} />
     </IconButton>
   );

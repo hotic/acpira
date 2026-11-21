@@ -125,6 +125,9 @@ pub struct AgentHealth {
 pub struct AgentInventory {
   pub agent: AgentId,
   pub binary: Option<String>,
+  /// Custom executable path configured for this agent in agents.json; absent when using automatic discovery
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub custom_binary: Option<String>,
   /// Version reported by the resolved CLI executable before any ACP handshake.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub cli_version: Option<String>,

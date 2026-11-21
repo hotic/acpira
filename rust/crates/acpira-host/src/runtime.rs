@@ -314,8 +314,10 @@ impl HostRuntime {
       h.set_library(library);
     }
 
-    let (m1, m2, m3) = (manager.clone(), manager.clone(), manager.clone());
+    let (m1, m2, m3, m4) = (manager.clone(), manager.clone(), manager.clone(), manager.clone());
     let (pr, pw, ph, phome) = (platform.clone(), platform.clone(), platform.clone(), platform.clone());
+    let (ac_read, ac_write) = (agent_config.clone(), agent_config.clone());
+    let (sa_write, pl_write) = (self_agent.clone(), plugins.clone());
     let settings = Arc::new(SettingsCenter::new(SettingsDeps {
       read: Arc::new(move |wire, k| pr.read_setting_of(wire, k)),
       write: Arc::new(move |k, v| {
@@ -329,6 +331,16 @@ impl HostRuntime {
       home: Arc::new(move || phome.home()),
       shared: crate::shared_config::SharedConfig::new(root.clone(), log.clone()),
       agent_config_path: agent_config.path().to_owned(),
+      agent_command_override: Arc::new(move |agent| ac_read.command_override(agent)),
+      set_agent_command: Arc::new(move |agent, path| {
+        let (ac, mgr, sa, pl) = (ac_write.clone(), m4.clone(), sa_write.clone(), pl_write.clone());
+        Box::pin(async move {
+          ac.set_command(&agent, path.as_deref()).await?;
+          let plugin_agents = pl.agent_entries();
+          mgr.set_registry(Arc::new(registry_of(&ac.snapshot(), sa.as_ref(), &plugin_agents)));
+          Ok(())
+        })
+      }),
       roster,
       providers,
     }));

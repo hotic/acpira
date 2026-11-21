@@ -225,7 +225,7 @@ impl SessionManager {
 
   /// Run the registry's install line in the background on this engine's machine (`installer`): progress and log go to
   /// every webview, and a finished install is looked for at once instead of on the next poll
-  pub(super) fn install(&self, agent: &str) {
+  pub(super) fn install(&self, agent: &str, install_node: bool) {
     let registry = self.registry();
     let Ok(def) = registry.get(agent) else { return };
     let Some(command) = registry.install(agent).and_then(|i| i.command) else { return };
@@ -241,7 +241,7 @@ impl SessionManager {
     let me = self.me.clone();
     let id = agent.to_owned();
     let os = crate::platform::command::Os::current();
-    self.installs.start(agent, command, os, messages, move |ok| {
+    self.installs.start(agent, command, os, install_node, messages, move |ok| {
       let Some(m) = me.upgrade() else { return };
       tokio::spawn(async move {
         // The installer may have just written the rc file that puts its directory on PATH
@@ -252,6 +252,10 @@ impl SessionManager {
         if ok {
           m.pool.invalidate(Some(&id));
           m.registry().forget_resolved(&id);
+          // A fresh private Node.js unblocks every other npm-backed agent too
+          if install_node {
+            m.registry().probe_all().await;
+          }
         }
         let found = m.registry().resolve_binary(&id).await.is_some();
         m.emit_agents();

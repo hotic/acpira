@@ -34,7 +34,7 @@ mod updates;
 mod windows;
 
 pub use self::links::session_clicked;
-pub use self::platform::pick_folder;
+pub use self::platform::{pick_file, pick_folder};
 
 pub const HELP_URL: &str = "https://github.com/hotic/acpira/issues";
 

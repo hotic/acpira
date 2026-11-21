@@ -10,13 +10,32 @@ pub trait Env: Sync {
 
 pub struct ProcessEnv;
 
-/// The sidecar's own environment, except that PATH includes what the login shell adds once that is known
+/// The sidecar's own environment, except that PATH includes what the login shell adds once that is known, plus Acpira's
+/// private portable Node.js runtime at lowest priority when installed
 impl Env for ProcessEnv {
   fn get(&self, key: &str) -> Option<String> {
     if key == "PATH" {
-      return super::login_path::effective_path();
+      return effective_path();
     }
     std::env::var(key).ok()
+  }
+}
+
+/// Effective PATH for discovery and child processes: inherited PATH, login shell / registry additions, then Acpira's
+/// private Node.js bin dir if present (never ahead of a user-installed Node.js)
+pub fn effective_path() -> Option<String> {
+  let managed = super::node_runtime::managed_bin_dir();
+  super::node_runtime::append_managed_bin(super::login_path::effective_path(), managed.as_deref(), Os::current())
+}
+
+/// The PATH override to set explicitly on child processes when login_path or the private Node.js runtime adds entries
+pub fn spawn_path() -> Option<String> {
+  let managed = super::node_runtime::managed_bin_dir();
+  let merged = super::login_path::merged();
+  match (merged, managed.as_deref()) {
+    (Some(p), m) => super::node_runtime::append_managed_bin(Some(p), m, Os::current()),
+    (None, Some(m)) => super::node_runtime::append_managed_bin(std::env::var("PATH").ok(), Some(m), Os::current()),
+    (None, None) => None,
   }
 }
 
@@ -65,7 +84,7 @@ async fn is_executable(p: &Path) -> bool {
 /// The proxy goes in first: a definition's or account's own env set afterwards still wins
 pub fn command(binary: &str, args: &[String]) -> tokio::process::Command {
   let mut cmd = native_command::command(binary, args);
-  if let Some(path) = super::login_path::merged() {
+  if let Some(path) = spawn_path() {
     cmd.env("PATH", path);
   }
   crate::net_proxy::apply(&mut cmd);

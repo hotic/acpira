@@ -248,6 +248,9 @@ pub struct AgentInstallProgress {
   /// Why it failed, already localized
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub error: Option<String>,
+  /// Failed because Node.js / npm was not found: the page offers downloading a private portable Node.js LTS and retrying
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub missing_node: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1145,6 +1148,9 @@ pub enum WebviewMsg {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
     agent: AgentId,
+    /// Download Acpira's private portable Node.js LTS first when npm is missing, then run the install line
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    install_node: Option<bool>,
   },
   /// Stop the agent's in-app install (its whole process tree)
   CancelInstall {
@@ -1241,6 +1247,12 @@ pub enum WebviewMsg {
     value: String,
   },
   OpenAgentConfig,
+  /// Override an agent's executable path in agents.json (None / empty resets a built-in agent to automatic discovery)
+  SetAgentBinary {
+    agent: AgentId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+  },
   OpenPath {
     path: String,
     /// Show the path in the OS file manager even when it is a file (the export toast's second button)

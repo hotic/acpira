@@ -245,9 +245,10 @@ export type HostMsg =
   // The VS Code shell's answer to copyImage / saveImage: the image is on the system clipboard or written to disk, or why not. Never sent by the sidecar
   | { type: 'copiedImage'; id: string; error?: string }
   | { type: 'savedImage'; id: string; saved?: boolean; error?: string }
-  // The desktop shell's folder dialog answered pickFolder: the folder picked, absent when the dialog was dismissed. Never sent
+  // The desktop shell's folder / file dialogs answered pickFolder / pickFile: the path picked, absent when dismissed. Never sent
   // by the sidecar
   | { type: 'pickedFolder'; path?: string }
+  | { type: 'pickedFile'; path?: string }
   // The desktop shell's toast (the engine's `toast` platform request), shown in the page's own toast stack; `open` adds a
   // button that opens that file (label already localized), `action` one that posts that shell command back. Never sent by
   // the sidecar
@@ -429,6 +430,8 @@ export interface AgentInstallProgress {
   prefix?: string;
   // Why it failed, already localized
   error?: string;
+  // Failed because Node.js / npm was not found: the page offers downloading a private portable Node.js LTS and retrying
+  missingNode?: boolean;
 }
 
 // Session actions carry the id of the session the view was showing; the host refuses to apply one to a different
@@ -455,8 +458,9 @@ export type WebviewMsg =
   // system clipboard as a file named `name` (a GIF the web clipboard would flatten to one PNG frame), or save them via the native dialog
   | { type: 'copyImage'; id: string; data: Uint8Array; name: string }
   | { type: 'saveImage'; id: string; data: Uint8Array; name: string }
-  // Desktop shell only, kept there like viewFocus: show the system folder dialog; answered with pickedFolder
+  // Desktop shell only, kept there like viewFocus: show the system folder / file dialog; answered with pickedFolder / pickedFile
   | { type: 'pickFolder' }
+  | { type: 'pickFile' }
   // Desktop shell only: the updater. Check now (`download`: fetch a newer version even with automatic downloads off),
   // restart into the staged version, switch automatic downloads
   | { type: 'updateCheck'; download?: boolean }
@@ -590,8 +594,9 @@ export type WebviewMsg =
   | { type: 'refreshQuota'; sessionId?: string; agent: AgentId }
   | { type: 'compact'; sessionId?: string }
   | { type: 'login'; sessionId?: string; methodId?: string }
-  // Run the agent's install line (AgentInfo.install) in the background on the session's or local engine's machine
-  | { type: 'installAgent'; sessionId?: string; agent: AgentId }
+  // Run the agent's install line (AgentInfo.install) in the background on the session's or local engine's machine.
+  // `installNode`: download Acpira's private portable Node.js LTS first when npm is missing, then run the install line
+  | { type: 'installAgent'; sessionId?: string; agent: AgentId; installNode?: boolean }
   // Stop that install and its whole process tree
   | { type: 'cancelInstall'; sessionId?: string; agent: AgentId }
   // The same install line in an IDE terminal, for an installer that needs a person at the keyboard
@@ -632,6 +637,8 @@ export type WebviewMsg =
   // rescan an agent's extension inventory, read the configOptions of its latest session
   | { type: 'setSetting'; key: SettingKey; value: unknown }
   | { type: 'openAgentConfig' }
+  // Override a built-in agent's executable path in agents.json (`path` omitted or empty resets to automatic discovery)
+  | { type: 'setAgentBinary'; agent: AgentId; path?: string }
   // An appearance axis the page exposes (motion, autoExpand, reportLink, projectMarks); host maps it onto acpira.appearance.<axis> and re-pushes the Appearance
   | { type: 'setAppearance'; axis: AxisKey; value: string }
   // `reveal` shows a file in the OS file manager instead of opening it

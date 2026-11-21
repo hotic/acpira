@@ -159,7 +159,7 @@ export interface ShellHandlers {
   unlockCredentials?: (agent: AgentInfo['id']) => void;
   // Run the agent on this machine in folders on SSH hosts from now on (`sshLocalAgents`) and start a session here in `cwd`
   runHere?: (agent: AgentInfo['id'], cwd: string) => void;
-  installAgent?: (agent: AgentInfo['id']) => void;
+  installAgent?: (agent: AgentInfo['id'], installNode?: boolean) => void;
   cancelInstall?: (agent: AgentInfo['id']) => void;
   installInTerminal?: (agent: AgentInfo['id']) => void;
   compact: () => void;
@@ -705,7 +705,7 @@ export function Shell(p: ShellProps) {
   // its CLI or its login, or cannot reach the vendor): its notice offers to run it on this machine instead
   const runHere = on.runHere && p.cwd && parseRemoteFolder(p.cwd) && p.agents.some(a => a.id === p.agent.id && canRunHere(a)) && !localOnSsh.includes(p.agent.id)
     ? () => on.runHere!(p.agent.id, p.cwd!) : undefined;
-  const installHere = useMemo(() => on.installAgent ? () => on.installAgent!(p.agent.id) : undefined, [on.installAgent, p.agent.id]);
+  const installHere = useMemo(() => on.installAgent ? (installNode?: boolean) => on.installAgent!(p.agent.id, installNode) : undefined, [on.installAgent, p.agent.id]);
   const cancelInstallHere = useMemo(() => on.cancelInstall ? () => on.cancelInstall!(p.agent.id) : undefined, [on.cancelInstall, p.agent.id]);
   const installTerminalHere = useMemo(() => on.installInTerminal ? () => on.installInTerminal!(p.agent.id) : undefined, [on.installInTerminal, p.agent.id]);
   const [fresh, setFresh] = useState<string>();
@@ -1578,6 +1578,7 @@ export function Shell(p: ShellProps) {
                     onInstall={installHere}
                     onCancelInstall={cancelInstallHere}
                     onInstallInTerminal={installTerminalHere}
+                    onOpenExternal={on.openExternal}
                   />
                   {held.queued?.length && p.activeSessionId
                     ? <Queue key={`queue:${p.activeSessionId}`} items={held.queued} composer={composerProps} blobUrl={blobUrl}

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { Download, KeyRound, Laptop, RotateCw, SquareTerminal, UserRound } from 'lucide-react';
+import { Download, ExternalLink, KeyRound, Laptop, RotateCw, SquareTerminal, UserRound } from 'lucide-react';
 import type { AccountInfo, AgentInfo, AuthMethodInfo, SessionStatus } from '@acpira/shared/transcript';
 import type { AccountAction, AddAccountVia, AgentInstallProgress } from '@acpira/shared/protocol';
 import { Button, IconButton } from '../ui/Button';
@@ -11,6 +11,7 @@ import { CopyDetail, DOCK_BUTTON, DockCard } from './Alert';
 import { t, tOr } from '../i18n';
 import { planName } from '../ui/AccountLabel';
 import { KeyBox } from '../ui/KeyBox';
+import { NODEJS_DOWNLOAD_URL, NodeInstallDialog } from '../settings/NodeInstallDialog';
 
 // ACP sign-in methods that only read a key from the CLI's own environment (droid's FACTORY_API_KEY), with nowhere to
 // type one: where the account layer takes a pasted key (AgentInfo.accountKeys), that way stands in for them
@@ -45,9 +46,10 @@ export interface NoticeProps {
   remoteAuth?: boolean;
   // Missing-CLI install on whichever engine owns the session (local or SSH host)
   install?: AgentInstallProgress;
-  onInstall?: () => void;
+  onInstall?: (installNode?: boolean) => void;
   onCancelInstall?: () => void;
   onInstallInTerminal?: () => void;
+  onOpenExternal?: (url: string) => void;
 }
 
 // How long a session may be starting before the connecting row shows
@@ -94,12 +96,12 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
   // on the start page does not flash it (reported 2026-10-23)
   if (status !== 'starting' || !late) return null;
   const label = t('notice.connecting', { agent: agent.name });
-  // Match the composer's text inset. Only the connection glyph loops;
+  // Stand on the dock's leading edge with the cards and picker below. Only the connection glyph loops;
   // the complete status fades in together and its label stays still.
   return (
     <div className="pointer-events-none px-dock pb-gap-half" data-session-connecting>
       <RowEntranceContext.Provider value={false}>
-        <Row key={agent.id} lead={<span aria-hidden="true"><Orb kind="fetch" /></span>} className="px-pad fade-in" role="status" aria-live="polite" aria-atomic="true" title={label}>
+        <Row key={agent.id} lead={<span aria-hidden="true"><Orb kind="fetch" /></span>} className="fade-in px-1.5" role="status" aria-live="polite" aria-atomic="true" title={label}>
           <span className="truncate">{label}</span>
         </Row>
       </RowEntranceContext.Provider>
@@ -117,11 +119,29 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
 // Once an import found no local login, signing in in the terminal becomes the primary and import stays greyed out in the menu.
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
-export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onAddAccountKey, onUnlock, onTakeOver, onRunHere, remoteAuth, install, onInstall, onCancelInstall, onInstallInTerminal }: NoticeProps) {
+export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onAddAccountKey, onUnlock, onTakeOver, onRunHere, remoteAuth, install, onInstall, onCancelInstall, onInstallInTerminal, onOpenExternal }: NoticeProps) {
   // The pasted-key way open: the box takes the actions' place until the key is sent or the way is cancelled
   const [keying, setKeying] = useState(false);
-  // Another session or a state change closes it: the box belongs to the sign-in it was opened for
-  useEffect(() => setKeying(false), [status, agent.id]);
+  // Confirmation dialog when an npm-based install failed because Node.js is missing
+  const [nodePrompt, setNodePrompt] = useState(false);
+  const [askedFrom, setAskedFrom] = useState<AgentInstallProgress | null | undefined>(undefined);
+  const [lastStatus, setLastStatus] = useState(install?.status);
+  // Another session or a state change closes transient panels: they belong to the agent / notice they opened for
+  useEffect(() => { setKeying(false); setNodePrompt(false); setAskedFrom(undefined); }, [status, agent.id]);
+  if (lastStatus !== install?.status) {
+    const wasRunning = lastStatus === 'running';
+    setLastStatus(install?.status);
+    if (wasRunning && install?.status === 'failed' && install.missingNode) setNodePrompt(true);
+    if (install?.status === 'running' || install?.status === 'success') setNodePrompt(false);
+  }
+  if (askedFrom !== undefined && install !== askedFrom) {
+    if (install?.status === 'failed' && install.missingNode) {
+      setAskedFrom(undefined);
+      setNodePrompt(true);
+    } else if (install?.status === 'success' || install?.status === 'cancelled' || install?.status === 'failed') {
+      setAskedFrom(undefined);
+    }
+  }
   if (status === 'ready' || status === 'starting') return null;
   const withAccounts = !!agent.accounts;
   const locked = status === 'auth_required' && withAccounts && !!agent.credentialsLocked;
@@ -187,15 +207,33 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     primary = { key: 'takeOver', label: t('notice.takeOver'), run: takeOver };
     showRetry = true;
   } else if (installCommand && onInstall) {
-    primary = installing && onCancelInstall
-      ? { key: 'cancelInstall', label: t('settings.install.cancel'), run: onCancelInstall }
-      : { key: 'install', label: t('settings.install.run'), title: installCommand, run: onInstall };
-    groups = [
-      onInstallInTerminal && !installing
-        ? [{ key: 'installTerminal', label: t('settings.install.terminal'), icon: rowIcon(SquareTerminal), title: installCommand, run: onInstallInTerminal }]
-        : [],
-      runHere,
-    ];
+    const missingNode = install?.status === 'failed' && !!install.missingNode;
+    const triggerInstall = () => {
+      setAskedFrom(install ?? null);
+      onInstall();
+    };
+    if (installing && onCancelInstall) {
+      primary = { key: 'cancelInstall', label: t('settings.install.cancel'), run: onCancelInstall };
+      groups = [runHere];
+    } else if (missingNode) {
+      primary = { key: 'installNode', label: t('settings.install.nodeConfirm'), run: () => setNodePrompt(true) };
+      groups = [
+        [
+          { key: 'install', label: t('settings.install.run'), icon: rowIcon(Download), title: installCommand, run: triggerInstall },
+          ...(onOpenExternal ? [{ key: 'nodeManual', label: t('settings.install.nodeManual'), icon: rowIcon(ExternalLink), run: () => onOpenExternal(NODEJS_DOWNLOAD_URL) }] : []),
+          ...(onInstallInTerminal ? [{ key: 'installTerminal', label: t('settings.install.terminal'), icon: rowIcon(SquareTerminal), title: installCommand, run: onInstallInTerminal }] : []),
+        ],
+        runHere,
+      ];
+    } else {
+      primary = { key: 'install', label: t('settings.install.run'), title: installCommand, run: triggerInstall };
+      groups = [
+        onInstallInTerminal && !installing
+          ? [{ key: 'installTerminal', label: t('settings.install.terminal'), icon: rowIcon(SquareTerminal), title: installCommand, run: onInstallInTerminal }]
+          : [],
+        runHere,
+      ];
+    }
     showRetry = !installing;
   } else {
     primary = retry;
@@ -246,7 +284,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       />
     );
   }
-  return (
+  return <>
     <DockCard
       title={body.title}
       detail={detail && <CopyDetail text={detail} label="" />}
@@ -259,7 +297,15 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       actions={primary && <Button variant="primary" className={methodButton} title={primary.title} onClick={primary.run}>{primary.label}</Button>}
       trail={showRetry && <IconButton size="sm" aria-label={retry.label} title={retry.label} onClick={onRetry}><RotateCw strokeWidth={1.5} /></IconButton>}
     />
-  );
+    {nodePrompt && installCommand && onInstall && (
+      <NodeInstallDialog
+        agentName={agent.name}
+        onConfirm={() => onInstall(true)}
+        onManual={onOpenExternal ? () => onOpenExternal(NODEJS_DOWNLOAD_URL) : undefined}
+        onClose={() => setNodePrompt(false)}
+      />
+    )}
+  </>;
 }
 
 // The other ways behind one secondary button, end-aligned under it: one-line rows with an icon, and the row's consequence

@@ -396,12 +396,20 @@ export function Field({ label, desc, htmlFor, stack: stacked, children }: { labe
   );
 }
 
-// A fact: its name as the row's title, the value as its second line
-export function FactRow({ label, children, title }: { label: ReactNode; children: ReactNode; title?: string }) {
+// A fact: its name as the row's title, the value as its second line, and an optional trailing action
+export function FactRow({ label, children, title, trailing }: { label: ReactNode; children: ReactNode; title?: string; trailing?: ReactNode }) {
   return (
-    <div className={cn(useSettingRow(), stack, 'justify-center')} data-detail>
-      <span className="text-2 text-fg-1">{label}</span>
-      <span className={cn(second, 'flex min-w-0 items-center gap-1.5')} title={title}>{children}</span>
+    <div className={cn(useSettingRow(), trailing ? 'flex items-center gap-gap' : cn(stack, 'justify-center'))} data-detail>
+      {trailing ? <>
+        <div className={cn(stack, 'flex-1 justify-center')}>
+          <span className="text-2 text-fg-1">{label}</span>
+          <span className={cn(second, 'flex min-w-0 items-center gap-1.5')} title={title}>{children}</span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">{trailing}</div>
+      </> : <>
+        <span className="text-2 text-fg-1">{label}</span>
+        <span className={cn(second, 'flex min-w-0 items-center gap-1.5')} title={title}>{children}</span>
+      </>}
     </div>
   );
 }

@@ -157,7 +157,15 @@ pub async fn plan(line: &str, os: Os) -> Result<Plan, PlanError> {
   }
   let mut prefix = None;
   if is_npm_global(line) {
-    match probe_npm_prefix(os).await {
+    let blocked = match probe_npm_prefix(os).await {
+      Some(b) => Some(b),
+      None => {
+        // The user may have just installed Node.js externally: re-read login shell / registry PATH once before reporting it missing
+        super::login_path::refresh(Duration::ZERO).await;
+        probe_npm_prefix(os).await
+      }
+    };
+    match blocked {
       None => return Err(PlanError::NodeMissing),
       Some(true) => {
         let dir = super::registry::expand_home(&format!("{USER_PREFIX}/"));
@@ -318,6 +326,10 @@ impl Log {
       self.dropped += 1;
     }
   }
+  /// Replace the current carriage-return progress line on stream 0, or append one
+  pub(super) fn set_progress(&mut self, line: String) {
+    self.apply(0, Piece::Progress(line));
+  }
   pub fn lines(&self) -> Vec<String> {
     let mut v: Vec<String> = self.lines.iter().cloned().collect();
     while v.last().is_some_and(String::is_empty) {
@@ -349,7 +361,7 @@ impl Cancel {
     self.0.1.notify_waiters();
     self.0.1.notify_one();
   }
-  fn is_cancelled(&self) -> bool {
+  pub(super) fn is_cancelled(&self) -> bool {
     *self.0.0.lock()
   }
   async fn wait(&self) {
@@ -363,7 +375,7 @@ impl Cancel {
 /// Run `plan` to its end, handing the log to `update` (throttled) as it grows
 pub async fn run(plan: &Plan, cancel: Cancel, log: Arc<Mutex<Log>>, update: impl Fn() + Send + Sync) -> Outcome {
   let mut cmd = crate::platform::command::command(&plan.program, &plan.args);
-  if let Some(path) = super::login_path::merged() {
+  if let Some(path) = super::launch::spawn_path() {
     cmd.env("PATH", path);
   }
   for (k, v) in &plan.env {
@@ -532,12 +544,14 @@ impl Installs {
     self.push();
   }
 
-  /// Start `line` for `agent` unless one is running already; `done(success)` runs after the end has been pushed
+  /// Start `line` for `agent` unless one is running already; `install_node` downloads Acpira's private portable Node.js
+  /// LTS first when npm is missing. `done(success)` runs after the end has been pushed
   pub fn start(
     self: &Arc<Self>,
     agent: &str,
     line: String,
     os: Os,
+    install_node: bool,
     messages: Messages,
     done: impl FnOnce(bool) + Send + 'static,
   ) -> bool {
@@ -552,7 +566,15 @@ impl Installs {
       entries.insert(
         agent.to_owned(),
         Entry {
-          progress: AgentInstallProgress { agent: agent.to_owned(), status: AgentInstallStatus::Running, log: vec![], proxy: None, prefix: None, error: None },
+          progress: AgentInstallProgress {
+            agent: agent.to_owned(),
+            status: AgentInstallStatus::Running,
+            log: vec![],
+            proxy: None,
+            prefix: None,
+            error: None,
+            missing_node: None,
+          },
           log: Arc::new(Mutex::new(log)),
           cancel: Some(cancel),
         },
@@ -570,12 +592,75 @@ impl Installs {
         let e = &entries[&agent];
         (e.log.clone(), e.cancel.clone().unwrap_or_default())
       };
+      let push = {
+        let me = me.clone();
+        move || me.push()
+      };
       let plan = match plan(&line, os).await {
         Ok(p) => p,
+        Err(PlanError::NodeMissing) if install_node => {
+          me.set(&agent, |e| {
+            e.progress.proxy = crate::net_proxy::current();
+          });
+          let target = match super::node_runtime::PlatformTarget::current() {
+            Ok(t) => t,
+            Err(err) => {
+              me.set(&agent, |e| {
+                e.progress.status = AgentInstallStatus::Failed;
+                e.progress.error = Some(format!("{err:#}"));
+                e.cancel = None;
+              });
+              done(false);
+              return;
+            }
+          };
+          let installed = super::node_runtime::ensure_managed_node(
+            super::node_runtime::managed_root(),
+            target,
+            None,
+            cancel.clone(),
+            log.clone(),
+            Arc::new(push.clone()),
+          )
+          .await;
+          match installed {
+            Ok(_) => match plan(&line, os).await {
+              Ok(p) => p,
+              Err(PlanError::NodeMissing) => {
+                me.set(&agent, |e| {
+                  e.progress.status = AgentInstallStatus::Failed;
+                  e.progress.error = Some(messages.node_missing.clone());
+                  e.progress.missing_node = Some(true);
+                  e.cancel = None;
+                });
+                done(false);
+                return;
+              }
+            },
+            Err(err) if err.downcast_ref::<crate::remote::archive::DownloadCancelled>().is_some() || cancel.is_cancelled() => {
+              me.set(&agent, |e| {
+                e.progress.status = AgentInstallStatus::Cancelled;
+                e.cancel = None;
+              });
+              done(false);
+              return;
+            }
+            Err(err) => {
+              me.set(&agent, |e| {
+                e.progress.status = AgentInstallStatus::Failed;
+                e.progress.error = Some(format!("{err:#}"));
+                e.cancel = None;
+              });
+              done(false);
+              return;
+            }
+          }
+        }
         Err(PlanError::NodeMissing) => {
           me.set(&agent, |e| {
             e.progress.status = AgentInstallStatus::Failed;
             e.progress.error = Some(messages.node_missing.clone());
+            e.progress.missing_node = Some(true);
             e.cancel = None;
           });
           done(false);
@@ -586,10 +671,6 @@ impl Installs {
         e.progress.proxy = plan.proxy.clone();
         e.progress.prefix = plan.prefix.clone();
       });
-      let push = {
-        let me = me.clone();
-        move || me.push()
-      };
       let mut outcome = if cancel.is_cancelled() { Outcome::Cancelled } else { run(&plan, cancel.clone(), log.clone(), push.clone()).await };
       // An earlier install cut short left npm's backup folder in the way: clear it and try once more
       // (Known by npm's own error lines, so a vendor script that runs npm inside gets it too)
@@ -885,7 +966,7 @@ mod tests {
     let (tx, rx) = tokio::sync::oneshot::channel();
     // The PATH entry makes `npm` the stand-in (and keeps the plan from probing the real npm)
     let line = format!("PATH='{}':$PATH npm install -g @scope/pkg", dir.path().display());
-    installs.start("mine", line, Os::Posix, messages, move |ok| {
+    installs.start("mine", line, Os::Posix, false, messages, move |ok| {
       let _ = tx.send(ok);
     });
     let ok = rx.await.unwrap();
@@ -907,11 +988,11 @@ mod tests {
     };
     let (tx, rx) = tokio::sync::oneshot::channel();
     let line = if cfg!(windows) { "Write-Output hello; exit 2" } else { "echo hello; exit 2" };
-    assert!(installs.start("mine", line.into(), Os::current(), messages(), move |ok| {
+    assert!(installs.start("mine", line.into(), Os::current(), false, messages(), move |ok| {
       let _ = tx.send(ok);
     }));
     // A second click while it runs starts nothing
-    assert!(!installs.start("mine", "echo again".into(), Os::current(), messages(), |_| {}));
+    assert!(!installs.start("mine", "echo again".into(), Os::current(), false, messages(), |_| {}));
     assert!(!rx.await.unwrap());
     let last = installs.list().pop().unwrap();
     assert_eq!(last.status, AgentInstallStatus::Failed);

@@ -190,8 +190,9 @@ export function App() {
     const timer = setTimeout(() => setPending(undefined), PENDING_MS);
     return () => clearTimeout(timer);
   }, [pending]);
-  // The desktop shell's folder dialog under way, settled by pickedFolder (a newer request settles the older one empty)
+  // The desktop shell's folder / file dialogs under way, settled by pickedFolder / pickedFile (a newer request settles the older one empty)
   const folderPick = useRef<(path?: string) => void>(undefined);
+  const filePick = useRef<(path?: string) => void>(undefined);
   // Observed subagent transcripts keyed `${sessionId}:${subagentId}`; the inspector subscribes to one at a time
   const [subagentTranscripts, setSubagentTranscripts] = useState<Record<string, { rev: number; running: boolean; turns: Turn[]; catchingUp?: boolean }>>({});
   // The session the view is showing right now, readable inside the stable handler object: every session action
@@ -332,6 +333,7 @@ export function App() {
         case 'session': resyncAsked.current = false; setNoProject(false); setSession(views.whole(m.session)); break;
         case 'noSession': setNoProject(true); setSession(undefined); break;
         case 'pickedFolder': { const settle = folderPick.current; folderPick.current = undefined; settle?.(m.path); break; }
+        case 'pickedFile': { const settle = filePick.current; filePick.current = undefined; settle?.(m.path); break; }
         case 'toast': pushShellToast(m); break;
         case 'detectedAgents': setDetected(m.agents); break;
         case 'firstRunError': setFirstRunError(m.error); break;
@@ -563,7 +565,7 @@ export function App() {
     },
     compact: () => post({ type: 'compact', sessionId: activeId.current }),
     login: methodId => post({ type: 'login', sessionId: activeId.current, methodId }),
-    installAgent: agent => post({ type: 'installAgent', sessionId: activeId.current, agent }),
+    installAgent: (agent, installNode) => post({ type: 'installAgent', sessionId: activeId.current, agent, ...(installNode ? { installNode: true } : {}) }),
     cancelInstall: agent => post({ type: 'cancelInstall', sessionId: activeId.current, agent }),
     installInTerminal: agent => post({ type: 'installInTerminal', sessionId: activeId.current, agent }),
     retry: () => post({ type: 'retry', sessionId: activeId.current }),
@@ -630,9 +632,15 @@ export function App() {
     removeAccount: id => post({ type: 'removeAccount', id }),
     refreshQuota: agent => post({ type: 'refreshQuota', agent }),
     unlockCredentials: agent => post({ type: 'unlockCredentials', agent }),
-    installAgent: agent => post({ type: 'installAgent', agent }),
+    installAgent: (agent, installNode) => post({ type: 'installAgent', agent, ...(installNode ? { installNode: true } : {}) }),
     cancelInstall: agent => post({ type: 'cancelInstall', agent }),
     installInTerminal: agent => post({ type: 'installInTerminal', agent }),
+    setAgentBinary: (agent, path) => post({ type: 'setAgentBinary', agent, ...(path ? { path } : {}) }),
+    pickFile: desktop ? () => new Promise<string | undefined>(resolve => {
+      filePick.current?.(undefined);
+      filePick.current = resolve;
+      post({ type: 'pickFile' });
+    }) : undefined,
     openExternal: url => post({ type: 'openExternal', url }),
     shared: () => post({ type: 'shared' }),
     sharedAction: action => post({ type: 'sharedAction', action }),

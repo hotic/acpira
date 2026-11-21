@@ -7,7 +7,8 @@ import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import { DEFAULT_SETTINGS } from '@acpira/shared/settings';
 import { newModel, type ProviderModel, type ProviderView } from '@acpira/shared/providers';
 import { setLocale, t } from '../i18n';
-import { AgentSettings, type AgentSettingsProps, type AgentTab } from './AgentPage';
+import { AgentSettings, BinaryPathDialog, type AgentSettingsProps, type AgentTab } from './AgentPage';
+import { NodeInstallDialog } from './NodeInstallDialog';
 import { editTokens, fmtTokens, ModelEditor, parseTokens } from './ProviderModel';
 import { dropSlot, type ProvidersState } from './ProvidersSection';
 import type { SettingsHandlers } from './SettingsShell';
@@ -68,6 +69,34 @@ describe('agent installation settings', () => {
     expect(markup).toContain('Searched');
     expect(markup).toContain('~/.local/bin  /usr/local/bin');
     expect(markup).toContain('login shell’s PATH');
+  });
+
+  it('uses Windows Path wording when searched directories are Windows paths and offers setting a custom executable path', () => {
+    const on: SettingsHandlers = { ...handlers, setAgentBinary: vi.fn(), pickFile: vi.fn() };
+    const missing = renderToStaticMarkup(page({
+      agent: { id: 'antigravity', name: 'Antigravity', available: false, missing: ['agy'], searched: ['C:\\Users\\sky\\AppData\\Local\\agy\\bin'] },
+      accounts: [], settings: DEFAULT_SETTINGS, env: { home: 'C:\\Users\\sky', cwd: 'C:\\Users\\sky\\repo' }, on,
+      inventory: { agent: 'antigravity', binary: null, steer: false, scannedAt: '2026-09-30T00:00:00Z', config: [], mcp: [], skills: [], rules: [] },
+    }));
+    expect(missing).toContain('System/User Path');
+    expect(missing).not.toContain('login shell’s PATH');
+    expect(missing).toContain('>Set path</button>');
+
+    const overridden = renderAgent({ id: 'antigravity', name: 'Antigravity', available: true }, { customBinary: 'C:\\Users\\sky\\.gemini\\bin\\agy.exe' }, undefined, on);
+    expect(overridden).toContain('>Change</button>');
+
+    const dialog = renderToStaticMarkup(createElement(BinaryPathDialog, {
+      agent: { id: 'antigravity', name: 'Antigravity', available: true },
+      current: 'C:\\Users\\sky\\.gemini\\bin\\agy.exe',
+      custom: 'C:\\Users\\sky\\.gemini\\bin\\agy.exe',
+      onBrowse: vi.fn(),
+      onSave: vi.fn(),
+      onClose: vi.fn(),
+    }));
+    expect(dialog).toContain('Executable path');
+    expect(dialog).toContain('C:\\Users\\sky\\.gemini\\bin\\agy.exe');
+    expect(dialog).toContain('>Browse…</button>');
+    expect(dialog).toContain('>Reset to default</button>');
   });
 
   // Reported 2026-10-14: the Status row arrived with the first probe's reply and pushed the page down
@@ -151,6 +180,20 @@ describe('in-app agent install', () => {
   it('offers no terminal fallback when the host has none', () => {
     expect(renderAgent(agent)).not.toContain('Run in terminal');
     expect(renderAgent(agent, {}, undefined, withTerminal)).toContain('Run in terminal');
+  });
+
+  it('offers installing portable Node.js when an npm install failed due to missing Node.js', () => {
+    const failed = renderAgent(agent, {}, {
+      agent: 'codex', status: 'failed', log: [], error: t('host.installNeedsNode'), missingNode: true,
+    }, withTerminal);
+    expect(failed).toContain('Install Node.js and continue');
+    const dialog = renderToStaticMarkup(createElement(NodeInstallDialog, {
+      agentName: 'Codex', onConfirm: vi.fn(), onManual: vi.fn(), onClose: vi.fn(),
+    }));
+    expect(dialog).toContain('Node.js required');
+    expect(dialog).toContain('~/.acpira/runtime/node');
+    expect(dialog).toContain('>Download Node.js manually</button>');
+    expect(dialog).toContain('>Install Node.js and continue</button>');
   });
 });
 

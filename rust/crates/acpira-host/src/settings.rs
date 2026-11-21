@@ -23,9 +23,14 @@ use acpira_shared::shared_config::{SharedAction, SharedView};
 
 /// A setting as one window's shell sees it (None: the current window)
 pub type WireRead = Arc<dyn Fn(Option<u64>, &str) -> Option<Value> + Send + Sync>;
+/// Read / update a built-in agent's executable override in agents.json (`None` resets to automatic discovery)
+pub type AgentCommandRead = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+pub type AgentCommandWrite = Arc<dyn Fn(String, Option<String>) -> BoxFuture<Result<()>> + Send + Sync>;
 
 pub struct SettingsDeps {
   pub agent_config_path: std::path::PathBuf,
+  pub agent_command_override: AgentCommandRead,
+  pub set_agent_command: AgentCommandWrite,
   /// A setting as one window's shell sees it (its own snapshot for shell keys; None: the current window)
   pub read: WireRead,
   pub write: Arc<dyn Fn(String, Value) -> BoxFuture<Result<()>> + Send + Sync>,
@@ -140,10 +145,16 @@ impl SettingsCenter {
     (self.deps.write)(format!("appearance.{axis}"), Value::from(value)).await
   }
 
+  /// Save or clear a custom executable path for `agent` in agents.json and rebuild the registry immediately
+  pub async fn set_agent_binary(&self, agent: &str, path: Option<&str>) -> Result<()> {
+    (self.deps.set_agent_command)(agent.to_owned(), path.map(str::to_owned)).await
+  }
+
   /// Scan one agent's extension points fresh; `cwd` is the project whose files count (the view's)
   pub async fn inventory(&self, agent: &str, cwd: &str) -> AgentInventory {
     let registry = (self.deps.registry)();
     let binary = registry.resolve_binary(agent).await;
+    let custom_binary = (self.deps.agent_command_override)(agent);
     let (adapter, cli_version) = match (&binary, registry.try_get(agent)) {
       (Some(b), Some(def)) => tokio::join!(read_adapter_info(b, def), version::installed_version(b, def)),
       _ => (None, None),
@@ -154,6 +165,7 @@ impl SettingsCenter {
         agent: agent.to_owned(),
         ext: agent_ext(agent),
         binary,
+        custom_binary,
         cli_version,
         runtime: (self.deps.runtime_info)(agent),
         adapter,

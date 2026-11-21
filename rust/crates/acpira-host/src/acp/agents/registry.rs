@@ -412,7 +412,7 @@ pub fn not_found(def: &AgentDef) -> anyhow::Error {
 }
 
 /// Linux reports a deleted executable as `<path> (deleted)`
-fn is_own_binary(command: &str, exe: &str) -> bool {
+pub(super) fn is_own_binary(command: &str, exe: &str) -> bool {
   command == exe || exe.strip_suffix(" (deleted)") == Some(command)
 }
 
@@ -468,9 +468,14 @@ pub struct AgentRegistry {
   next_listener: std::sync::atomic::AtomicU64,
 }
 
+/// Look up a built-in agent definition by id
+pub fn builtin_def(id: &str) -> Option<AgentDef> {
+  builtin_agents().into_iter().find(|d| d.id == id)
+}
+
 /// `command` starts the built-in's `builtin` launcher: the same name, or a path to it (an npm shim's absolute path, its
 /// `.cmd` on Windows). A path read as a different command dropped the adapter and with it the update offer
-fn same_launcher(builtin: &str, command: &str) -> bool {
+pub(crate) fn same_launcher(builtin: &str, command: &str) -> bool {
   let file = command.rsplit(['/', '\\']).next().unwrap_or(command);
   let stem = match file.rsplit_once('.') {
     Some((stem, ext)) if ["cmd", "exe", "bat", "ps1"].iter().any(|e| ext.eq_ignore_ascii_case(e)) => stem,

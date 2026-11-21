@@ -95,6 +95,8 @@ fn deps(store: Store) -> SettingsDeps {
   let (r, w) = (store.clone(), store);
   SettingsDeps {
     agent_config_path: std::env::temp_dir().join("acpira-bridge-agents.json"),
+    agent_command_override: Arc::new(|_| None),
+    set_agent_command: Arc::new(|_, _| Box::pin(async { Ok(()) })),
     read: Arc::new(move |_, k| r.lock().unwrap().get(k).cloned()),
     write: Arc::new(move |k, x| {
       w.lock().unwrap().insert(k, x);
@@ -141,6 +143,14 @@ async fn inventory_reports_the_resolved_cli_version_without_an_acp_session() {
   assert_eq!(inventory.binary.as_deref(), custom.to_str());
   assert!(inventory.cli_version.is_none());
   assert!(!dir.path().join("custom.ran").exists());
+
+  let link = dir.path().join("acpira-link");
+  std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &link).unwrap();
+  let registry = Arc::new(AgentRegistry::new(&json!({})).with_self_agent(link.to_str().unwrap(), dir.path()));
+  let center = SettingsCenter::new(SettingsDeps { registry: Arc::new(move || registry.clone()), ..deps(Default::default()) });
+  let inventory = center.inventory("acpira", cwd).await;
+  assert_eq!(inventory.binary.as_deref(), link.to_str());
+  assert_eq!(inventory.cli_version.as_deref(), Some(acpira_shared::version::VERSION));
 }
 
 // Two windows on one engine: each page hears its own window's shell keys, and a background window's change reaches only

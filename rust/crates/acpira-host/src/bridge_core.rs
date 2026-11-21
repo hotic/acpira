@@ -499,6 +499,17 @@ impl BridgeCore {
       W::OpenAgentConfig => {
         platform.open_resolved_file(&self.settings.agent_config_path().to_string_lossy(), None).await?;
       }
+      W::SetAgentBinary { agent, path } => {
+        if let Err(e) = self.settings.set_agent_binary(&agent, path.as_deref()).await {
+          let msg = format!("{e:#}");
+          platform.log(&format!("settings setAgentBinary failed: {msg}"));
+          platform.toast("error", &msg);
+        }
+        let inventory = self.settings.inventory(&agent, &self.folder()).await;
+        // Emit agents before inventory: an availability flip clears the webview's cached inventory, which the fresh one then fills
+        self.manager.emit_agents();
+        self.post_now(HostMsg::Inventory { agent, inventory });
+      }
       W::OpenPath { path, reveal } => {
         // A path from the inventory lists: files open in the editor, directories (or anything asked to) reveal in the OS
         // file manager

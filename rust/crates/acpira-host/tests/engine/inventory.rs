@@ -74,7 +74,7 @@ impl Fixture {
     ScanEnv { home: self.home.clone(), cwd: self.cwd.clone(), config: Path::new(&self.home).join(".config") }
   }
   async fn scan(&self, agent: &str, binary: Option<&str>) -> AgentInventory {
-    scan_inventory(ScanInput { agent: agent.into(), ext: agent_ext(agent), binary: binary.map(str::to_owned), cli_version: None, runtime: None, adapter: None, health: None }, &self.env()).await
+    scan_inventory(ScanInput { agent: agent.into(), ext: agent_ext(agent), binary: binary.map(str::to_owned), custom_binary: None, cli_version: None, runtime: None, adapter: None, health: None }, &self.env()).await
   }
   // Native separators, as the scanner spells expanded templates
   fn home(&self, rel: &str) -> String {

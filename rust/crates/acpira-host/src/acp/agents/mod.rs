@@ -5,6 +5,7 @@ pub mod lock_holder;
 pub mod login_path;
 pub mod model_sources;
 pub mod native_sessions;
+pub mod node_runtime;
 pub mod npm_latest;
 pub mod pool;
 pub mod probe_controls;

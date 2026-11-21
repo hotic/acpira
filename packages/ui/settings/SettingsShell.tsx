@@ -59,12 +59,17 @@ export interface SettingsHandlers {
   refreshQuota?: (agent: AgentId) => void;
   // AgentInfo.credentialsLocked: unlock the credential store in a host terminal
   unlockCredentials?: (agent: AgentId) => void;
-  // Run the agent's install line in the background on the engine's machine; docs links open in the browser
-  installAgent: (agent: AgentId) => void;
+  // Run the agent's install line in the background on the engine's machine (`installNode` fetches Acpira's private
+  // portable Node.js LTS first when npm is missing); docs links open in the browser
+  installAgent: (agent: AgentId, installNode?: boolean) => void;
   // Stop that install
   cancelInstall?: (agent: AgentId) => void;
   // The same install line in a host terminal (an installer that needs a person at the keyboard)
   installInTerminal?: (agent: AgentId) => void;
+  // Override an agent's executable path in agents.json (`undefined` resets a built-in agent to automatic discovery)
+  setAgentBinary?: (agent: AgentId, path?: string) => void;
+  // Desktop shell only: open the native file dialog to pick an executable
+  pickFile?: () => Promise<string | undefined>;
   openExternal: (url: string) => void;
   // Shared tab: read the view, apply an action (the reply is the fresh view)
   shared?: () => void;

@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use serde_json::{Map, Value};
 use tokio::fs;
 
-use crate::acp::agents::registry::CustomAgentSetting;
+use crate::acp::agents::registry::{CustomAgentSetting, builtin_def, same_launcher};
 use crate::platform::command::Os;
 use crate::store::file_lock::{with_file_lock, write_atomic};
 
@@ -65,6 +65,83 @@ impl AgentConfig {
     }
     *current = value;
     Ok(true)
+  }
+
+  /// The executable override currently saved for a built-in agent, when any; None when automatic discovery applies
+  pub fn command_override(&self, agent: &str) -> Option<String> {
+    let builtin = builtin_def(agent)?;
+    let snap = self.value.read();
+    let cmd = snap.as_object()?.get(agent)?.as_object()?.get("command")?.as_str()?.trim();
+    if cmd.is_empty() || cmd == builtin.command {
+      return None;
+    }
+    Some(cmd.to_owned())
+  }
+
+  /// Set or clear an agent's executable path in agents.json (`None` / empty resets a built-in agent to default discovery)
+  pub async fn set_command(&self, agent: &str, command: Option<&str>) -> Result<()> {
+    let _guard = self.reload.lock().await;
+    let trimmed = command.map(str::trim).filter(|s| !s.is_empty());
+    let builtin = builtin_def(agent);
+    if trimmed.is_none() && builtin.is_none() {
+      bail!("cannot reset a custom agent without a built-in default");
+    }
+    if let Some(parent) = self.path.parent() {
+      fs::create_dir_all(parent).await?;
+    }
+    let next = with_file_lock(&self.path, || async {
+      let mut root = match read(&self.path).await {
+        Ok(Value::Object(map)) => map,
+        Ok(_) => Map::new(),
+        Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => Map::new(),
+        Err(e) => return Err(e),
+      };
+      match trimmed {
+        Some(cmd) => {
+          let entry = root.entry(agent.to_owned()).or_insert_with(|| Value::Object(Map::new()));
+          if !entry.is_object() {
+            *entry = Value::Object(Map::new());
+          }
+          if let Some(obj) = entry.as_object_mut() {
+            obj.insert("command".into(), Value::String(cmd.to_owned()));
+            // Pointing a built-in agent at a differently named binary replaces the built-in entry in AgentRegistry;
+            // carry over its default args when none are declared yet so e.g. `agy-beta.exe` still launches `acp`.
+            if let Some(b) = &builtin
+              && !same_launcher(&b.command, cmd)
+              && !b.args.is_empty()
+              && !obj.contains_key("args")
+            {
+              obj.insert("args".into(), Value::Array(b.args.iter().cloned().map(Value::String).collect()));
+            }
+          }
+        }
+        None => {
+          if let Some(b) = &builtin
+            && let Some(Value::Object(obj)) = root.get_mut(agent)
+          {
+            obj.remove("command");
+            // Drop default args we may have copied when overriding with a differently named binary
+            let default_args: Vec<Value> = b.args.iter().cloned().map(Value::String).collect();
+            if obj.get("args").and_then(Value::as_array).is_some_and(|a| *a == default_args) {
+              obj.remove("args");
+            }
+            if obj.is_empty() {
+              root.remove(agent);
+            } else {
+              obj.insert("command".into(), Value::String(b.command.clone()));
+            }
+          }
+        }
+      }
+      let value = Value::Object(root);
+      let mut bytes = serde_json::to_vec_pretty(&value)?;
+      bytes.push(b'\n');
+      write_atomic(&self.path, &bytes, Some(0o600)).await?;
+      Ok(value)
+    })
+    .await?;
+    *self.value.write() = next;
+    Ok(())
   }
 }
 
@@ -170,5 +247,32 @@ mod tests {
     fs::write(a.path(), b"{}").await.unwrap();
     assert!(a.reload().await.unwrap());
     assert_eq!(a.snapshot(), json!({}));
+  }
+
+  #[tokio::test]
+  async fn set_command_overrides_and_resets_built_in_agents_while_preserving_other_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = AgentConfig::new(dir.path());
+    cfg.initialize(None).await.unwrap();
+    assert_eq!(cfg.command_override("antigravity"), None);
+
+    // Same launcher basename keeps the built-in overlay without duplicating args
+    cfg.set_command("antigravity", Some(r"C:\Users\sky\.gemini\bin\agy.exe")).await.unwrap();
+    assert_eq!(cfg.command_override("antigravity").as_deref(), Some(r"C:\Users\sky\.gemini\bin\agy.exe"));
+    assert_eq!(cfg.snapshot()["antigravity"], json!({ "command": r"C:\Users\sky\.gemini\bin\agy.exe" }));
+
+    // Resetting removes the now-empty entry cleanly
+    cfg.set_command("antigravity", None).await.unwrap();
+    assert_eq!(cfg.command_override("antigravity"), None);
+    assert_eq!(cfg.snapshot(), json!({}));
+
+    // Differently named binary carries over default args (`acp`), and custom env survives a reset
+    fs::write(cfg.path(), r#"{"antigravity":{"command":"agy","env":{"FOO":"1"}}}"#).await.unwrap();
+    cfg.reload().await.unwrap();
+    cfg.set_command("antigravity", Some(r"D:\tools\agy-beta.exe")).await.unwrap();
+    assert_eq!(cfg.snapshot()["antigravity"], json!({ "command": r"D:\tools\agy-beta.exe", "args": ["acp"], "env": { "FOO": "1" } }));
+    cfg.set_command("antigravity", None).await.unwrap();
+    assert_eq!(cfg.command_override("antigravity"), None);
+    assert_eq!(cfg.snapshot()["antigravity"], json!({ "command": "agy", "env": { "FOO": "1" } }));
   }
 }

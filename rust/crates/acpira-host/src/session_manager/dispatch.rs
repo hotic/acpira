@@ -567,7 +567,7 @@ impl SessionManager {
         let s = self.target(v, session_id.as_deref());
         self.login(s, method_id.as_deref()).await?;
       }
-      W::InstallAgent { agent, .. } => self.install(&agent),
+      W::InstallAgent { agent, install_node, .. } => self.install(&agent, install_node == Some(true)),
       W::CancelInstall { agent, .. } => self.installs.cancel(&agent),
       W::InstallInTerminal { agent, .. } => self.install_in_terminal(&agent),
       _ => {}

@@ -54,6 +54,18 @@ pub fn pick_folder(w: Arc<ChatWindow>) {
   });
 }
 
+/// The system file dialog, as a sheet on the window (executable path picker); pickedFile carries no path when dismissed
+pub fn pick_file(w: Arc<ChatWindow>) {
+  let window = w.window.clone();
+  tauri::async_runtime::spawn(async move {
+    let dialog = rfd::AsyncFileDialog::new().set_parent(&window);
+    match dialog.pick_file().await {
+      Some(file) => w.post(json!({ "type": "pickedFile", "path": file.path().to_string_lossy() })),
+      None => w.post(json!({ "type": "pickedFile" })),
+    }
+  });
+}
+
 impl Platform for App {
   fn write_setting(&self, key: &str, value: Option<Value>) {
     self.settings.set(key, value);

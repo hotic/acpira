@@ -140,6 +140,7 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::Login { .. }
     | W::InstallAgent { .. }
     | W::CancelInstall { .. }
+    | W::SetAgentBinary { .. }
     | W::SetAppearance { .. }
     | W::Shared
     | W::SharedAction { .. }

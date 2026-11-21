@@ -64,6 +64,8 @@ export interface AgentInventory {
   agent: AgentId;
   // Resolved executable; null when not found
   binary: string | null;
+  // Custom executable path configured for this agent in agents.json; absent when using automatic discovery
+  customBinary?: string;
   // Version reported by the resolved CLI executable before any ACP handshake
   cliVersion?: string;
   runtime?: AgentRuntimeInfo;

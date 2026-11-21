@@ -1,18 +1,17 @@
 //! Installed versions of known non-adapter CLIs, without opening an ACP session.
 
-use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use super::{launch, registry::{AgentDef, SELF_AGENT_ID}};
+use super::{launch, registry::{AgentDef, SELF_AGENT_ID, is_own_binary}};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 const OUTPUT_LIMIT: u64 = 8192;
 
 pub(crate) async fn installed_version(binary: &str, def: &AgentDef) -> Option<String> {
-  if def.id == SELF_AGENT_ID && std::env::current_exe().ok().as_deref() == Some(Path::new(binary)) {
+  if (def.id == SELF_AGENT_ID || def.args.first().map(String::as_str) == Some("agent")) && is_current_exe(binary) {
     return Some(acpira_shared::version::VERSION.to_owned());
   }
   let prefix = def.version_prefix?;
@@ -45,6 +44,14 @@ pub(crate) async fn installed_version(binary: &str, def: &AgentDef) -> Option<St
   })
   .await
   .ok()?
+}
+
+fn is_current_exe(binary: &str) -> bool {
+  let Ok(exe) = std::env::current_exe() else { return false };
+  if is_own_binary(binary, &exe.to_string_lossy()) {
+    return true;
+  }
+  matches!((std::fs::canonicalize(binary), std::fs::canonicalize(&exe)), (Ok(a), Ok(b)) if a == b)
 }
 
 async fn read_output(pipe: impl AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {

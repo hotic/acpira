@@ -45,9 +45,29 @@ fn content_range_total(raw: Option<&str>, from: u64) -> Option<Option<u64>> {
   Some(total)
 }
 
+/// Marker error returned by `download_cancellable` when its cancellation flag turns true
+#[derive(Debug)]
+pub struct DownloadCancelled;
+
+impl std::fmt::Display for DownloadCancelled {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str("download cancelled")
+  }
+}
+
+impl std::error::Error for DownloadCancelled {}
+
 /// Download `url` into `to` (resuming `<to>.part` with HTTP `Range` across transient connection drops and retries),
 /// reporting `(bytes so far, total length)` after every chunk; returns the SHA-256 of the complete file
 pub fn download_progress(url: &str, to: &Path, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<String> {
+  download_cancellable(url, to, progress, &|| false)
+}
+
+/// Like `download_progress`, stopping between retries and after any read chunk when `cancelled()` turns true
+pub fn download_cancellable(url: &str, to: &Path, progress: &mut dyn FnMut(u64, Option<u64>), cancelled: &dyn Fn() -> bool) -> Result<String> {
+  if cancelled() {
+    return Err(anyhow!(DownloadCancelled));
+  }
   if let Some(dir) = to.parent() {
     std::fs::create_dir_all(dir)?;
   }
@@ -62,10 +82,18 @@ pub fn download_progress(url: &str, to: &Path, progress: &mut dyn FnMut(u64, Opt
   .build()
   .into();
   for attempt in 0..DOWNLOAD_TRIES {
+    if cancelled() {
+      let _ = std::fs::remove_file(&part);
+      return Err(anyhow!(DownloadCancelled));
+    }
     if attempt > 0
       && let Some(&ms) = RETRY_BACKOFF_MS.get(attempt - 1)
     {
       std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+    if cancelled() {
+      let _ = std::fs::remove_file(&part);
+      return Err(anyhow!(DownloadCancelled));
     }
     let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
     let mut req = agent.get(url);
@@ -74,7 +102,11 @@ pub fn download_progress(url: &str, to: &Path, progress: &mut dyn FnMut(u64, Opt
     }
     let mut res = match req.call() {
       Ok(r) => r,
-      Err(_) if attempt + 1 < DOWNLOAD_TRIES => continue,
+      Err(_) if attempt + 1 < DOWNLOAD_TRIES && !cancelled() => continue,
+      Err(_) if cancelled() => {
+        let _ = std::fs::remove_file(&part);
+        return Err(anyhow!(DownloadCancelled));
+      }
       Err(e) => return Err(e).with_context(|| format!("download {url}")),
     };
     let status = res.status().as_u16();
@@ -121,6 +153,11 @@ pub fn download_progress(url: &str, to: &Path, progress: &mut dyn FnMut(u64, Opt
     let mut reader = res.body_mut().as_reader();
     let mut buf = vec![0u8; 1 << 16];
     let read_err = loop {
+      if cancelled() {
+        drop(file);
+        let _ = std::fs::remove_file(&part);
+        return Err(anyhow!(DownloadCancelled));
+      }
       match reader.read(&mut buf) {
         Ok(0) => break None,
         Ok(n) => {
@@ -136,8 +173,12 @@ pub fn download_progress(url: &str, to: &Path, progress: &mut dyn FnMut(u64, Opt
     file.sync_all()?;
     drop(file);
     if let Some(e) = read_err {
-      if attempt + 1 < DOWNLOAD_TRIES {
+      if attempt + 1 < DOWNLOAD_TRIES && !cancelled() {
         continue;
+      }
+      if cancelled() {
+        let _ = std::fs::remove_file(&part);
+        return Err(anyhow!(DownloadCancelled));
       }
       return Err(e).with_context(|| format!("download {url}"));
     }

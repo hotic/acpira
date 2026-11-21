@@ -98,6 +98,7 @@ impl ChatWindow {
       "createDataHome" => app.create_data_home(self),
       "tourDone" => app.tour_done(),
       "pickFolder" => crate::app::pick_folder(self.clone()),
+      "pickFile" => crate::app::pick_file(self.clone()),
       // The updater stays in the shell too (About, the restart toast)
       "updateCheck" | "updateInstall" | "updateAuto" => {
         let v: Value = serde_json::from_str(message.get()).unwrap_or_default();
