@@ -130,14 +130,18 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
   const observerRef = useRef<ResizeObserver | null>(null);
   const observedLeads = useRef(new Set<Element>());
   const [segments, setSegments] = useState<Segment[]>([]);
+  const segmentsRef = useRef<Segment[]>([]);
   const measureRef = useRef<() => void>(() => {});
   const spans = useRef<(HTMLSpanElement | null)[]>([]);
   const lengths = useRef<number[]>([]);
+  const targetsRef = useRef<number[]>([]);
   // A segment stays unsettled until its first painted frame lands, so a synchronous layout cascade on mount
   // (e.g. a child CommandPrompt cutting its text in useLayoutEffect) snaps to the final height instead of easing
   // from the pre-cut height measured in the first commit pass.
   const settled = useRef<boolean[]>([]);
   const growFrame = useRef<number | undefined>(undefined);
+  const lastTick = useRef(0);
+  const settleFrame = useRef<number | undefined>(undefined);
   // A rail switched off as its panel closes retracts with the panel instead of vanishing on the first frame of
   // the close: for --dur-close it keeps measuring (its own inert rows included, bottoms clamped to the shrinking
   // root), follows without easing and fades out, then drops
@@ -148,6 +152,8 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     setWasEnabled(enabled);
     setRetracting(!enabled && segments.length > 0);
   }
+  const retractingRef = useRef(retracting);
+  retractingRef.current = retracting;
   useLayoutEffect(() => {
     const root = ref.current;
     if (!retracting) return;
@@ -157,65 +163,83 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
   }, [retracting]);
   const drawn = enabled || retracting;
 
-  // Ease every segment toward its measured length with one shared value per segment.
-  // Exponential approach tolerates a target that moves every frame without restarting.
-  useLayoutEffect(() => {
+  // Apply measured positions and drive --rail-length imperatively so ResizeObserver updates land before paint
+  // without a React commit or extra rAF lag. Non-terminal segments bridge two visible icons and stay attached to
+  // both as nested folds open or close; terminal segments ease only while growing (streaming text / opening output)
+  // and snap when shrinking so the line and end dot never poke past the content onto following rows.
+  const syncGeometry = useRef((next: Segment[]) => {
     const root = ref.current;
     if (!root) return;
-    const targets = segments.map(segment => segment.bottom - segment.top);
     const write = (index: number, value: number) => {
       lengths.current[index] = value;
       spans.current[index]?.style.setProperty('--rail-length', String(value));
     };
-    lengths.current.length = targets.length;
-    settled.current.length = targets.length;
-    const snap = motionDisabled(root) || retracting;
+    lengths.current.length = next.length;
+    targetsRef.current.length = next.length;
+    settled.current.length = next.length;
+    const snap = motionDisabled(root) || retractingRef.current;
     let pending = false;
     let fresh = false;
-    targets.forEach((target, index) => {
+    next.forEach((segment, index) => {
+      const span = spans.current[index];
+      if (span) {
+        span.style.left = `${segment.x}px`;
+        span.style.top = `${segment.top}px`;
+      }
+      const target = segment.bottom - segment.top;
+      targetsRef.current[index] = target;
       const current = lengths.current[index];
-      if (current === undefined || !settled.current[index] || snap) {
+      if (current === undefined || !settled.current[index] || snap || !segment.terminal || target <= current) {
         write(index, target);
         if (snap) settled.current[index] = true;
-        else fresh = true;
-      } else if (current !== target) pending = true;
+        else if (!settled.current[index]) fresh = true;
+      } else if (current !== target) {
+        pending = true;
+      }
     });
-    if (!pending) {
-      if (!fresh) return;
-      growFrame.current = requestAnimationFrame(() => {
-        growFrame.current = undefined;
-        settled.current.fill(true, 0, targets.length);
+    if (fresh && settleFrame.current === undefined && typeof requestAnimationFrame === 'function') {
+      settleFrame.current = requestAnimationFrame(() => {
+        settleFrame.current = undefined;
+        settled.current.fill(true, 0, targetsRef.current.length);
       });
-      return () => {
-        if (growFrame.current !== undefined) { cancelAnimationFrame(growFrame.current); growFrame.current = undefined; }
-      };
     }
-    const duration = cssTimeVar(root, '--rail-grow-duration', DEFAULT_GROW_MS) || DEFAULT_GROW_MS;
-    const tau = duration / 4;
+    if (!pending) {
+      if (growFrame.current !== undefined) {
+        cancelAnimationFrame(growFrame.current);
+        growFrame.current = undefined;
+      }
+      return;
+    }
+    if (growFrame.current !== undefined) return;
     // Both ends read performance.now(): the rAF timestamp is the frame's start, which on a busy main thread
-    // lies before the effect that scheduled it, and this effect restarts on every measured frame of an opening panel
-    let last = performance.now();
+    // lies before the call that scheduled it. The loop reads live targetsRef so streaming updates never restart it.
+    lastTick.current = performance.now();
     const tick = () => {
       growFrame.current = undefined;
-      settled.current.fill(true, 0, targets.length);
+      const host = ref.current;
+      if (!host) return;
+      settled.current.fill(true, 0, targetsRef.current.length);
+      const duration = cssTimeVar(host, '--rail-grow-duration', DEFAULT_GROW_MS) || DEFAULT_GROW_MS;
+      const tau = duration / 4;
       const now = performance.now();
-      const elapsed = now - last;
-      last = now;
+      const elapsed = now - lastTick.current;
+      lastTick.current = now;
       let busy = false;
-      targets.forEach((target, index) => {
+      targetsRef.current.forEach((target, index) => {
         const current = lengths.current[index];
         if (current === undefined || current === target) return;
-        const next = railStep(current, target, elapsed, tau);
-        write(index, next);
-        if (next !== target) busy = true;
+        const nextLength = target < current ? target : railStep(current, target, elapsed, tau);
+        write(index, nextLength);
+        if (nextLength !== target) busy = true;
       });
       if (busy) growFrame.current = requestAnimationFrame(tick);
     };
     growFrame.current = requestAnimationFrame(tick);
-    return () => {
-      if (growFrame.current !== undefined) { cancelAnimationFrame(growFrame.current); growFrame.current = undefined; }
-    };
-  }, [segments]);
+  });
+
+  useLayoutEffect(() => {
+    if (drawn) syncGeometry.current(segmentsRef.current);
+  }, [segments, drawn, retracting]);
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -238,6 +262,11 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
       if (!origin || !leads.length) {
         // Under a closing ancestor or a hidden view (zero box) the rail stays as drawn
         if (drawn && (hidden || !origin?.width || !origin?.height)) return;
+        segmentsRef.current = [];
+        lengths.current.length = 0;
+        targetsRef.current.length = 0;
+        settled.current.length = 0;
+        if (growFrame.current !== undefined) { cancelAnimationFrame(growFrame.current); growFrame.current = undefined; }
         setSegments(previous => previous.length ? [] : previous);
         return;
       }
@@ -259,14 +288,17 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
         terminal: index === icons.length - 1,
         step: index < icons.length - 1 ? entranceStep(anchored[index + 1]!.lead) : stepAfter(entranceStep(anchored[index]!.lead)),
       })).filter(segment => segment.bottom > segment.top);
-      setSegments(previous => {
-        // Only a segment created now draws in; one that already showed keeps its step (or none) and just eases to its new length
-        const merged = next.map((segment, index) => index < previous.length ? { ...segment, step: previous[index]!.step } : segment);
-        return previous.length === merged.length && previous.every((segment, index) => {
-          const other = merged[index]!;
-          return segment.x === other.x && segment.top === other.top && segment.bottom === other.bottom && segment.terminal === other.terminal;
-        }) ? previous : merged;
-      });
+      const previous = segmentsRef.current;
+      // Only a segment created now draws in; one that already showed keeps its step (or none) and updates its geometry in place
+      const merged = next.map((segment, index) => index < previous.length ? { ...segment, step: previous[index]!.step } : segment);
+      const sameStructure = previous.length === merged.length
+        && previous.every((segment, index) => segment.terminal === merged[index]!.terminal);
+      segmentsRef.current = merged;
+      if (sameStructure && merged.every((_, index) => spans.current[index])) {
+        syncGeometry.current(merged);
+        return;
+      }
+      setSegments(merged);
     };
     measureRef.current = measure;
     measure();
@@ -276,12 +308,20 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     const root = ref.current;
     if (!root) return;
     let frame: number | undefined;
+    const cancelScheduled = () => {
+      if (frame !== undefined) { cancelAnimationFrame(frame); frame = undefined; }
+    };
     const schedule = () => {
       if (typeof requestAnimationFrame !== 'function') { measureRef.current(); return; }
       if (frame !== undefined) return;
       frame = requestAnimationFrame(() => { frame = undefined; measureRef.current(); });
     };
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    // ResizeObserver already fires once per frame after layout and before paint; measuring synchronously here
+    // keeps segments attached to animating folds on the exact frame they move instead of trailing by a frame.
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      cancelScheduled();
+      measureRef.current();
+    });
     observerRef.current = observer;
     observer?.observe(root);
     for (const lead of observedLeads.current) observer?.observe(lead);
@@ -305,7 +345,9 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     }
     window.addEventListener('resize', schedule);
     return () => {
-      if (frame !== undefined) cancelAnimationFrame(frame);
+      cancelScheduled();
+      if (growFrame.current !== undefined) { cancelAnimationFrame(growFrame.current); growFrame.current = undefined; }
+      if (settleFrame.current !== undefined) { cancelAnimationFrame(settleFrame.current); settleFrame.current = undefined; }
       observer?.disconnect();
       observerRef.current = null;
       observedLeads.current.clear();
@@ -320,6 +362,6 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
       ref={span => { spans.current[index] = span; }}
       data-terminal={segment.terminal || undefined}
       data-enter={segment.step !== undefined || undefined} onAnimationEnd={endDraw}
-      style={{ left: segment.x, top: segment.top, ...(segment.step !== undefined && { '--rail-step': segment.step }) } as CSSProperties} />)}
+      style={segment.step !== undefined ? { '--rail-step': segment.step } as CSSProperties : undefined} />)}
   </div>;
 }
