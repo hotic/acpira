@@ -52,3 +52,27 @@ describe('a turn that summons subagents', () => {
     expect(html.indexOf('Test edge cases')).toBeLessThan(html.indexOf('Both agree.'));
   });
 });
+
+describe('plain-reply CodexFold attributes', () => {
+  it('omits data-panel-tail while a bare Working head streams text directly', () => {
+    const turn: AgentTurn = { role: 'agent', startedAt: 1, blocks: [{ type: 'text', markdown: 'Hello', streaming: true }] };
+    const html = renderToStaticMarkup(createElement(AgentMessage, {
+      turn, index: 1, running: true, onPermission: () => {}, turnIndex: 1, last: true,
+    }));
+    expect(html).toContain('data-process-fold');
+    expect(html).not.toContain('data-panel-tail');
+    expect(html).not.toContain('data-has-blocks');
+  });
+
+  it('sets data-panel-tail when an open fold ends in a process panel', () => {
+    const turn: AgentTurn = { role: 'agent', startedAt: 1, blocks: [
+      { type: 'thought', text: 'Checking...', streaming: false },
+      { type: 'text', markdown: 'Hello', streaming: true },
+    ] };
+    const html = renderToStaticMarkup(createElement(AgentMessage, {
+      turn, index: 1, running: true, onPermission: () => {}, turnIndex: 1, last: true,
+    }));
+    expect(html).toContain('data-panel-tail="true"');
+    expect(html).toContain('data-has-blocks="true"');
+  });
+});

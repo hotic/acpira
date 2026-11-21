@@ -2,6 +2,7 @@ import type { AgentBlock, SteerBlock, ToolCallBlock } from '@acpira/shared/trans
 import { toolFiles, visibleToolContents } from './toolDetails';
 import { parseFileLink, type FileLink } from './fileLinks';
 import { sessionRead, splitSessionTarget, type SessionRead } from '@acpira/shared/sessionLinks';
+import { isImageGenTool, isImageResultBlock, isShowVideoTool, isShowWidgetTool, toolImages, toolVideos, toolWidget } from '@acpira/shared/imageTools';
 
 // One item of a turn's process list: a block on its own, or a run of consecutive reads / edits / session reads / checks
 // of one background command under one head.
@@ -20,6 +21,8 @@ export type GroupKind = 'read' | 'edit' | 'session' | 'wait';
 // under one head, its last check's state included: a failed check is the command's own exit
 function groupKind(block: AgentBlock): GroupKind | undefined {
   if (block.type !== 'tool_call' || block.asyncTask || isDelegation(block)) return;
+  const result: boolean = isImageResultBlock(block);
+  if (result) return;
   if (block.verbKey === 'verb.wait') return block.status === 'cancelled' ? undefined : 'wait';
   if (block.status === 'failed' || block.status === 'cancelled') return;
   if (block.verbKey === 'verb.readSession') return 'session';
@@ -33,14 +36,22 @@ export function isDelegation(block: AgentBlock): block is ToolCallBlock & { suba
   return block.type === 'tool_call' && block.subagentId !== undefined;
 }
 
-// The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt (what the
-// user said) and the subagent rows at a delegation (the work the turn handed off). Runs of items fold. A part is keyed
-// by its first item, so content arriving later leaves the earlier parts mounted; back-to-back delegations (a parallel
-// launch) share one part
+// The process is cut where a steered prompt, delegation or tool result stays in view while the rows around it fold.
+// A result's tool row ends the preceding run. A run is keyed by its first item, and back-to-back delegations share one part.
 export type FoldPart =
   | { type: 'items'; id: string; items: ProcessItem[] }
   | { type: 'steer'; id: string; block: SteerBlock }
-  | { type: 'subagents'; id: string; ids: string[] };
+  | { type: 'subagents'; id: string; ids: string[] }
+  | { type: 'result'; id: string; block: ToolCallBlock };
+
+// An unfinished image generation has a placeholder even before the tool has returned a file.
+export function hasProcessResult(block: ToolCallBlock): boolean {
+  if (isShowWidgetTool(block)) return !!toolWidget(block);
+  if (isShowVideoTool(block)) return block.status !== 'failed' && toolVideos(block).length > 0;
+  const generation = isImageGenTool(block);
+  if (generation && (block.status === 'pending' || block.status === 'in_progress')) return true;
+  return isImageResultBlock(block) && toolImages(block).length > 0;
+}
 
 export function processParts(items: ProcessItem[]): FoldPart[] {
   const out: FoldPart[] = [];
@@ -50,8 +61,13 @@ export function processParts(items: ProcessItem[]): FoldPart[] {
     else if (item.type === 'block' && isDelegation(item.block)) {
       if (last?.type === 'subagents') last.ids.push(item.block.subagentId);
       else out.push({ type: 'subagents', id: item.id, ids: [item.block.subagentId] });
-    } else if (last?.type === 'items') last.items.push(item);
-    else out.push({ type: 'items', id: item.id, items: [item] });
+    } else {
+      if (last?.type === 'items') last.items.push(item);
+      else out.push({ type: 'items', id: item.id, items: [item] });
+      if (item.type === 'block' && item.block.type === 'tool_call' && hasProcessResult(item.block)) {
+        out.push({ type: 'result', id: `result:${item.id}`, block: item.block });
+      }
+    }
   }
   return out;
 }

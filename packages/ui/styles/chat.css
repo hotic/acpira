@@ -304,19 +304,21 @@
      the head, which is taller than a process row by twice that slack. A margin takes it back, since the part's own
      prose-gap padding is a utility this layer cannot override; it eases with the fold */
   [data-fold-head] ~ [data-card-part] { transition: margin-block-start var(--dur-open) ease-out; }
-  [data-fold-head] ~ [data-card-part]:not([data-open] ~ *, [data-card-part] ~ *) {
+  [data-fold-head] ~ [data-card-part]:not([data-open] ~ *, [data-card-part] ~ *, [data-result-part] ~ *) {
     margin-block-start: calc((var(--process-row) - var(--chat-row)) / 2);
   }
 
   /* The reply stands under its process the way narrative stands under a tool row inside it (the prose gap), well
-     inside the message gap above the process, so the process and its reply read as one turn. The fold's margin takes
-     back the reply stack's gap and whatever sits under the last line: the panel's tail while open, the head row's extra
-     height over a process row while folded. A fold with nothing under it keeps the stack's spacing. */
-  [data-process-fold]:not(:last-child) {
-    margin-block-end: calc(var(--process-prose-gap) - var(--gap) - (var(--chat-row) - var(--process-row)) / 2);
+     inside the message gap above the process, so the process and its reply read as one turn. Placed on the following
+     sibling rather than the fold itself: a newly mounted first line of text starts at its settled offset instead of
+     inheriting the fold's `:last-child` zero margin and sliding over `--dur-open`. */
+  [data-process-fold] + * {
+    margin-block-start: calc(var(--process-prose-gap) - var(--gap) - (var(--chat-row) - var(--process-row)) / 2);
+    transition: margin-block-start var(--dur-open) ease-out;
   }
-  [data-process-fold][data-open]:not(:last-child) {
-    margin-block-end: calc(var(--process-prose-gap) - var(--gap) - var(--spacing) * 1.5);
+  /* Only an open fold that actually ends in an items panel carries `pb-1.5`; a bare Working head keeps the head-row formula above. */
+  [data-process-fold][data-panel-tail] + * {
+    margin-block-start: calc(var(--process-prose-gap) - var(--gap) - var(--spacing) * 1.5);
   }
   /* A process head right under the prompt card stands as far below the card as the reply stands below the head (the
      prose gap, measured to the head row's box, whose slack over a process row matches the reply's leading). The margin
@@ -325,9 +327,18 @@
   [data-sticky-prompt] + [data-part="agent-message"]:has(> :first-child > [data-process-fold]:first-child > [data-fold-head]:not([inert])) {
     margin-block-start: calc(var(--process-prose-gap) - var(--msg-gap));
   }
-  /* Under a steered prompt's card there is neither: the reply keeps the whole prose gap, as narrative after a card does */
-  [data-process-fold][data-card-tail]:not(:last-child) {
-    margin-block-end: calc(var(--process-prose-gap) - var(--gap));
+  /* The reply keeps the full prose gap under a steered prompt, result card, or a retired compaction row. */
+  [data-process-fold]:is([data-card-tail], [data-retired]) + * {
+    margin-block-start: calc(var(--process-prose-gap) - var(--gap));
+  }
+  /* A retired empty fold collapses its head and cancels the stack's gap (`-mb-gap`) after the fade delay; drop this
+     sibling adjustment on the same beat so the reply lands directly at the message gap. */
+  [data-process-fold][data-retired]:not([data-has-blocks]) + * {
+    margin-block-start: 0;
+    transition-delay: var(--dur-open);
+  }
+  [data-process-fold][data-quiet] + * {
+    transition: none;
   }
 
   /* The context report pointing at calls (chat/reportLink.ts): their rows lit on a band, the rest of the thread dimmed.

@@ -4,7 +4,7 @@ import type { AsyncTaskInfo, AsyncTaskState, ImageRef, ToolCallBlock } from '@ac
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { imageMimeOf } from '@acpira/shared/attachments';
 import { toolTodoEntries } from '@acpira/shared/todoTools';
-import { isImageGenTool, isShowImageTool, isShowVideoTool, isShowWidgetTool, toolImages, toolTexts } from '@acpira/shared/imageTools';
+import { isImageGenTool, isImageResultBlock, isShowVideoTool, isShowWidgetTool, toolImages, toolTexts } from '@acpira/shared/imageTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowTarget } from '../ui/Row';
@@ -17,7 +17,7 @@ import { PlanDetails } from './Plan';
 import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
 import { FileMenu } from './ImageMenu';
-import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
+import { GeneratedImages } from './GeneratedImage';
 import { ShownWidget } from './AgentWidget';
 import { ShownVideos } from './AgentVideo';
 import { TerminalOutput, ToolOutput } from './Terminal';
@@ -42,26 +42,27 @@ export { OpenToolFileContext } from './fileLinks';
 // Memoized on the block reference: a live turn re-renders on every chunk, and only the tool that changed should pay for it.
 // The rows enter once per tool id: the branch below changes shape as the call progresses, and a remount must not replay it.
 // The id rides on a box-less wrapper for the context report to find the row by (chat/reportLink.ts)
-export const ToolCall = memo(function ToolCall({ block, grouped = false, continuing = false }: { block: ToolCallBlock; grouped?: boolean; continuing?: boolean }) {
+export const ToolCall = memo(function ToolCall({ block, grouped = false, continuing = false, externalResult = false }: {
+  block: ToolCallBlock; grouped?: boolean; continuing?: boolean; externalResult?: boolean;
+}) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
-  return <div data-calls={block.id} data-row-card={rowCard(block) || undefined} className="contents"><EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} continuing={continuing} /></EntranceOnce></div>;
+  return <div data-calls={block.id} data-row-card={(!externalResult && rowCard(block)) || undefined} className="contents">
+    <EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} continuing={continuing} externalResult={externalResult} /></EntranceOnce>
+  </div>;
 });
 
 // A row whose result card hangs under it (generated or shown images, a video, a widget): the item after it stands a
-// prose gap off the card (chat.css [data-row-card]), so the card reads as this row's and not the next one's. Read from
-// the block alone, so a fold toggling does not re-render every row for it
-const rowCard = (block: ToolCallBlock) => block.status === 'completed' &&
-  (isImageGenTool(block) || isShowImageTool(block) || isShowVideoTool(block) || isShowWidgetTool(block));
+// prose gap off the card (chat.css [data-row-card]).
+const rowCard = (block: ToolCallBlock) => block.status === 'completed' && isImageResultBlock(block);
 
-// A result shown under its row: always for a row of its own, and for one in a process fold only while that fold is
-// open. Read here rather than in the row, so toggling a fold re-renders these few and not every tool row inside it
-function InFold({ grouped, children }: { grouped: boolean; children: ReactNode }) {
-  const inFold = useContext(ImageInFoldContext);
-  return !grouped || inFold ? children : null;
+export function ToolResult({ block }: { block: ToolCallBlock }) {
+  if (isShowWidgetTool(block)) return <ShownWidget block={block} />;
+  if (isShowVideoTool(block)) return <ShownVideos block={block} />;
+  return <GeneratedImages block={block} />;
 }
 
-function ToolCallRows({ block, grouped, continuing }: { block: ToolCallBlock; grouped: boolean; continuing: boolean }) {
+function ToolCallRows({ block, grouped, continuing, externalResult }: { block: ToolCallBlock; grouped: boolean; continuing: boolean; externalResult: boolean }) {
   const { toolLine } = useAppearance();
   const running = block.status === 'in_progress' && block.observation !== 'unknown';
   const execute = block.kind === 'execute';
@@ -161,31 +162,15 @@ function ToolCallRows({ block, grouped, continuing }: { block: ToolCallBlock; gr
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
   // A skill load is one row naming the skill; only a failure opens to its message below
   if (isSkillTool(block) && !(block.status === 'failed' && visibleContent.length)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-  // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the
-  // process fold the images stay below this row while it is open; the fold owner moves them outside when it closes.
-  if (isImageGenTool(block)) {
-    const text = toolTexts(block);
+  // Image generation's revised prompt opens on demand. The show tools' receipts are for the model only.
+  const result: boolean = isImageResultBlock(block);
+  if (result && !(isShowVideoTool(block) && block.status === 'failed')) {
+    const text = isImageGenTool(block) && toolTexts(block);
     const row = text
       ? <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={false}
           body={<CodeSurface className="text-fg-2 whitespace-pre-wrap">{text}</CodeSurface>}>{label}</Disclosure>
       : <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return <div className="flex flex-col gap-gap">{row}<InFold grouped={grouped}><GeneratedImages block={block} /></InFold></div>;
-  }
-  // Shown images (Acpira's show_image tool): a plain row naming the caption or files; the images stay below this row in
-  // an open process fold and move outside it when closed, and the receipt text is for the model only.
-  if (isShowImageTool(block)) {
-    const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return <div className="flex flex-col gap-gap">{row}<InFold grouped={grouped}><GeneratedImages block={block} /></InFold></div>;
-  }
-  if (isShowVideoTool(block) && block.status !== 'failed') {
-    const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return <div className="flex flex-col gap-gap">{row}<InFold grouped={grouped}><ShownVideos block={block} /></InFold></div>;
-  }
-  // A shown widget (Acpira's show_widget) sits like a shown image: under its row in an open process fold, outside it
-  // once the fold closes; the receipt text is for the model only
-  if (isShowWidgetTool(block)) {
-    const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return <div className="flex flex-col gap-gap">{row}<InFold grouped={grouped}><ShownWidget block={block} /></InFold></div>;
+    return externalResult ? row : <div className="flex flex-col gap-gap">{row}<ToolResult block={block} /></div>;
   }
   // A Claude workflow run: the launch receipt is written for the model (transcript dir, resume instructions), so the row
   // opens to the run's own report instead; its agents are the subagent rows after the turn's content

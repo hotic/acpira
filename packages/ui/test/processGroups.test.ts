@@ -153,6 +153,15 @@ describe('process parts', () => {
       : part.type === 'subagents' ? part.ids : part.id)).toEqual([['thought:5'], ['n1', 'n2'], ['r1'], 'st', ['r2']]);
   });
 
+  it('keeps each shown result between the folding run ending at its tool row and the next run', () => {
+    const first: ToolCallBlock = { ...read('image-a', '/a.png'), verbKey: 'verb.showImage',
+      content: { type: 'image', blob: 'a.png', mimeType: 'image/png' } };
+    const second: ToolCallBlock = { ...first, id: 'image-b' };
+    const parts = processParts(groupProcess([read('r1', '/a.ts'), first, second, thought]));
+    expect(parts.map(part => part.type === 'items' ? part.items.map(item => item.id)
+      : part.type === 'result' ? part.block.id : part.type)).toEqual([['r1', 'image-a'], 'image-a', ['image-b'], 'image-b', ['thought:5']]);
+  });
+
   it('never groups a delegation with the reads around it, whatever its kind', () => {
     expect(groupProcess([read('r1', '/a.ts'), delegate('d1', 'n1'), read('r2', '/b.ts')]).map(item => item.type)).toEqual(['block', 'block', 'block']);
   });
