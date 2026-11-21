@@ -9,7 +9,7 @@
 
 ## Contracts
 
-- One `SidecarClient` per app on the machine engine the IDE windows share (`host-architecture.md`, Machine engine; Windows: its own `shell: 'desktop'` pipe); quitting only disconnects. Hello sends `env.projects: true`, no `cwd`, no `searchFiles` (the engine walks the project).
+- One `SidecarClient` per app on the machine engine the IDE windows share (`host-architecture.md`, Machine engine); quitting only disconnects. Hello sends `env.projects: true`, no `cwd`, no `searchFiles` (the engine walks the project).
 - A project of several folders (`SessionCategories.projectMeta`, edited by `editProject`) stays keyed by its primary folder, the sessions' ACP `cwd`; each session gets the other folders as `additionalDirectories` on every new / load / resume, read then, so an edit reaches it on next open. A folder belongs to one project; the list groups by `projectOf`, not `cwd`. SSH projects keep one folder. The built-in agent names the folders only in a new session's prompt.
 - Page origin `acpira-app://localhost/` (custom scheme: secure context, no back entry); responses are `no-store`, so a reload takes a new bundle, except session blobs (content-hashed names): `immutable`, since WebView2 refetches a `no-store` image for each new `<img>` and a fold moving a shown image blanked it for a frame; blobs never fall back to a `.zst` sibling.
 - `src/init.js` (top frame only) sends one `invoke('acpira_post')` at a time carrying everything posted meanwhile — separate invokes may overtake; down, `Channel` messages carry an index the page reorders by.
@@ -69,7 +69,7 @@ No Sparkle or `tauri-plugin-updater`: `acpira-desktop/src/update/`, shell side `
 - The manifest's Ed25519 signature covers every digest; a build without `update::PUBLIC_KEYS`, or macOS without `TEAM_ID`, never checks.
 - The bundle must match the base byte for byte, else the full package; the result checks against the manifest file list (incl. `_CodeSignature` and the stapled ticket), so the client never signs.
 - https to GitHub hosts only, every redirect hop checked. Staging sits on the install's volume, passes `codesign --verify --deep --strict` with the team and `spctl`, then `renamex_np(RENAME_SWAP)`.
-- Running turns survive: the updated app's engine binary is a newer build that takes the machine engine over while the old one finishes its turns (Windows: a new binary is a new pipe key).
+- Running turns survive: the updated app's engine binary is a newer build that takes the machine engine over while the old one finishes its turns.
 - Windows: a running exe renames but cannot overwrite, so it moves to `.old` (held by the old engine too, deleted best effort later). The updater never checks the exe's Authenticode — the signed manifest is the whole check. Writability is a probe file: the read-only attribute means nothing.
 - Unverified: a real update's team check, App Translocation, read-only volumes, a proxied download, release update jobs.
 

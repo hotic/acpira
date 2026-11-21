@@ -17,14 +17,14 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 class MachineEngineTest {
-    @Test fun `macOS and Linux reach the machine engine, Windows and ACPIRA_ENGINE=stdio keep the child process`() {
-        val none: (String) -> String? = { null }
-        assertTrue(MachineEngine.wanted(none, "Mac OS X"))
-        assertTrue(MachineEngine.wanted(none, "Linux"))
-        assertFalse(MachineEngine.wanted(none, "Windows 11"))
-        val stdio: (String) -> String? = { if (it == "ACPIRA_ENGINE") "stdio" else null }
-        assertFalse(MachineEngine.wanted(stdio, "Mac OS X"))
-        assertFalse(MachineEngine.wanted(stdio, "Linux"))
+    @Test fun `every platform reaches the machine engine, Windows through the relay, ACPIRA_ENGINE=stdio keeps the child process`() {
+        assertTrue(MachineEngine.wanted { null })
+        assertFalse(MachineEngine.wanted { if (it == "ACPIRA_ENGINE") "stdio" else null })
+        assertTrue(MachineEngine.relayed("Windows 11"))
+        assertFalse(MachineEngine.relayed("Mac OS X"))
+        assertFalse(MachineEngine.relayed("Linux"))
+        val relay = MachineEngine.relay(SidecarCommand(listOf("C:\\a\\acpira.exe", "--no-dev-takeover"), "bundled"), java.nio.file.Paths.get("C:\\u\\.acpira"))
+        assertEquals(listOf("C:\\a\\acpira.exe", "engine", "--home", "C:\\u\\.acpira", "--attach", "--no-dev-takeover"), relay.argv)
     }
 
     @Test fun `the last stdout line names the socket, anything else is an error`() {

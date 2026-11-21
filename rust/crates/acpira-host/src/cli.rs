@@ -579,7 +579,8 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
 }
 
 /// `acpira serve --socket \\.\pipe\NAME` on Windows: the same engine on a named pipe that only this user can open and no
-/// other machine can reach. The lock lives in `<home>/run/NAME.lock`; the pipe itself goes with the process
+/// other machine can reach. The lock lives in `<home>/run/NAME.lock`; the pipe itself goes with the process. The
+/// machine's pipe (`machine_engine::ensure::socket_path`) is the machine's engine, as the Unix socket is
 #[cfg(windows)]
 async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
   use acpira_shared::win_pipe::{OwnerOnly, PIPE_PREFIX};
@@ -590,17 +591,30 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
     return 2;
   };
   let grace = idle_grace(flag(args, "--idle-grace").as_deref(), over_ssh());
-  // Windows has no machine engine: the gateway runs in the engine remote access's logon task starts
+  let machine = std::path::Path::new(&pipe) == crate::machine_engine::ensure::socket_path(&home);
+  // The machine's engine runs the gateway while remote access is on
   let forced = args.iter().any(|a| a == "--gateway");
-  let hosts = forced || args.iter().any(|a| a == "--service");
+  let service = args.iter().any(|a| a == "--service");
+  let hosts = forced || service || machine;
   let run = home.join("run");
   if let Err(e) = std::fs::create_dir_all(&run) {
     stderr(&format!("serve: {}: {e}", run.display()));
     return 1;
   }
+  if service
+    && let Some(code) =
+      crate::devices::host::before_service(std::path::Path::new(&pipe), &home, crate::devices::host::SERVICE_CONFIRM_WAIT, &stderr).await
+  {
+    return code;
+  }
   let name = pipe.strip_prefix(PIPE_PREFIX).unwrap_or(&pipe).replace(['\\', '/'], "_");
   let lock = match take_lock(&run.join(format!("{name}.lock"))).await {
     Ok(l) => l,
+    // Another engine won the pipe meanwhile: the service is done only if that one runs the gateway
+    Err(0) if service => {
+      let deadline = tokio::time::Instant::now() + crate::devices::host::SERVICE_CONFIRM_WAIT;
+      return crate::devices::host::confirm_gateway(&home, None, deadline, &stderr).await;
+    }
     Err(code) => return code,
   };
   let security = match OwnerOnly::new() {
@@ -622,7 +636,11 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
       }
     }
   };
-  let mut server = match create(true) {
+  // The machine's pipe outlives a predecessor handing over while it still holds its wires (they go once this engine
+  // answers). The lock is ours, so the name is that engine's, and an instance joins it; another user's pipe refuses
+  // the join, its access list being that user's own
+  let first = create(true).or_else(|e| if machine { create(false).map_err(|_| e) } else { Err(e) });
+  let mut server = match first {
     Ok(s) => s,
     // Someone serves this name already (the lock is ours, so not an engine of this user's: a stale or a squatted name)
     Err(e) => {
@@ -661,8 +679,9 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
     }
   });
   let gateway = host.clone();
+  // The machine's pipe is where a successor answers: a drained engine keeps its wires until it does (`Engine::drain`)
   engine.set_endpoint(
-    None,
+    machine.then(|| PathBuf::from(&pipe)),
     Box::new(move || {
       accept.abort();
       drop(lock);
@@ -671,6 +690,10 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
       }
     }),
   );
+  if machine {
+    let home = home.clone();
+    tokio::spawn(async move { crate::machine_engine::ensure::retire_legacy(&home, &stderr).await });
+  }
   let code = run_until_idle(engine, grace).await;
   drop(host);
   code

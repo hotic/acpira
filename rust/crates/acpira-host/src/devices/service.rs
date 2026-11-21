@@ -35,14 +35,9 @@ pub fn log_path(root: &Path) -> PathBuf {
   root.join("run").join("engine.log")
 }
 
-/// Where the service's engine listens: the machine's socket; on Windows, which has no machine engine, a pipe of the
-/// data root's own (named after it, case aside, as paths there are)
+/// Where the service's engine listens: the machine's socket (on Windows its pipe; builds up to 2.1.6 had the service
+/// serve a pipe of its own there, `acpira-remote-<digest>`, which `machine_engine::ensure::retire_legacy` hands over)
 pub fn socket(root: &Path) -> PathBuf {
-  if cfg!(windows) {
-    let d = Sha256::digest(root.to_string_lossy().to_lowercase().as_bytes());
-    let hex: String = d.iter().take(8).map(|b| format!("{b:02x}")).collect();
-    return PathBuf::from(format!(r"\\.\pipe\acpira-remote-{hex}"));
-  }
   crate::machine_engine::ensure::socket_path(root)
 }
 
@@ -279,7 +274,7 @@ mod tests {
     if cfg!(unix) {
       assert_eq!(a[2], "/r/run/engine.sock", "the machine's engine");
     } else {
-      assert!(a[2].starts_with(r"\\.\pipe\acpira-remote-"));
+      assert!(a[2].starts_with(r"\\.\pipe\acpira-machine-"), "the machine's engine");
     }
   }
 

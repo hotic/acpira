@@ -1,6 +1,5 @@
 //! The gateway inside the engine (docs/dev/host-architecture.md, Remote access gateway). The machine's engine runs it
-//! while remote access is on (Windows, which has no machine engine: the engine remote access's logon task starts,
-//! `serve --service`), so devices drive this process's sessions directly and the engine stays up for them. `serve
+//! while remote access is on, so devices drive this process's sessions directly and the engine stays up for them. `serve
 //! --gateway` runs it whatever the switch says (the phones' test gateways, apps/ios/scripts/gateway.sh). Binding the
 //! control channel decides which process serves the data root: a draining engine gives the gateway up with its endpoint
 //! and its successor takes it once the channel is free. A standalone `acpira-gateway` left by a build up to 2.0.6 is
@@ -211,10 +210,6 @@ async fn run(host: Arc<Host>, on_tx: mpsc::UnboundedSender<Lifecycle>, mut on_rx
         Some(Lifecycle::Stop) => {
           h.stopped.store(true, Ordering::Release);
           h.log("stop requested");
-          // Windows: the next engine of the logon task (a newer build) serves the data root; this one ends once idle
-          if cfg!(windows) && let Some(e) = h.engine.upgrade() {
-            e.release_endpoint();
-          }
         }
         Some(Lifecycle::Restart) => {
           h.log("restarting");
@@ -227,14 +222,12 @@ async fn run(host: Arc<Host>, on_tx: mpsc::UnboundedSender<Lifecycle>, mut on_rx
 }
 
 /// How long `serve --service` waits for the engine already serving the machine to show it runs the gateway
-#[cfg(unix)]
 pub const SERVICE_CONFIRM_WAIT: Duration = Duration::from_secs(20);
 
 /// `serve --service` finding the machine's socket served, before it takes it: None to go on and serve, or the exit code
 /// to end with. An older build is asked to hand over, since one from before the gateway moved into the engine never runs
 /// it; one of this build or newer runs it itself while remote access is on, and the service ends cleanly only once the
 /// control channel shows it does. A failure exit has the login service try again later
-#[cfg(unix)]
 pub async fn before_service(socket: &Path, root: &Path, wait: Duration, log: &(dyn Fn(&str) + Send + Sync)) -> Option<i32> {
   use crate::machine_engine::{ensure, policy};
   let deadline = tokio::time::Instant::now() + wait;
@@ -266,7 +259,6 @@ pub async fn before_service(socket: &Path, root: &Path, wait: Duration, log: &(d
 }
 
 /// 0 once the data root's gateway runs inside an engine (`pid`, or any when None), 1 when it does not by `deadline`
-#[cfg(unix)]
 pub async fn confirm_gateway(root: &Path, pid: Option<u32>, deadline: tokio::time::Instant, log: &(dyn Fn(&str) + Send + Sync)) -> i32 {
   let socket = Paths::new(root).socket;
   loop {

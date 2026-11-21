@@ -24,8 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger
 // Protocol version of packages/shared/sidecar.ts; a sidecar built for another version is rejected at hello, never guessed around
 const val SIDECAR_PROTOCOL_VERSION = 1
 
-// One sidecar link per project window: on macOS and Linux a connection to the machine's engine (MachineEngine), on Windows (or with
-// ACPIRA_ENGINE=stdio) a child process with the project folder as its cwd. Either way hello carries the project folder (sessions belong
+// One sidecar link per project window: a connection to the machine's engine (MachineEngine; on Windows through its relay process), or
+// with ACPIRA_ENGINE=stdio a child process with the project folder as its cwd. Either way hello carries the project folder (sessions belong
 // to a project), and the views of this window (tool window, later editor tabs) attach to it. Envelopes before hello completes wait in
 // an outbox; a crash or a closed connection reconnects with backoff and re-attaches every view on the session it was showing.
 //
@@ -118,14 +118,14 @@ class SidecarService(private val project: Project) : Disposable {
                 return
             }
             val cwd = project.basePath?.let { Paths.get(it) }
-            if (MachineEngine.wanted()) {
+            if (MachineEngine.wanted() && !MachineEngine.relayed()) {
                 // `acpira engine` may take tens of seconds (landing the binary, an older engine handing over): it runs off this
                 // executor, and `starting` keeps a second start out meanwhile
                 AppExecutorUtil.getAppExecutorService().execute { reachEngine(gen, command, cwd) }
                 return
             }
             val child = SidecarProcess(
-                command, cwd,
+                if (MachineEngine.wanted()) MachineEngine.relay(command, SafeMode.home()) else command, cwd,
                 { env -> enqueue { onEnvelope(gen, env) } },
                 { what -> enqueue { onExit(gen, what) } },
             )

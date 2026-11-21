@@ -1,6 +1,7 @@
-//! `acpira engine [--home DIR] [--no-dev-takeover] [--idle-grace S]`: makes sure the machine's one engine runs and is at least this build,
-//! then prints where it listens as one JSON line (`{"socket", "version", "pid"}`). Every shell runs this before it
-//! connects, with the engine binary it carries:
+//! `acpira engine [--home DIR] [--no-dev-takeover] [--idle-grace S] [--attach]`: makes sure the machine's one engine runs and is at least
+//! this build, then prints where it listens as one JSON line (`{"socket", "version", "pid"}`); with `--attach` it
+//! prints nothing and becomes a wire to it instead (`attach`). Every shell runs this before it connects, with the engine
+//! binary it carries:
 //! - nothing listens on the machine's socket: this build lands in `<home>/engine/` (`stage`) and starts from there;
 //! - an older engine listens and this build may replace it (`policy::takes_over`): it is asked to drain (it hands the
 //!   socket over, its windows reconnect here, it ends once its running turns have) and this build starts;
@@ -11,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use acpira_shared::version::VERSION;
@@ -19,10 +20,13 @@ use acpira_shared::version::VERSION;
 use super::{policy, stage};
 
 /// How long a probe or drain answer may take: an engine answers both before any runtime work
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const ANSWER_WAIT: Duration = Duration::from_secs(5);
 /// How long the whole thing may take: landing a large debug build, an old engine handing over, a fresh start
 const ENSURE_WAIT: Duration = Duration::from_secs(40);
+/// The machine engine's pipe name before its data root's digest (Windows). Distinct from the per-shell pipes of builds
+/// up to 2.1.6 (`acpira-engine-`, `acpira-remote-`), which `retire_legacy` looks for
+pub const MACHINE_PIPE: &str = "acpira-machine-";
 const LOG_ROTATE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// The engine the shell should connect to
@@ -42,8 +46,15 @@ pub struct Probed {
 }
 
 /// The machine's socket for `home`: `<home>/run/engine.sock`, or a private one under the temp dir when that path is
-/// too long for a Unix socket (named after the data root, so two roots never share one)
+/// too long for a Unix socket (named after the data root, so two roots never share one). Windows: a named pipe named
+/// after the data root (case folded, as its paths are), which only this user's engine may serve
 pub fn socket_path(home: &Path) -> PathBuf {
+  if cfg!(windows) {
+    use sha2::{Digest, Sha256};
+    let d = Sha256::digest(home.to_string_lossy().to_lowercase().as_bytes());
+    let hex: String = d.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    return PathBuf::from(format!(r"\\.\pipe\{MACHINE_PIPE}{hex}"));
+  }
   let own = home.join("run").join("engine.sock");
   if own.as_os_str().len() < 100 {
     return own;
@@ -71,6 +82,7 @@ pub async fn cli(args: &[String], home: PathBuf) -> i32 {
   };
   let log = |line: &str| eprintln!("[acpira engine] {line}");
   match ensure_with(&home, allow_dev, &serve_args, &log).await {
+    Ok(r) if args.iter().any(|a| a == "--attach") => attach(&r.socket, &log).await,
     Ok(r) => {
       println!("{}", json!({ "socket": r.socket, "version": r.version, "pid": r.pid }));
       0
@@ -80,6 +92,44 @@ pub async fn cli(args: &[String], home: PathBuf) -> i32 {
       1
     }
   }
+}
+
+/// `--attach`: this process's stdin and stdout carry a wire to the engine on `socket`, for a shell that cannot open the
+/// endpoint itself (Java reads and writes a Windows named pipe only one at a time). Ends when either side closes: the
+/// engine only detaches the wire's views, as for any shell going away
+#[cfg(any(unix, windows))]
+async fn attach(socket: &Path, log: &(dyn Fn(&str) + Send + Sync)) -> i32 {
+  let stream = match connect(socket).await {
+    Ok(Some(s)) => s,
+    Ok(None) => {
+      log(&format!("{} went away before the wire was made", socket.display()));
+      return 1;
+    }
+    Err(e) => {
+      log(&format!("{}: {e:#}", socket.display()));
+      return 1;
+    }
+  };
+  let (mut from_engine, mut to_engine) = tokio::io::split(stream);
+  let up = async {
+    let _ = tokio::io::copy(&mut tokio::io::stdin(), &mut to_engine).await;
+  };
+  let down = async {
+    let mut stdout = tokio::io::stdout();
+    let _ = tokio::io::copy(&mut from_engine, &mut stdout).await;
+    let _ = stdout.flush().await;
+  };
+  tokio::select! {
+    () = up => {}
+    () = down => {}
+  }
+  0
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn attach(_socket: &Path, log: &(dyn Fn(&str) + Send + Sync)) -> i32 {
+  log("the machine engine has no endpoint on this platform yet");
+  1
 }
 
 /// Lands this build, then reaches the machine's engine: starting it, or taking over from an older one, when needed.
@@ -166,15 +216,38 @@ pub(crate) async fn drain(socket: &Path, allow_dev: bool) -> Result<()> {
   }
 }
 
+/// Builds up to 2.1.6 ran an engine per shell on Windows: the desktop app's on `acpira-engine-<key>`, remote access's
+/// on `acpira-remote-<key>`, each locking `run/<pipe name>.lock` in the data root it serves. The machine engine asks
+/// those of its own data root to hand over once it serves (each ends once its running turns have). An IDE window's
+/// child-process engine has no endpoint: it goes when the window reloads on a newer build
+#[cfg(windows)]
+pub async fn retire_legacy(home: &Path, log: &(dyn Fn(&str) + Send + Sync)) {
+  let Ok(entries) = std::fs::read_dir(home.join("run")) else { return };
+  for entry in entries.flatten() {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let Some(pipe) = name.strip_suffix(".lock").filter(|n| n.starts_with("acpira-engine-") || n.starts_with("acpira-remote-")) else {
+      continue;
+    };
+    let socket = PathBuf::from(format!(r"{}{pipe}", acpira_shared::win_pipe::PIPE_PREFIX));
+    match probe(&socket).await {
+      // Builds of this machine engine's version or newer never serve a pipe of this kind; such an answer is left alone
+      Ok(Some(p)) if !p.draining && policy::takes_over(VERSION, &p.version, true) => {
+        log(&format!("engine {} (pid {}) on {pipe} serves this data root beside the machine's: asking it to hand over", p.version, p.pid));
+        if let Err(e) = drain(&socket, true).await {
+          log(&format!("{pipe}: {e:#}"));
+        }
+      }
+      Ok(_) => {}
+      Err(e) => log(&format!("{pipe}: {e:#}")),
+    }
+  }
+}
+
 /// One request on its own connection, answered by one of `kinds`; None when nothing listens
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn ask(socket: &Path, msg: Value, kinds: &[&str]) -> Result<Option<Value>> {
-  let stream = match tokio::net::UnixStream::connect(socket).await {
-    Ok(s) => s,
-    Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) => return Ok(None),
-    Err(e) => return Err(e.into()),
-  };
-  let (read, mut write) = stream.into_split();
+  let Some(stream) = connect(socket).await? else { return Ok(None) };
+  let (read, mut write) = tokio::io::split(stream);
   write.write_all(format!("{msg}\n").as_bytes()).await?;
   let mut lines = BufReader::new(read).lines();
   let answer = tokio::time::timeout(ANSWER_WAIT, async {
@@ -192,9 +265,39 @@ async fn ask(socket: &Path, msg: Value, kinds: &[&str]) -> Result<Option<Value>>
   Ok(answer)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 async fn ask(_socket: &Path, _msg: Value, _kinds: &[&str]) -> Result<Option<Value>> {
   bail!("the machine engine has no endpoint on this platform yet")
+}
+
+/// A connection to the engine on `socket`; None when nothing listens there
+#[cfg(unix)]
+pub(crate) async fn connect(socket: &Path) -> Result<Option<tokio::net::UnixStream>> {
+  match tokio::net::UnixStream::connect(socket).await {
+    Ok(s) => Ok(Some(s)),
+    Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) => Ok(None),
+    Err(e) => Err(e.into()),
+  }
+}
+
+/// A connection to the engine's pipe, once the process serving it is known to run as this user (another user may create
+/// a pipe of the name first). Every instance taken answers busy for the moment the engine needs to offer the next one;
+/// a pipe with no instance listening for longer (an engine handing over, its wires still open) is nothing to reach
+#[cfg(windows)]
+pub(crate) async fn connect(socket: &Path) -> Result<Option<tokio::net::windows::named_pipe::NamedPipeClient>> {
+  const ERROR_PIPE_BUSY: i32 = 231;
+  let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+  loop {
+    match tokio::net::windows::named_pipe::ClientOptions::new().open(socket) {
+      Ok(c) if acpira_shared::win_pipe::served_by_this_user(&c) => return Ok(Some(c)),
+      Ok(_) => bail!("{} is served by a process of another user", socket.display()),
+      Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && tokio::time::Instant::now() < deadline => {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+      }
+      Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) || e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+      Err(e) => return Err(e.into()),
+    }
+  }
 }
 
 fn log_path(home: &Path) -> PathBuf {
@@ -250,7 +353,7 @@ async fn start(exe: &Path, socket: &Path, home: &Path, serve_args: &[String]) ->
 
 /// A process this one started
 enum Spawned {
-  #[cfg_attr(not(unix), allow(dead_code, reason = "Windows has no detached start yet (`spawn_detached`)"))]
+  #[cfg_attr(not(any(unix, windows)), allow(dead_code, reason = "no detached start on this platform (`spawn_detached`)"))]
   Child(std::process::Child),
   /// Started without `std::process` (launcher::spawn_disclaimed)
   #[cfg(target_os = "macos")]
@@ -349,7 +452,61 @@ fn spawn_detached(exe: &Path, socket: &Path, home: &Path, serve_args: &[String],
   Ok(Spawned::Child(cmd.spawn()?))
 }
 
-#[cfg(not(unix))]
+/// Windows: no console window, a process group of its own and (where the caller's job allows it) outside the caller's
+/// job, which an IDE or a terminal may close together with itself
+#[cfg(windows)]
+fn spawn_detached(exe: &Path, socket: &Path, home: &Path, serve_args: &[String], log: &Path) -> Result<Spawned> {
+  use std::os::windows::process::CommandExt;
+  const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+  const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+  const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+  keep_std_handles();
+  let cwd = crate::store::data_dir::home_dir();
+  let command = |breakaway: bool| -> Result<std::process::Command> {
+    let out = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
+    let err = out.try_clone()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd
+      .arg("serve")
+      .arg("--socket")
+      .arg(socket)
+      .arg("--home")
+      .arg(home)
+      .args(serve_args)
+      .current_dir(&cwd)
+      .stdin(std::process::Stdio::null())
+      .stdout(out)
+      .stderr(err)
+      .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | if breakaway { CREATE_BREAKAWAY_FROM_JOB } else { 0 });
+    Ok(cmd)
+  };
+  // A job that forbids leaving it refuses the breakaway: the engine then stays in the caller's job
+  let child = match command(true)?.spawn() {
+    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => command(false)?.spawn()?,
+    other => other?,
+  };
+  Ok(Spawned::Child(child))
+}
+
+/// This process's own standard handles stay out of the engine it starts: the shell reading `acpira engine`'s output
+/// waits for the pipe to close, which an engine holding a copy of it would keep open for its whole life
+#[cfg(windows)]
+fn keep_std_handles() {
+  use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+  use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+  for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+    // SAFETY: GetStdHandle has no preconditions; SetHandleInformation only fails on a handle that is not one (null or
+    // INVALID_HANDLE_VALUE when there is no such stream), which changes nothing
+    unsafe {
+      let h = GetStdHandle(which);
+      if !h.is_null() {
+        SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+      }
+    }
+  }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn spawn_detached(_exe: &Path, _socket: &Path, _home: &Path, _serve_args: &[String], _log: &Path) -> Result<Spawned> {
   bail!("the machine engine has no endpoint on this platform yet")
 }
@@ -358,6 +515,7 @@ fn spawn_detached(_exe: &Path, _socket: &Path, _home: &Path, _serve_args: &[Stri
 mod tests {
   use super::*;
 
+  #[cfg(unix)]
   #[test]
   fn the_socket_is_per_data_root_and_short_enough() {
     let a = socket_path(Path::new("/Users/u/.acpira"));
@@ -366,5 +524,15 @@ mod tests {
     let b = socket_path(Path::new(&deep));
     assert!(b.as_os_str().len() < 104 && b.file_name().is_some_and(|n| n.to_string_lossy().starts_with("engine-")));
     assert_ne!(b, socket_path(Path::new(&format!("{deep}/y"))));
+  }
+
+  // One pipe per data root, whatever case its path was given in: every shell must find the same engine
+  #[cfg(windows)]
+  #[test]
+  fn windows_names_one_pipe_per_data_root() {
+    let a = socket_path(Path::new(r"C:\Users\U\.acpira"));
+    assert!(a.to_string_lossy().starts_with(r"\\.\pipe\acpira-machine-"), "{}", a.display());
+    assert_eq!(a, socket_path(Path::new(r"c:\users\u\.ACPIRA")));
+    assert_ne!(a, socket_path(Path::new(r"C:\Users\U\.acpira\harness")));
   }
 }

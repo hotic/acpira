@@ -16,7 +16,6 @@ mod golden;
 mod harness;
 mod inventory;
 mod local_accounts;
-#[cfg(unix)]
 mod machine_engine;
 mod normalize;
 mod plans;

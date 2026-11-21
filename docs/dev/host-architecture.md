@@ -24,7 +24,7 @@ What the engine (`rust/`) and its shells cannot give back from a quick look. Age
 
 ## Machine engine
 
-- One `acpira serve` per OS user and data root (`machine_engine/`) on `<home>/run/engine.sock`; every shell and SSH peer reaches it via `acpira engine`. No second engine collides on an agent (`session_locked`); Windows: per-shell engines.
+- One `acpira serve` per OS user and data root (`machine_engine/`) on `<home>/run/engine.sock` (Windows: a pipe, `windows-compatibility.md`); every shell and SSH peer reaches it via `acpira engine`. No second engine collides on an agent (`session_locked`).
 - It runs from `<home>/engine/<version>-<digest16>/`, never a bundle: VS Code deletes an old extension folder under its engine. A copy pins (`.in-use` flock) from its pick on; `prune` keeps the newest release (fallback).
 - Newest wins (`policy.rs`), compared per probe. A drained engine gives up the endpoint at once, its wires once the successor answers (else a reconnecting shell starts an old build), and ends once nothing is in flight (`AcpSession::in_flight`); turns cannot move — ACP pipes belong to the process. `-dev.<stamp>` packages replace a release only from a local shell.
 - Window facts (cwd, projects, capabilities, shell settings) are per wire; viewer-less reads take the active wire's, IDE actions go to the causing view's wire.
@@ -93,7 +93,7 @@ What the engine (`rust/`) and its shells cannot give back from a quick look. Age
 
 ## Remote access gateway
 
-- The gateway (`acpira-gateway`, a library) runs inside the machine's engine (`devices/host.rs`; Windows: the logon task's `serve --service`). Whoever binds the control channel serves the data root: a draining engine gives it up with its endpoint, an older standalone one is stopped first. A hosting engine never idles out.
+- The gateway (`acpira-gateway`, a library) runs inside the machine's engine (`devices/host.rs`). Whoever binds the control channel serves the data root: a draining engine gives it up with its endpoint, an older standalone one is stopped first. A hosting engine never idles out.
 - Login service (`devices/service.rs`; labels kept so older builds read the switch) starts `serve --service` from `devices/service/acpira`, on Unix exec'd into the landed copy. With the socket taken it drains an older build (pre-merge ones never host), or exits 0 once status shows its `enginePid`, else fails (retried). Install / uninstall never end a running engine. A successor after a handover is unsupervised until next login. An engine `launcher::watch` retired while hosting sees to its successor on the way out of `serve` (failure exit under the service, else `Service::start`): an app that quit to install leaves no shell.
   - macOS 27.0: `bootout` returns while the job is still listed; a `bootstrap` then (or of a disabled job) fails with `5: Input/output error`: wait for `launchctl print` to fail; a 5 with the label loaded is success.
 - macOS grants follow the responsible process: a bare binary keys by path, an app by signature (`sign-mac.mjs`; ad hoc loses them). The launcher (`machine_engine/launcher.rs`) is the app's bundled engine, else a frozen copy; never delete a bundle it runs from.

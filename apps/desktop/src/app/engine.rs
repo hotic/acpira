@@ -57,27 +57,13 @@ impl App {
     };
     let mut opts = ClientOpts::new(commands, hello, on_request, log_arc());
     // The persistent engine (a Unix socket, a named pipe on Windows); ACPIRA_ENGINE=stdio runs it attached instead
-    {
-      opts.engine = Box::new(move |cmd| {
-        if std::env::var("ACPIRA_ENGINE").as_deref() == Ok("stdio") {
-          return None;
-        }
-        // The machine's one engine, shared with the IDE windows and the gateway (acpira-host machine_engine/)
-        #[cfg(unix)]
-        let _ = cmd;
-        #[cfg(unix)]
-        return Some(acpira_desktop::engine::machine_endpoint(&data_home));
-        #[cfg(not(unix))]
-        Some(acpira_desktop::engine::engine_endpoint(&acpira_desktop::engine::EndpointOpts {
-          binary: &cmd.command,
-          home: &data_home,
-          cwd: None,
-          shell: Some("desktop"),
-          tmp: None,
-          uid: None,
-        }))
-      });
-    }
+    opts.engine = Box::new(move |_cmd| {
+      if std::env::var("ACPIRA_ENGINE").as_deref() == Ok("stdio") {
+        return None;
+      }
+      // The machine's one engine, shared with the IDE windows and the gateway (acpira-host machine_engine/)
+      Some(acpira_desktop::engine::machine_endpoint(&data_home))
+    });
     opts.on_state = Box::new(|state, detail| {
       if state != SidecarState::Failed {
         return;

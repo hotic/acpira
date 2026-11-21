@@ -54,8 +54,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Sessions run in a persistent engine on the machine that hosts the workspace (the SSH server for Remote-SSH): closing the
   // window, reloading it or losing the connection leaves running turns going, and the next window for the workspace reconnects.
-  // Windows has no Unix sockets for it and keeps the child-process sidecar; ACPIRA_ENGINE=stdio opts out anywhere (debugging)
-  const persistent = process.platform !== 'win32' && process.env.ACPIRA_ENGINE !== 'stdio';
+  // On Windows over the named pipe `acpira engine` names; ACPIRA_ENGINE=stdio opts out anywhere (debugging)
+  const persistent = process.env.ACPIRA_ENGINE !== 'stdio';
   const sidecar = client = new SidecarClient({
     // An update deletes this extension's folder under a window not yet reloaded: it reconnects with a landed engine copy
     commands: () => {

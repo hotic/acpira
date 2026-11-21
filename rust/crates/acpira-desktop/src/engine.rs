@@ -24,7 +24,8 @@ pub struct EngineEndpoint {
   pub machine: Option<PathBuf>,
 }
 
-/// The machine's one engine for `home` (Unix): every shell on the machine connects to it
+/// The machine's one engine for `home`: every shell on the machine connects to it (on Windows over the pipe `acpira
+/// engine` names; `socket` is then only the run folder's placeholder)
 pub fn machine_endpoint(home: &Path) -> EngineEndpoint {
   let run = home.join("run");
   EngineEndpoint { socket: run.join("engine.sock"), log: run.join("engine.log"), machine: Some(home.to_path_buf()) }
@@ -194,7 +195,6 @@ pub async fn reach_engine(
   cancelled: &(dyn Fn() -> bool + Send + Sync),
   log: &(dyn Fn(&str) + Send + Sync),
 ) -> std::io::Result<EngineStream> {
-  #[cfg(unix)]
   if let Some(home) = &ep.machine {
     return reach_machine_engine(cmd, home, cancelled, log).await;
   }
@@ -282,12 +282,12 @@ pub async fn reach_engine(
 
 /// How long `acpira engine` may take: landing a large debug build, an older engine handing over, a fresh start (its own
 /// limit is 40 s)
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const ENSURE_WAIT: Duration = Duration::from_secs(45);
 
 /// The machine's engine: `<binary> engine --home H` makes sure it runs (and is at least this build) and prints where it
 /// listens; then a connection there. Its stderr goes to `log`
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn reach_machine_engine(
   cmd: &SidecarCommand,
   home: &Path,
@@ -298,10 +298,15 @@ async fn reach_machine_engine(
   let mut wait = std::time::Duration::from_millis(100);
   loop {
     let socket = ensure_machine_engine(cmd, home, cancelled, log).await?;
-    match EngineStream::connect(&socket).await {
-      // Gone between the answer and the connect (a newer build took over, or it idled out): ask again
+    #[cfg(unix)]
+    let connected = EngineStream::connect(&socket).await;
+    #[cfg(windows)]
+    let connected = connect_engine(&EngineEndpoint { socket: PathBuf::from(&socket), log: PathBuf::new(), machine: None }).await;
+    match connected {
+      // Gone between the answer and the connect (a newer build took over, or it idled out): ask again. A Windows pipe
+      // with no instance listening (one handing over) is busy until its successor offers one
       Err(e)
-        if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused)
+        if (matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused) || e.raw_os_error() == Some(231))
           && tokio::time::Instant::now() + wait < deadline
           && !cancelled() =>
       {
@@ -314,7 +319,7 @@ async fn reach_machine_engine(
   }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn ensure_machine_engine(
   cmd: &SidecarCommand,
   home: &Path,
@@ -323,6 +328,9 @@ async fn ensure_machine_engine(
 ) -> std::io::Result<String> {
   let mut c = tokio::process::Command::new(&cmd.command);
   c.arg("engine").arg("--home").arg(home).args(&cmd.args).envs(&cmd.env).stdin(std::process::Stdio::null()).kill_on_drop(true);
+  // A console engine binary started from the app would otherwise open a console window for the moment it runs
+  #[cfg(windows)]
+  c.creation_flags(crate::process::CREATE_NO_WINDOW);
   let out = tokio::time::timeout(ENSURE_WAIT, c.output())
     .await
     .map_err(|_| std::io::Error::other(format!("acpira engine gave no answer within {}s", ENSURE_WAIT.as_secs())))??;

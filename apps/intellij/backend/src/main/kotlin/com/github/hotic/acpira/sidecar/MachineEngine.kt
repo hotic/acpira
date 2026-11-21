@@ -22,11 +22,21 @@ object MachineEngine {
     // How long `acpira engine` may take: landing a large build, an older engine handing over, a fresh start (its own limit is 40 s)
     private const val ENSURE_WAIT_MS = 45_000L
 
-    fun wanted(): Boolean = wanted(ShellEnv::get, System.getProperty("os.name"))
+    fun wanted(): Boolean = wanted(ShellEnv::get)
 
-    // macOS and Linux reach it over a Unix socket; Windows keeps the child-process sidecar. ACPIRA_ENGINE=stdio opts out anywhere (debugging)
-    internal fun wanted(env: (String) -> String?, osName: String): Boolean =
-        !osName.startsWith("Windows", ignoreCase = true) && env("ACPIRA_ENGINE") != "stdio"
+    // Every platform; ACPIRA_ENGINE=stdio opts out (debugging)
+    internal fun wanted(env: (String) -> String?): Boolean = env("ACPIRA_ENGINE") != "stdio"
+
+    fun relayed(): Boolean = relayed(System.getProperty("os.name"))
+
+    // macOS and Linux connect to its Unix socket. Windows goes through `acpira engine --attach`, whose stdio carries the wire: Java
+    // reads and writes a named pipe one call at a time, so a blocked read would hold every write
+    internal fun relayed(osName: String): Boolean = osName.startsWith("Windows", ignoreCase = true)
+
+    // The relay's command line: the subcommand first (the binary reads it from the first argument), then the command's own arguments.
+    // Run as a SidecarProcess: its `shutdown` and its end only detach this window's views, as a closed connection does
+    fun relay(command: SidecarCommand, home: Path): SidecarCommand =
+        SidecarCommand(listOf(command.argv[0], "engine", "--home", home.toString(), "--attach") + command.argv.drop(1), "${command.label} via the machine engine")
 
     // `<binary> engine --home H` makes sure the engine runs (and is at least this build) and prints where it listens. Blocks for up to
     // ENSURE_WAIT_MS; its stderr goes to the IDE log. Throws SidecarSetupException with the engine's own reason when it fails

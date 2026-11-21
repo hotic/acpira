@@ -415,11 +415,10 @@ async fn install_locked(root: &Path, service: &Service, exe: &Path, log: &(dyn F
   let program = Program { exe: stage::exe(root) };
   let built = stage::built(exe).filter(|_| !stage::is_copy(root, exe));
   // A gateway that answers without an engine of its own is a standalone one from before the gateway moved into the
-  // engine; its login service is replaced below. On Windows the engine running the gateway runs from the copy: it lets
-  // the next one take over first
+  // engine; its login service is replaced below. An engine's gateway stays: a newer build takes the machine's engine
+  // over by itself (`machine_engine`), and a running copy goes aside on Windows (`stage::stage`)
   let running = request(&socket, &GatewayRequest::Status).await.ok().and_then(|v| serde_json::from_value::<GatewayStatus>(v).ok());
-  let copy_changes = !stage::is_copy(root, exe) && !same_build(root, built);
-  if running.as_ref().is_some_and(|s| s.engine_pid.is_none() || (cfg!(windows) && copy_changes)) {
+  if running.as_ref().is_some_and(|s| s.engine_pid.is_none()) {
     stop(&socket).await;
   }
   stage::stage(root, exe).await?;
@@ -439,13 +438,6 @@ async fn install_locked(root: &Path, service: &Service, exe: &Path, log: &(dyn F
   // This process may be the one to run it
   let _ = host::kick();
   Ok(())
-}
-
-/// `gateway.json` names this version and build already
-fn same_build(root: &Path, built: Option<u64>) -> bool {
-  let config = read_config(root);
-  let installed = config.get("engine").and_then(Value::as_str).and_then(|e| stage::installed_version(Path::new(e)));
-  installed.as_deref() == Some(VERSION) && config.get("engineBuilt").and_then(Value::as_u64) == built
 }
 
 /// Ask the gateway on `socket` to stop and wait until its control channel is gone
