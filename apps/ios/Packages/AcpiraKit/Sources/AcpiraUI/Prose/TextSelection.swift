@@ -49,10 +49,12 @@ struct TextSelectionSurface: UIViewRepresentable {
       context.coordinator.painter.names = marks
       context.coordinator.painter.attach(view)
     }
-    guard !view.attributedText.isEqual(to: text) else { return }
+    guard !view.selectableText.isEqual(to: text) else { return }
+    view.accessibilityLabel = selectionText(text, range: NSRange(location: 0, length: text.length))
+    // The prompt pills are painted from the view's own layout, so a surface carrying them lays its text out at once
+    if view.holdText(text, unless: marks != nil) { return }
     let selected = view.selectedRange
     view.attributedText = text
-    view.accessibilityLabel = selectionText(text, range: NSRange(location: 0, length: text.length))
     // Streaming may extend a selected paragraph. Never replace a user's range with the incoming tail.
     if selected.length > 0, NSMaxRange(selected) <= text.length { view.selectedRange = selected }
   }
@@ -169,6 +171,31 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
   private let linkTouches = LinkTouches()
   /// One event opens one page, should UIKit's link action and the view's tap both report it
   private var opening = false
+  /// The text, held back from TextKit until a touch lands on the view or a menu selects it (`loadText`). Every paragraph
+  /// of a reply carries one of these views, and laying out each one's clear copy of its text cost about as much as
+  /// drawing the text when a long chat opened; a streamed paragraph laid its copy out again on every chunk
+  private var heldText: NSAttributedString?
+  private var loaded = false
+
+  /// The text the view selects, whether laid out yet or not
+  var selectableText: NSAttributedString { heldText ?? attributedText }
+
+  /// Keeps `text` back while nothing has needed the view's layout; false once the text is laid out (or `now`), when
+  /// the caller sets it on the view itself
+  func holdText(_ text: NSAttributedString, unless now: Bool) -> Bool {
+    if now { loadText() }
+    guard !loaded else { return false }
+    heldText = text
+    return true
+  }
+
+  /// Lays the held text out: from here on the view carries it like any text view
+  func loadText() {
+    guard !loaded else { return }
+    loaded = true
+    if let heldText { attributedText = heldText }
+    heldText = nil
+  }
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
@@ -227,6 +254,8 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     let hit = super.hitTest(point, with: event)
     if hit != nil {
+      // Hit-testing asks every sibling; only the view under the point lays its text out, before anything here reads it
+      loadText()
       selectionScope?.target = self
       if let position = closestPosition(to: point),
          let line = tokenizer.rangeEnclosingPosition(position, with: .line, inDirection: UITextDirection(rawValue: UITextStorageDirection.forward.rawValue)) {
@@ -251,6 +280,8 @@ final class SelectionTextView: UITextView, UIEditMenuInteractionDelegate {
 
   func beginSelection() {
     guard window != nil else { return }
+    // The block menu's Select may reach a paragraph no touch has laid out
+    loadText()
     becomeFirstResponder()
     selectAll(nil)
     showSelectionMenu()

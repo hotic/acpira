@@ -86,6 +86,24 @@ import UIKit
     #expect(!scope.active)
   }
 
+  @Test func aSurfaceLaysItsTextOutOnlyOnceATouchLandsOnIt() throws {
+    let text = selectionContent("一段要等手指碰到才排版的文字。", style: WebType.text1)
+    let host = UIHostingController(rootView: TextSelectionSurface(text: text).frame(width: 300, height: 60))
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 200))
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    host.view.layoutIfNeeded()
+    let view = try #require(selectionView(in: host.view))
+    #expect(view.attributedText.length == 0 && view.selectableText.isEqual(to: text))
+    #expect(view.accessibilityLabel == "一段要等手指碰到才排版的文字。")
+    // A sibling's hit test passes over it without laying it out
+    _ = view.hitTest(CGPoint(x: -10, y: -10), with: nil)
+    #expect(view.attributedText.length == 0)
+    _ = view.hitTest(CGPoint(x: 10, y: 10), with: nil)
+    #expect(view.attributedText.isEqual(to: text))
+  }
+
   @Test(arguments: [false, true])
   func promptSelectionActionsEditTheWholeHistoricalTurn(long: Bool) throws {
     let text = long ? String(repeating: "检查完整任务。Read the existing implementation.\n\n", count: 200) : "Original historical prompt"
@@ -104,7 +122,7 @@ import UIKit
     host.view.layoutIfNeeded()
     let view = try #require(selectionView(in: host.view))
     #expect(!view.gestureRecognizerShouldBegin(UILongPressGestureRecognizer()))
-    #expect(selectionText(view.attributedText, range: NSRange(location: 0, length: view.attributedText.length)) == text.trimmingTrailingWhitespace())
+    #expect(selectionText(view.selectableText, range: NSRange(location: 0, length: view.selectableText.length)) == text.trimmingTrailingWhitespace())
     try #require(view.actions.first { $0.title == t("history.edit") }).run("historical")
     #expect(edited == 4)
     try #require(view.actions.first { $0.title == t("goal.setFromPrompt") }).run("historical")
