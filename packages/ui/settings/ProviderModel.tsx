@@ -49,11 +49,13 @@ export function modelSummary(m: ProviderModel): string {
 
 // One model of a source as a row: its name over what it offers (window, output limit, levels, image input), then the
 // enable switch; the id is the name's tooltip, and a click anywhere on the row but the switch opens its editor
-export function ModelRow({ model, open, dim, onToggleOpen, onChange, onRemove, onTest, test }: {
+export function ModelRow({ model, open, dim, dragging, editKeyShortcuts, onToggleOpen, onChange, onRemove, onTest, test }: {
   model: ProviderModel;
   open: boolean;
   // The source is switched off: the row reads as inactive whatever its own switch says
   dim?: boolean;
+  dragging?: boolean;
+  editKeyShortcuts?: string;
   onToggleOpen: () => void;
   onChange: (m: ProviderModel) => void;
   onRemove: () => void;
@@ -65,8 +67,8 @@ export function ModelRow({ model, open, dim, onToggleOpen, onChange, onRemove, o
   return (
     <>
       <ItemRow title={<span title={model.id}>{name}</span>} desc={modelSummary(model) || model.id} dim={dim}
-        onEdit={onToggleOpen} editLabel={label}
-        trailing={<Switch checked={model.enabled} onChange={enabled => onChange({ ...model, enabled })} label={name} />} />
+        dragging={dragging} onEdit={onToggleOpen} editLabel={label} editKeyShortcuts={editKeyShortcuts}
+        trailing={<span data-no-drag className="flex shrink-0 items-center"><Switch checked={model.enabled} onChange={enabled => onChange({ ...model, enabled })} label={name} /></span>} />
       {open && <ModelEditor model={model} title={label} onSave={m => { onChange(m); onToggleOpen(); }} onCancel={onToggleOpen} onRemove={onRemove} onTest={onTest} test={test} />}
     </>
   );

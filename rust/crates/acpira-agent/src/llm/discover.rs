@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use acpira_shared::model_catalog::Catalog;
-use acpira_shared::providers::{ApiFormat, EFFORTS_FIELD, Provider, ProviderModel, Thinking};
+use acpira_shared::providers::{ApiFormat, EFFORTS_FIELD, INPUT_FIELD, Provider, ProviderModel, Thinking};
 
 use super::family::ThinkingParam;
 use super::{Endpoint, Event, Item, LlmError, Part, Request, StopReason, Usage, error_message};
@@ -166,13 +166,34 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
     "/limit/output",
     "/capabilities/max_output_tokens",
   ]);
-  let modalities: Vec<String> = [strings(e.pointer("/architecture/input_modalities")), strings(e.pointer("/modalities/input")), strings(e.get("input_modalities"))].concat();
+  let modalities: Vec<String> = [
+    strings(e.pointer("/architecture/input_modalities")),
+    strings(e.pointer("/modalities/input")),
+    strings(e.pointer("/capabilities/input_modalities")),
+    strings(e.get("input_modalities")),
+  ]
+  .concat();
   let params = strings(e.get("supported_parameters"));
   let caps = strings(e.get("capabilities"));
   let kind = e.get("type").and_then(Value::as_str).unwrap_or("");
+  let vision_flagged = [
+    "/vision",
+    "/supportsVision",
+    "/supports_vision",
+    "/supportsImageInput",
+    "/supports_image_input",
+    "/capabilities/vision",
+    "/capabilities/supports_vision",
+    "/capabilities/supportsVision",
+    "/capabilities/vision/supported",
+    "/capabilities/supports/vision",
+    "/capabilities/image_input",
+  ]
+  .iter()
+  .any(|p| e.pointer(p) == Some(&Value::Bool(true)));
   let images = if !modalities.is_empty() {
     Some(modalities.iter().any(|m| m == "image"))
-  } else if kind == "vlm" || caps.iter().any(|c| c == "vision") {
+  } else if kind == "vlm" || vision_flagged || caps.iter().any(|c| c == "vision") {
     Some(true)
   } else {
     None
@@ -269,7 +290,7 @@ pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
     o
   });
   let images = listed.images.unwrap_or_else(|| {
-    estimated.push("input");
+    estimated.push(INPUT_FIELD);
     entry.is_some_and(|c| c.images)
   });
   if images {

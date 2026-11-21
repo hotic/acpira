@@ -533,7 +533,7 @@ fn valid_env_name(name: &str) -> bool {
 /// the agent speaks, and every model has an id. A key comes from the vault under the source's id or from the
 /// variable `keyEnv` names; the key itself never goes in the file
 pub fn provider_of(raw: &Value, plugin: &str) -> Result<acpira_shared::providers::Provider, String> {
-  use acpira_shared::providers::{KEY_ENV_FIELD, PLUGIN_FIELD, Provider};
+  use acpira_shared::providers::{INPUT_FIELD, KEY_ENV_FIELD, PLUGIN_FIELD, Provider};
   let id = raw.get("id").and_then(Value::as_str).unwrap_or_default();
   let at = format!("provider `{id}`");
   if !valid_id(id) {
@@ -557,6 +557,14 @@ pub fn provider_of(raw: &Value, plugin: &str) -> Result<acpira_shared::providers
   }
   if p.models.is_empty() || p.models.iter().any(|m| m.id.trim().is_empty()) {
     return Err(format!("{at}: `models` needs at least one model, each with an `id`"));
+  }
+  // A model entry that omits `input` leaves image support to the catalogue, while an explicit `input` list stays as declared
+  if let Some(raw_models) = raw.get("models").and_then(Value::as_array) {
+    for (m, raw_m) in p.models.iter_mut().zip(raw_models) {
+      if raw_m.get("input").is_none() && !m.input_guessed() {
+        m.estimated.push(INPUT_FIELD.to_owned());
+      }
+    }
   }
   if let Some(env) = p.extra.get(KEY_ENV_FIELD)
     && !env.as_str().is_some_and(valid_env_name)

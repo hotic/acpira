@@ -122,6 +122,27 @@ fn a_gateway_reasoning_flag_without_catalogue_levels_gets_the_default_levels() {
 }
 
 #[test]
+fn gateway_vision_flags_confirm_image_input_and_false_leaves_it_for_the_catalogue() {
+  for entry in [
+    json!({ "id": "v1", "vision": true }),
+    json!({ "id": "v2", "supportsVision": true }),
+    json!({ "id": "v3", "supports_vision": true }),
+    json!({ "id": "v4", "capabilities": { "supports_vision": true } }),
+    json!({ "id": "v5", "capabilities": { "supports": { "vision": true } } }),
+    json!({ "id": "v6", "capabilities": { "vision": { "supported": true } } }),
+    json!({ "id": "v7", "capabilities": { "input_modalities": ["text", "image"] } }),
+  ] {
+    let m = model(entry.clone());
+    assert_eq!(m.input, ["text", "image"], "{entry}");
+    assert!(!m.estimated.iter().any(|e| e == "input"), "{entry}: {:?}", m.estimated);
+  }
+  // A gateway defaulting `supports_vision: false` on a model it does not know still lets the catalogue enable images
+  let m = model(json!({ "id": "gemini-3.8-flash", "capabilities": { "supports_vision": false } }));
+  assert_eq!(m.input, ["text", "image"]);
+  assert!(m.estimated.iter().any(|e| e == "input"));
+}
+
+#[test]
 fn levels_the_endpoint_lists_are_taken_as_reported() {
   // The asgard gateway's /v1/models entry for Kimi K3.1 Pro (trimmed; recorded 2026-10-29): both spellings of the scale
   let entry = json!({ "id": "kimi-k3.1-pro", "name": "Kimi K3.1 Pro", "reasoning": true, "context_length": 1048576, "max_output_tokens": 131072,

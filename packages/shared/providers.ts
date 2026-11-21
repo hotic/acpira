@@ -192,8 +192,33 @@ export function newModel(id: string): ProviderModel {
   return { id, enabled: true, input: ['text'], thinking: 'auto', efforts: [], sampling: {}, estimated: [] };
 }
 
-// Refresh listed fast tiers and replace guessed effort levels with the endpoint's confirmed scale. Saved / manual
-// levels and thinking-off stay intact; undefined when nothing moved.
+// Move one model id to another index of the list (no-op when absent or already there)
+export function moveModel(models: ProviderModel[], id: string, to: number): ProviderModel[] {
+  const from = models.findIndex(m => m.id === id);
+  if (from < 0) return models;
+  const clamped = Math.max(0, Math.min(models.length - 1, to));
+  if (from === clamped) return models;
+  const next = [...models];
+  const [picked] = next.splice(from, 1);
+  next.splice(clamped, 0, picked!);
+  return next;
+}
+
+// Arrange models in the given id order; any models not listed follow in their existing order
+export function orderModels(models: ProviderModel[], ids: readonly string[]): ProviderModel[] {
+  const byId = new Map(models.map(m => [m.id, m]));
+  const seen = new Set<string>();
+  const ordered: ProviderModel[] = [];
+  for (const id of ids) {
+    const m = byId.get(id);
+    if (m && !seen.has(id)) { seen.add(id); ordered.push(m); }
+  }
+  for (const m of models) if (!seen.has(m.id)) ordered.push(m);
+  return ordered;
+}
+
+// Refresh listed fast tiers and replace guessed effort levels / input modalities with what the endpoint confirms.
+// Saved / manual values and thinking-off stay intact; undefined when nothing moved.
 export function syncListedModels(models: ProviderModel[], listed?: ProviderModel[]): ProviderModel[] | undefined {
   if (!listed?.length || !models.length) return undefined;
   const byId = new Map(listed.map(m => [m.id, m]));
@@ -204,14 +229,23 @@ export function syncListedModels(models: ProviderModel[], listed?: ProviderModel
     const fastListed = fresh.fastListed ?? undefined;
     const efforts = m.thinking !== 'off' && m.estimated.includes('efforts')
       && fresh.efforts.length > 0 && !fresh.estimated.includes('efforts');
-    if ((m.fastListed ?? undefined) === fastListed && !efforts) return m;
+    const input = m.estimated.includes('input') && !fresh.estimated.includes('input');
+    if ((m.fastListed ?? undefined) === fastListed && !efforts && !input) return m;
     changed = true;
     const copy = { ...m };
     if (fastListed === undefined) delete copy.fastListed;
     else copy.fastListed = fastListed;
+    const confirmed = new Set<string>();
     if (efforts) {
       copy.efforts = [...fresh.efforts];
-      copy.estimated = m.estimated.filter(field => field !== 'efforts');
+      confirmed.add('efforts');
+    }
+    if (input) {
+      copy.input = [...fresh.input];
+      confirmed.add('input');
+    }
+    if (confirmed.size) {
+      copy.estimated = m.estimated.filter(field => !confirmed.has(field));
     }
     return copy;
   });

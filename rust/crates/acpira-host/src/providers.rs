@@ -84,14 +84,19 @@ impl ProviderStore {
     let catalog = crate::model_catalog::current();
     let mut providers = Vec::with_capacity(file.providers.len());
     for mut provider in file.providers.iter().cloned() {
-      // A guessed or empty scale shows as the agent offers it (the catalogue's levels when it knows the model), so the
-      // dialog lights what the composer offers; it is marked as a guess until the dialog saves it
-      for m in provider.models.iter_mut().filter(|m| m.thinking != Thinking::Off) {
-        if let Some(levels) = m.catalogue_efforts(&catalog) {
+      // Guessed metadata shows as the agent sees it against the current catalogue, so the settings rows and editor
+      // match what a turn will offer; each field stays marked as a guess until the dialog saves it
+      for m in &mut provider.models {
+        if m.thinking != Thinking::Off
+          && let Some(levels) = m.catalogue_efforts(&catalog)
+        {
           m.efforts = levels.to_vec();
           if !m.efforts_guessed() {
             m.estimated.push(EFFORTS_FIELD.into());
           }
+        }
+        if let Some(images) = m.catalogue_images(&catalog) {
+          m.set_takes_images(images);
         }
       }
       let has_key = self.vault.get(&provider_secret_key(&provider.id)).await.ok().flatten().is_some_and(|k| !k.is_empty());
@@ -454,6 +459,21 @@ mod tests {
       ("low medium high".to_owned(), false),
       (String::new(), false),
     ]);
+  }
+
+  /// Guessed image input follows the current catalogue in the settings view too, while an explicit text-only choice stays
+  #[tokio::test]
+  async fn the_view_fills_guessed_image_input_from_the_catalogue() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = json!({ "providers": [{ "id": "gw", "baseUrl": "https://gw.test/v1", "models": [
+      { "id": "kimi-k3", "input": ["text"], "estimated": ["input"] },
+      { "id": "kimi-k3-saved", "name": "Kimi K3", "input": ["text"] },
+      { "id": "o3-mini", "input": ["text", "image"], "estimated": ["input"] },
+    ] }] });
+    std::fs::write(dir.path().join(PROVIDERS_FILE), file.to_string()).unwrap();
+    let v = store(dir.path()).view().await;
+    let shown: Vec<_> = v.providers[0].provider.models.iter().map(|m| (m.takes_images(), m.input_guessed())).collect();
+    assert_eq!(shown, [(true, true), (false, false), (false, true)]);
   }
 
   #[tokio::test]

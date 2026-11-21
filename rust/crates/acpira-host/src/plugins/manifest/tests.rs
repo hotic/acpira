@@ -225,6 +225,9 @@ fn providers_need_a_usable_source_and_never_a_key() {
   assert_eq!((m.contributes.kinds(), m.layer()), (vec!["providers"], "agents"));
   let p = provider_of(&good, "gw").unwrap();
   assert_eq!((p.name.as_str(), p.extra["plugin"].as_str(), p.extra["keyEnv"].as_str()), ("gw-claude", Some("gw"), Some("GW_KEY")));
+  assert!(p.models[0].input_guessed(), "omitted `input` falls back to the catalogue");
+  let explicit = provider_of(&json!({ "id": "gw-text", "baseUrl": "http://gw:8080", "models": [{ "id": "m", "input": ["text"] }] }), "gw").unwrap();
+  assert!(!explicit.models[0].input_guessed(), "explicit `input` stays confirmed");
   let bad = base(json!([
     good,
     { "id": "gw-claude", "format": "anthropic", "baseUrl": "http://x", "models": [{ "id": "m" }] },

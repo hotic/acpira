@@ -295,6 +295,28 @@ impl ProviderModel {
     self.input.iter().any(|i| i == "image")
   }
 
+  pub fn set_takes_images(&mut self, images: bool) {
+    if images {
+      if !self.takes_images() {
+        self.input.push("image".to_owned());
+      }
+    } else {
+      self.input.retain(|i| i != "image");
+    }
+  }
+
+  /// Whether image input is still a guess (catalogue or default) rather than reported by the endpoint or saved in the
+  /// settings dialog, which clears `estimated`
+  pub fn input_guessed(&self) -> bool {
+    self.estimated.iter().any(|e| e == INPUT_FIELD)
+  }
+
+  /// Whether the catalogue says this model accepts images, where it stands in for a guessed `input` (`estimated` names
+  /// `INPUT_FIELD`). Confirmed settings (reported by the endpoint or saved in the dialog) return `None`
+  pub fn catalogue_images(&self, catalog: &Catalog) -> Option<bool> {
+    self.input_guessed().then(|| catalog.lookup(&self.id, self.name.as_deref()).map(|c| c.images)).flatten()
+  }
+
   /// Whether the levels are still a guess (catalogue or defaults) rather than reported by the endpoint or saved in the
   /// settings dialog, which clears `estimated`
   pub fn efforts_guessed(&self) -> bool {
@@ -324,6 +346,8 @@ impl ProviderModel {
 
 /// The `estimated` entry naming guessed effort levels
 pub const EFFORTS_FIELD: &str = "efforts";
+/// The `estimated` entry naming guessed input modalities
+pub const INPUT_FIELD: &str = "input";
 
 impl Provider {
   pub fn api_format(&self) -> Option<ApiFormat> {
@@ -607,6 +631,29 @@ mod tests {
     assert!(model(json!({ "id": "mystery" })).offered_efforts(&catalog).is_empty());
     // Thinking off: no scale whatever the list holds
     assert!(model(json!({ "id": "kimi-k3.1-pro", "thinking": "off", "efforts": ["low"] })).offered_efforts(&catalog).is_empty());
+  }
+
+  #[test]
+  fn catalogue_images_replace_a_guess_and_keep_a_confirmed_choice() {
+    use crate::model_catalog::{Catalog, trim_models_dev};
+    let api = json!({ "openai": { "models": {
+      "gpt-6.2-astra": { "name": "GPT-6.2 Astra", "modalities": { "input": ["text", "image"] } },
+      "o3-mini": { "name": "o3-mini", "modalities": { "input": ["text"] } }
+    } } });
+    let catalog = Catalog::new(trim_models_dev(&api, "2026-11-20T00:00:00Z", None));
+    let model = |v: serde_json::Value| -> ProviderModel { serde_json::from_value(v).unwrap() };
+    let mut guessed = model(json!({ "id": "gpt-6.2-astra", "input": ["text"], "estimated": ["input"] }));
+    assert_eq!(guessed.catalogue_images(&catalog), Some(true));
+    guessed.set_takes_images(true);
+    guessed.set_takes_images(true);
+    assert_eq!(guessed.input, ["text", "image"]);
+    guessed.set_takes_images(false);
+    assert_eq!(guessed.input, ["text"]);
+    // A guessed model the catalogue knows as text-only reports false; an unknown one returns None
+    assert_eq!(model(json!({ "id": "o3-mini", "input": ["text", "image"], "estimated": ["input"] })).catalogue_images(&catalog), Some(false));
+    assert_eq!(model(json!({ "id": "mystery", "input": ["text"], "estimated": ["input"] })).catalogue_images(&catalog), None);
+    // Explicitly saved text-only stays untouched
+    assert_eq!(model(json!({ "id": "gpt-6.2-astra", "input": ["text"] })).catalogue_images(&catalog), None);
   }
 
   #[test]

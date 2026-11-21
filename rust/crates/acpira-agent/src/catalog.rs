@@ -48,7 +48,7 @@ pub fn lookup<'a>(catalog: &'a Catalog, model: &ProviderModel) -> Option<&'a Cat
   catalog.lookup(&model.id, model.name.as_deref())
 }
 
-/// Fill the limits the configuration leaves open from the catalogue, marked as estimated; returns the list prices
+/// Fill the limits and guessed capabilities the configuration leaves open from the catalogue; returns the list prices
 pub fn complete(model: &mut ProviderModel, catalog: &Catalog) -> Option<Cost> {
   let entry = lookup(catalog, model)?;
   for (field, slot, value) in [("context", &mut model.context, entry.context), ("output", &mut model.output, entry.output)] {
@@ -60,6 +60,9 @@ pub fn complete(model: &mut ProviderModel, catalog: &Catalog) -> Option<Cost> {
         model.estimated.push(field.to_owned());
       }
     }
+  }
+  if model.input_guessed() {
+    model.set_takes_images(entry.images);
   }
   entry.cost
 }
@@ -80,6 +83,36 @@ mod tests {
     let mut unknown: ProviderModel = serde_json::from_value(serde_json::json!({ "id": "my-local-model" })).unwrap();
     assert!(complete(&mut unknown, &catalog).is_none());
     assert_eq!((unknown.context, unknown.output), (None, None));
+  }
+
+  #[test]
+  fn guessed_image_input_follows_the_catalogue_while_a_confirmed_choice_stays() {
+    let api = serde_json::json!({ "openai": { "models": {
+      "gpt-6.2-astra": { "name": "GPT-6.2 Astra", "modalities": { "input": ["text", "image"] } },
+      "o3-mini": { "name": "o3-mini", "modalities": { "input": ["text"] } }
+    } } });
+    let catalog = Catalog::new(acpira_shared::model_catalog::trim_models_dev(&api, "2026-11-20T00:00:00Z", None));
+    let mut guessed: ProviderModel = serde_json::from_value(serde_json::json!({
+      "id": "gpt-6.2-astra", "input": ["text"], "estimated": ["input"]
+    }))
+    .unwrap();
+    complete(&mut guessed, &catalog);
+    assert_eq!(guessed.input, ["text", "image"]);
+    assert_eq!(guessed.estimated, ["input"]);
+
+    let mut confirmed_off: ProviderModel = serde_json::from_value(serde_json::json!({
+      "id": "gpt-6.2-astra", "input": ["text"]
+    }))
+    .unwrap();
+    complete(&mut confirmed_off, &catalog);
+    assert_eq!(confirmed_off.input, ["text"]);
+
+    let mut text_only_guess: ProviderModel = serde_json::from_value(serde_json::json!({
+      "id": "o3-mini", "input": ["text", "image"], "estimated": ["input"]
+    }))
+    .unwrap();
+    complete(&mut text_only_guess, &catalog);
+    assert_eq!(text_only_guess.input, ["text"]);
   }
 
   #[test]

@@ -9,7 +9,7 @@ import { newModel, type ProviderModel, type ProviderView } from '@acpira/shared/
 import { setLocale, t } from '../i18n';
 import { AgentSettings, type AgentSettingsProps, type AgentTab } from './AgentPage';
 import { editTokens, fmtTokens, ModelEditor, parseTokens } from './ProviderModel';
-import type { ProvidersState } from './ProvidersSection';
+import { dropSlot, type ProvidersState } from './ProvidersSection';
 import type { SettingsHandlers } from './SettingsShell';
 
 // A dialog portals into the shell's layer once mounted, so the server renders none of it; here every part renders its
@@ -229,5 +229,28 @@ describe('built-in agent model sources', () => {
     const limits = [128_000, 64_000, 1_000_000, 131_072, 1_048_576, 393_216, 200_001];
     expect(limits.map(n => parseTokens(editTokens(n)))).toEqual(limits);
     expect([131_072, 128_000, 1_048_576].map(editTokens)).toEqual(['128k', '128000', '1M']);
+  });
+
+  it('computes stable non-oscillating drop slots for equal and mixed row heights', () => {
+    // Three 56px sibling rows and a 56px dragged row: thresholds sit at 56, 112, 168
+    expect([-20, 0, 28, 56].map(c => dropSlot([56, 56, 56], 56, c))).toEqual([0, 0, 0, 0]);
+    expect([57, 84, 112].map(c => dropSlot([56, 56, 56], 56, c))).toEqual([1, 1, 1]);
+    expect([113, 168].map(c => dropSlot([56, 56, 56], 56, c))).toEqual([2, 2]);
+    expect([169, 400].map(c => dropSlot([56, 56, 56], 56, c))).toEqual([3, 3]);
+    // Variable heights: dragged 40px over [80, 56] → slot 0 centre 20, slot 1 centre 100 (mid 60), slot 2 centre 156 (mid 128)
+    expect([20, 60, 61, 128, 129].map(c => dropSlot([80, 56], 40, c))).toEqual([0, 0, 1, 1, 2]);
+    expect(dropSlot([], 56, 100)).toBe(0);
+  });
+
+  it('exposes keyboard reorder shortcuts only when a source has more than one model', () => {
+    const single = render();
+    expect(single).toContain('data-model-row="deepseek-v4-flash"');
+    expect(single).not.toContain('Alt+ArrowUp Alt+ArrowDown');
+    const multi: ProviderView = { ...sources[0]!, models: [model('a', { name: 'Alpha' }), model('b', { name: 'Beta' })] };
+    const markup = renderToStaticMarkup(page({
+      agent: builtin, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on: handlers,
+      providers: { view: { ...state.view, providers: [multi] } }, controls: [],
+    }, 'sources'));
+    expect(markup).toContain('aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"');
   });
 });

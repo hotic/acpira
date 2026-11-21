@@ -623,6 +623,9 @@ export interface ItemRowProps {
   // The row opens its dialog: a click anywhere on it but its own controls; the row lights up, no glyph
   onEdit?: () => void;
   editLabel?: string;
+  editKeyShortcuts?: string;
+  // Row is picked up or sliding into its new slot after a drag
+  dragging?: boolean;
   // The whole row is the button
   onClick?: () => void;
   // Greyed out as a whole (disabled server, missing file)
@@ -638,9 +641,11 @@ export interface ItemRowProps {
 export const rowHover = 'relative isolate before:absolute before:inset-y-(--hover-y) before:inset-x-(--hover-out) before:rounded-(--hover-r) before:-z-10 before:transition-colors enabled:hover:before:bg-hover focus-visible:before:bg-hover';
 // The same fill for a row that is a div (it may hold buttons of its own)
 const divHover = 'relative isolate cursor-pointer before:absolute before:inset-y-(--hover-y) before:inset-x-(--hover-out) before:rounded-(--hover-r) before:-z-10 before:transition-colors hover:before:bg-hover has-[[data-row-key]:focus-visible]:before:bg-hover';
+// Lifted look while a row is dragged or landing in its new slot: opaque over sliding siblings, quiet inset edge and shadow
+const divDragging = 'relative isolate cursor-grabbing before:absolute before:inset-y-(--hover-y) before:inset-x-(--hover-out) before:rounded-(--hover-r) before:-z-10 before:bg-(--settings-drag-bg) before:shadow-pop before:ring-1 before:ring-inset before:ring-line-strong';
 const OWN_CONTROL = 'button:not([data-row-key]), a, input, textarea, select, label, [role="switch"], [role="checkbox"], [role="menu"]';
 
-export function ItemRow({ lead, title, desc, extra, extraWide, trailing, onOpen, reserveOpen, onEdit, editLabel, onClick, dim, className }: ItemRowProps) {
+export function ItemRow({ lead, title, desc, extra, extraWide, trailing, onOpen, reserveOpen, onEdit, editLabel, editKeyShortcuts, dragging, onClick, dim, className }: ItemRowProps) {
   const Tag = onClick ? 'button' : 'div';
   const press = !onClick ? onEdit ?? onOpen : undefined;
   // A click on one of the row's own controls (a switch, remove, …) stays theirs; anywhere else on the row opens
@@ -678,12 +683,12 @@ export function ItemRow({ lead, title, desc, extra, extraWide, trailing, onOpen,
       className={cn(
         useSettingRow(), 'group/row flex w-full gap-gap text-left', extraWide ? 'flex-col gap-y-(--stack-gap)' : 'items-center',
         onClick && rowHover,
-        press && divHover,
+        press && (dragging ? divDragging : divHover),
         className,
       )}
     >
       {/* The row's own key stop when the row opens a dialog: a zero-size button over the title */}
-      {onEdit && !onClick && <button type="button" data-row-key onClick={onEdit} aria-label={editLabel} aria-haspopup="dialog" className="sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:inset-0 focus-visible:outline-none" />}
+      {onEdit && !onClick && <button type="button" data-row-key onClick={onEdit} aria-label={editLabel} aria-haspopup="dialog" aria-keyshortcuts={editKeyShortcuts} className="sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:inset-0 focus-visible:outline-none" />}
       {extraWide ? <><span className="flex w-full min-w-0 items-center gap-gap">{head}</span>{extra}</> : head}
     </Tag>
   );
