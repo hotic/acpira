@@ -55,6 +55,8 @@ pub struct Opts {
   pub remote: Option<Arc<acpira_host::remote::connections::Connections>>,
   /// The plugins' resident processes the manager's sessions report to
   pub plugin_runtime: Option<Arc<acpira_host::plugins::runtime::Runtimes>>,
+  /// Local shell browser opener, for remote peer `openBrowser` tests
+  pub browser: Option<Arc<dyn acpira_host::relay::hub::HostBrowser>>,
 }
 
 impl Opts {
@@ -77,6 +79,7 @@ impl Opts {
       ssh_local_agents: Arc::new(Mutex::new(Default::default())),
       remote: None,
       plugin_runtime: None,
+      browser: None,
     }
   }
 
@@ -158,6 +161,7 @@ impl Mgr {
         bus: opts.bus,
         attention: Some(Arc::new(move |a| at.lock().unwrap().push(a))),
         remote: opts.remote.clone(),
+        browser: opts.browser.clone(),
       },
     );
     let v = m.attach(None);

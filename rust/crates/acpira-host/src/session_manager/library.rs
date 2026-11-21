@@ -93,6 +93,10 @@ impl SessionLibrary for SessionManager {
       })
     })
   }
+
+  fn session_wires(&self, session_id: &str) -> Vec<u64> {
+    SessionManager::session_wires(self, session_id)
+  }
 }
 
 impl SessionManager {

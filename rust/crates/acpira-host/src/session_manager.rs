@@ -166,6 +166,8 @@ pub struct ManagerDeps {
   pub attention: Option<AttentionFn>,
   /// SSH hosts (`remote/connections.rs`) for sessions whose folder is on one; None: no remote folders
   pub remote: Option<Arc<crate::remote::connections::Connections>>,
+  /// Local shell browser opener (`SidecarPlatform`), for `openBrowser` requests forwarded from SSH host engines
+  pub browser: Option<Arc<dyn crate::relay::hub::HostBrowser>>,
 }
 
 #[derive(Default)]
@@ -204,9 +206,19 @@ pub struct Viewer {
   shell: Option<ViewerShell>,
   /// The machine the page belongs to: a turn it sends reads that machine's built-in agent settings (`AcpSession::sent_by`)
   sent_from: parking_lot::Mutex<crate::acp::session::SentFrom>,
+  /// The sidecar wire (window or peer) this viewer belongs to, for routing `open_browser` back to it
+  wire: parking_lot::Mutex<Option<u64>>,
 }
 
 impl Viewer {
+  pub fn wire(&self) -> Option<u64> {
+    *self.wire.lock()
+  }
+
+  pub fn set_wire(&self, wire: Option<u64>) {
+    *self.wire.lock() = wire;
+  }
+
   pub fn sent_from(&self) -> crate::acp::session::SentFrom {
     self.sent_from.lock().clone()
   }

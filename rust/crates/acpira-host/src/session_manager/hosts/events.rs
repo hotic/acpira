@@ -76,6 +76,48 @@ impl SessionManager {
               (self.deps.run_in_terminal)(format!("{title} ({})", run.alias), prog, ssh_args, None);
             }
           }
+          Some("openBrowser") => {
+            let request_id = env.get("requestId").and_then(Value::as_str).map(str::to_owned);
+            let Some(url) = request.get("url").and_then(Value::as_str).map(str::to_owned) else {
+              if let Some(id) = request_id {
+                run.send(json!({ "type": "platformResponse", "requestId": id, "error": "missing url" }));
+              }
+              return;
+            };
+            let Some(browser) = self.deps.browser.clone() else {
+              if let Some(id) = request_id {
+                run.send(json!({ "type": "platformResponse", "requestId": id, "error": "this editor cannot show web pages inside it" }));
+              }
+              return;
+            };
+            let session_id = request.get("sessionId").and_then(Value::as_str).map(str::to_owned);
+            let cwd = request.get("cwd").and_then(Value::as_str).map(|c| local_folder(&run.alias, c));
+            // Always tag the host (`ssh://<alias>/...`) so the local preview proxy tunnels loopback URLs to this host
+            let folder = cwd.clone().or_else(|| Some(local_folder(&run.alias, "/")));
+            let wires = session_id.as_deref().map(|id| self.session_wires(id)).unwrap_or_default();
+            let run = run.clone();
+            tokio::spawn(async move {
+              let session = session_id.as_deref().zip(cwd.as_deref());
+              let reply = match browser.open_for(&url, folder.as_deref(), session, &wires).await {
+                Ok(opened) => match serde_json::to_value(opened) {
+                  Ok(result) => Ok(result),
+                  Err(e) => Err(e.to_string()),
+                },
+                Err(e) => Err(format!("{e:#}")),
+              };
+              if let Some(id) = request_id {
+                match reply {
+                  Ok(result) => {
+                    run.send(json!({ "type": "platformResponse", "requestId": id, "result": result }));
+                  }
+                  Err(error) => {
+                    run.send(json!({ "type": "platformResponse", "requestId": id, "error": error }));
+                  }
+                }
+              }
+            });
+            return;
+          }
           _ => {}
         }
         if let Some(id) = env.get("requestId").and_then(Value::as_str) {

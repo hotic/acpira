@@ -257,6 +257,7 @@ impl HostRuntime {
         lease_root: root.clone(),
         bus: true,
         remote: Some(connections.clone()),
+        browser: Some(platform.clone()),
         shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()), Some(plugin_servers))),
         plugin_hooks: Some(plugin_hooks),
         plugin_prompts: Some(plugin_prompts),

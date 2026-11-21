@@ -40,18 +40,44 @@ const LISTEN_CHECK: Duration = Duration::from_secs(2);
 pub trait HostBrowser: Send + Sync {
   /// Whether the serving shell can show a page inside the editor
   fn available(&self) -> bool;
+  /// Whether a shell serving `wires` (driving / viewing wires, checked first) can show a page
+  fn available_for(&self, _wires: &[u64]) -> bool {
+    self.available()
+  }
   /// Show the page; where the user's side shows it (a forwarded port has its own address) and whether an earlier tab
   /// was reused, or why it did not open. `folder`: the session folder on an SSH host whose loopback the page is on.
   /// `session`: the id and folder of the session whose agent asked
   fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>, session: Option<(&'a str, &'a str)>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>>;
+  /// `open`, preferring one of `wires` when multiple windows or peers are connected
+  fn open_for<'a>(
+    &'a self,
+    url: &'a str,
+    folder: Option<&'a str>,
+    session: Option<(&'a str, &'a str)>,
+    _wires: &'a [u64],
+  ) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
+    self.open(url, folder, session)
+  }
 }
 
 impl HostBrowser for crate::sidecar::platform::SidecarPlatform {
   fn available(&self) -> bool {
     self.can_open_browser()
   }
+  fn available_for(&self, wires: &[u64]) -> bool {
+    self.can_open_browser_for(wires)
+  }
   fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>, session: Option<(&'a str, &'a str)>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
     Box::pin(self.open_browser(url, folder, session))
+  }
+  fn open_for<'a>(
+    &'a self,
+    url: &'a str,
+    folder: Option<&'a str>,
+    session: Option<(&'a str, &'a str)>,
+    wires: &'a [u64],
+  ) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
+    Box::pin(self.open_browser_for(url, folder, session, wires))
   }
 }
 
@@ -180,8 +206,9 @@ impl RelayHub {
         let _ = write.write_all(reply(HubReply::Roster { personas, groups }).as_bytes()).await;
       }
       HubOp::Features => {
-        let browser = self.browser.read().as_ref().is_some_and(|b| b.available());
         let session = session.upgrade();
+        let wires = self.preferred_wires(session.as_deref());
+        let browser = self.browser.read().as_ref().is_some_and(|b| b.available_for(&wires));
         let remote = session.as_ref().is_some_and(|s| s.remote_folder().is_some());
         // The project tools go to the session's own agent; a summoned child's CLI keeps its own
         let remote_tools = session.as_ref().filter(|_| caller.is_none()).and_then(|s| s.remote_stand()).map(|st| st.alias);
@@ -250,9 +277,11 @@ impl RelayHub {
         return;
       }
       HubOp::OpenBrowser { url } => {
+        let session = session.upgrade();
+        let wires = self.preferred_wires(session.as_deref());
         let browser = self.browser.read().clone();
         let r = match browser {
-          Some(b) if b.available() => self.open_browser(b.as_ref(), &url, session.upgrade()).await,
+          Some(b) if b.available_for(&wires) => self.open_browser(b.as_ref(), &url, session, &wires).await,
           _ => HubReply::Error("This editor cannot show web pages inside it; give the user the URL instead.".into()),
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
@@ -361,11 +390,29 @@ impl RelayHub {
     }
   }
 
+  /// The wires associated with `session` (the wire that last drove it, then any currently viewing it), in priority order
+  fn preferred_wires(&self, session: Option<&AcpSession>) -> Vec<u64> {
+    let mut wires = Vec::new();
+    if let Some(s) = session {
+      if let Some(w) = s.last_wire() {
+        wires.push(w);
+      }
+      if let Some(lib) = self.library.read().as_ref().and_then(Weak::upgrade) {
+        for w in lib.session_wires(&s.id) {
+          if !wires.contains(&w) {
+            wires.push(w);
+          }
+        }
+      }
+    }
+    wires
+  }
+
   /// A loopback page must be served on this machine first (the one the agent and its servers run on): nothing
   /// listening there is reported as such, before the shell forwards a port and checks from the user's side
   /// The listen check runs where the agent's commands do: this machine, or the SSH host of the session's folder (whose
   /// loopback the page is on, so the shell is told the folder)
-  async fn open_browser(&self, browser: &dyn HostBrowser, url: &str, session: Option<Arc<AcpSession>>) -> HubReply {
+  async fn open_browser(&self, browser: &dyn HostBrowser, url: &str, session: Option<Arc<AcpSession>>, wires: &[u64]) -> HubReply {
     let remote = session.as_ref().filter(|s| s.remote_folder().is_some());
     if let Some((host, port)) = loopback_target(url) {
       let listening = match remote {
@@ -379,7 +426,7 @@ impl RelayHub {
       }
     }
     let folder = remote.map(|s| s.cwd.clone());
-    match browser.open(url, folder.as_deref(), session.as_ref().map(|s| (s.id.as_str(), s.cwd.as_str()))).await {
+    match browser.open_for(url, folder.as_deref(), session.as_ref().map(|s| (s.id.as_str(), s.cwd.as_str())), wires).await {
       Ok(opened) => {
         let what = match opened.reused {
           Some(BrowserReuse::Revealed) => format!("{url} was already open in a browser tab in the user's editor; brought that tab to the front without reloading it."),

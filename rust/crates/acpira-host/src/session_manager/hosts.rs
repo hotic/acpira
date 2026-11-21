@@ -48,8 +48,10 @@ const NEW_WAIT: Duration = Duration::from_secs(60);
 const OPEN_WAIT: Duration = Duration::from_secs(30);
 /// What this engine serves for the host's engine (the requests its views cause come back here).
 /// Terminal commands run on the host through `ssh -t`; a fresh SSH login still has its own security session and
-/// cannot unlock a background engine's macOS keychain.
-const PEER_CAPS: &[&str] = &["toast", "runInTerminal"];
+/// cannot unlock a background engine's macOS keychain. `openBrowser` forwards to this engine's shell with `folder` /
+/// `cwd` rewritten to `ssh://<alias>/...` so the preview proxy tunnels the host's loopback ports.
+const PEER_CAPS: &[&str] = &["toast", "runInTerminal", "openBrowser"];
+const PEER_CAPS_NO_BROWSER: &[&str] = &["toast", "runInTerminal"];
 /// Blob fetches from one host at a time: a session full of pictures must not queue the view stream behind them all
 const BLOB_FETCHES: usize = 3;
 /// The largest blob fetched without being asked for; a larger one stays on the host and its view shows it as missing
@@ -618,13 +620,14 @@ async fn drive(weak: Weak<SessionManager>, run: Arc<HostRun>) {
   loop {
     let Some(m) = weak.upgrade() else { return };
     let Some(connections) = m.deps.remote.clone() else { return };
+    let caps = if m.deps.browser.is_some() { PEER_CAPS } else { PEER_CAPS_NO_BROWSER };
     drop(m);
     let attempt: Result<(PeerLink, crate::remote::client::RemoteClient)> = async {
       // What an earlier link heard may be another engine's by now (an update; a run cancelled mid-link never got to
       // forget it): unknown until this link's hello
       connections.forget_engine_features(&run.alias);
       let client = connections.follow(&run.alias, CONNECT_WAIT).await?;
-      let link = PeerLink::connect(&client, None, PeerHello { version: acpira_shared::version::VERSION, capabilities: PEER_CAPS, host_language: "en" }).await?;
+      let link = PeerLink::connect(&client, None, PeerHello { version: acpira_shared::version::VERSION, capabilities: caps, host_language: "en" }).await?;
       Ok((link, client))
     }
     .await;

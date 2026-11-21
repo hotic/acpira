@@ -1011,3 +1011,99 @@ async fn remote_missing_cli_installs_on_the_host_and_starts_the_waiting_session(
   m.dispose().await;
   connections.dispose();
 }
+
+/// An agent running on an SSH host gets `open_browser` through the peer wire and its calls come back to this machine's
+/// shell with `folder` / `cwd` rewritten to `ssh://<alias>/...` so the preview proxy tunnels the host's loopback port.
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_agent_open_browser_forwards_to_local_shell_with_remote_folder() {
+  use acpira_host::relay::hub::HostBrowser;
+  use acpira_shared::sidecar::BrowserOpened;
+  use std::sync::Arc;
+
+  #[derive(Debug, Clone, PartialEq, Eq)]
+  struct BrowserCall {
+    url: String,
+    folder: Option<String>,
+    session: Option<(String, String)>,
+  }
+  struct RecordingBrowser {
+    calls: parking_lot::Mutex<Vec<BrowserCall>>,
+  }
+  impl HostBrowser for RecordingBrowser {
+    fn available(&self) -> bool {
+      true
+    }
+    fn open<'a>(
+      &'a self,
+      url: &'a str,
+      folder: Option<&'a str>,
+      session: Option<(&'a str, &'a str)>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<BrowserOpened>> + Send + 'a>> {
+      let url = url.to_owned();
+      let folder = folder.map(str::to_owned);
+      let session = session.map(|(id, cwd)| (id.to_owned(), cwd.to_owned()));
+      Box::pin(async move {
+        self.calls.lock().push(BrowserCall { url: url.clone(), folder, session });
+        Ok(BrowserOpened { url, reused: None })
+      })
+    }
+  }
+
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let host_home = lab.host_home().join(".acpira");
+  let work = lab.path().join("hostfs/work");
+  std::fs::create_dir_all(&host_home).unwrap();
+  std::fs::create_dir_all(&work).unwrap();
+  std::fs::write(host_home.join("agents.json"), serde_json::to_vec(&fake.setting(json!({}))).unwrap()).unwrap();
+
+  // Start a loopback server on this machine (which stands in for the SSH host in `Lab`)
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let port = listener.local_addr().unwrap().port();
+  tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+
+  let dir = tempfile::tempdir().unwrap();
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  let browser = Arc::new(RecordingBrowser { calls: Default::default() });
+  let mut opts = crate::session_manager::Opts::with_agents(fake.setting(json!({})), "fake").projects();
+  opts.remote = Some(connections.clone());
+  opts.browser = Some(browser.clone());
+  // Force remote run on the SSH host engine instead of local run
+  opts.ssh_local_agents.lock().unwrap().insert("fake".into(), false);
+  let m = crate::session_manager::Mgr::new(&dir.path().join("sessions"), opts);
+  m.init().await;
+
+  let remote_cwd = format!("ssh://gen1{}", work.display());
+  m.handle(json!({ "type": "newSession", "agent": "fake", "cwd": remote_cwd })).await;
+  wait(&m, "remote session ready", 30_000, || m.active().is_some_and(|v| v["status"] == "ready")).await;
+  let id = m.active_id().unwrap();
+
+  let target_url = format!("http://127.0.0.1:{port}/app?k=1");
+  m.handle(json!({ "type": "send", "sessionId": id, "text": format!("mcp-call:open_browser {{\"url\":\"{target_url}\"}}") })).await;
+  wait(&m, "remote open_browser reply", 30_000, || {
+    m.active().is_some_and(|v| v["status"] == "ready" && v["turns"].as_array().is_some_and(|t| t.len() >= 2))
+  })
+  .await;
+
+  let view = m.active().unwrap();
+  let text = view["turns"][1]["blocks"][0]["markdown"].as_str().unwrap_or("");
+  let parsed: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("expected JSON reply, got {text:?}: {e}"));
+  let tools: Vec<&str> = parsed["tools"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+  assert!(tools.contains(&"open_browser"), "expected open_browser in remote MCP tools: {tools:?}");
+  assert_eq!(parsed["result"]["isError"], false, "open_browser call failed: {parsed}");
+  assert!(
+    parsed["result"]["content"][0]["text"].as_str().unwrap_or("").contains(&format!("Opened {target_url}")),
+    "unexpected open_browser reply: {parsed}",
+  );
+
+  let calls = browser.calls.lock().clone();
+  assert_eq!(calls.len(), 1, "expected one local browser open: {calls:?}");
+  assert_eq!(calls[0].url, target_url);
+  assert_eq!(calls[0].folder.as_deref(), Some(remote_cwd.as_str()));
+  assert_eq!(calls[0].session, Some((id, remote_cwd)));
+
+  m.dispose().await;
+  connections.dispose();
+}

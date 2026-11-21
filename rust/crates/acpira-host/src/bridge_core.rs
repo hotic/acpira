@@ -130,6 +130,7 @@ impl BridgeCore {
     remote_access: Arc<crate::devices::RemoteAccess>,
   ) -> Arc<BridgeCore> {
     let viewer = manager.attach_in(initial, shell);
+    viewer.set_wire(wire);
     // A peer's page is that machine's, any other this machine's: the settings the turns it sends read
     viewer.set_sent_from(match wire.and_then(|w| platform.peer_machine(w)) {
       Some(m) => crate::acp::session::SentFrom::Machine(m),

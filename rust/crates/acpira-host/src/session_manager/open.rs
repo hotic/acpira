@@ -146,6 +146,7 @@ impl SessionManager {
         && keep_empty(&cur, &id, acc.as_deref(), &cwd)
       {
         cur.sent_by(&v.sent_from());
+        cur.set_last_wire(v.wire());
         if category.is_some() {
           cur.set_category(category);
         }
@@ -162,6 +163,7 @@ impl SessionManager {
       let s = AcpSession::fresh(&id, &cwd, me.session_deps(), acc);
       // Started from a page, it reads the settings of the page's machine from its first request
       s.sent_by(&v.sent_from());
+      s.set_last_wire(v.wire());
       s.adopt_sender();
       if category.is_some() {
         s.set_category(category);

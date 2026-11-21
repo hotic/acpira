@@ -327,9 +327,9 @@ pub fn run(version: &str) -> i32 {
         let mut tools = vec![tool_def(), video_tool_def(), widget_tool_def(), hooks_tool_def()];
         let roster = relay.roster();
         let plugins = relay.plugins();
-        relay.served(listing_print(roster.as_ref(), plugins.as_ref()));
-        tools.extend(roster.and_then(|(personas, groups)| (!personas.is_empty()).then(|| ask_tool_def(&personas, &groups))));
         let features = relay.features();
+        relay.served(listing_print(roster.as_ref(), plugins.as_ref(), features.browser));
+        tools.extend(roster.and_then(|(personas, groups)| (!personas.is_empty()).then(|| ask_tool_def(&personas, &groups))));
         if features.summoned {
           tools.push(caller_tool_def());
         }

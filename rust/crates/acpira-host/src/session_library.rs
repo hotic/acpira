@@ -47,6 +47,10 @@ pub type LibraryFuture<'a> = Pin<Box<dyn Future<Output = Result<String, String>>
 pub trait SessionLibrary: Send + Sync {
   fn search_sessions<'a>(&'a self, caller: &'a LibraryCaller, args: SessionSearchArgs) -> LibraryFuture<'a>;
   fn read_session<'a>(&'a self, caller: &'a LibraryCaller, args: SessionReadArgs) -> LibraryFuture<'a>;
+  /// Wires currently viewing `session_id` (most recently attached first), for routing `open_browser` to the viewing shell
+  fn session_wires(&self, _session_id: &str) -> Vec<u64> {
+    vec![]
+  }
 }
 
 /// The session a reference names: a link or id the list knows, else the agent's own session id of one. An id-shaped

@@ -526,23 +526,61 @@ impl SidecarPlatform {
     }
   }
 
+  /// Which wire serves `open_browser` for a session: the task's own origin wire when set, else the first wire in
+  /// `preferred` (the session's driving wire or current viewers) declaring `openBrowser`, else the active local window,
+  /// else (with no active local window) the newest connected peer declaring `openBrowser`, else `last` when no wire is
+  /// registered (attached single-wire platform). `Some(Some(wire))` routes to that wire; `Some(None)` uses the default route
+  fn browser_target(&self, preferred: &[u64]) -> Option<Option<u64>> {
+    let shells = self.shells.read();
+    if let Some(o) = origin()
+      && let Some(w) = shells.wires.get(&o)
+    {
+      return w.facts.caps.contains("openBrowser").then_some(Some(o));
+    }
+    for &wire in preferred {
+      if shells.wires.get(&wire).is_some_and(|w| w.facts.caps.contains("openBrowser")) {
+        return Some(Some(wire));
+      }
+    }
+    if let Some(active) = shells.active {
+      return shells.window(active).is_some_and(|f| f.caps.contains("openBrowser")).then_some(Some(active));
+    }
+    if let Some(peer) = shells.wires.iter().filter(|(_, w)| w.peer && w.facts.caps.contains("openBrowser")).map(|(&id, _)| id).max() {
+      return Some(Some(peer));
+    }
+    (shells.wires.is_empty() && shells.last.caps.contains("openBrowser")).then_some(None)
+  }
+
   /// Whether the serving shell can show a page inside the editor (`open_browser` is offered only then)
   pub fn can_open_browser(&self) -> bool {
-    self.has_cap("openBrowser")
+    self.can_open_browser_for(&[])
+  }
+
+  /// Whether a shell serving `preferred` (or the active window / a browser-capable peer) can show a page
+  pub fn can_open_browser_for(&self, preferred: &[u64]) -> bool {
+    self.browser_target(preferred).is_some()
   }
 
   /// Show an http(s) page in the editor; where the user's side shows it, or the shell's reason it did not open
   pub async fn open_browser(&self, url: &str, folder: Option<&str>, session: Option<(&str, &str)>) -> Result<BrowserOpened> {
-    if !self.has_cap("openBrowser") {
+    self.open_browser_for(url, folder, session, &[]).await
+  }
+
+  /// `open_browser`, routing to the first browser-capable wire in `preferred` before falling back to the active window or a peer
+  pub async fn open_browser_for(&self, url: &str, folder: Option<&str>, session: Option<(&str, &str)>, preferred: &[u64]) -> Result<BrowserOpened> {
+    let Some(target) = self.browser_target(preferred) else {
       return Err(anyhow!("this editor cannot show web pages inside it"));
-    }
+    };
     let request = PlatformRequest::OpenBrowser {
       url: url.to_owned(),
       folder: folder.map(str::to_owned),
       session_id: session.map(|(id, _)| id.to_owned()),
       cwd: session.map(|(_, cwd)| cwd.to_owned()),
     };
-    let r = self.rpc(request).await?;
+    let r = match target {
+      Some(wire) => ORIGIN.scope(wire, self.rpc(request)).await?,
+      None => self.rpc(request).await?,
+    };
     let mut opened: BrowserOpened = serde_json::from_value(r).unwrap_or_default();
     if opened.url.is_empty() {
       opened.url = url.to_owned();
@@ -849,5 +887,74 @@ mod tests {
     assert_eq!(*sent.lock(), 0, "window B cannot open a link");
     p.open_external("https://example.com");
     assert_eq!(*sent.lock(), 1);
+  }
+
+  fn peer_hello(caps: &[&str]) -> Hello {
+    serde_json::from_value(json!({
+      "protocolVersion": 1, "requestId": "r",
+      "client": { "name": "acpira-peer", "role": "peer", "capabilities": caps },
+      "env": { "cwd": "/host/home", "hostLanguage": "en", "projects": true },
+      "settings": {},
+    }))
+    .unwrap()
+  }
+
+  #[tokio::test]
+  async fn open_browser_routes_to_preferred_or_browser_capable_peer_without_stealing_from_local_windows() {
+    let routed = Arc::new(parking_lot::Mutex::new(Vec::<Option<u64>>::new()));
+    let r = routed.clone();
+    let p_peer = peer_hello(&["toast", "openBrowser"]);
+    let p = SidecarPlatform::routed(
+      Arc::new(move |msg| {
+        let wire = origin();
+        r.lock().push(wire);
+        // Answer immediately on a separate task is not needed: check target via can_open_browser_for and inspect routed origin
+        let _ = msg;
+        wire.or(Some(0))
+      }),
+      &p_peer,
+      Arc::new(|_| {}),
+      false,
+    );
+    // Headless host with only a browser-capable peer: open_browser is available and targets that peer
+    p.add_peer(10, &p_peer);
+    assert!(p.can_open_browser());
+    assert_eq!(p.browser_target(&[]), Some(Some(10)));
+    assert_eq!(p.browser_target(&[10]), Some(Some(10)));
+
+    // A second peer without openBrowser (e.g. phone): cannot be targeted directly, while peer 10 still serves
+    p.add_peer(11, &peer_hello(&["toast"]));
+    assert_eq!(p.browser_target(&[11]), Some(Some(10)));
+
+    // Local window WITHOUT openBrowser (e.g. IntelliJ) becomes active: local sessions do NOT steal peer 10's browser,
+    // while peer 10's own sessions still target peer 10
+    let ide = window("/a", "en", false, &["toast"], json!({}));
+    p.add_window(20, &ide);
+    p.announce(p.set_active(Some(20)));
+    assert!(!p.can_open_browser());
+    assert_eq!(p.browser_target(&[20]), None);
+    assert_eq!(p.browser_target(&[10]), Some(Some(10)));
+
+    // Local window WITH openBrowser becomes active: local sessions target it, peer 10's sessions still target peer 10
+    let desktop = window("/b", "en", true, &["openBrowser"], json!({}));
+    p.add_window(21, &desktop);
+    p.announce(p.set_active(Some(21)));
+    assert_eq!(p.browser_target(&[]), Some(Some(21)));
+    assert_eq!(p.browser_target(&[10]), Some(Some(10)));
+    assert_eq!(p.browser_target(&[21, 10]), Some(Some(21)));
+
+    // Both local windows and peer 10 leave, leaving only non-browser peer 11: last's openBrowser does NOT route to peer 11
+    p.announce(p.set_active(None));
+    p.drop_wire(21);
+    p.drop_wire(20);
+    p.drop_wire(10);
+    assert!(!p.can_open_browser());
+    assert_eq!(p.browser_target(&[]), None);
+
+    // Peer 11 leaves too (no wires left): falls back to last (the disconnected desktop window), matching existing behaviour
+    p.drop_wire(11);
+    assert!(p.can_open_browser());
+    assert_eq!(p.browser_target(&[]), Some(None));
+    assert!(routed.lock().is_empty());
   }
 }

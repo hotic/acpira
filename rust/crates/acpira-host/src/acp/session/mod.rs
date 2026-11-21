@@ -391,6 +391,8 @@ pub struct AcpSession {
   settings_from: parking_lot::Mutex<Option<String>>,
   /// Who sent last since the running turn started: the next turn reads their settings (`sent_by`)
   next_from: parking_lot::Mutex<SentFrom>,
+  /// The wire (window or peer) that last drove this session, so `open_browser` returns to it even if the user switched away
+  last_wire: parking_lot::Mutex<Option<u64>>,
 }
 
 /// Where a turn came from, for the built-in agent settings the session reads from then on (`AcpSession::sent_by`).
@@ -580,6 +582,7 @@ impl AcpSession {
         plugin_offers: Default::default(),
         settings_from: parking_lot::Mutex::new(record.settings_from),
         next_from: Default::default(),
+        last_wire: Default::default(),
       }
     })
   }
@@ -605,6 +608,18 @@ impl AcpSession {
   /// last turn over SSH (`sent_by`)
   pub fn settings_from(&self) -> Option<String> {
     self.settings_from.lock().clone()
+  }
+
+  /// The wire (window or peer) that last drove this session, for routing `open_browser` back to it
+  pub fn last_wire(&self) -> Option<u64> {
+    *self.last_wire.lock()
+  }
+
+  /// Note the wire that started or sent to this session
+  pub fn set_last_wire(&self, wire: Option<u64>) {
+    if wire.is_some() {
+      *self.last_wire.lock() = wire;
+    }
   }
 
   /// "Whoever sends decides": a message sent from another machine makes the next turn read that machine's built-in agent

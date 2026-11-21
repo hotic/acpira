@@ -197,6 +197,7 @@ impl SessionManager {
       sink: Default::default(),
       shell,
       sent_from: Default::default(),
+      wire: Default::default(),
     });
     st.viewers.push(v.clone());
     let unseeded = st.categories.projects.is_none();
@@ -384,6 +385,7 @@ impl SessionManager {
       sink: Default::default(),
       shell: None,
       sent_from: parking_lot::Mutex::new(from),
+      wire: Default::default(),
     });
     self.dispatch(&v, m).await.map_err(|e| error_text(&e))
   }
@@ -439,6 +441,19 @@ impl SessionManager {
 
   pub(super) fn viewers_on(&self, id: &str, except: Option<&Viewer>) -> Vec<Arc<Viewer>> {
     self.viewers().into_iter().filter(|v| except.is_none_or(|e| e.id != v.id) && v.active_id().as_deref() == Some(id)).collect()
+  }
+
+  /// Wires currently viewing `id`, most recently attached first (deduplicated)
+  pub(super) fn session_wires(&self, id: &str) -> Vec<u64> {
+    let mut wires = Vec::new();
+    for v in self.viewers_on(id, None).into_iter().rev() {
+      if let Some(w) = v.wire()
+        && !wires.contains(&w)
+      {
+        wires.push(w);
+      }
+    }
+    wires
   }
 
   pub(crate) fn mark_dirty(&self, id: &str, running: bool) {

@@ -69,15 +69,17 @@ pub(super) fn roster_fingerprint(personas: &[acpira_shared::subagents::SubagentP
   if sidekick_alone { format!("{print}+sidekick") } else { print }
 }
 
-/// What a listing depends on besides the fixed tools: the roster (`roster_fingerprint`), the plugin tools in effect and
-/// the tool groups switched off. An unreachable hub offered none of them, which counts as empty
+/// What a listing depends on besides the fixed tools: the roster (`roster_fingerprint`), the plugin tools in effect,
+/// the tool groups switched off, and whether the serving shell offers `open_browser`. An unreachable hub offered none
+/// of them, which counts as empty
 pub(super) fn listing_print(
   roster: Option<&(Vec<acpira_shared::subagents::SubagentPersona>, Vec<acpira_shared::subagents::SubagentGroup>)>,
   plugins: Option<&(Vec<Value>, Vec<String>)>,
+  browser: bool,
 ) -> String {
   let roster = roster.map(|(p, g)| roster_fingerprint(p, g)).unwrap_or_else(|| roster_fingerprint(&[], &[]));
   let plugins = plugins.map(|p| serde_json::to_string(p).unwrap_or_default()).unwrap_or_default();
-  format!("{roster}\n{plugins}")
+  format!("{roster}\n{plugins}\n{browser}")
 }
 
 /// Claude Code waits for an MCP tool call far longer than a child round takes, and so does the built-in agent (client
@@ -304,7 +306,7 @@ impl Relay {
           continue;
         };
         failures = 0;
-        let print = listing_print(Some(&roster), relay.plugins().as_ref());
+        let print = listing_print(Some(&roster), relay.plugins().as_ref(), relay.features().browser);
         // A listing already in flight may still be told once more; that costs the client one identical tools/list
         let notify = relay.watch.state.lock().poll(print);
         if notify && !send(&json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" })) {

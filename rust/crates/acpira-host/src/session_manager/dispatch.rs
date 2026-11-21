@@ -89,6 +89,7 @@ impl SessionManager {
     let id = session_id.map(str::to_owned).or_else(|| v.active_id());
     if let Some(s) = id.and_then(|id| self.live(&id)) {
       s.sent_by(&v.sent_from());
+      s.set_last_wire(v.wire());
     }
   }
 
