@@ -316,7 +316,7 @@ async fn a_peer_reaches_the_hosts_engine_which_outlives_the_connection() {
   connections.dispose();
 }
 
-/// Remote run end to end on this engine's side: an agent `sshLocalAgents` does not name runs in the host's engine, whose sessions join the local list as
+/// Remote run end to end on this engine's side: an agent `sshLocalAgents` keeps on the host runs in the host's engine, whose sessions join the local list as
 /// `ssh://` folders, a new session in a folder there starts on the host and is shown here, and a rename goes there
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() {
@@ -334,6 +334,8 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   let dir = tempfile::tempdir().unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake).projects();
   opts.remote = Some(connections.clone());
+  // An installed external ACP runs here by default now; these cases test the host engine's run
+  opts.ssh_local_agents.lock().unwrap().insert("fake".into(), false);
   let m = crate::session_manager::Mgr::new(dir.path(), opts);
   m.init().await;
 
@@ -469,6 +471,8 @@ async fn a_host_edit_lost_in_flight_reports_an_unknown_outcome() {
   connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake).projects();
   opts.remote = Some(connections.clone());
+  // An installed external ACP runs here by default now; these cases test the host engine's run
+  opts.ssh_local_agents.lock().unwrap().insert("fake".into(), false);
   let m = crate::session_manager::Mgr::new(dir.path(), opts);
   m.init().await;
   m.handle(json!({ "type": "newSession", "agent": "fake", "cwd": folder })).await;
@@ -511,6 +515,8 @@ async fn a_new_session_page_in_a_host_folder_gets_the_hosts_models() {
   let dir = tempfile::tempdir().unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake).projects();
   opts.remote = Some(connections.clone());
+  // An installed external ACP runs here by default now; these cases test the host engine's run
+  opts.ssh_local_agents.lock().unwrap().insert("fake".into(), false);
   let m = crate::session_manager::Mgr::new(dir.path(), opts);
   m.init().await;
 
@@ -623,6 +629,8 @@ async fn switching_agents_replaces_an_empty_host_session() {
   let dir = tempfile::tempdir().unwrap();
   let mut opts = crate::session_manager::Opts::with_agents(agents, "fake").projects();
   opts.remote = Some(connections.clone());
+  // An installed external ACP runs here by default now; this case tests the host engine's run of both
+  opts.ssh_local_agents.lock().unwrap().extend([("fake".into(), false), ("fake2".into(), false)]);
   let m = crate::session_manager::Mgr::new(dir.path(), opts);
   m.init().await;
 
@@ -1083,7 +1091,8 @@ async fn remote_agent_open_browser_forwards_to_local_shell_with_remote_folder() 
   let target_url = format!("http://127.0.0.1:{port}/app?k=1");
   m.handle(json!({ "type": "send", "sessionId": id, "text": format!("mcp-call:open_browser {{\"url\":\"{target_url}\"}}") })).await;
   wait(&m, "remote open_browser reply", 30_000, || {
-    m.active().is_some_and(|v| v["status"] == "ready" && v["turns"].as_array().is_some_and(|t| t.len() >= 2))
+    // The host's view can list the new agent turn while the status still reads ready, so wait for the turn's own end
+    m.active().is_some_and(|v| v["status"] == "ready" && v["turns"][1]["stop"].is_string())
   })
   .await;
 
