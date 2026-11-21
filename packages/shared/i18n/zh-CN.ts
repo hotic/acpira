@@ -2008,7 +2008,7 @@ export const zhCN = {
   'settings.plugins.schedules': '定时任务',
   'settings.plugins.none': '还没有插件',
   'settings.plugins.noMatch': '没有匹配的插件',
-  'settings.plugins.builtinDesc': '直接调用模型，不用装 CLI',
+  'settings.plugins.builtinDesc': '自带智能体',
   'settings.plugins.officialCli': '{vendor} 官方 CLI',
   'settings.plugins.acpAgent': 'ACP 智能体',
   'settings.plugins.notInstalled': '未安装',

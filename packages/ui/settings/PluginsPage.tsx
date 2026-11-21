@@ -308,8 +308,9 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate
   onOpen: () => void;
   onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
 }) {
+  const builtin = a.id === BUILTIN_AGENT_ID;
   const vendor = VENDOR[a.id] ?? a.vendor;
-  const desc = a.id === BUILTIN_AGENT_ID ? t('settings.plugins.builtinDesc') : vendor ? t('settings.plugins.officialCli', { vendor }) : t('settings.plugins.acpAgent');
+  const desc = builtin ? t('settings.plugins.builtinDesc') : vendor ? t('settings.plugins.officialCli', { vendor }) : t('settings.plugins.acpAgent');
   const missing = a.available === false || inventory?.binary === null;
   const version = missing ? undefined : inventoryVersion(inventory);
   const versionStatus = missing ? 'settings.plugins.notInstalled' : inventory ? 'settings.fact.versionUnknown' : 'settings.agent.probing';
@@ -331,12 +332,15 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate
             title={last ? t('settings.agent.lastEnabled') : t('settings.agent.enabled', { agent: a.name })} />
         </span>
       </div>
-      {/* The version on the left, after Built in for the agent that ships inside Acpira; the gear alone on the right, so it
-          lines up across tiles whatever the version's length, its glyph on the switch's right edge */}
+      {/* The version on the left, after Built in for the agent that ships inside Acpira (which never shows a CLI probe or
+          unknown-version status beside Built in); the gear alone on the right, so it lines up across tiles whatever the
+          version's length, its glyph on the switch's right edge */}
       <div className="mt-auto flex h-(--tile-foot) items-center justify-between gap-gap border-t border-line px-pad">
         <span className="flex min-w-0 items-baseline gap-2 text-3 text-fg-3">
-          {a.id === BUILTIN_AGENT_ID && <span className="shrink-0">{t('settings.plugins.bundled')}</span>}
-          <span className={cn('truncate', version && 'font-mono tabular-nums')} title={version}>{version ?? t(versionStatus)}</span>
+          {builtin && <span className="shrink-0">{t('settings.plugins.bundled')}</span>}
+          {version
+            ? <span className="truncate font-mono tabular-nums" title={version}>{version}</span>
+            : !builtin && <span className="truncate">{t(versionStatus)}</span>}
         </span>
         <span data-no-drag className="-mr-ctl-sm-bleed flex shrink-0 items-center">
           {/* A newer pinned adapter: the update action beside the gear, its dot breathing like an unread session; while the
