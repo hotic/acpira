@@ -103,6 +103,11 @@ final class AppModel {
   /// noted is the whole allowance
   @ObservationIgnored var earlierFills: [String: Int] = [:]
   var path: [Route] = []
+  /// A session link opened before any paired computer's wire (the link launched the app): the first wire's model opens
+  /// it (RootView.followPairing)
+  @ObservationIgnored var linked: String?
+  /// A paired build's model before any wire (`init(blank:)`): it knows no session yet, so a link waits rather than fails
+  @ObservationIgnored private(set) var blank = false
   var toast: Toast?
   /// Folders added by hand, ahead of the ones sessions use
   var addedProjects: [String] = []
@@ -225,6 +230,7 @@ final class AppModel {
     accounts = []
     summaries = []
     views = [:]
+    blank = true
   }
 
   private init(demo options: LaunchOptions) {

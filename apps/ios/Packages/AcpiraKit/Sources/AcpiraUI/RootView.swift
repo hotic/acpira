@@ -201,6 +201,11 @@ public struct RootView: View {
       next.computer = computer.id
       if model.live, model.computer == computer.id { next.resume(from: model) }
       next.onClosed = { [weak pairing] in pairing?.connectionEnded(wire.endReason() ?? .offline, of: wire) }
+      // A session link that launched the app before any wire (AppModel.openLink): its chat now that one is up
+      if let id = model.linked {
+        model.linked = nil
+        if next.path.last != .chat(id) { next.path.append(.chat(id)) }
+      }
       // An opened notification from this computer: its chat over whatever the stack holds
       if let open = push.opening, open.computer == computer.id {
         push.opening = nil

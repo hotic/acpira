@@ -233,8 +233,9 @@ import WebKit
     web.navigationDelegate = coordinator
     coordinator.onPrompt = { prompts.append($0) }
     web.loadHTMLString(html, baseURL: nil)
-    // A cold simulator can take seconds to start the first web content process
-    for _ in 0..<300 where reported == 0 {
+    // A cold simulator under parallel test load can take tens of seconds to launch the first web content process
+    let deadline = ContinuousClock.now + .seconds(60)
+    while reported == 0, ContinuousClock.now < deadline {
       try? await Task.sleep(for: .milliseconds(50))
     }
     WidgetWebView.dismantleUIView(web, coordinator: coordinator)
@@ -271,5 +272,11 @@ import WebKit
     #expect(!m.openLink(try #require(URL(string: "https://example.com/session/\(id)"))))
     #expect(m.openLink(try #require(URL(string: "acpira://session/nope"))))
     #expect(m.toast != nil && m.path.count == 1)
+  }
+
+  @Test func aLinkBeforeAnyWireWaitsForIt() throws {
+    let m = AppModel(blank: LaunchOptions(fixture: "showcase", theme: nil, motion: false, locale: "en", screen: "list"))
+    #expect(m.openLink(try #require(URL(string: "acpira://session/abc"))))
+    #expect(m.toast == nil && m.path.isEmpty && m.linked == "abc")
   }
 }

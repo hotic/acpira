@@ -21,6 +21,12 @@ extension AppModel {
     }
     guard let id = SessionLinks.id(ofLink: url.absoluteString) else { return false }
     if path.last == .chat(id) { return true }
+    // Launched by the link before any computer's wire is up: the chat opens on the first wire instead of being called
+    // missing by a model that knows nothing yet
+    if blank {
+      linked = id
+      return true
+    }
     // The engine knows sessions this list may not show yet; the demo only its own
     guard live || views[id] != nil else {
       show(t("mobile.link.missing"), icon: .circleAlert)
