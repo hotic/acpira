@@ -168,4 +168,3 @@ export function currentRun(days: Map<number, UsageDay>, today: number): number {
   while (days.get(day)?.tokens) { n++; day = addDays(day, -1); }
   return n;
 }
-

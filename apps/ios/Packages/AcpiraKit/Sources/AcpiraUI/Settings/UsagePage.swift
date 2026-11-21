@@ -53,7 +53,7 @@ struct UsagePage: View {
       .readableWidth()
     }
     .background(Palette.formPage.ignoresSafeArea())
-    .navigationTitle(t("usagePage.title"))
+    .navigationTitle(t("settings.nav.usage"))
     .navigationBarTitleDisplayModeInline()
     .onAppear { model.loadUsage() }
   }

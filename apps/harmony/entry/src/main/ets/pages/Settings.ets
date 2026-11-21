@@ -416,7 +416,7 @@ export struct SettingsPage {
       }
       FormSection({ footer: this.model.supportsUsage ? '' : t('mobile.outdated') }) {
         ValueRow({
-          label: t('usagePage.title'), chevron: true, active: this.model.supportsUsage, tag: 'settings.usage',
+          label: t('settings.nav.usage'), chevron: true, active: this.model.supportsUsage, tag: 'settings.usage',
           onTap: () => this.routes.usage()
         })
       }

@@ -1101,7 +1101,7 @@ export struct UsagePage {
   }
 
   build() {
-    FormPage({ title: t('usagePage.title'), lead: this.lead, onBack: () => this.onBack() }) {
+    FormPage({ title: t('settings.nav.usage'), lead: this.lead, onBack: () => this.onBack() }) {
       Column({ space: UsageMetrics.sectionGap }) {
         if (this.model.usageView !== undefined) {
           this.body(this.model.usageView)

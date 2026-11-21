@@ -242,7 +242,7 @@ private struct UsageSettingsSection: View {
   var body: some View {
     Section {
       NavigationLink(value: SettingsRoute.usage) {
-        Text(web: t("usagePage.title"), paragraph: false)
+        Text(web: t("settings.nav.usage"), paragraph: false)
       }
       .disabled(!model.supportsUsage)
     } footer: {

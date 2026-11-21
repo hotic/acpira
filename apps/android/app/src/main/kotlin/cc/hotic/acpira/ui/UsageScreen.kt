@@ -108,7 +108,7 @@ fun UsageScreen(model: AppModel) {
     containerColor = Palette.formPage,
     topBar = {
       TopAppBar(
-        title = { Text(t("usagePage.title"), fontSize = Type.barTitle, fontWeight = FontWeight.SemiBold) },
+        title = { Text(t("settings.nav.usage"), fontSize = Type.barTitle, fontWeight = FontWeight.SemiBold) },
         navigationIcon = { LeadButton("usage.back") { model.pop() } },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.formPage),
       )

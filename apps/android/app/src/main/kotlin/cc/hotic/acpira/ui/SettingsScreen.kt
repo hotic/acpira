@@ -184,7 +184,7 @@ private fun UsageSettingsSection(model: AppModel) {
   val enabled = model.supportsUsage
   FormSection(null, footer = if (enabled) null else t("mobile.outdated")) {
     FormRow(
-      t("usagePage.title"),
+      t("settings.nav.usage"),
       Modifier.then(if (enabled) Modifier.clickable { model.push(cc.hotic.acpira.store.Screen.Usage) } else Modifier)
         .testTag("settings.usage"),
     ) {
