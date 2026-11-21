@@ -127,13 +127,45 @@ impl AcpSession {
     // The plugins' processes may change the list; Acpira's own server stays
     let mut servers = self.plugin_mcp(servers).await;
     {
-      let mut c = self.core.lock();
+      let c = self.core.lock();
       if !c.mcp_skip.is_empty() {
         servers.retain(|s| !c.mcp_skip.iter().any(|n| s.get("name").and_then(Value::as_str) == Some(n)));
         self.log(&format!("MCP left out after failing to start: {}", c.mcp_skip.join(", ")));
       }
-      c.mcp_sent = servers.iter().filter_map(|s| s.get("name").and_then(Value::as_str).map(str::to_owned)).collect();
     }
+    // Codex 0.170.0 rejects local stdio MCP servers when CODEX_EXEC_SERVER_URL replaces the local environment,
+    // while connecting directly from this machine to Streamable HTTP MCP entries (`remote::mcp_http`)
+    let servers = if self.local_run() == Some(crate::acp::local_run::LocalRun::Exec)
+      && self.remote_folder().is_some()
+      && caps.is_some_and(|c| c.http)
+    {
+      let log: crate::store::transcript_store::LogFn = {
+        let me = self.me.clone();
+        Arc::new(move |line: &str| {
+          if let Some(s) = me.upgrade() {
+            s.log(line);
+          }
+        })
+      };
+      match crate::remote::mcp_http::McpHttpBridge::rewrite(servers.clone(), self.process_cwd(), log).await {
+        Ok((rewritten, bridge, names)) => {
+          *self.mcp_bridge.lock() = bridge;
+          if !names.is_empty() {
+            self.log(&format!("remote: bridged stdio MCP over HTTP: {}", names.join(", ")));
+          }
+          rewritten
+        }
+        Err(e) => {
+          self.mcp_bridge.lock().take();
+          self.log(&format!("remote: could not start MCP HTTP bridge: {e:#}"));
+          servers.into_iter().filter(|s| crate::remote::mcp_http::stdio_spec(s).is_none()).collect()
+        }
+      }
+    } else {
+      self.mcp_bridge.lock().take();
+      servers
+    };
+    self.core.lock().mcp_sent = servers.iter().filter_map(|s| s.get("name").and_then(Value::as_str).map(str::to_owned)).collect();
     req["mcpServers"] = json!(servers);
     self.with_prompt_layers(&mut req, &self.agent);
     if let Some(id) = acp_id {
@@ -158,6 +190,7 @@ impl AcpSession {
   pub(crate) fn drop_process(&self, c: &mut Core) -> Option<BoxFuture<()>> {
     // Codex's exec-server on an SSH host ends with its CLI, also one that never came up
     self.exec_tunnel.lock().take();
+    self.mcp_bridge.lock().take();
     c.adapter_stale = false;
     let proc = c.proc.take()?;
     c.proc_gen += 1;

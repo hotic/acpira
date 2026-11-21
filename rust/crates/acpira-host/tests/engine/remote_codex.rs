@@ -178,3 +178,151 @@ async fn a_codex_session_opens_on_the_host_path_with_the_tunnel() {
   assert!(h.logs().iter().any(|l| l.contains("runs its tools on gen1") && !l.contains(&secret)), "logged without the secret: {:?}", h.logs());
   connections.dispose();
 }
+
+async fn http_post(port: u16, path: &str, auth: &str, sid: Option<&str>, body: &str) -> (u16, Option<String>, String) {
+  use tokio::io::AsyncBufReadExt;
+  let mut sock = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+  let mut req = format!(
+    "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: {auth}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
+    body.len()
+  );
+  if let Some(s) = sid {
+    req.push_str(&format!("Mcp-Session-Id: {s}\r\n"));
+  }
+  req.push_str("\r\n");
+  req.push_str(body);
+  sock.write_all(req.as_bytes()).await.unwrap();
+  let mut reader = tokio::io::BufReader::new(sock);
+  let mut status_line = String::new();
+  reader.read_line(&mut status_line).await.unwrap();
+  let status: u16 = status_line.split_whitespace().nth(1).unwrap().parse().unwrap();
+  let mut out_sid = None;
+  let mut content_len = 0usize;
+  loop {
+    let mut line = String::new();
+    reader.read_line(&mut line).await.unwrap();
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    if trimmed.is_empty() {
+      break;
+    }
+    let (k, v) = trimmed.split_once(':').unwrap();
+    if k.eq_ignore_ascii_case("mcp-session-id") {
+      out_sid = Some(v.trim().to_owned());
+    } else if k.eq_ignore_ascii_case("content-length") {
+      content_len = v.trim().parse().unwrap();
+    }
+  }
+  let mut buf = vec![0u8; content_len];
+  if content_len > 0 {
+    reader.read_exact(&mut buf).await.unwrap();
+  }
+  (status, out_sid, String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Under Codex SSH local run, stdio MCP servers (both Acpira's own `acpira` server and host `.mcp.json`
+/// stdio servers via `acpira mcp-host`) are bridged onto loopback Streamable HTTP endpoints that execute end to end,
+/// while external HTTP MCP entries pass through untouched.
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_ssh_local_run_bridges_stdio_mcp_servers_over_http() {
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let connections = host(&lab).await;
+  let codex = LocalCodex { version: VERSION.into(), package: Some(package(&lab)) };
+  drop(connections.codex.open(&connections, "gen1", &codex).await.unwrap());
+
+  let folder = lab.host_home().join("work-mcp");
+  std::fs::create_dir_all(&folder).unwrap();
+  // Project stdio MCP server on the fake SSH host, plus an external HTTP server that must pass through untouched
+  let host_script = folder.join("host-mcp.sh");
+  write_exec(
+    &host_script,
+    r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"host-tool","version":"1"}}}\n' "$id"
+      ;;
+    *'"method":"tools/call"'*)
+      id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"cwd=%s"}]}}\n' "$id" "$(pwd)"
+      ;;
+  esac
+done
+"#,
+  );
+  std::fs::write(
+    folder.join(".mcp.json"),
+    serde_json::to_string(&json!({
+      "mcpServers": {
+        "host-tool": { "command": "/bin/sh", "args": [host_script] },
+        "ext-http": { "type": "http", "url": "https://example.com/mcp" }
+      }
+    }))
+    .unwrap(),
+  )
+  .unwrap();
+
+  let logs = tempfile::tempdir().unwrap();
+  let mcp_trace = logs.path().join("mcp.log");
+  let binary = lab.path().join("pkg").join(vendor_rel()).join("bin/codex");
+  let mut h = Harness::for_agent(
+    &fake,
+    "codex",
+    json!({ "env": { "FAKE_MCP_TRACE": mcp_trace, "CODEX_PATH": binary } }),
+  );
+  h.deps.remote = Some(connections.clone());
+  let roster = Arc::new(acpira_host::relay::roster::Roster::new(h.dir.path()));
+  let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
+  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+
+  let s = Disposing(h.session(&format!("ssh://gen1{}", folder.display())));
+  s.start().await;
+  assert!(view(&s)["error"].is_null(), "{} {:?}", view(&s)["error"], h.logs());
+
+  let trace = std::fs::read_to_string(&mcp_trace).unwrap();
+  let line = trace.lines().find_map(|l| l.strip_prefix("new ")).expect("session/new mcp trace");
+  let servers: Vec<Value> = serde_json::from_str(line).unwrap();
+
+  let find = |name: &str| servers.iter().find(|e| e["name"] == name).unwrap_or_else(|| panic!("missing {name} in {servers:?}"));
+  let ext = find("ext-http");
+  assert_eq!(ext["type"], "http");
+  assert_eq!(ext["url"], "https://example.com/mcp");
+
+  // Both `acpira` and the remote `.mcp.json` stdio server `host-tool` are bridged over loopback HTTP
+  let parse_http = |entry: &Value| -> (u16, String, String) {
+    assert_eq!(entry["type"], "http", "expected bridged http entry: {entry}");
+    let url = entry["url"].as_str().unwrap();
+    let rest = url.strip_prefix("http://127.0.0.1:").expect("loopback http url");
+    let (p, tail) = rest.split_once('/').unwrap();
+    let auth = entry["headers"][0]["value"].as_str().unwrap().to_owned();
+    (p.parse().unwrap(), format!("/{tail}"), auth)
+  };
+
+  let (acpira_port, acpira_path, acpira_auth) = parse_http(find("acpira"));
+  let (st, sid, body) = http_post(acpira_port, &acpira_path, &acpira_auth, None, r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).await;
+  assert_eq!(st, 200, "acpira initialize: {body}");
+  let sid = sid.expect("Mcp-Session-Id");
+  let (st, _, body) = http_post(acpira_port, &acpira_path, &acpira_auth, Some(&sid), r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#).await;
+  assert_eq!(st, 200, "acpira tools/list: {body}");
+  let tools_json: Value = serde_json::from_str(&body).unwrap();
+  let tool_names: Vec<&str> = tools_json["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+  assert!(tool_names.contains(&"show_image") && tool_names.contains(&"workspace_hooks"), "tools: {tool_names:?}");
+
+  // Remote project stdio server runs on the host inside `folder` via `acpira mcp-host` -> RelayHub -> SSH helper
+  let (host_port, host_path, host_auth) = parse_http(find("host-tool"));
+  let (st, host_sid, body) = http_post(host_port, &host_path, &host_auth, None, r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).await;
+  assert_eq!(st, 200, "host-tool initialize: {body}");
+  let host_sid = host_sid.expect("host-tool Mcp-Session-Id");
+  let (st, _, body) = http_post(host_port, &host_path, &host_auth, Some(&host_sid), r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{}}}"#).await;
+  assert_eq!(st, 200, "host-tool tools/call: {body}");
+  let call_json: Value = serde_json::from_str(&body).unwrap();
+  let got = call_json["result"]["content"][0]["text"].as_str().unwrap();
+  let canon = std::fs::canonicalize(&folder).unwrap();
+  assert!(got.ends_with(&folder.display().to_string()) || got.ends_with(&canon.display().to_string()), "expected host cwd, got: {got}");
+
+  // Closing the session tears down the loopback bridge
+  drop(s);
+  crate::support::until(|| std::net::TcpStream::connect(("127.0.0.1", acpira_port)).is_err(), 5_000).await;
+  connections.dispose();
+}

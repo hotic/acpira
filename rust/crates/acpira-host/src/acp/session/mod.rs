@@ -381,6 +381,8 @@ pub struct AcpSession {
   pub(crate) loose_calls: parking_lot::Mutex<std::collections::HashMap<String, crate::acp::transport::cancel::Cancel>>,
   /// Codex in a folder on an SSH host: the way to its exec-server there, as long as its CLI runs (`remote_exec_env`)
   pub(crate) exec_tunnel: parking_lot::Mutex<Option<crate::remote::codex_exec::ExecTunnel>>,
+  /// Loopback Streamable HTTP bridge for stdio MCP servers under Codex SSH local run (`remote::mcp_http`)
+  pub(crate) mcp_bridge: parking_lot::Mutex<Option<crate::remote::mcp_http::McpHttpBridge>>,
   /// The `clientId`s of the actions the session ran, newest last (`claim_client_id`); saved with the record
   client_ids: parking_lot::Mutex<std::collections::VecDeque<String>>,
   /// The plugin host each card offered by `plugin_activate` came through, by card id (`plugin_card.rs`)
@@ -573,6 +575,7 @@ impl AcpSession {
         own_dirs: Default::default(),
         loose_calls: Default::default(),
         exec_tunnel: Default::default(),
+        mcp_bridge: Default::default(),
         client_ids: parking_lot::Mutex::new(record.client_ids.iter().cloned().collect()),
         plugin_offers: Default::default(),
         settings_from: parking_lot::Mutex::new(record.settings_from),
