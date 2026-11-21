@@ -116,3 +116,67 @@ describe('desktop list preferences', () => {
     expect(api.getState()).toEqual({ sessionListView: view, acpiraSessionId: 'current-session' });
   });
 });
+
+describe('touch pinch window zoom', () => {
+  function mountInit() {
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    const listeners = new Map<string, Array<(e: Record<string, unknown>) => void>>();
+    const window = {
+      top: undefined as unknown,
+      __TAURI_INTERNALS__: {
+        invoke: async (cmd: string, args: unknown) => { calls.push({ cmd, args }); },
+        transformCallback: () => 1,
+      },
+      __acpiraApi: undefined,
+    };
+    window.top = window;
+    runInNewContext(script.replace("'__ACPIRA_STATE_SCOPE__'", '""'), {
+      window, localStorage: storage(), sessionStorage: storage(), TextEncoder,
+      location: { protocol: 'acpira-app:', host: 'localhost' },
+      navigator: { platform: 'MacIntel' },
+      document: { addEventListener() {}, querySelectorAll: () => [], documentElement: {} },
+      addEventListener(type: string, fn: (e: Record<string, unknown>) => void) {
+        const list = listeners.get(type) ?? [];
+        list.push(fn);
+        listeners.set(type, list);
+      },
+      requestAnimationFrame: () => 0,
+      ResizeObserver: class { observe() {} unobserve() {} },
+      MutationObserver: class { observe() {} },
+    });
+    const emit = (type: string, event: Record<string, unknown>) => {
+      const ev = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...event };
+      for (const fn of listeners.get(type) ?? []) fn(ev);
+      return ev;
+    };
+    return { calls, emit };
+  }
+
+  it('steps window zoom on an unhandled touch display pinch', () => {
+    const { calls, emit } = mountInit();
+    emit('pointerdown', { timeStamp: 100 });
+    expect(emit('gesturestart', { timeStamp: 120, scale: 1 }).defaultPrevented).toBe(true);
+    emit('gesturechange', { timeStamp: 140, scale: 1.3 });
+    expect(emit('wheel', { timeStamp: 150 }).defaultPrevented).toBe(true);
+    emit('gestureend', { timeStamp: 160, scale: 1.3 });
+    expect(calls.filter(c => c.cmd === 'acpira_window')).toEqual([{ cmd: 'acpira_window', args: { op: 'zoomIn' } }]);
+  });
+
+  it('leaves a pinch alone when a page surface already prevented default on gesturestart', () => {
+    const { calls, emit } = mountInit();
+    emit('pointerdown', { timeStamp: 100 });
+    emit('gesturestart', { timeStamp: 120, scale: 1, defaultPrevented: true });
+    emit('gesturechange', { timeStamp: 140, scale: 1.5 });
+    expect(emit('wheel', { timeStamp: 150 }).defaultPrevented).toBe(false);
+    emit('gestureend', { timeStamp: 160, scale: 1.5 });
+    expect(calls.filter(c => c.cmd === 'acpira_window')).toEqual([]);
+  });
+
+  it('ignores trackpad pinches without a preceding press', () => {
+    const { calls, emit } = mountInit();
+    expect(emit('gesturestart', { timeStamp: 1000, scale: 1 }).defaultPrevented).toBe(false);
+    emit('gesturechange', { timeStamp: 1020, scale: 1.5 });
+    emit('gestureend', { timeStamp: 1040, scale: 1.5 });
+    expect(calls.filter(c => c.cmd === 'acpira_window')).toEqual([]);
+  });
+});

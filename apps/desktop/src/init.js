@@ -178,12 +178,13 @@
 
   // A pinch on a touch display: one View menu zoom step per quarter of scale, and the page under the fingers does not
   // scroll meanwhile. WebKit lets the fingers press the page first (pointerdown, then pointercancel) and a trackpad pinch
-  // never does, so a trackpad keeps WebKit's own behaviour
+  // never does, so a trackpad keeps WebKit's own behaviour. A page surface that owns the pinch (the image lightbox)
+  // prevents default on gesturestart and keeps the gesture to itself
   let pressedAt = -1e9;
   let pinch = null;
   addEventListener('pointerdown', e => { pressedAt = e.timeStamp; }, { capture: true, passive: true });
   addEventListener('gesturestart', e => {
-    if (e.timeStamp - pressedAt > 500) return;
+    if (e.defaultPrevented || e.timeStamp - pressedAt > 500) return;
     e.preventDefault();
     pinch = 1;
   });

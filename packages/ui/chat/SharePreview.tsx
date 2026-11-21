@@ -160,10 +160,10 @@ export function SharePreviewDialog({ payload, onClose }: {
     <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Popup
+          ref={zoom.surfaceRef}
           aria-label={t('share.title')}
           onClick={zoom.onBackdropClick(onClose)}
-          onWheel={zoom.onWheel}
-          className="absolute inset-0 z-40 flex items-center justify-center overflow-hidden bg-scrim p-page backdrop-blur-xs"
+          className="absolute inset-0 z-40 flex touch-none items-center justify-center overflow-hidden bg-scrim p-page backdrop-blur-xs"
         >
           {/* Capture source: laid out at the chat column width but never painted */}
           <div aria-hidden className="pointer-events-none invisible absolute inset-0 flex items-center justify-center p-page">
