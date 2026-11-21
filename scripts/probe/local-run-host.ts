@@ -56,7 +56,7 @@ const local = mkdtempSync(join(tmpdir(), 'acpira-local-run-cwd-'));
 // A built-in id whose launcher the entry repeats keeps its definition, with the entry's `localRun` over it
 const defs: Record<string, string> = { droid: 'droid', grok: 'grok', devin: 'devin', kimi: 'kimi', opencode: 'opencode', hermes: 'hermes', pi: 'pi-acp', dsh: 'dsh' };
 const agents = localRun || defs[agent] ? { [agent]: { command: defs[agent] ?? agent, localRun: localRun ? JSON.parse(localRun) as unknown : true } } : undefined;
-const host = await Host.start({ cwd: local, home: store, defaultAgent: agent, agents, settings: { sshLocalAgents: [agent] } });
+const host = await Host.start({ cwd: local, home: store, defaultAgent: agent, agents, settings: { sshLocalAgents: { [agent]: true } } });
 const m = await host.view();
 
 const cards: PermissionBlock[] = [];

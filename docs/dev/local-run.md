@@ -4,7 +4,7 @@ A CLI under local run in an `ssh://` folder (`remote.md`) keeps its login, model
 
 ## Contract
 
-- Every ACP agent can run here, the user's switch (`sshLocalAgents`) deciding. A built-in CLI has a profile (`local_run::builtin`), which wins over a custom entry of its id; any other agent gets the generic profile unless its entry says `localRun: false`. Withheld, whatever an entry says, and run in the host's engine: Pi, Hermes, Kimi Code (`withheld`, reasons below).
+- Every ACP agent can run here, `sshLocalAgents` (`id -> bool` override map, defaulting to on for installed external ACPs and off for uninstalled CLIs and the built-in agent) deciding. A built-in CLI has a profile (`local_run::builtin`), which wins over a custom entry of its id; any other agent gets the generic profile unless its entry says `localRun: false`. Withheld, whatever an entry says, and run in the host's engine: Pi, Hermes, Kimi Code (`withheld`, reasons below).
 - With the switch off a host folder never starts a session here: `new_session_for` refuses rather than fall back to this machine's login when the host's engine is not there to ask.
 - Stand-ins live under `<data root>/remote/`: `hosts/` for Claude Code (it keys sessions by folder), `antigravity/`, else `stand/<agent>/`. The pool warms the next process there, unless the profile adds launch arguments or environment.
 - Gates, strongest first: the native tools taken off the model's list (launch arguments, an environment's configuration, Claude's `disallowedTools`); a stand-in `PreToolUse` hook running `acpira tool-guard <agent>`; always, the engine refusing a native write or command's permission request (`stand::blocked_native`, ahead of full access).

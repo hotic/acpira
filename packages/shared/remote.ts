@@ -2,20 +2,49 @@
 // in every field that holds a folder (a session's cwd, the project list); the alias is the host's name in ~/.ssh/config (or
 // a typed `user@host:port`) and is the host's identity. Both sides run test/fixtures/remote-folders.json
 
+import { BUILTIN_AGENT_ID } from './providers';
+import type { SshLocalMap } from './settings';
+
 export const REMOTE_SCHEME = 'ssh://';
 
 /** The agents an engine from before `AgentInfo.sshLocal` lets run on this machine in a folder on an SSH host. A newer
  * engine says it per agent, from each definition's way there (rust acp/local_run) */
 export const SSH_LOCAL_AGENTS: readonly string[] = ['acpira', 'claude', 'antigravity', 'codex'];
 
-/** Whether an agent of this machine can run here in a folder on an SSH host, only its tools there. Which of those do is
- * the `sshLocalAgents` setting; every other agent, and these when off, runs in the host's own engine */
+/** Whether an agent of this machine can run here in a folder on an SSH host, only its tools there */
 export const canRunHere = (a: { id: string; sshLocal?: boolean }): boolean => a.sshLocal ?? SSH_LOCAL_AGENTS.includes(a.id);
 
-/** The `sshLocalAgents` setting narrowed to this machine's agents that can run here: a name of one that cannot (an
- * agents.json entry since removed) goes to the host like any other, as the engine routes it */
-export function sshLocalAgents(agents: readonly { id: string; sshLocal?: boolean }[], setting: readonly string[] | undefined): string[] {
-  return (setting ?? []).filter(id => agents.some(a => a.id === id && canRunHere(a)));
+/** Whether `agent` runs on this machine in an SSH host folder: requires `canRunHere`, then honours an explicit
+ * `sshLocalAgents[id]` override; otherwise installed external ACPs default to on, while the built-in agent and
+ * uninstalled CLIs default to off */
+export function runsHereOnSsh(
+  agent: { id: string; sshLocal?: boolean; available?: boolean },
+  setting: SshLocalMap | undefined,
+): boolean {
+  if (!canRunHere(agent)) return false;
+  if (setting && Object.hasOwn(setting, agent.id)) return setting[agent.id] === true;
+  return agent.id !== BUILTIN_AGENT_ID && agent.available === true;
+}
+
+/** Update `sshLocalAgents` for one toggle, dropping the entry when `on` matches the agent's automatic default */
+export function setSshLocal(
+  setting: SshLocalMap | undefined,
+  agent: { id: string; available?: boolean },
+  on: boolean,
+): SshLocalMap {
+  const next: SshLocalMap = { ...setting };
+  const auto = agent.id !== BUILTIN_AGENT_ID && agent.available === true;
+  if (on === auto) delete next[agent.id];
+  else next[agent.id] = on;
+  return next;
+}
+
+/** The agents that currently run on this machine in a folder on an SSH host, mirroring `SessionManager::runs_here_on_ssh` */
+export function sshLocalAgents(
+  agents: readonly { id: string; sshLocal?: boolean; available?: boolean }[],
+  setting: SshLocalMap | undefined,
+): string[] {
+  return agents.filter(a => runsHereOnSsh(a, setting)).map(a => a.id);
 }
 
 export interface RemoteFolder { alias: string; path: string }

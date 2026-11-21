@@ -163,9 +163,8 @@ async fn a_folder_on_an_ssh_host_is_a_project_in_one_spelling() {
   lab.map_root("/acpira-virtual-host", &real);
   let connections = lab.engine("engine");
   connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  // The fake agent runs here in a stand-in (`localRun`, `sshLocalAgents`), so the folder checks are this engine's
+  // An installed external ACP runs here in a stand-in by default (`localRun`, `sshLocalAgents`), so the folder checks are this engine's
   let mut opts = Opts::with_agents(fake.setting(json!({ "localRun": true })), "fake").cwd(&home).projects();
-  opts.ssh_local_agents.lock().unwrap().push("fake".into());
   opts.remote = Some(connections.clone());
   let m = Mgr::new(&dir.path().join("sessions"), opts);
   m.init().await;

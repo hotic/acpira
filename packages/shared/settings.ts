@@ -7,6 +7,10 @@ import { sanitizeKeybindings, type KeybindingMap } from './keybindings';
 // Long lists (Devin's 210 models) are trimmed to what is actually used via this; the option currently selected is never hidden
 export type HiddenMap = Record<AgentId, Record<string, string[]>>;
 
+// Explicit per-agent overrides for running an agent on this machine in an SSH host folder (`true` = here, `false` =
+// host; absent = automatic: on for installed external ACPs, off for the built-in agent and uninstalled CLIs)
+export type SshLocalMap = Record<AgentId, boolean>;
+
 // Which saved account takes over when the bound one runs out of quota (acpira.accountSwitch, one choice for every agent; default off):
 // the one whose nearest allowance window resets first, the one with the most allowance left, the next one in list order, or no automatic switch
 export type AccountSwitchStrategy = 'off' | 'earliestReset' | 'mostRemaining' | 'listOrder';
@@ -109,9 +113,10 @@ export interface SettingsView {
   notifySystem: boolean;
   // Agents whose Plan mode approves tool requests without a card (plan approvals and adapter safety asks still ask)
   planAutoApprove: AgentId[];
-  // Agents that run on this machine in a folder on an SSH host, only their tools on the host (SSH_LOCAL_AGENTS); the rest
-  // run in the host's own engine. None by default
-  sshLocalAgents: AgentId[];
+  // Explicit per-agent overrides for running an agent on this machine in an SSH host folder (`true` = here, `false` =
+  // host; absent = automatic: on for installed external ACPs whose definition supports local run, off for the built-in
+  // agent and uninstalled CLIs). Empty by default
+  sshLocalAgents: SshLocalMap;
   // Cross-harness subagents: kept in ~/.acpira/subagents.json (shared by every window and IDE), not a host setting
   subagents: SubagentPersona[];
   // Groups of those personas, summoned together (the same file's `groups`)
@@ -181,8 +186,8 @@ export const DEFAULT_SETTINGS: SettingsView = {
   notifySound: true,
   notifySystem: false,
   planAutoApprove: [],
-  // Every agent runs in the host's own engine until opted in: a session run here is a read-only copy on the host
-  sshLocalAgents: [],
+  // Installed external ACPs default to running here on SSH hosts; the built-in agent defaults to the host
+  sshLocalAgents: {},
   subagents: [],
   subagentGroups: [],
   agentCpuCap: AGENT_CPU_CAP.default,
@@ -253,8 +258,7 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
     case 'planAutoApprove':
       return idList(value) as SettingsView[K];
     case 'sshLocalAgents':
-      // Which agents can run here is each agent's (`canRunHere`), read where the list is used
-      return (Array.isArray(value) ? idList(value) : fallback) as SettingsView[K];
+      return sanitizeSshLocalAgents(value) as SettingsView[K];
     case 'subagents':
       return sanitizePersonas(value) as SettingsView[K];
     case 'proxy': {
@@ -273,6 +277,22 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
 function idList(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return [...new Set(v.filter((x): x is string => typeof x === 'string').map(x => x.trim()).filter(Boolean))];
+}
+
+// Explicit `agent -> boolean` map; a legacy opt-in array preserves only an explicit built-in `acpira` opt-in, since
+// installed external ACPs now default to running here automatically
+function sanitizeSshLocalAgents(v: unknown): SshLocalMap {
+  const out: SshLocalMap = {};
+  if (Array.isArray(v)) {
+    if (v.some(x => typeof x === 'string' && x.trim() === 'acpira')) out.acpira = true;
+    return out;
+  }
+  if (!v || typeof v !== 'object') return out;
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    const id = k.trim();
+    if (id && typeof raw === 'boolean') out[id] = raw;
+  }
+  return out;
 }
 
 function oneOf<T extends string>(v: unknown, list: readonly T[]): T | undefined {

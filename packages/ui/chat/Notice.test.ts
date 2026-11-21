@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agentsForFolder, pickFolderAgent } from '@acpira/shared/agentOrder';
-import { SSH_LOCAL_AGENTS, sshLocalAgents } from '@acpira/shared/remote';
+import { runsHereOnSsh, setSshLocal, SSH_LOCAL_AGENTS, sshLocalAgents } from '@acpira/shared/remote';
 import type { AgentInfo, AuthMethodInfo } from '@acpira/shared/transcript';
 import { setLocale } from '../i18n';
 import { Notice, type NoticeProps } from './Notice';
@@ -130,15 +130,29 @@ describe('SSH folder agent selection', () => {
     expect(pickFolderAgent(localAgents, 'antigravity', 'ssh://gen1/work', '/local/repo', undefined, SSH_LOCAL_AGENTS)).toBe('antigravity');
   });
 
-  it('narrows the setting to the agents the engine says can run here, an older engine by its fixed list', () => {
+  it('defaults installed external ACPs to local run while keeping uninstalled CLIs and built-in acpira on the host', () => {
     const newer: AgentInfo[] = [
-      { id: 'droid', name: 'Droid', sshLocal: true },
-      { id: 'claude', name: 'Claude Code', sshLocal: false },
-      { id: 'kimi', name: 'Kimi', sshLocal: false },
+      { id: 'acpira', name: 'Acpira', available: true, sshLocal: true },
+      { id: 'droid', name: 'Droid', available: true, sshLocal: true },
+      { id: 'grok', name: 'Grok', available: false, sshLocal: true },
+      { id: 'claude', name: 'Claude Code', available: true, sshLocal: false },
+      { id: 'kimi', name: 'Kimi', available: true, sshLocal: false },
     ];
-    expect(sshLocalAgents(newer, ['droid', 'claude', 'kimi'])).toEqual(['droid']);
-    expect(sshLocalAgents(localAgents, ['claude', 'kimi', 'gone'])).toEqual(['claude']);
-    expect(sshLocalAgents(localAgents, undefined)).toEqual([]);
+    // Default (empty overrides): installed external ACPs that can run here are on; uninstalled, withheld and built-in acpira stay off
+    expect(sshLocalAgents(newer, undefined)).toEqual(['droid']);
+    expect(sshLocalAgents(newer, {})).toEqual(['droid']);
+    // Explicit overrides turn an installed ACP off, or turn built-in acpira / an uninstalled ACP on; withheld agents still stay off
+    expect(sshLocalAgents(newer, { droid: false, acpira: true, grok: true, claude: true, kimi: true })).toEqual(['acpira', 'grok']);
+    // Older engines without AgentInfo.sshLocal fall back to SSH_LOCAL_AGENTS
+    expect(sshLocalAgents(localAgents, {})).toEqual(['claude', 'antigravity']);
+    expect(sshLocalAgents(localAgents, { claude: false, acpira: true, kimi: true, gone: true })).toEqual(['acpira', 'antigravity']);
+    // setSshLocal stores only deviations from each agent's automatic default
+    expect(setSshLocal({}, { id: 'droid', available: true }, false)).toEqual({ droid: false });
+    expect(setSshLocal({ droid: false }, { id: 'droid', available: true }, true)).toEqual({});
+    expect(setSshLocal({}, { id: 'acpira', available: true }, true)).toEqual({ acpira: true });
+    expect(setSshLocal({ acpira: true }, { id: 'acpira', available: true }, false)).toEqual({});
+    expect(runsHereOnSsh({ id: 'custom-acp', available: true, sshLocal: true }, {})).toBe(true);
+    expect(runsHereOnSsh({ id: 'custom-acp', available: false, sshLocal: true }, {})).toBe(false);
   });
 
   it('falls back when an agent is set to remote-run and missing on the SSH host, or defers to an unprobed host', () => {

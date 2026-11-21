@@ -144,8 +144,8 @@ pub struct ManagerDeps {
   pub compaction: Arc<dyn Fn() -> CompactionPolicy + Send + Sync>,
   /// Agents whose plan mode answers tool permission requests itself (`acpira.planAutoApprove`)
   pub plan_auto_approve: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
-  /// Agents that run here in a folder on an SSH host, the rest starting in the host's engine (`acpira.sshLocalAgents`)
-  pub ssh_local_agents: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+  /// Explicit per-agent overrides for running an agent here in a folder on an SSH host (`acpira.sshLocalAgents`)
+  pub ssh_local_agents: Arc<dyn Fn() -> acpira_shared::settings::SshLocalMap + Send + Sync>,
   pub hidden: Arc<dyn Fn() -> HiddenMap + Send + Sync>,
   pub scope: Arc<dyn Fn() -> String + Send + Sync>,
   /// Shared MCP servers handed to every session (`shared_config::mcp_provider`); None in tests that do not need them

@@ -92,4 +92,12 @@ describe('sanitizeSetting (appearance)', () => {
     expect(inWorkspace({ cwd: '/w/a/sub' }, '/w/a')).toBe(false);
     expect(inWorkspace({ cwd: '/w/b' }, '/w/a')).toBe(false);
   });
+
+  it('sshLocalAgents keeps explicit boolean overrides and migrates legacy arrays', () => {
+    expect(DEFAULT_SETTINGS.sshLocalAgents).toEqual({});
+    expect(sanitizeSetting('sshLocalAgents', undefined)).toEqual({});
+    expect(sanitizeSetting('sshLocalAgents', { ' claude ': false, acpira: true, bad: 'yes', '': true })).toEqual({ claude: false, acpira: true });
+    expect(sanitizeSetting('sshLocalAgents', ['claude', 'antigravity'])).toEqual({});
+    expect(sanitizeSetting('sshLocalAgents', ['acpira', 'antigravity'])).toEqual({ acpira: true });
+  });
 });

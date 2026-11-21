@@ -253,4 +253,30 @@ describe('built-in agent model sources', () => {
     }, 'sources'));
     expect(markup).toContain('aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"');
   });
+
+  it('defaults the SSH local-run switch on only for installed external ACPs and respects explicit overrides', () => {
+    const prev = (globalThis as { window?: unknown }).window;
+    (globalThis as { window?: unknown }).window = { __acpira: { shell: 'desktop' } };
+    const switchChecked = (agent: AgentInfo, sshLocalAgents: Record<string, boolean> = {}, tab: AgentTab = 'overview') => {
+      const markup = renderToStaticMarkup(page({
+        agent, accounts: [], settings: { ...DEFAULT_SETTINGS, sshLocalAgents },
+        env: { home: '/preview', cwd: '/preview/project' }, on: handlers,
+        providers: tab === 'behavior' ? state : undefined,
+      }, tab));
+      const m = markup.match(/aria-label="Run on this computer"[^>]*aria-checked="(true|false)"|aria-checked="(true|false)"[^>]*aria-label="Run on this computer"/);
+      return m ? (m[1] ?? m[2]) : undefined;
+    };
+    try {
+      expect(switchChecked({ id: 'antigravity', name: 'Antigravity', available: true, sshLocal: true })).toBe('true');
+      expect(switchChecked({ id: 'custom-acp', name: 'Custom', available: true, sshLocal: true })).toBe('true');
+      expect(switchChecked({ id: 'antigravity', name: 'Antigravity', available: false, sshLocal: true })).toBe('false');
+      expect(switchChecked({ id: 'antigravity', name: 'Antigravity', available: true, sshLocal: true }, { antigravity: false })).toBe('false');
+      expect(switchChecked({ id: 'acpira', name: 'Acpira', available: true, sshLocal: true }, {}, 'behavior')).toBe('false');
+      expect(switchChecked({ id: 'acpira', name: 'Acpira', available: true, sshLocal: true }, { acpira: true }, 'behavior')).toBe('true');
+      expect(switchChecked({ id: 'kimi', name: 'Kimi', available: true, sshLocal: false })).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete (globalThis as { window?: unknown }).window;
+      else (globalThis as { window?: unknown }).window = prev;
+    }
+  });
 });

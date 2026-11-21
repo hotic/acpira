@@ -10,6 +10,9 @@ use crate::transcript::AgentId;
 
 pub type HiddenMap = BTreeMap<AgentId, BTreeMap<String, Vec<String>>>;
 pub type KeybindingMap = BTreeMap<String, String>;
+/// Explicit per-agent overrides for running an agent on this machine in an SSH host folder (`true` = run here, `false` =
+/// run on the host; absent = automatic: on for installed external ACPs, off for the built-in agent and uninstalled CLIs)
+pub type SshLocalMap = BTreeMap<AgentId, bool>;
 
 pub const UI_FONT_SIZE: (i64, i64, i64) = (10, 20, 13);
 pub const CODE_FONT_SIZE: (i64, i64, i64) = (9, 20, 12);
@@ -96,11 +99,11 @@ pub struct SettingsView {
   /// Agents whose plan mode answers tool permission requests itself (plan approvals still ask)
   #[serde(default)]
   pub plan_auto_approve: Vec<AgentId>,
-  /// Agents that run on this machine in a folder on an SSH host, only their tools on the host; which agents can is each
-  /// definition's (`AgentInfo::ssh_local`), so a name of one that cannot is ignored where it is read. The rest run in the
-  /// host's own engine. None by default: a session run here is only a read-only copy on the host
-  #[serde(default = "default_ssh_local_agents")]
-  pub ssh_local_agents: Vec<AgentId>,
+  /// Explicit per-agent overrides for running an agent on this machine in an SSH host folder (`true` = here, `false` =
+  /// host; absent = automatic: on for installed external ACPs whose definition supports local run, off for the built-in
+  /// agent and uninstalled CLIs). Empty by default
+  #[serde(default, deserialize_with = "deserialize_ssh_local_agents")]
+  pub ssh_local_agents: SshLocalMap,
   /// Cross-harness subagents (`~/.acpira/subagents.json`, not a host setting: every window and IDE shares the file)
   #[serde(default)]
   pub subagents: Vec<crate::subagents::SubagentPersona>,
@@ -134,16 +137,29 @@ pub struct SettingsView {
   pub keybindings: KeybindingMap,
 }
 
-fn default_ssh_local_agents() -> Vec<AgentId> {
-  vec![]
+/// The `sshLocalAgents` setting: explicit `agent -> bool` overrides. A legacy opt-in array (`["acpira", "claude"]`)
+/// preserves only an explicit built-in `acpira` opt-in; installed external ACPs now run here automatically by default
+pub fn ssh_local_agents(value: &Value) -> SshLocalMap {
+  let mut out = SshLocalMap::new();
+  if let Some(obj) = value.as_object() {
+    for (k, v) in obj {
+      let id = k.trim();
+      if !id.is_empty()
+        && let Some(b) = v.as_bool()
+      {
+        out.insert(id.to_owned(), b);
+      }
+    }
+  } else if let Some(arr) = value.as_array()
+    && arr.iter().filter_map(Value::as_str).any(|s| s.trim() == "acpira")
+  {
+    out.insert("acpira".into(), true);
+  }
+  out
 }
 
-/// The `sshLocalAgents` setting: the agents it names, none when it is unset
-pub fn ssh_local_agents(value: &Value) -> Vec<AgentId> {
-  if !value.is_array() {
-    return default_ssh_local_agents();
-  }
-  id_list(value)
+fn deserialize_ssh_local_agents<'de, D: serde::Deserializer<'de>>(d: D) -> Result<SshLocalMap, D::Error> {
+  Ok(ssh_local_agents(&Value::deserialize(d)?))
 }
 
 fn default_agent_cpu_cap() -> i64 {
@@ -293,7 +309,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "desktopLayout" => Value::from(one_of(value, &DESKTOP_LAYOUTS, DEFAULT_DESKTOP_LAYOUT)),
     "panelScope" => Value::from(one_of(value, &PANEL_SCOPES, DEFAULT_PANEL_SCOPE)),
     "agentOrder" | "disabledAgents" | "planAutoApprove" => Value::from(id_list(value)),
-    "sshLocalAgents" => Value::from(ssh_local_agents(value)),
+    "sshLocalAgents" => serde_json::to_value(ssh_local_agents(value)).unwrap_or_else(|_| Value::Object(Default::default())),
     "subagents" => serde_json::to_value(crate::subagents::sanitize_personas(value)).unwrap_or(Value::Array(vec![])),
     "keybindings" => sanitize_keybindings(value),
     _ => Value::Null,
@@ -486,5 +502,18 @@ mod tests {
     assert_eq!(sanitize_setting("panelFiles", &Value::from(false)), Value::from(false));
     assert_eq!(sanitize_setting("panelFiles", &Value::Null), Value::from(true));
     assert!(is_shared_setting("panelFiles"));
+  }
+
+  #[test]
+  fn ssh_local_agents_accepts_override_map_and_migrates_legacy_array() {
+    use serde_json::json;
+    assert_eq!(sanitize_setting("sshLocalAgents", &Value::Null), json!({}));
+    assert_eq!(
+      sanitize_setting("sshLocalAgents", &json!({ " claude ": false, "acpira": true, "bad": "yes", "": true })),
+      json!({ "acpira": true, "claude": false }),
+    );
+    // Legacy opt-in arrays: installed external ACPs default on now, so only an explicit built-in opt-in carries over
+    assert_eq!(sanitize_setting("sshLocalAgents", &json!(["claude", "antigravity"])), json!({}));
+    assert_eq!(sanitize_setting("sshLocalAgents", &json!(["acpira", "antigravity"])), json!({ "acpira": true }));
   }
 }

@@ -52,6 +52,7 @@ import { imageMimeOf, stagedFileBlob } from '@acpira/shared/attachments';
 import { mediaKind } from '../panel/files';
 import { agentsForFolder, launchable, pickFolderAgent } from '@acpira/shared/agentOrder';
 import { canRunHere, parseRemoteFolder, sshLocalAgents } from '@acpira/shared/remote';
+import type { SshLocalMap } from '@acpira/shared/settings';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ProjectDialog } from './ProjectDialog';
 import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postWindowControl, useShellCommands, useShellToasts, useWindowLights } from '../desktop';
@@ -258,8 +259,8 @@ export interface ShellProps {
   shareEditorSelection?: boolean;
   // Settings `steerQueued` on an agent that can steer: a queued row's send button steers it into the running turn
   steerQueued?: boolean;
-  // Settings `sshLocalAgents`: the agents that run on this machine in a folder on an SSH host
-  sshLocalAgents?: string[];
+  // Settings `sshLocalAgents`: explicit per-agent overrides for running on this machine in an SSH host folder
+  sshLocalAgents?: SshLocalMap;
   // Settings → Subagents, the enabled ones: offered in the composer's @ list and summon menu
   personas?: MentionPersona[];
   sessions: SessionSummary[];

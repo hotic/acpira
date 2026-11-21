@@ -95,7 +95,7 @@ impl SettingsCenter {
       notify_sound: read("notifySound").as_bool().unwrap_or(true),
       notify_system: read("notifySystem").as_bool().unwrap_or(false),
       plan_auto_approve: list("planAutoApprove"),
-      ssh_local_agents: list("sshLocalAgents"),
+      ssh_local_agents: serde_json::from_value(read("sshLocalAgents")).unwrap_or_default(),
       subagents: self.deps.roster.list(),
       subagent_groups: self.deps.roster.groups(),
       agent_cpu_cap: read("agentCpuCap").as_i64().unwrap_or(acpira_shared::settings::AGENT_CPU_CAP.2),

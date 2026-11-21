@@ -1,6 +1,6 @@
 # SSH remote workspaces
 
-Remote folders over the system `ssh`. Local run keeps login and agent loop here and runs only tools on the host through a helper (`acpira remote --stdio`); remote run drives the host's own `acpira serve` as a peer. The agent picks, not the host: a new session in a host folder runs here when `sshLocalAgents` names its agent and it can (below), else on the host (`session_manager/hosts/actions.rs` `host_action`). It names none by default: only a host-run session is the host's own, live on every engine there; one run here reaches the host as a standby record copy, promoted only on execution there. Either way a host folder has one session history, the host's own store. Code: `rust/crates/acpira-host/src/remote/`.
+Remote folders over the system `ssh`. Local run keeps login and agent loop here and runs only tools on the host through a helper (`acpira remote --stdio`); remote run drives the host's own `acpira serve` as a peer. The agent picks, not the host: a new session in a host folder runs here when `runs_here_on_ssh` holds (`session_manager/hosts/actions.rs`), else on the host (`host_action`). `sshLocalAgents` is a per-agent `id -> bool` override map: absent entries default to on for installed external ACPs whose definition carries a `LocalRun`, and off for uninstalled CLIs and the built-in agent (a legacy array preserves only an explicit `acpira` opt-in). Only a host-run session is the host's own, live on every engine there; one run here reaches the host as a standby record copy, promoted only on execution there. Either way a host folder has one session history, the host's own store. Code: `rust/crates/acpira-host/src/remote/`.
 
 ## Transport
 
@@ -35,7 +35,7 @@ OpenSSH behaviour the code relies on (OpenSSH 10.3 client, Ubuntu and macOS serv
 
 ## Built-in agent
 
-An agent runs here in an `ssh://` folder only when `sshLocalAgents` names it and its definition carries a `LocalRun` (`acp/local_run/mod.rs`, shown to pages as `AgentInfo.sshLocal`); else it runs on the host, or fails with `host.remoteBuiltinOnly`. Engine side `acp/session/remote.rs`, agent side `acpira_agent::remote`.
+An agent runs here in an `ssh://` folder only when `runs_here_on_ssh` holds (`sshLocalAgents` override or installed external CLI) and its definition carries a `LocalRun` (`acp/local_run/mod.rs`, shown to pages as `AgentInfo.sshLocal`); else it runs on the host, or fails with `host.remoteBuiltinOnly`. Engine side `acp/session/remote.rs`, agent side `acpira_agent::remote`.
 
 - Session requests carry the host path as `cwd` and `_meta["acpira/remote"] = { alias, places }`; prompt files, commands and skills come only from `places`, never this disk.
 - File and command tools go to the host as `_acpira/remoteTool` and run in the helper with the same `acpira_agent::tools` code. Paths under the local data root (session outputs, plan, staged attachments) stay local.

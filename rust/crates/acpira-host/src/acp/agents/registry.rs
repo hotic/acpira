@@ -714,6 +714,11 @@ impl AgentRegistry {
     self.defs.get(id)
   }
 
+  /// Whether `id`'s executable was found on the last probe (`None` before the first probe finishes)
+  pub fn available(&self, id: &str) -> Option<bool> {
+    self.probed.load(Ordering::Acquire).then(|| self.resolved.lock().contains_key(id))
+  }
+
   /// Find the executable; a lookup that flips availability notifies subscribers like a full probe would
   /// Drop the path `id` was last found at, so the next lookup searches anew: an install may have put a newer copy
   /// earlier in the search order while the old one stays where it was

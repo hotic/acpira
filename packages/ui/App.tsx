@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, AgentInstallProgress, DetectedAgent, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@acpira/shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
-import type { HiddenMap, PanelScope, SettingKey, SettingsView } from '@acpira/shared/settings';
+import type { HiddenMap, PanelScope, SettingKey, SettingsView, SshLocalMap } from '@acpira/shared/settings';
+import { runsHereOnSsh, setSshLocal } from '@acpira/shared/remote';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import { isLocale, resolveLocale, type Locale } from '@acpira/shared/i18n/core';
 import { reuse, reuseById } from '@acpira/shared/reuse';
@@ -498,17 +499,21 @@ export function App() {
   }, [view, page, controls, personaAgents]);
 
 
-  // "Run it on this computer" from a session in a folder on an SSH host: the agent joins `sshLocalAgents`, then a new
-  // session starts in the same folder once the engine's settings say so, since it routes new sessions by that setting
-  const sshLocal = useRef<string[]>(undefined);
+  // "Run it on this computer" from a session in a folder on an SSH host: update `sshLocalAgents`, then start a new
+  // session in the same folder once the engine's settings say so, since it routes new sessions by that setting
+  const sshLocal = useRef<SshLocalMap>(undefined);
   sshLocal.current = settings?.sshLocalAgents;
+  const agentsRef = useRef<AgentInfo[]>([]);
+  agentsRef.current = agents;
   const runHerePending = useRef<{ agent: string; cwd: string }>(undefined);
   useEffect(() => {
     const want = runHerePending.current;
-    if (!want || !settings?.sshLocalAgents.includes(want.agent)) return;
+    if (!want || !settings) return;
+    const info = agents.find(a => a.id === want.agent);
+    if (!info || !runsHereOnSsh(info, settings.sshLocalAgents)) return;
     runHerePending.current = undefined;
     post({ type: 'newSession', agent: want.agent, cwd: want.cwd });
-  }, [settings]);
+  }, [settings, agents]);
 
   const on = useMemo<ShellHandlers>(() => ({
     editTurn,
@@ -553,7 +558,8 @@ export function App() {
     unlockCredentials: agent => post({ type: 'unlockCredentials', sessionId: activeId.current, agent }),
     runHere: (agent, cwd) => {
       runHerePending.current = { agent, cwd };
-      post({ type: 'setSetting', key: 'sshLocalAgents', value: [...(sshLocal.current ?? []).filter(a => a !== agent), agent] });
+      const info = agentsRef.current.find(a => a.id === agent) ?? { id: agent };
+      post({ type: 'setSetting', key: 'sshLocalAgents', value: setSshLocal(sshLocal.current, info, true) });
     },
     compact: () => post({ type: 'compact', sessionId: activeId.current }),
     login: methodId => post({ type: 'login', sessionId: activeId.current, methodId }),

@@ -5,7 +5,7 @@ import type { AccountAction, AgentInstallProgress } from '@acpira/shared/protoco
 import { inventoryVersion, type AgentHealthStage, type AgentInventory, type InventoryFile, type InventoryMcp, type InventoryScope, type InventorySkill } from '@acpira/shared/inventory';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
-import { canRunHere } from '@acpira/shared/remote';
+import { canRunHere, runsHereOnSsh, setSshLocal } from '@acpira/shared/remote';
 import { familyLabel, isFastControl, isReasoningControl, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_FAST_CATEGORY } from '@acpira/shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
@@ -414,10 +414,8 @@ function PermissionsSection({ agent, settings, on }: { agent: AgentInfo; setting
 const SSH_LOCAL_DESC: Record<string, MsgKey> = { acpira: 'settings.agent.sshLocal.descBuiltin' };
 function SshHostSection({ agent, settings, on }: { agent: AgentInfo; settings: SettingsView; on: SettingsHandlers }) {
   if (!canRunHere(agent) || !remoteOffered()) return null;
-  const enabled = settings.sshLocalAgents.includes(agent.id);
-  const toggle = (v: boolean) => on.setSetting('sshLocalAgents', v
-    ? [...settings.sshLocalAgents, agent.id]
-    : settings.sshLocalAgents.filter(id => id !== agent.id));
+  const enabled = runsHereOnSsh(agent, settings.sshLocalAgents);
+  const toggle = (v: boolean) => on.setSetting('sshLocalAgents', setSshLocal(settings.sshLocalAgents, agent, v));
   return (
     <Section title={t('settings.agent.sshHosts')} desc={t('settings.agent.sshHosts.desc')}>
       <Field label={t('settings.agent.sshLocal')} desc={t(SSH_LOCAL_DESC[agent.id] ?? 'settings.agent.sshLocal.descClaude')}>

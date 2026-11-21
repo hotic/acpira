@@ -46,7 +46,7 @@ console.log(`host ${alias} (${hostname}) project ${project}, code word ${word}`)
 const store = mkdtempSync(join(tmpdir(), 'acpira-remote-codex-store-'));
 copyFileSync(join(homedir(), '.acpira', 'connections.json'), join(store, 'connections.json'));
 const local = mkdtempSync(join(tmpdir(), 'acpira-remote-codex-cwd-'));
-const host = await Host.start({ cwd: local, home: store, defaultAgent: 'codex', settings: { sshLocalAgents: ['codex'] } });
+const host = await Host.start({ cwd: local, home: store, defaultAgent: 'codex', settings: { sshLocalAgents: { codex: true } } });
 const m = await host.view();
 
 const cards: PermissionBlock[] = [];

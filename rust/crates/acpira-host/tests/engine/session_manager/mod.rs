@@ -49,9 +49,8 @@ pub struct Opts {
   pub hidden: HiddenMap,
   pub local_accounts: Option<Arc<LocalAccounts>>,
   pub accounts: Option<Arc<acpira_host::accounts::account_manager::AccountManager>>,
-  /// Agents that run here in a folder on an SSH host (`sshLocalAgents`); both that can by default, as the tests of their
-  /// tools on a host expect
-  pub ssh_local_agents: Arc<Mutex<Vec<String>>>,
+  /// Explicit per-agent overrides for running an agent here in a folder on an SSH host (`sshLocalAgents`)
+  pub ssh_local_agents: Arc<Mutex<acpira_shared::settings::SshLocalMap>>,
   /// SSH hosts for `ssh://` folders (`remote_connections::Lab`)
   pub remote: Option<Arc<acpira_host::remote::connections::Connections>>,
   /// The plugins' resident processes the manager's sessions report to
@@ -75,7 +74,7 @@ impl Opts {
       hidden: HiddenMap::default(),
       local_accounts: None,
       accounts: None,
-      ssh_local_agents: Arc::new(Mutex::new(vec!["acpira".into(), "claude".into()])),
+      ssh_local_agents: Arc::new(Mutex::new(Default::default())),
       remote: None,
       plugin_runtime: None,
     }
