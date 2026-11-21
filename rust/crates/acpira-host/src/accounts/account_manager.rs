@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow};
 
 use acpira_shared::transcript::{AccountInfo, AccountQuota, AccountQuotaIssue, StrMap};
 
-use super::account_store::AccountStore;
+use super::account_store::{AccountCredential, AccountDraft, AccountStore};
 use super::cli_home::{LOCAL_LOGIN, poll_until};
 use super::plugin_accounts::{self, PluginAccount};
 use super::provider::{AccountProvider, QuotaRead, QuotaTokenExpired};
@@ -543,7 +543,12 @@ impl AccountManager {
     toast_key: &str,
   ) -> Result<AccountInfo> {
     let local = draft.secret == LOCAL_LOGIN;
-    let a = self.store.add(agent, draft).await?;
+    let p = self.providers.get(agent).cloned();
+    let adopt = p.as_ref().filter(|_| local).and_then(|p| p.adopt_local(draft.label.clone()));
+    let a = match (p, adopt) {
+      (Some(p), Some(adopt)) => self.store_adopted(&p, agent, adopt, draft.detail).await?,
+      _ => self.store.add(agent, draft).await?,
+    };
     if local {
       // Imported on purpose: the automatic import may keep it up to date again
       let _ = self.store.set_dismissed(agent, &a.label, false).await;
@@ -553,6 +558,38 @@ impl AccountManager {
     self.emit();
     // Quota is decoration: do not wait on the vendor before the row appears
     tokio::spawn(self.refresh_quota(&a.id, false));
+    Ok(a)
+  }
+
+  /// Store a draft `adopt_local` made, under its label: an account with that label keeps its id and moves to the new
+  /// home, whose predecessor goes; the new home goes again when the store refuses it
+  async fn store_adopted(
+    &self,
+    p: &Arc<dyn AccountProvider>,
+    agent: &str,
+    adopt: BoxFuture<Result<AccountDraft>>,
+    detail: Option<String>,
+  ) -> Result<AccountInfo> {
+    let draft = AccountDraft { detail, ..adopt.await? };
+    let made = AccountCredential { secret: draft.secret.clone(), meta: draft.meta.clone() };
+    let before = match self.store.list(Some(agent)).into_iter().find(|a| a.label == draft.label) {
+      Some(a) => self.store.credential(&a.id).await.ok().flatten(),
+      None => None,
+    };
+    let a = match self.store.add(agent, draft).await {
+      Ok(a) => a,
+      Err(e) => {
+        if let Some(f) = p.forget(made) {
+          f.await;
+        }
+        return Err(e);
+      }
+    };
+    if let Some(old) = before.filter(|c| c.secret != LOCAL_LOGIN && c.secret != made.secret)
+      && let Some(f) = p.forget(old)
+    {
+      f.await;
+    }
     Ok(a)
   }
 
@@ -570,7 +607,8 @@ impl AccountManager {
   /// (`auto_import`): a login appears as an account, a re-login as another identity renames that account (the CLI
   /// store it points at now holds the new one), the plan of the same identity follows the quota read, and nothing happens when the login is gone, when an account with that
   /// label already exists (e.g. the same identity in a private home) or when the user removed it (`dismissed`, cleared
-  /// by importing it again)
+  /// by importing it again). A provider that moves local logins out (`adopt_local`) gets a new account for each new
+  /// identity instead of a rename, and the one it replaced keeps its own, signed out
   pub async fn sync_local(self: &Arc<Self>, agent: Option<&str>) {
     let _serial = self.syncing.lock().await;
     // Same moments as the local login: startup, window focus, an account view refreshing
@@ -586,28 +624,39 @@ impl AccountManager {
       let local = self.local_account(&agent).await;
       let same_label = self.store.list(Some(&agent)).into_iter().find(|a| a.label == draft.label);
       let result = match (same_label, local) {
-        // Same identity: the plan is the quota read's to update (the local store may keep the login-time plan, Claude
-        // Code's credentials do), so a known detail is never overwritten from here, only a missing one filled in
-        (Some(a), Some(l)) if a.id == l.id => {
-          if a.detail.is_some() || draft.detail.is_none() {
-            continue;
+        (Some(a), Some(l)) if a.id == l.id => match p.adopt_local(a.label.clone()) {
+          // An account an earlier build left on the CLI's store moves to a home of its own, keeping its id
+          Some(adopt) => {
+            (self.log)(&format!("account local login moved to its own home: {agent} {}", a.label));
+            self.store_adopted(&p, &agent, adopt, a.detail.clone()).await.map(|a| a.id)
           }
-          self.store.set_detail(&a.id, draft.detail.clone()).await.map(|_| a.id)
-        }
+          // Same identity: the plan is the quota read's to update (the local store may keep the login-time plan, Claude
+          // Code's credentials do), so a known detail is never overwritten from here, only a missing one filled in
+          None => {
+            if a.detail.is_some() || draft.detail.is_none() {
+              continue;
+            }
+            self.store.set_detail(&a.id, draft.detail.clone()).await.map(|_| a.id)
+          }
+        },
         (Some(_), _) => continue,
-        (None, Some(l)) => {
-          (self.log)(&format!("account local login changed: {agent} {} → {}", l.label, draft.label));
-          self.forget_quota(&l.id).await;
-          self.store.set_identity(&l.id, &draft.label, draft.detail.clone()).await.map(|_| l.id)
-        }
-        (None, None) => {
-          let label = draft.label.clone();
-          let added = self.store.add(&agent, draft).await.map(|a| a.id);
-          if added.is_ok() {
-            (self.log)(&format!("account local login picked up: {agent} {label}"));
+        (None, Some(l)) => match p.adopt_local(l.label.clone()) {
+          // The CLI's store holds someone else now: the account keeps its identity in a home of its own, signed out
+          // until it signs in again, and the new login is picked up beside it
+          Some(adopt) => {
+            (self.log)(&format!("account local login changed: {agent} {} → {}; the account keeps its identity, signed out", l.label, draft.label));
+            match self.store_adopted(&p, &agent, adopt, l.detail.clone()).await {
+              Ok(_) => self.pick_up_local(&p, &agent, draft).await,
+              Err(e) => Err(e),
+            }
           }
-          added
-        }
+          None => {
+            (self.log)(&format!("account local login changed: {agent} {} → {}", l.label, draft.label));
+            self.forget_quota(&l.id).await;
+            self.store.set_identity(&l.id, &draft.label, draft.detail.clone()).await.map(|_| l.id)
+          }
+        },
+        (None, None) => self.pick_up_local(&p, &agent, draft).await,
       };
       match result {
         Ok(id) => {
@@ -617,6 +666,19 @@ impl AccountManager {
         Err(e) => (self.log)(&format!("account local login {agent}: {e}")),
       }
     }
+  }
+
+  /// A local login no account stands for yet becomes one, in a home of its own where the provider moves it there
+  async fn pick_up_local(&self, p: &Arc<dyn AccountProvider>, agent: &str, draft: AccountDraft) -> Result<String> {
+    let label = draft.label.clone();
+    let added = match p.adopt_local(label.clone()) {
+      Some(adopt) => self.store_adopted(p, agent, adopt, draft.detail).await,
+      None => self.store.add(agent, draft).await,
+    };
+    if added.is_ok() {
+      (self.log)(&format!("account local login picked up: {agent} {label}"));
+    }
+    added.map(|a| a.id)
   }
 
   pub async fn import(self: &Arc<Self>, agent: &str) -> Result<Option<AccountInfo>> {
@@ -1079,5 +1141,104 @@ mod plugin_account_tests {
     m.remove("plugin:demo:r1").await.unwrap();
     assert_eq!(asked.lock().clone(), Some(("demo".into(), "r1".into(), "codex".into())));
     assert!(m.get("plugin:demo:r1").is_none());
+  }
+}
+
+#[cfg(test)]
+mod adopt_tests {
+  use super::*;
+  use crate::accounts::account_store::FileVault;
+  use crate::accounts::provider::LoginFlow;
+  use std::path::{Path, PathBuf};
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  /// A CLI whose local login is copied out: each adoption is a folder under `homes`, holding `login` when the local
+  /// login was the adopted label's at the time
+  struct Adopting {
+    local: parking_lot::Mutex<Option<String>>,
+    homes: PathBuf,
+    seq: AtomicUsize,
+  }
+
+  impl AccountProvider for Adopting {
+    fn agent(&self) -> &str {
+      "antigravity"
+    }
+    fn import_local(&self) -> BoxFuture<Option<AccountDraft>> {
+      let label = self.local.lock().clone();
+      Box::pin(async move { label.map(|label| AccountDraft { label, detail: None, secret: LOCAL_LOGIN.into(), meta: None }) })
+    }
+    fn auto_import(&self) -> bool {
+      true
+    }
+    fn adopt_local(&self, label: String) -> Option<BoxFuture<Result<AccountDraft>>> {
+      let home = self.homes.join(self.seq.fetch_add(1, Ordering::SeqCst).to_string());
+      let signed_in = self.local.lock().as_deref() == Some(label.as_str());
+      Some(Box::pin(async move {
+        std::fs::create_dir_all(&home)?;
+        if signed_in {
+          std::fs::write(home.join("login"), &label)?;
+        }
+        Ok(AccountDraft { label, detail: None, secret: home.to_string_lossy().into_owned(), meta: None })
+      }))
+    }
+    fn forget(&self, cred: AccountCredential) -> Option<BoxFuture<()>> {
+      Some(Box::pin(async move {
+        let _ = std::fs::remove_dir_all(cred.secret);
+      }))
+    }
+    fn login(&self) -> BoxFuture<Result<LoginFlow>> {
+      Box::pin(async { Err(anyhow!("no login here")) })
+    }
+  }
+
+  #[tokio::test]
+  async fn a_local_login_moves_to_a_home_of_its_own_and_another_identity_never_takes_the_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let log: LogFn = Arc::new(|_| {});
+    let vault = Arc::new(FileVault::new(dir.path().join("secrets.json"), log.clone()));
+    let store = Arc::new(AccountStore::new(dir.path().join("accounts.json"), vault, log.clone()));
+    store.load().await.unwrap();
+    let on_cli = |label: &str| AccountDraft { label: label.into(), detail: None, secret: LOCAL_LOGIN.into(), meta: None };
+    // An earlier build left the account on the CLI's store
+    let me = store.add("antigravity", on_cli("me@x.io")).await.unwrap();
+    let p = Arc::new(Adopting { local: Some("me@x.io".to_owned()).into(), homes: dir.path().join("homes"), seq: AtomicUsize::new(0) });
+    let m = AccountManager::new(store.clone(), vec![p.clone()], log, Arc::new(|_, _, _, _| {}), Arc::new(|_, _| {}));
+    let secret = async |id: &str| store.credential(id).await.unwrap().unwrap().secret;
+    let labels = || {
+      let mut l: Vec<String> = m.list().into_iter().map(|a| a.label).collect();
+      l.sort();
+      l
+    };
+
+    // Moved, signed in, keeping its id; settled after that
+    m.sync_local(None).await;
+    let home = secret(&me.id).await;
+    assert!(home != LOCAL_LOGIN && Path::new(&home).join("login").exists());
+    m.sync_local(None).await;
+    assert_eq!((secret(&me.id).await, labels()), (home.clone(), vec!["me@x.io".to_owned()]));
+
+    // The app signs in as someone else: a new account beside it, never a rename
+    *p.local.lock() = Some("other@x.io".to_owned());
+    m.sync_local(None).await;
+    assert_eq!(labels(), ["me@x.io", "other@x.io"]);
+    assert_eq!((m.get(&me.id).unwrap().label, secret(&me.id).await), ("me@x.io".to_owned(), home.clone()));
+
+    // One still on the CLI's store whose identity is gone from it: kept, in a home of its own, signed out
+    let stale = store.add("antigravity", on_cli("stale@x.io")).await.unwrap();
+    *p.local.lock() = Some("third@x.io".to_owned());
+    m.reload().await;
+    m.sync_local(None).await;
+    assert_eq!(labels(), ["me@x.io", "other@x.io", "stale@x.io", "third@x.io"]);
+    let stale_home = secret(&stale.id).await;
+    assert!(stale_home != LOCAL_LOGIN && Path::new(&stale_home).is_dir() && !Path::new(&stale_home).join("login").exists());
+
+    // Importing on purpose again replaces the copy and drops the one it replaced
+    let third = m.list().into_iter().find(|a| a.label == "third@x.io").unwrap();
+    let first_copy = secret(&third.id).await;
+    let again = m.import("antigravity").await.unwrap().unwrap();
+    assert_eq!(again.id, third.id);
+    let copy = secret(&third.id).await;
+    assert!(copy != first_copy && Path::new(&copy).join("login").exists() && !Path::new(&first_copy).exists());
   }
 }

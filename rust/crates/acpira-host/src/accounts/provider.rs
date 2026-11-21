@@ -57,6 +57,14 @@ pub trait AccountProvider: Send + Sync {
   fn auto_import(&self) -> bool {
     false
   }
+  /// A private home for the account standing for the CLI's own login under `label`, for a CLI whose own store the
+  /// vendor's desktop app signs in with too (Antigravity): an agent process on that store writes the token it holds back
+  /// on every refresh, signing the app out whenever the two hold different identities. The local login is copied in
+  /// when it is still `label`'s, otherwise the home stays signed out until that account signs in again; the draft's
+  /// secret is the home. None keeps local logins in the CLI's store (`LOCAL_LOGIN`). Nothing happens until awaited
+  fn adopt_local(&self, _label: String) -> Option<BoxFuture<Result<AccountDraft>>> {
+    None
+  }
   fn login(&self) -> BoxFuture<Result<LoginFlow>>;
   /// Whether a pasted API key can stand for an account (`key_account`), beside the terminal login
   fn accepts_keys(&self) -> bool {

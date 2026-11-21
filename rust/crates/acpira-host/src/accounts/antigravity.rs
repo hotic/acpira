@@ -9,8 +9,11 @@
 //! turns it into the flag. The account's gemini dir owns the token file and `antigravity-cli/cache` (the sign-in method
 //! and the account's default project); every other entry links into the regular ~/.gemini, so conversations, settings,
 //! skills and MCP config stay one store and a switched session loads its own conversation. The local login keeps the
-//! keyring and the regular dir. `agy` refreshes its tokens in place; Acpira only reads the email. Windows takes the
-//! same variables and keeps the file the same way (1.5.9); a Linux keyring login is not read, only a token file is.
+//! keyring and the regular dir, but no account runs on it: the keyring item is the Antigravity app's login too, and an
+//! `agy` on it writes the token it holds back on every refresh, so an account standing for it gets a private home with
+//! a copy of the login when it is imported (`adopt_local`). `agy` refreshes its tokens in place; Acpira only reads the
+//! email. Windows takes the same variables and keeps the file the same way (1.5.9); a Linux keyring login is not read,
+//! only a token file is.
 //! `conversation_summaries.db` is linked on Unix alone (`OWN_DB`).
 //!
 //! Quota: `agy -p /usage --output-format json` answers from the vendor without an agent turn or a conversation
@@ -144,6 +147,15 @@ fn link_store(store: &Path, shared: &Path) {
   link_shared(&store.join(APP_DIR), &shared.join(APP_DIR), &own);
 }
 
+/// A login as a saved account's own token file, the one `agy` keeps under SSH; `writer_id` names the keyring writer the
+/// value came from, not this copy
+async fn write_login(store: &Path, mut login: Value) -> Result<()> {
+  if let Some(fields) = login.as_object_mut() {
+    fields.remove("writer_id");
+  }
+  crate::store::file_lock::write_atomic(&store.join(APP_DIR).join(TOKEN_FILE), &serde_json::to_vec(&login)?, Some(0o600)).await
+}
+
 /// The login in a saved account's own store
 async fn saved_login(home: &Path) -> Option<Value> {
   json_file(&store_of(home).join(APP_DIR).join(TOKEN_FILE)).await
@@ -174,6 +186,30 @@ impl AccountProvider for AntigravityAccountProvider {
 
   fn auto_import(&self) -> bool {
     true
+  }
+
+  /// The keyring item is the Antigravity app's login as well, so the account gets a copy of its own (see the trait)
+  fn adopt_local(&self, label: String) -> Option<BoxFuture<Result<AccountDraft>>> {
+    let homes = self.homes.clone();
+    Some(Box::pin(async move {
+      let home = homes.join(random_uuid());
+      let made = async {
+        let store = store_of(&home);
+        for dir in [&home, &store, &store.join(APP_DIR)] {
+          create_private_dir(dir).await?;
+        }
+        link_store(&store, &default_home());
+        if let Some(login) = local_login().await.filter(|l| email_of(l).as_deref() == Some(label.as_str())) {
+          write_login(&store, login).await?;
+        }
+        anyhow::Ok(())
+      };
+      if let Err(e) = made.await {
+        remove_home(&homes, &home).await;
+        return Err(e);
+      }
+      Ok(AccountDraft { label, detail: None, secret: home.to_string_lossy().into_owned(), meta: Some(home_meta(&home)) })
+    }))
   }
 
   /// `agy acp --login` on a fresh account dir, as an SSH session so the login lands in that dir's token file. There it
