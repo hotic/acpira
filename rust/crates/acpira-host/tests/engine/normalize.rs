@@ -1315,6 +1315,17 @@ fn mcp_calls_name_their_server_and_take_the_tools_title_whatever_the_adapter_nam
   // A command that merely starts with mcp_ is no MCP call
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "y3", "name": "run_command", "title": "mcp_tool_check --all", "kind": "execute", "status": "pending" }));
   expect_absent(block(&s, 0, 9), "mcpServer");
+  // agy acp 1.5.13: the server of a second session request in one process is registered as `<server>_<8 hex>`
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "y4", "name": "mcp_blockbench_9defe6f0_get_project_state",
+    "title": "Run mcp_blockbench_9defe6f0_get_project_state", "kind": "other", "status": "in_progress" }));
+  expect_match(block(&s, 0, 10), json!({ "mcpServer": "blockbench", "target": "get project state" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "y5", "name": "mcp_acpira_0db272fb_show_image", "title": "Run mcp_acpira_0db272fb_show_image",
+    "kind": "other", "status": "in_progress", "rawInput": { "path": "/tmp/a.png" } }));
+  expect_match(block(&s, 0, 11), json!({ "verbKey": "verb.showImage" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "y6", "name": "mcp_acpira_b3cf0d51_read_session", "title": "Run mcp_acpira_b3cf0d51_read_session",
+    "kind": "other", "status": "in_progress", "rawInput": { "session": "acpira://session/68e65628-76be-4748-ae17-8d1d7ea1ffb1" } }));
+  expect_match(block(&s, 0, 12), json!({ "verbKey": "verb.readSession" }));
+  expect_absent(block(&s, 0, 12), "mcpServer");
 }
 
 #[test]

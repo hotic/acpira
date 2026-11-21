@@ -313,17 +313,20 @@ pub fn tool_defs(alias: &str) -> Vec<Value> {
 /// `mcp_acpira_Edit`, `acpira___Edit`, `acpira_Edit`, `acpira: Edit`, `Calling Edit from acpira`), so the name is read
 /// by its words: Acpira's server, exactly one remote tool, and nothing else but the fillers. A search for tools
 /// (`Search tools: acpira Edit`) or another server's `Edit` is none, and a hyphen keeps a word whole, so the server
-/// `acpira-tool` is not Acpira's
+/// `acpira-tool` is not Acpira's. `agy` registers a server whose name its process already holds under another
+/// configuration as `acpira_<8 hex>` (`mcp_acpira_9791ed97_Read`): that word right after the server's is skipped
 fn tool_named(profile: &StandProfile, s: &str) -> Option<&'static str> {
   let remote = |n: &str| acpira_shared::host_tools::REMOTE.iter().find(|t| **t == n).copied();
   if let Some(n) = Some(profile.prefix.as_str()).filter(|p| !p.is_empty()).and_then(|p| s.strip_prefix(p)).and_then(remote) {
     return Some(n);
   }
-  let (mut server, mut tool) = (false, None);
+  let alias = |w: &str| w.len() == 8 && w.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+  let (mut server, mut tool, mut after_server) = (false, None, false);
   for w in s.split(|c: char| !c.is_ascii_alphanumeric() && c != '-').filter(|w| !w.is_empty()) {
+    let aliased = std::mem::take(&mut after_server) && alias(w);
     if w.eq_ignore_ascii_case(crate::host_mcp::SERVER_NAME) {
-      server = true;
-    } else if !NAME_FILLERS.iter().any(|f| w.eq_ignore_ascii_case(f)) {
+      (server, after_server) = (true, true);
+    } else if !aliased && !NAME_FILLERS.iter().any(|f| w.eq_ignore_ascii_case(f)) {
       if tool.is_some() {
         return None;
       }
@@ -481,6 +484,13 @@ mod tests {
     assert_eq!(remote_name(&claude, &u), Some("Edit"));
     assert_eq!(remote_name(&claude, &json!({ "name": "mcp_acpira_Read", "title": "Run mcp_acpira_Read" })), Some("Read"));
     assert_eq!(remote_name(&claude, &json!({ "title": "Run mcp_acpira_Bash" })), Some("Bash"));
+    // agy's name for the server of a second session request in one process
+    let agy = profile("antigravity");
+    assert_eq!(remote_name(&agy, &json!({ "name": "mcp_acpira_9791ed97_Glob", "title": "Run mcp_acpira_9791ed97_Glob" })), Some("Glob"));
+    assert_eq!(remote_name(&agy, &json!({ "title": "Run mcp_acpira_9791ed97_Bash" })), Some("Bash"));
+    assert_eq!(remote_name(&agy, &json!({ "name": "mcp_acpira_9791ed97_show_image" })), None);
+    assert_eq!(remote_name(&agy, &json!({ "name": "mcp_blockbench_9defe6f0_Read" })), None);
+    assert_eq!(remote_name(&agy, &json!({ "name": "mcp_acpira_Read_9791ed97" })), None, "only right after the server");
     assert_eq!(remote_name(&claude, &json!({ "title": "mcp__acpira__show_image" })), None);
     assert_eq!(remote_name(&claude, &json!({ "name": "mcp_acpira_show_image", "title": "Run mcp_acpira_show_image" })), None);
     assert_eq!(remote_name(&claude, &json!({ "title": "Edit" })), None);

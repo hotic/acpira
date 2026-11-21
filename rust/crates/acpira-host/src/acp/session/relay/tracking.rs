@@ -29,7 +29,7 @@ pub(super) fn names_ask_agent(u: &Value) -> bool {
 /// Whether a tool name is Acpira's `ask_agent` (bare, or the way an adapter prefixes its server)
 pub(super) fn is_ask_name(x: &str) -> bool {
   static ASK: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})ask_agent$"));
+    std::sync::LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2}(?:[0-9a-f]{8}_)?)ask_agent$"));
   ASK.is_match(x.trim())
 }
 

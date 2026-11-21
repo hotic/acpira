@@ -159,8 +159,9 @@ pub(super) fn infer_kind(title: Option<&str>) -> Option<ToolKind> {
 
 /// Acpira's own MCP tool (`acpira mcp`, see `host_mcp.rs`) as each adapter names it: claude-agent-acp
 /// `mcp__acpira__show_image`, codex-acp `mcp.acpira.show_image` (+ rawInput `{ server, tool, arguments }`), OpenCode
-/// `acpira_show_image`, and a bare `show_image` from adapters that drop the server prefix
-static SHOW_IMAGE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})show_image$"));
+/// `acpira_show_image`, `agy acp` `mcp_acpira_show_image` or, under its alias for the server (`AGY_MCP`),
+/// `mcp_acpira_0db272fb_show_image`, and a bare `show_image` from adapters that drop the server prefix
+static SHOW_IMAGE: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2}(?:[0-9a-f]{8}_)?)show_image$"));
 pub const SHOW_IMAGE_VERB: &str = "verb.showImage";
 
 pub(super) fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
@@ -169,7 +170,7 @@ pub(super) fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Ma
 }
 
 /// Acpira's `show_video`, in the same adapter namings as show_image.
-static SHOW_VIDEO: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})show_video$"));
+static SHOW_VIDEO: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2}(?:[0-9a-f]{8}_)?)show_video$"));
 pub const SHOW_VIDEO_VERB: &str = "verb.showVideo";
 
 pub(super) fn is_show_video_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
@@ -178,7 +179,7 @@ pub(super) fn is_show_video_call(u: &Value, title: Option<&str>, raw: Option<&Ma
 }
 
 /// Acpira's `show_widget`, in the same namings as show_image
-static SHOW_WIDGET: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})show_widget$"));
+static SHOW_WIDGET: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2}(?:[0-9a-f]{8}_)?)show_widget$"));
 pub const SHOW_WIDGET_VERB: &str = "verb.showWidget";
 
 pub(super) fn is_show_widget_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
@@ -187,7 +188,7 @@ pub(super) fn is_show_widget_call(u: &Value, title: Option<&str>, raw: Option<&M
 }
 
 /// Acpira's session tools (`host_mcp.rs` search_sessions / read_session), in the same namings as show_image
-static SESSION_TOOL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2})(search_sessions|read_session)$"));
+static SESSION_TOOL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2}(?:[0-9a-f]{8}_)?)(search_sessions|read_session)$"));
 pub const SEARCH_SESSIONS_VERB: &str = "verb.searchSessions";
 pub const READ_SESSION_VERB: &str = "verb.readSession";
 
@@ -228,8 +229,10 @@ pub(super) fn show_image_args(raw: Option<&Map<String, Value>>) -> Option<&Map<S
 static CLAUDE_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp__([A-Za-z0-9-][A-Za-z0-9_-]*?)__(.+)$"));
 static CODEX_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp\.([^.\s]+)\.(\S+)$"));
 /// `agy acp`'s `mcp_<server>_<tool>` (agy 1.5.9, in `name`, with the title `Run <name>`). The server ends at the first
-/// underscore, so a server whose own name holds one is cut short
-static AGY_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp_([^_\s]+)_(\S+)$"));
+/// underscore, so a server whose own name holds one is cut short. A server whose name the process already holds under
+/// another configuration is registered as `<server>_<8 hex>` (agy 1.5.13: a second session request of one process, each
+/// carrying a fresh hub grant), which is no part of the tool's name
+static AGY_MCP: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^mcp_([^_\s]+)_(?:[0-9a-f]{8}_)?(\S+)$"));
 
 /// An MCP tool call: the server's name as configured, the tool's own name, and its title when the agent knows it
 pub(super) struct McpCall {
