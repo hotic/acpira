@@ -18,6 +18,9 @@ pub struct Stand {
   pub host: String,
   /// Where the CLI runs here: `<data root>/remote/<profile dir>/<alias>/<host path>`
   pub local: PathBuf,
+  /// The folders the session's process was told to keep the CLI's own files in (`OwnFiles::env_dirs` as an account
+  /// set them, `AgentProcess::own_dirs`): the engine's own environment never names those
+  pub own: Vec<PathBuf>,
 }
 
 /// `<data root>/remote/<dir>/<alias>/<host path>`
@@ -40,7 +43,7 @@ impl Stand {
   pub fn new(profile: Arc<StandProfile>, alias: &str, host: &str, data_root: &Path) -> Stand {
     let host = trim_host(host);
     let local = stand_folder(&profile.dir, alias, host, data_root);
-    Stand { profile, alias: alias.to_owned(), host: host.to_owned(), local }
+    Stand { profile, alias: alias.to_owned(), host: host.to_owned(), local, own: Vec::new() }
   }
 
   /// Makes the stand-in. A folder on the way that its owner cannot enter or write (a stray `chmod` on `<data root>/remote`
@@ -147,10 +150,17 @@ fn config_roots(profile: &StandProfile, home: &Path) -> Vec<PathBuf> {
   out
 }
 
+/// `config_roots` for a session's stand-in in the engine, which also knows the folders of the session's process
+fn own_roots(stand: &Stand, home: &Path) -> Vec<PathBuf> {
+  let mut out = config_roots(&stand.profile, home);
+  out.extend(stand.own.iter().cloned());
+  out
+}
+
 /// The folders of this machine whose files the CLI's tools reach for and must find here: its own folders (plans,
 /// memory, artifacts, saved tool outputs) and Acpira's data root. Its temporary files are matched by prefix
-pub fn here_roots(profile: &StandProfile, home: &Path, data_root: &Path) -> Vec<PathBuf> {
-  let mut out = config_roots(profile, home);
+pub fn here_roots(stand: &Stand, home: &Path, data_root: &Path) -> Vec<PathBuf> {
+  let mut out = own_roots(stand, home);
   out.push(data_root.to_path_buf());
   out
 }
@@ -183,9 +193,9 @@ pub fn runs_here(name: &str, args: &Value, stand: &Stand, data_root: &Path, root
 
 /// Whether a local write (`runs_here`) targets the CLI's own plan / artifact folder, which its native tools write
 /// without showing a permission card
-pub fn is_quiet_write(profile: &StandProfile, path: &str, home: &Path) -> bool {
+pub fn is_quiet_write(stand: &Stand, path: &str, home: &Path) -> bool {
   let p = Path::new(path);
-  !climbs(path) && config_roots(profile, home).iter().any(|root| profile.own.quiet_writes.iter().any(|w| p.starts_with(root.join(w))))
+  !climbs(path) && own_roots(stand, home).iter().any(|root| stand.profile.own.quiet_writes.iter().any(|w| p.starts_with(root.join(w))))
 }
 
 /// The paths in a native tool's arguments: string values (or string lists) under a key naming a path, file or
@@ -204,8 +214,7 @@ fn tool_paths(args: &Value) -> impl Iterator<Item = String> + '_ {
 
 /// Whether a native file tool only touches the CLI's own files: it names at least one path and every one is absolute
 /// (or `~/`) and inside one of its own folders. `..` is refused rather than resolved, so `~/.gemini/../x` cannot pass
-fn own_paths(profile: &StandProfile, paths: impl Iterator<Item = String>, home: &Path) -> bool {
-  let roots = config_roots(profile, home);
+fn own_paths(roots: &[PathBuf], paths: impl Iterator<Item = String>, home: &Path) -> bool {
   let mut any = false;
   for p in paths.filter(|p| !p.is_empty()) {
     let p = match p.strip_prefix("~/") {
@@ -222,7 +231,7 @@ fn own_paths(profile: &StandProfile, paths: impl Iterator<Item = String>, home: 
 
 /// `own_paths` of a native tool call's arguments
 pub fn own_file(profile: &StandProfile, args: &Value, home: &Path) -> bool {
-  own_paths(profile, tool_paths(args), home)
+  own_paths(&config_roots(profile, home), tool_paths(args), home)
 }
 
 /// Where a CLI names the tool of a permission request: the top-level `name`, Grok's and Devin's `_meta`, else the title
@@ -241,6 +250,15 @@ pub fn unjudged(stand: &Stand, tc: &Value) -> bool {
   stand.profile.gates.is_empty()
     && tc.get("kind").and_then(Value::as_str) == Some("other")
     && !native_names(tc).first().is_some_and(|n| n.starts_with("mcp_"))
+}
+
+/// A location's path as the platform reads it: on Windows `agy` sends a file URL's path (`/C:/Users/me/x`), which is
+/// not absolute there until the slash before the drive goes
+fn located_path(p: &str) -> &str {
+  match p.strip_prefix('/') {
+    Some(rest) if cfg!(windows) && matches!(rest.as_bytes(), [d, b':', ..] if d.is_ascii_alphabetic()) => rest,
+    _ => p,
+  }
 }
 
 /// The engine's refusal under every profile: a permission request of a native tool (not one of Acpira's, `caller`
@@ -268,12 +286,12 @@ pub fn blocked_native(stand: &Stand, tc: &Value, home: &Path, data_root: &Path) 
   // A model's arguments may come as a JSON string
   let parsed = input.as_str().and_then(|s| serde_json::from_str::<Value>(s).ok());
   let input = parsed.as_ref().unwrap_or(input);
-  let located = tc.get("locations").and_then(Value::as_array).into_iter().flatten().filter_map(|l| l.get("path")?.as_str().map(str::to_owned));
+  let located = tc.get("locations").and_then(Value::as_array).into_iter().flatten().filter_map(|l| Some(located_path(l.get("path")?.as_str()?).to_owned()));
   let paths: Vec<String> = tool_paths(input).chain(located).collect();
   if paths.iter().any(|p| stand.in_stand(p) || Path::new(p).starts_with(data_root.join("remote"))) {
     return true;
   }
-  !own_paths(&stand.profile, paths.into_iter(), home)
+  !own_paths(&own_roots(stand, home), paths.into_iter(), home)
 }
 
 /// The engine subcommand a stand-in's hook runs (`guard`), with the agent's id after it
@@ -563,11 +581,11 @@ mod tests {
     let data = Path::new("/Users/me/.acpira");
     let home = Path::new("/Users/me");
     let s = stand();
-    let roots = here_roots(&s.profile, home, data);
+    let roots = here_roots(&s, home, data);
     let here = |name: &str, args: Value| runs_here(name, &args, &s, data, &roots);
     assert!(here("Write", json!({ "file_path": "/Users/me/.claude/plans/p.md", "content": "x" })));
-    assert!(is_quiet_write(&s.profile, "/Users/me/.claude/plans/p.md", home));
-    assert!(!is_quiet_write(&s.profile, "/Users/me/.acpira/plans/p.md", home), "the data root is no plan folder");
+    assert!(is_quiet_write(&s, "/Users/me/.claude/plans/p.md", home));
+    assert!(!is_quiet_write(&s, "/Users/me/.acpira/plans/p.md", home), "the data root is no plan folder");
     assert!(here("Read", json!({ "file_path": "/private/tmp/claude-501/out.txt" })));
     assert!(!here("Read", json!({ "file_path": "/Users/me/.acpira/remote/hosts/gen1/home/u/proj/a.rs" })));
     assert!(!here("Read", json!({ "file_path": "src/a.rs" })));
@@ -576,13 +594,13 @@ mod tests {
     // `..` never climbs out of the CLI's own folders into this machine's files: the call goes to the host
     let climb = "/Users/me/.claude/plans/../../Projects/demo/a.rs";
     assert!(!here("Write", json!({ "file_path": climb, "content": "x" })));
-    assert!(!is_quiet_write(&s.profile, climb, home));
+    assert!(!is_quiet_write(&s, climb, home));
     assert!(!here("Write", json!({ "file_path": "/Users/me/.acpira/../Projects/a.rs", "content": "x" })));
 
     let agy = agy_stand();
-    let agy_roots = here_roots(&agy.profile, home, data);
+    let agy_roots = here_roots(&agy, home, data);
     assert!(runs_here("Write", &json!({ "file_path": "/Users/me/.gemini/antigravity-cli/brain/id/plan.md", "content": "x" }), &agy, data, &agy_roots));
-    assert!(is_quiet_write(&agy.profile, "/Users/me/.gemini/antigravity-cli/brain/id/plan.md", home));
+    assert!(is_quiet_write(&agy, "/Users/me/.gemini/antigravity-cli/brain/id/plan.md", home));
     assert!(!runs_here("Read", &json!({ "file_path": "/Users/me/.acpira/remote/antigravity/gen1/home/u/proj/a.rs" }), &agy, data, &agy_roots));
     assert!(!runs_here("Read", &json!({ "file_path": "/tmp/claude-501/out.txt" }), &agy, data, &agy_roots), "Claude's temp files are Claude's");
   }
@@ -602,6 +620,17 @@ mod tests {
     // A location outside its own folders counts as much as an argument
     let tc = json!({ "name": "write_to_file", "kind": "edit", "rawInput": { "TargetFile": own }, "locations": [{ "path": "/etc/hosts" }] });
     assert!(blocked_native(&agy, &tc, Path::new(me), data));
+    // On Windows agy's locations are a file URL's path
+    #[cfg(windows)]
+    assert!(!blocked_native(&agy, &json!({ "name": "view_file", "kind": "read", "locations": [{ "path": format!("/{own}") }] }), Path::new(me), data));
+    // A saved or plugin account's gemini dir is the CLI's own only for the session whose process was given it
+    let store = format!("{me}/.acpira/accounts/a1/.gemini");
+    let media = json!({ "name": "view_file", "kind": "read", "rawInput": { "AbsolutePath": format!("{store}/antigravity-cli/brain/c1/media_0.png") } });
+    assert!(blocked_native(&agy, &media, Path::new(me), data));
+    let mut account = agy_stand();
+    account.own = vec![PathBuf::from(&store)];
+    assert!(!blocked_native(&account, &media, Path::new(me), data));
+    assert!(is_quiet_write(&account, &format!("{store}/antigravity-cli/brain/c1/plan.md"), Path::new(me)));
     // A question, a mode switch, a fetch or another MCP server's tool is not the gate's business
     assert!(!blocked_native(&agy, &json!({ "toolCallId": "interaction_1", "title": "Pick one", "kind": "other" }), home, data));
     assert!(!blocked_native(&agy, &json!({ "title": "Ready to code?", "kind": "switch_mode" }), home, data));

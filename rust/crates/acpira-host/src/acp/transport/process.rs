@@ -146,12 +146,22 @@ pub struct AgentProcess {
   pub pid: Option<u32>,
   /// Droid's actual session store, after the launch env and account overrides have been applied.
   pub(crate) droid_sessions: Option<PathBuf>,
+  /// The folders this child was told to keep the CLI's own files in: its local-run profile's `OwnFiles::env_dirs` as
+  /// the account or the definition set them. The engine's own environment does not carry an account's
+  pub(crate) own_dirs: Vec<PathBuf>,
   signals: Option<Signals>,
   box_: HandlerBox,
   life: watch::Receiver<Life>,
   killed: parking_lot::Mutex<bool>,
   /// The unstable `models` field shown as a model select (`legacy_models.rs`)
   legacy: LegacyModels,
+}
+
+/// `AgentProcess::own_dirs`: the account's value wins over the definition's, as in the child's environment
+fn own_dirs(def: &AgentDef, extra_env: Option<&acpira_shared::transcript::StrMap>) -> Vec<PathBuf> {
+  let Some(profile) = crate::acp::local_run::builtin(&def.id).and_then(|l| l.stand().cloned()) else { return Vec::new() };
+  let named = |k: &String| extra_env.and_then(|e| e.get(k)).or_else(|| def.env.as_ref()?.get(k)).filter(|d| !d.is_empty());
+  profile.own.env_dirs.iter().filter_map(named).map(PathBuf::from).collect()
 }
 
 /// A session start's requested sessionId, kept for `LegacyModels::adopt` without cloning every request's params
@@ -245,6 +255,7 @@ impl AgentProcess {
       cmd.env(k, v);
     }
     let droid_sessions = (Vendor::of(&def.id) == Vendor::Droid).then(|| droid_usage::sessions_dir(cmd.as_std(), cwd));
+    let own_dirs = own_dirs(def, extra_env);
     #[cfg(windows)]
     let (mut child, job) = crate::platform::windows_process::spawn(&mut cmd).await.map_err(|e| anyhow::Error::new(AgentSpawnError::new(e, cwd)))?;
     #[cfg(not(windows))]
@@ -327,6 +338,7 @@ impl AgentProcess {
         init,
         pid,
         droid_sessions,
+        own_dirs,
         signals,
         box_,
         life: life_rx,

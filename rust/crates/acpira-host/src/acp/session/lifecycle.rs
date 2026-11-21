@@ -368,6 +368,7 @@ impl AcpSession {
         methods.sort_by_key(is_api_key_method);
         methods
       });
+      *self.own_dirs.lock() = proc.own_dirs.clone();
       c.proc = Some(proc);
     }
     self.handoff().await

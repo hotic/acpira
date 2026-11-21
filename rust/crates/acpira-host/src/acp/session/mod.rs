@@ -372,6 +372,8 @@ pub struct AcpSession {
   /// A stand-in CLI's calls of the project tools on its SSH host, by the model's call id, until their rows complete
   /// (`stand.rs`)
   pub(crate) remote_calls: parking_lot::Mutex<std::collections::HashMap<String, stand::RemoteCall>>,
+  /// The current process's `AgentProcess::own_dirs`, for the stand-in's checks (`Stand::own`)
+  pub(crate) own_dirs: parking_lot::Mutex<Vec<std::path::PathBuf>>,
   /// Those that came with no row to bind to (an MCP call ahead of its ACP `tool_call`), so a stop still reaches them
   pub(crate) loose_calls: parking_lot::Mutex<std::collections::HashMap<String, crate::acp::transport::cancel::Cancel>>,
   /// Codex in a folder on an SSH host: the way to its exec-server there, as long as its CLI runs (`remote_exec_env`)
@@ -564,6 +566,7 @@ impl AcpSession {
         epoch,
         host_stdio: Default::default(),
         remote_calls: Default::default(),
+        own_dirs: Default::default(),
         loose_calls: Default::default(),
         exec_tunnel: Default::default(),
         client_ids: parking_lot::Mutex::new(record.client_ids.iter().cloned().collect()),

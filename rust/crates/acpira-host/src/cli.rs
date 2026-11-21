@@ -60,7 +60,8 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 }
 
 /// The first arguments `run` answers: everything but a desktop window's (none, or a session link). The desktop exe hands
-/// these to the engine and opens a window for anything else
+/// these to the engine and opens a window for anything else. A stand-in's hook runs the guard through this exe on
+/// Windows: a guard missing here prints nothing, which the CLI takes for an allow
 pub fn is_engine_command(first: Option<&str>) -> bool {
   matches!(
     first,
@@ -85,7 +86,8 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "gateway"
         | "launch"
         | "supervise"
-        | "agy-guard"
+        | crate::acp::local_run::stand::GUARD_COMMAND
+        | crate::acp::local_run::stand::AGY_GUARD_COMMAND
     )
   )
 }
@@ -834,7 +836,8 @@ mod dispatch_tests {
     assert!(!is_engine_command(None));
     assert!(!is_engine_command(Some("acpira://session/abc")));
     assert!(!is_engine_command(Some("--home")));
-    for c in ["stdio", "serve", "agent", "mcp-host", "--version"] {
+    // The guard names as hook files written by any engine spell them
+    for c in ["stdio", "serve", "agent", "mcp-host", "--version", "tool-guard", "agy-guard"] {
       assert!(is_engine_command(Some(c)), "{c}");
     }
   }

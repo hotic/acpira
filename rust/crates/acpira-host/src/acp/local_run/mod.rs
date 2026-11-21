@@ -239,7 +239,13 @@ fn antigravity() -> StandProfile {
     env: vec![],
     files: vec![],
     own_cards: true,
-    own: OwnFiles { dirs: strs(&[".gemini"]), env_dirs: vec![], temp_prefixes: vec![], quiet_writes: strs(&["antigravity-cli/brain", "antigravity/brain"]) },
+    // A saved or plugin account keeps its own gemini dir, named to the CLI's process (and so to its hooks)
+    own: OwnFiles {
+      dirs: strs(&[".gemini"]),
+      env_dirs: strs(&[crate::accounts::antigravity::STORE_ENV]),
+      temp_prefixes: vec![],
+      quiet_writes: strs(&["antigravity-cli/brain", "antigravity/brain"]),
+    },
     native: NativeTools {
       shell: strs(&[
         "run_command",

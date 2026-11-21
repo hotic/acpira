@@ -85,7 +85,7 @@ impl AcpSession {
   }
 
   fn here_roots(&self, stand: &Stand) -> Vec<PathBuf> {
-    stand_in::here_roots(&stand.profile, &home_dir(), &self.data_root())
+    stand_in::here_roots(stand, &home_dir(), &self.data_root())
   }
 
   /// How the session's agent runs here for a folder on an SSH host (`AgentDef::local_run`); None runs it in the host's
@@ -99,7 +99,9 @@ impl AcpSession {
   pub(crate) fn remote_stand(&self) -> Option<Stand> {
     let f = self.remote_folder()?;
     let profile = self.local_run()?.stand()?.clone();
-    Some(Stand::new(profile, &f.alias, &f.path, &self.data_root()))
+    let mut stand = Stand::new(profile, &f.alias, &f.path, &self.data_root());
+    stand.own = self.own_dirs.lock().clone();
+    Some(stand)
   }
 
   /// Whether picking mode `id` stays off the wire, the engine approving instead: in a gateless stand-in (the generic
@@ -554,11 +556,11 @@ impl AcpSession {
     if !matches!(c.name, "Write" | "Edit" | "MultiEdit") {
       return RemotePerm::None;
     }
-    let roots = stand_in::here_roots(&stand.profile, &home, &data_root);
+    let roots = stand_in::here_roots(&stand, &home, &data_root);
     if !stand_in::runs_here(c.name, &c.input, &stand, &data_root, &roots) {
       return RemotePerm::HostEdit;
     }
     let path = c.input.get("file_path").or_else(|| c.input.get("path")).and_then(Value::as_str).unwrap_or("");
-    if stand_in::is_quiet_write(&stand.profile, path, &home) { RemotePerm::AgentOwnFile } else { RemotePerm::None }
+    if stand_in::is_quiet_write(&stand, path, &home) { RemotePerm::AgentOwnFile } else { RemotePerm::None }
   }
 }
