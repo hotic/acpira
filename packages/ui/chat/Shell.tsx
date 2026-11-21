@@ -784,7 +784,7 @@ export function Shell(p: ShellProps) {
   }, [p.categories, p.cwd, chatHere]);
   const copyPath = useCallback((path: string) => copied(navigator.clipboard.writeText(path), t('session.project.copied')), [copied]);
   const newFromPanel = useCallback((agent?: AgentId) => { on.newSession(agent); closeDrawer(); }, [on.newSession, closeDrawer]);
-  const newInCat = useCallback((category: string) => { on.newSession(folderAgent(p.cwd), category); closeDrawer(); }, [on.newSession, folderAgent, p.cwd, closeDrawer]);
+  const newInCat = useCallback((category: string, cwd?: string) => { on.newSession(folderAgent(cwd ?? p.cwd), category, cwd); closeDrawer(); }, [on.newSession, folderAgent, p.cwd, closeDrawer]);
   const toggleDrawer = useCallback(() => (drawerOpenNow.current ? closeDrawer() : openDrawer()), [closeDrawer, openDrawer]);
   const trail = useSessionHistory(desktop ? p.activeSessionId : undefined, id => p.sessions.some(s => s.id === id), id => on.selectSession(id));
   const focusSearch = () => {

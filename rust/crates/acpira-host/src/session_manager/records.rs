@@ -101,7 +101,8 @@ impl SessionManager {
     let categories = self.categories();
     self
       .patch_record(id, move |r| {
-        let fits = category.as_ref().is_none_or(|c| categories.categories.iter().any(|x| &x.id == c && x.cwd == r.cwd));
+        let project = categories.project_of(&r.cwd);
+        let fits = category.as_ref().is_none_or(|c| categories.categories.iter().any(|x| &x.id == c && x.cwd == project));
         if fits {
           if category.is_some() {
             r.pinned = None;

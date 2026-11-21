@@ -142,7 +142,7 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
   const byProject = new Map<string, SessionSummary[]>();
   for (const s of rest) if (!chat(s)) { const key = projectOf(s.cwd); byProject.set(key, [...byProject.get(key) ?? [], s]); }
   // A project with categories but no session in view still shows (so its categories can be reached), unless filtering
-  if (!filtering) for (const c of categories) if (!byProject.has(c.cwd) && !offList(c.cwd, registered)) byProject.set(c.cwd, []);
+  if (!filtering) for (const c of categories) if (!byProject.has(c.cwd) && !offList(c.cwd, registered, removed)) byProject.set(c.cwd, []);
   if (!filtering) for (const cwd of registered ?? []) if (!byProject.has(cwd)) byProject.set(cwd, []);
   const latest = (cwd: string) => byProject.get(cwd)!.reduce((m, s) => (s.updatedAt > m ? s.updatedAt : m), '');
   // Unregistered folders rank after every registered one (Infinity - Infinity is NaN, which falls through to the next key)

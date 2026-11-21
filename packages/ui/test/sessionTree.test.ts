@@ -80,7 +80,7 @@ describe('session tree', () => {
 
   it('a folder taken off the project list leaves it with its sessions, which a search still finds', () => {
     const shown = [s('a', { cwd: '/work/gone', updatedAt: at(9) }), s('b', { cwd: '/work/gone', pinned: true }), s('c', { updatedAt: at(5) })];
-    const input = { ...base, categories: [], workspace: undefined, shown, grouped: true, registered: [WS], removed: ['/work/gone'] };
+    const input = { ...base, categories: [{ id: 'gone-cat', name: 'Old', cwd: '/work/gone' }], workspace: undefined, shown, grouped: true, registered: [WS], removed: ['/work/gone'] };
     const tree = buildSessionTree(input);
     expect(tree.projects.map(p => p.cwd)).toEqual([WS]);
     expect(tree.pinned).toEqual([]);

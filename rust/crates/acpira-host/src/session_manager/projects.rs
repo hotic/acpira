@@ -264,7 +264,11 @@ impl SessionManager {
   pub(super) fn category_for(&self, category: Option<String>, cwd: &str) -> Option<Option<String>> {
     match category {
       None => Some(None),
-      Some(id) => self.state.lock().categories.categories.iter().any(|c| c.id == id && c.cwd == cwd).then_some(Some(id)),
+      Some(id) => {
+        let categories = &self.state.lock().categories;
+        let project = categories.project_of(cwd);
+        categories.categories.iter().any(|c| c.id == id && c.cwd == project).then_some(Some(id))
+      }
     }
   }
 
