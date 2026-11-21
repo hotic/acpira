@@ -356,6 +356,7 @@ struct Thread: View {
   @State private var gate = QuietGate()
   #if os(iOS)
   @State private var control = TranscriptControl()
+  @State private var live = LiveTurns()
   #endif
 
   var body: some View {
@@ -364,6 +365,7 @@ struct Thread: View {
     let quiet = gate.isQuiet(session: session, catchingUp: false, liveStream: stream)
     let control = control
     let session = session
+    let whole = live.note(session)
     // Only the viewport bridge reads animated geometry. Putting the collection in that reader reconfigured every
     // visible hosted turn on every frame of a dock fold, including an entire open process history.
     GeometryReader { proxy in
@@ -371,7 +373,8 @@ struct Thread: View {
     }
     .background {
       TranscriptCollection(items: threadItems(session, preOpen: preOpen,
-                                              loadingEarlier: model?.loadingEarlier[session.id] != nil), control: control,
+                                              loadingEarlier: model?.loadingEarlier[session.id] != nil, wholeTurns: whole),
+                           control: control,
                            motion: motion, earlier: session.earlier,
                            loadEarlier: { [model] in model?.loadEarlier(session.id) },
                            fillEarlier: { [model] in model?.fillEarlier(session.id) }) { values in
@@ -407,6 +410,22 @@ struct Thread: View {
       .defaultScrollAnchor(.bottom)
       .safeAreaInset(edge: .bottom, spacing: 0) { ThreadDock(session: session).readableWidth() }
     #endif
+  }
+}
+
+/// The turns a thread saw running, by their place in the session: they keep one row once settled. Cut into rows as it
+/// settles, a reply would lose the fade its last words were still streaming in with; the next opening of the chat
+/// cuts it (ThreadItems.swift). A reference, so noting a turn from the body is no state change
+final class LiveTurns {
+  private var seen: Set<Int> = []
+
+  func note(_ session: SessionView) -> Set<Int> {
+    // The running turn is the last one (threadItems' `running`); a prompt just sent stands after a settled reply,
+    // which stays cut
+    if session.running, case .agent(let turn)? = session.turns.last, turn.stop == nil {
+      seen.insert(session.turns.count - 1 + session.turnBase)
+    }
+    return seen
   }
 }
 

@@ -238,6 +238,35 @@ struct ProseBlocks: View {
   }
 }
 
+/// A row's run of a settled reply cut into thread rows (ReplyPieces.swift), stacked as ProseBlocks stacks a whole text:
+/// whole blocks, and runs of a list's items numbered where they stand in the list
+struct ProseRun: View {
+  let segments: [ReplySegment]
+  @Environment(\.agentAccent) private var accent
+  @Environment(\.quoteProse) private var quote
+
+  var body: some View {
+    let style = ProseStyle(tone: .reply, accent: accent)
+    VStack(alignment: .leading, spacing: Metrics.gap) {
+      ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+        Group {
+          switch segment {
+          case let .block(block, index):
+            ProseBlock(block: block, style: style, first: index == 0).quoteMenu(block, quote)
+          case let .items(list, ordered, start, items):
+            // Long-pressed, a run of the list still quotes the whole list, as the list drawn whole does
+            ProseList(ordered: ordered, start: start, items: items, style: style).quoteMenu(list, quote)
+          }
+        }
+        #if !canImport(UIKit)
+        .environment(\.quoteProse, nil)
+        #endif
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
 struct ProseBlock: View {
   let block: MDBlock
   let style: ProseStyle

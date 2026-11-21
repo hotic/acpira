@@ -14,8 +14,9 @@ struct ThreadItem: Equatable {
     case earlier(loading: Bool)
     case user(UserTurn, index: Int, editable: Bool, goal: Bool)
     case returns([SubagentReport])
+    /// One agent turn, or one row of a long settled reply cut into several (`cut`, ReplyPieces.swift)
     case agent(AgentTurn, index: Int, scope: String, running: Bool, last: Bool, settings: TurnSettings?, retry: Bool,
-               subagents: [SubagentSummary])
+               subagents: [SubagentSummary], cut: ReplyCut = .whole)
     case queue([QueuedPrompt], steer: Bool)
   }
 
@@ -38,8 +39,11 @@ struct ThreadItem: Equatable {
 
 /// The thread's rows in order, with the spacing ThreadContent's stacked sections had: a prompt card, then its replies a
 /// message gap below it and a message gap apart, and the gap to the next exchange under the exchange's last row (only a
-/// row gap after a reply's action row, whose own height already separates them)
-func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarlier: Bool = false) -> [ThreadItem] {
+/// row gap after a reply's action row, whose own height already separates them).
+/// `wholeTurns` nil keeps every turn in one row (the stacked renders); otherwise a long settled reply is cut into rows a
+/// block gap apart (ReplyPieces.swift), except in the turns it names (by their place in the session)
+func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarlier: Bool = false,
+                 wholeTurns: Set<Int>? = nil) -> [ThreadItem] {
   let groups = exchanges(session.turns)
   let activeAgent = session.turns.lastIndex { if case .agent = $0 { true } else { false } }
   // Each child reaches only the turn that announced it
@@ -76,14 +80,30 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarl
     }
     for item in exchange.agents {
       let index = item.index + base
-      out.append(ThreadItem(
-        id: "a\(index)",
-        kind: .agent(item.turn, index: index, scope: "\(session.id):\(index)",
-                     running: session.running && item.index == activeAgent && item.turn.stop == nil,
-                     last: item.index == session.turns.count - 1, settings: exchange.user?.settings,
-                     // A child announced in a turn ahead of the view has no row until that turn is loaded
-                     retry: item.index == retry, subagents: nodes[index] ?? []),
-        exchange: exchange.id, top: gap, preOpen: opened))
+      let running = session.running && item.index == activeAgent && item.turn.stop == nil
+      // A child announced in a turn ahead of the view has no row until that turn is loaded
+      let subagents = nodes[index] ?? []
+      let cuts = wholeTurns.flatMap { whole in
+        running || whole.contains(index) ? nil : ReplyPieces.rows(item.turn, subagents: subagents)
+      }
+      func row(_ id: String, _ cut: ReplyCut, top: CGFloat) -> ThreadItem {
+        ThreadItem(id: id,
+                   kind: .agent(item.turn, index: index, scope: "\(session.id):\(index)", running: running,
+                                last: item.index == session.turns.count - 1, settings: exchange.user?.settings,
+                                retry: item.index == retry, subagents: subagents, cut: cut),
+                   exchange: exchange.id, top: top, preOpen: opened)
+      }
+      if let cuts {
+        // The turn's own row ends inside its reply; the rest follows a block gap apart (a list's item gap inside a
+        // list, ProseList), the last row closing the turn
+        out.append(row("a\(index)", .head(end: cuts[1].start), top: gap))
+        for m in 1..<cuts.count {
+          let cut: ReplyCut = m == cuts.count - 1 ? .tail(start: cuts[m].start) : .piece(cuts[m].start..<cuts[m + 1].start)
+          out.append(row("a\(index).\(m)", cut, top: cuts[m].inList ? Metrics.s0_5 : Metrics.gap))
+        }
+      } else {
+        out.append(row("a\(index)", .whole, top: gap))
+      }
       gap = WebMetrics.msgGap
     }
     if out.count > start { out[out.count - 1].bottom = next }
@@ -134,9 +154,9 @@ struct ThreadItemView: View {
       UserMessageCard(turn: turn, index: index, editable: editable, goal: goal)
     case let .returns(reports):
       SubagentReturns(reports: reports)
-    case let .agent(turn, index, scope, running, last, settings, retry, subagents):
+    case let .agent(turn, index, scope, running, last, settings, retry, subagents, cut):
       AgentMessage(turn: turn, running: running, scope: scope, index: index, last: last, settings: settings, retry: retry,
-                   subagents: subagents)
+                   subagents: subagents, cut: cut)
     case let .queue(queued, steer):
       // Prompts queued behind the running turn, as faint bubbles after it: where each lands once sent, so nothing
       // moves when it goes. Over the composer they stacked under the floating to-do card and pushed it up

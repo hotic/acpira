@@ -44,6 +44,8 @@ struct AgentMessage: View {
   var retry = false
   /// The subagents announced during this turn (`nodesByTurn`)
   var subagents: [SubagentSummary] = []
+  /// The part of a long settled reply this thread row draws (ReplyPieces.swift)
+  var cut: ReplyCut = .whole
   @Environment(\.sessionActions) private var sessionActions
   @Environment(\.subagentTranscript) private var readOnly
   @Environment(\.quietEntrance) private var quiet
@@ -68,13 +70,15 @@ struct AgentMessage: View {
         // row to show: the fold head there would say "awaiting approval" under the card that already asks
         let visible = section.blocks.contains { if case .permission(let p) = $0 { p.planId == nil } else { true } }
         let planWait = section.blocks.contains { if case .permission(let p) = $0 { p.planId != nil } else { false } }
-        // A child row that never renders anywhere would be worse than a turn with nothing else to show
-        if visible || (lastSection && ((running && !planWait) || outcome || !placement.rest.isEmpty)) {
+        // A child row that never renders anywhere would be worse than a turn with nothing else to show. A later row of
+        // a cut reply draws the last stretch's reply alone
+        if (lastSection || cut.opens) && (visible || (lastSection && ((running && !planWait) || outcome || !placement.rest.isEmpty))) {
           CodexMessage(turn: sectionTurn(shown, section, last: lastSection, split: sections.count > 1),
                        running: lastSection && running, onPermission: sessionActions.permission,
-                       subagents: lastSection ? placement.rest : [], stretch: i == 0 ? nil : section.key)
+                       subagents: lastSection ? placement.rest : [], stretch: i == 0 ? nil : section.key,
+                       cut: lastSection ? cut : .whole)
         }
-        if let plan = section.plan {
+        if cut.opens, let plan = section.plan {
           PlanDocumentCard(block: plan, permission: shown.blocks.lazy.compactMap { block -> PermissionBlock? in
             if case .permission(let p) = block, p.planId == plan.id { p } else { nil }
           }.first)
@@ -83,7 +87,7 @@ struct AgentMessage: View {
         }
       }
       // A child's transcript offers no action row: fork there would act on the parent session
-      if showsTurnActions(turn, running: running) && !readOnly {
+      if cut.closes && showsTurnActions(turn, running: running) && !readOnly {
         TurnActions(turn: turn, index: index, settings: settings, retry: retry, last: last)
       }
     }
@@ -120,6 +124,8 @@ struct CodexMessage: View {
   var subagents: [SubagentSummary] = []
   /// The stretch after the first (`PlanSection.key`): its process fold keeps its own memory (`CodexFold.stretch`)
   var stretch: String?
+  /// The part of a long settled reply the row draws (`AgentMessage.cut`)
+  var cut: ReplyCut = .whole
   @Environment(\.sessionActions) private var actions
   @Environment(\.subagentTranscript) private var readOnly
   @Environment(\.processPrefs) private var prefs
@@ -131,28 +137,43 @@ struct CodexMessage: View {
     // The kinds of step the reader left out drop before grouping (Turns.tsx); the head still names them live
     let process = visibleSteps(split.process, hiding: prefs.hidden)
     VStack(alignment: .leading, spacing: Metrics.gap) {
-      // Goal milestones before anything else (a `/goal` prompt's own "Goal set") open the turn above the fold
-      ForEach(Array(split.goalsLead.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
-      CodexFold(turn: turn, blocks: process, running: running, hasTools: hasTools, stretch: stretch)
-      ForEach(split.notices, id: \.id) { NoticeRow(block: $0) }
-      if !subagents.isEmpty {
-        SubagentGroup(nodes: subagents)
-        ChildPermissions(nodes: subagents)
+      if cut.opens {
+        // Goal milestones before anything else (a `/goal` prompt's own "Goal set") open the turn above the fold
+        ForEach(Array(split.goalsLead.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
+        CodexFold(turn: turn, blocks: process, running: running, hasTools: hasTools, stretch: stretch)
+        ForEach(split.notices, id: \.id) { NoticeRow(block: $0) }
+        if !subagents.isEmpty {
+          SubagentGroup(nodes: subagents)
+          ChildPermissions(nodes: subagents)
+        }
       }
-      ForEach(Array(split.reply.enumerated()), id: \.offset) { _, block in
-        // A long press on a block of the reply quotes it into the composer (Quotes.swift); a child's transcript has
-        // no composer of its own to quote into
-        StreamProse(block: block).environment(\.quoteProse, readOnly ? nil : QuoteAction(run: actions.quote))
-          // The reply sits under the process fold and moves with every frame of its reveal. As a group it moves as one
-          // piece; without it each paragraph was recorded and its glyphs drawn again per frame (`ThreadItemView`)
-          .geometryGroup()
+      // A long press on a block of the reply quotes it into the composer (Quotes.swift); a child's transcript has no
+      // composer of its own to quote into
+      let quote = readOnly ? nil : QuoteAction(run: actions.quote)
+      if cut == .whole {
+        ForEach(Array(split.reply.enumerated()), id: \.offset) { _, block in
+          StreamProse(block: block).environment(\.quoteProse, quote)
+            // The reply sits under the process fold and moves with every frame of its reveal. As a group it moves as
+            // one piece; without it each paragraph was recorded and its glyphs drawn again per frame (`ThreadItemView`)
+            .geometryGroup()
+        }
+      } else {
+        // A settled reply's run, each text's share stacked as its whole Prose would be (its pacing long over)
+        ForEach(replySlices(split.reply, cut), id: \.id) { slice in
+          ProseRun(segments: slice.segments)
+            .environment(\.markdownImages, slice.text.images)
+            .environment(\.quoteProse, quote)
+            .geometryGroup()
+        }
       }
-      // Later milestones (paused, met, cleared …) close the reply they followed
-      ForEach(Array(split.goals.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
-      ForEach(split.permissions.filter { $0.planId == nil }, id: \.id) { block in
-        PermissionCard(block: block) { onPermission(block.id, $0) }
+      if cut.closes {
+        // Later milestones (paused, met, cleared …) close the reply they followed
+        ForEach(Array(split.goals.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
+        ForEach(split.permissions.filter { $0.planId == nil }, id: \.id) { block in
+          PermissionCard(block: block) { onPermission(block.id, $0) }
+        }
+        if !running && turnOutcome(turn) != nil { OutcomeRow(turn: turn) }
       }
-      if !running && turnOutcome(turn) != nil { OutcomeRow(turn: turn) }
     }
   }
 }
