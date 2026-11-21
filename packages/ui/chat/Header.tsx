@@ -149,7 +149,7 @@ export const Header = memo(function Header({ title, sessions, categories, agent,
   return (
     // Desktop: the window's title bar on the sheet (no rule under it, it moves the window), the title followed by its project
     <div data-part="header" data-sheet-header={desktop || undefined} data-drag-region={desktop || undefined}
-      className={cn('flex h-hdr shrink-0 items-center gap-gap', desktop ? 'pr-(--sheet-trail) pl-(--sheet-lead)' : 'px-dock shadow-[inset_0_-1px_0_0_var(--line)]')}>
+      className={cn('flex h-hdr shrink-0 items-center gap-gap', desktop ? 'pt-(--hdr-drop) pr-(--sheet-trail) pl-(--sheet-lead)' : 'px-dock shadow-[inset_0_-1px_0_0_var(--line)]')}>
       {/* Desktop: the column's toggle sits on the pinned title row (chat/DesktopFrame.tsx) */}
       {!desktop && sessionPanel !== 'hidden' && !sessionPanelDocked && (
         <IconButton data-session-toggle onClick={onToggleDrawer} aria-expanded={drawerOpen} aria-label={t('session.history')} title={t('session.history')}>

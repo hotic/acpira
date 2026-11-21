@@ -51,13 +51,18 @@
 /* The Files tab's tree sits at the panel's (and the window's) right edge, under the pinned toggle: its filter, sections and
    rows end where the toggle's button does (reported 2026-10-24), and start on the tabs' edge, start-x in from the panel's
    side, as far from the chat sheet as the trailing edge is from the window's (2026-10-26). The files layout's explorer has
-   no toggle above it and keeps its own gaps (FileTree.tsx). The filter starts at the tab's top, where the chat's pinned
-   prompt card starts under the sheet's header, so the two boxes share a top line across the panes */
-.acp-shell[data-desktop] [data-files-tab] { --tree-lead: var(--start-x); --tree-trail: calc(var(--start-x) + var(--sheet-inset)); --tree-top: 0px; }
-/* A narrow window: the panel is a page over the whole window, title row included, so its tabs start after the traffic
-   lights with half a gap's breath (the tree's line where there are none). A token the tab row reads: the row's padding
-   is a utility, which a rule in the components layer never overrides */
-.acp-shell[data-desktop][data-narrow] [data-panel-tabs] { --tabs-lead: max(var(--start-x), calc(var(--lights-w) + var(--gap) / 2)); }
+   no toggle above it and keeps its own gaps (FileTree.tsx). The filter starts --gap under the tabs, where the chat's
+   pinned prompt card stops under the sheet's header (HistoryMessage pt-gap), so the two boxes share a top line across the
+   panes and the filter keeps equal breathing room above and below */
+.acp-shell[data-desktop] [data-files-tab] { --tree-lead: var(--start-x); --tree-trail: calc(var(--start-x) + var(--sheet-inset)); --tree-top: var(--gap); }
+/* Narrow window: the panel covers the whole window, so its leading edge mirrors its trailing edge on the cards' line
+   directly under the macOS traffic lights (which stay anchored there). Tabs start after the lights with half a gap's
+   breath (the tree's leading line where there are none). A token the tab row reads: the row's padding is a utility,
+   which a rule in the components layer never overrides */
+.acp-shell[data-desktop][data-narrow] [data-files-tab] { --tree-lead: calc(var(--start-x) + var(--sheet-inset)); }
+.acp-shell[data-desktop][data-narrow] [data-panel-tabs] { --tabs-lead: max(calc(var(--start-x) + var(--sheet-inset)), calc(var(--lights-w) + var(--gap) / 2)); }
+/* Files layout on macOS: the explorer sits under the traffic lights, so its leading edge stands on the cards' line too */
+.acp-shell[data-desktop][data-os="mac"] [data-explorer] { --tree-lead: calc(var(--sheet-inset) + var(--start-x)); --tree-trail: var(--start-x); }
 @theme inline {
   --spacing-tool-panel: var(--tool-panel-w);
   --spacing-tree-chevron: var(--tree-chevron);

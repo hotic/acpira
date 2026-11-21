@@ -133,7 +133,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
       {/* At the window's left edge while the explorer is folded: the pinned title row sits over its tabs' start */}
       <div data-stage data-edge={hidden || undefined} data-moving={moving || undefined} className="relative order-2 flex min-w-(--stage-fit-min) flex-1 flex-col">
         <div data-drag-region data-stage-tabs
-          className={cn('flex h-hdr shrink-0 items-center gap-1 pr-gap', hidden ? 'pl-[calc(var(--title-w)-var(--sheet-inset))]' : 'pl-gap-half')}>
+          className={cn('flex h-hdr shrink-0 items-center gap-1 pt-(--hdr-drop) pr-gap', hidden ? 'pl-[calc(var(--title-w)-var(--sheet-inset))]' : 'pl-gap-half')}>
           <PanelTabList>
             {views.map(v => (v === 'review'
               ? <TabButton key="review" label={t('panel.allChanges')} on={!!shown && sameView(shown, v)} closable
@@ -172,7 +172,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
         </div>
       </div>
       {/* Pinned at the window's top-right corner, where the tool panel's toggle sits in the conversation layout */}
-      <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[var(--title-top)] pr-[calc(var(--sheet-inset)+var(--line-end)+var(--caps-w,0px))]">
+      <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[calc(var(--title-top)+var(--hdr-drop,0px))] pr-[calc(var(--sheet-inset)+var(--line-end)+var(--caps-w,0px))]">
         <IconButton className="pointer-events-auto" title={`${sessionsLabel} ${TOGGLE_KEY}`} aria-label={t('desktop.sessionList')} aria-pressed={p.sessionsShown} onClick={p.onToggleSessions}>
           <PanelRight strokeWidth={1.5} />
         </IconButton>

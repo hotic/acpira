@@ -82,7 +82,7 @@ export function SubagentInspector(p: InspectorProps) {
           that header (data-sheet-header: the title row's and the corner toggle's room); the docked pane's ends come from
           desktop.css (--pane-lead / --pane-trail on the pane) */}
       <div data-sheet-header={(desktop && mode === 'overlay') || undefined} data-drag-region={desktop || undefined}
-        className={cn('flex h-hdr shrink-0 items-center gap-gap',
+        className={cn('flex h-hdr shrink-0 items-center gap-gap pt-(--hdr-drop)',
           !desktop ? 'px-page shadow-[inset_0_-1px_0_0_var(--line)]'
             : mode === 'overlay' ? 'pr-(--sheet-trail) pl-(--sheet-lead)' : 'pr-(--pane-trail) pl-(--pane-lead)')}>
         {!closeAtEnd && close}

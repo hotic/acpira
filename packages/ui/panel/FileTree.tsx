@@ -30,7 +30,7 @@ import { isChatRoot } from './chat';
 
 // The fill is one tint over a base (panel.css .tree-row): hover and selection only change the tint. The lead glyph sits a
 // pixel low: centred on the line box it rode high beside the names' lowercase letters (as the session list's project folder)
-const TREE_ROW = 'tree-row group/row relative cursor-pointer gap-1 rounded-md pr-2 [&>.row-lead]:translate-y-px';
+const TREE_ROW = 'tree-row group/row relative cursor-pointer gap-1.5 rounded-md pr-2 [&>.row-lead]:w-icon [&>.row-lead]:translate-y-px';
 // The leading space for a depth: the chevron's slot, then one step per level
 const indent = (depth: number): CSSProperties => ({ paddingLeft: `calc(var(--gap) / 2 + var(--tree-chevron) + ${depth} * var(--tree-indent))` });
 const chevronAt = (depth: number): CSSProperties => ({ left: `calc(var(--gap) / 2 + ${depth} * var(--tree-indent))` });
@@ -504,7 +504,7 @@ export function FileTree(p: FileTreeProps) {
           sections and the rows share its edge lines, and the filter starts at the tab's top there (--tree-top). No rule under it, a stuck folder
           draws its own edge once the tree scrolls */}
       {/* The filter keeps the system's menu, and the session's changes have none: only the project's own rows are entries */}
-      <div onContextMenu={e => e.stopPropagation()} className="flex shrink-0 items-center pt-[var(--tree-top,var(--spacing-gap-half))] pb-gap-half pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
+      <div onContextMenu={e => e.stopPropagation()} className="flex shrink-0 items-center pt-[var(--tree-top,var(--spacing-gap))] pb-gap-half pl-[var(--tree-lead,var(--spacing-gap))] pr-[var(--tree-trail,var(--spacing-gap))]">
         <label className="flex h-ctl min-w-0 flex-1 items-center gap-1.5 rounded-md border border-line bg-chip px-2 text-2 focus-within:border-line-strong">
           <Search strokeWidth={1.5} className="size-3.5 shrink-0 text-fg-3" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('panel.filter')} spellCheck={false}
@@ -514,7 +514,7 @@ export function FileTree(p: FileTreeProps) {
         </label>
       </div>
       {p.changes.length > 0 && (
-        <div className="shrink-0 pt-gap-half pr-[var(--tree-trail,var(--spacing-gap-half))] pb-gap pl-[var(--tree-lead,var(--spacing-gap-half))]" data-changes onContextMenu={e => e.stopPropagation()}>
+        <div className="shrink-0 pr-[var(--tree-trail,var(--spacing-gap-half))] pb-gap pl-[var(--tree-lead,var(--spacing-gap-half))]" data-changes onContextMenu={e => e.stopPropagation()}>
           <div className={SECTION}>
             <button type="button" onClick={() => setChangesOpen(o => !o)} aria-expanded={changesOpen} className="flex items-center gap-1 hover:text-fg-1">
               {t('panel.changes')}<ChevronRight strokeWidth={1.5} className={cn('size-3 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover/section:opacity-100', changesOpen && 'rotate-90')} />

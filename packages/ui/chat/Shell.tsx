@@ -535,11 +535,9 @@ export function Shell(p: ShellProps) {
   // Files layout: the title row's toggle folds the explorer, the pinned one at the top-right corner (⌥⌘B) the session column
   const explorerHidden = usePanelValue(s => s.explorerHidden);
   const toggleSessions = useCallback(() => hideColumn(!columnHidden), [hideColumn, columnHidden]);
-  // macOS: the traffic lights stand on the cards' line, which the column's icons share, so they stay put as the column
-  // folds or the window narrows (desktop.css --lights-x). The files layout, the panel's page over a narrow window and
-  // another density draw another line, and the lights move there
-  const panelOpen = usePanelValue(s => s.open);
-  useWindowLights(root, desktop, [files, panelOpen, canDock, a.density]);
+  // macOS: the traffic lights stay anchored on the cards' line across layouts, panels and width tiers (desktop.css
+  // --lights-x); only a density change moves them
+  useWindowLights(root, desktop, [a.density]);
   const [inspect, setInspect] = useState<{ id: string }>();
   const [graphOpen, setGraphOpen] = useState(false);
   useEffect(() => setGraphOpen(false), [p.activeSessionId]);

@@ -78,7 +78,7 @@ export function TitleRow({ onBack, onForward, column }: {
 }) {
   const label = column && t(column.open ? 'desktop.hideSidebar' : 'desktop.showSidebar');
   return <>
-    <div data-title-row data-drag-region className="absolute top-0 left-0 z-20 flex h-hdr items-center gap-0.5">
+    <div data-title-row data-drag-region className="absolute top-0 left-0 z-20 flex h-hdr items-center gap-0.5 pt-(--hdr-drop)">
       {!column?.drawer && <>
         <IconButton title={`${t('desktop.back')} ${shortcutLabel('[')}`} aria-label={t('desktop.back')} disabled={!onBack} onClick={onBack} className={STEP}><ArrowLeft strokeWidth={1.5} /></IconButton>
         <IconButton title={`${t('desktop.forward')} ${shortcutLabel(']')}`} aria-label={t('desktop.forward')} disabled={!onForward} onClick={onForward} className={STEP}><ArrowRight strokeWidth={1.5} /></IconButton>
@@ -277,8 +277,8 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: 
   useLocale();
   // With the devices row (remote/DevicesCard.tsx) the foot is one line across the column: the gear first, on the rows'
   // icon column, then the devices row filling the rest (its card rising from it). Without it the gear stands alone at the
-  // left, its glyph a size up (--foot-icon) so it does not read as a stray mark. The foot sits by the chat sheet's bottom
-  // edge (--foot-bottom), its icons as far off the window's bottom as the traffic lights off its top
+  // left; either way its glyph is a size up (--foot-icon) so it does not read as a stray mark. The foot sits by the chat
+  // sheet's bottom edge (--foot-bottom), on macOS in the window's corner, its fill as far off the bottom as off the left
   const row = devicesShown(useRemoteAccess());
   // Something new to install, an agent's adapter or Acpira itself: a breathing dot in the gear's top right corner, which the
   // round glyph leaves empty
@@ -291,7 +291,7 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: 
     <span className="absolute -top-1 -right-1 flex"><UpdateDot /></span>
   );
   return (
-    <div className="flex shrink-0 items-center px-column-pad pt-gap-half pb-(--foot-bottom)">
+    <div data-foot-row={row || undefined} className="flex shrink-0 items-center px-column-pad pt-gap-half pb-(--foot-bottom)">
       <DropdownMenu.Root>
         <DropdownMenu.Trigger render={<button type="button" data-land="settings" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_START : GEAR}>
           {row

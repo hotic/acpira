@@ -10,6 +10,9 @@
   --sheet-inset: 8px;
   /* The header line's distance from the window's top: the sheet's inset, none on Windows, where the line is the title bar */
   --title-top: var(--sheet-inset);
+  /* How far the title line's controls sit below the line's middle, as padding over its top (a 4 px pad drops centred
+     controls by 2): macOS only, below */
+  --hdr-drop: 0px;
   --lights-w: 0px;
   /* A notch under the sheet, not black: at 55% the column read as a hole beside the page (reported 2026-10-23) */
   --canvas: color-mix(in srgb, var(--bg-0) 78%, #000);
@@ -38,7 +41,8 @@
   /* The gear at the column's foot (chat/DesktopFrame.tsx AppMenu): a size up from the rows' icons */
   --foot-icon: 18px;
   /* The column foot's and the settings rail's bottom inset (AppMenu, settings/Nav.tsx): a pixel under the sheet's, since
-     the sheet's 1 px ring is drawn outside its box; a row's fill (hover, the current page) then ends on the ring's outer edge */
+     the sheet's 1 px ring is drawn outside its box; a row's fill (hover, the current page) then ends on the ring's outer
+     edge. macOS puts the foot in the window's corner instead (below, with --column-pad) */
   --foot-bottom: calc(var(--sheet-inset) - 1px);
   --title-w: calc(var(--title-lead) + 3 * var(--ctl) + 4px + var(--gap));
   /* The edge a narrow window's list page casts over the chat as it slides */
@@ -50,21 +54,32 @@
 .acp-shell[data-desktop][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--title-lead) + var(--ctl) + var(--gap)); }
 /* The lights span 60 px from --lights-x (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath
    of about 15 px to its icon (67: the span and that breath, desktop.ts LIGHTS_ROOM) */
-/* macOS: the header line is 40 px, so its controls get a breath above and below inside the sheet; the lights' centre
-   sits on the line's centre (the sheet's inset and half the line, 28 off the window's top, apps/desktop windows.rs) */
-/* The lights' left edge stands on the cards' line, the sheet's inset plus --start-x off the window's edge: the cards
-   and the composer start there in a window without a column, and the column's and the settings rail's icons stand on
-   it too (--column-pad below), so the lights stay put as the column folds or the window narrows. Two places draw
-   another line under them, and the shell moves the lights there (Shell.tsx posts the title row's padding as it eases,
-   apps/desktop mac.rs set_lights_x): the files layout's explorer, and the panel's page over a narrow window */
-.acp-shell[data-desktop][data-os="mac"] { --lights-x: calc(var(--sheet-inset) + var(--start-x)); --lights-w: calc(var(--lights-x) + 67px); --hdr: 40px; }
-.acp-shell[data-desktop][data-os="mac"][data-layout="files"] { --lights-x: 17px; }
-.acp-shell[data-desktop][data-os="mac"][data-narrow]:has(> [data-tool-panel-wrap][data-shown]) { --lights-x: var(--start-x); }
-/* The session column and the settings rail in its place: the side padding that puts a row's icon (the row's own 8 px,
+/* macOS: the header line is 40 px, so its controls get a breath above and below inside the sheet. Everything on it sits
+   2 px under its middle (--hdr-drop), the lights too (30 off the window's top, apps/desktop windows.rs): centred, the
+   line read as pressed against the window's top over the first card */
+/* The lights' left edge stands a pixel inside the cards' line, the sheet's inset plus --start-x off the window's edge:
+   the cards and the composer start there in a window without a column, the column's and the settings rail's icons
+   stand on it too (--column-pad below), and full-window panes under the lights (the files layout's explorer and a narrow
+   window's tool panel, panel.css) align their leading edge to that same line. A round light touching a card's rounded
+   corner on the same pixel reads as sticking out, and the column's glyphs draw their strokes inside their boxes, so the
+   pixel in puts the lights on what the eye takes for both lines. Traffic lights are a window-level anchor: they never
+   move across layouts, panels, drawers or pages (only a density change updates --start-x) */
+.acp-shell[data-desktop][data-os="mac"] { --lights-x: calc(var(--sheet-inset) + var(--start-x) + 1px); --lights-w: calc(var(--lights-x) + 67px); --hdr: 40px; --hdr-drop: 4px; }
+/* The session column, explorer and settings rail: the side padding that puts a row's icon (the row's own 8 px,
    then the icon's inset in its lead cell) on the cards' line, so the column reads on the line the sheet takes once it
    is folded. Both sides, so a row's fill keeps equal margins. macOS only: where the page draws the caption, the rows'
    fills stay under the title row's first button (--title-lead), half a gap in */
-.acp-shell[data-desktop][data-os="mac"] :is([data-session-panel], [data-settings-rail]) { --column-pad: calc(var(--sheet-inset) + var(--start-x) - 8px - (var(--lead) - var(--icon)) / 2); }
+.acp-shell[data-desktop][data-os="mac"] :is([data-session-panel], [data-settings-rail], [data-explorer]) { --column-pad: calc(var(--sheet-inset) + var(--start-x) - 8px - (var(--lead) - var(--icon)) / 2); }
+/* Their foot (the gear, the devices row, About) sits in the window's corner, not on the sheet's bottom edge, which left
+   the gear pressed into the corner once the column moved in to the cards' line. The gear's fill stands as far off the
+   window's bottom as off its left (the corner rule); the gear before the devices row starts a control's slack further
+   in (chat/DesktopFrame.tsx GEAR_START), so its foot rises as much. Either way the gear's glyph centre is as far off
+   the bottom as off the left, and the rail's About row puts its glyph there too, so switching between the chat, the
+   files layout and the settings keeps the foot glyph still (its fill then ends 2 px higher than its side inset at the
+   default density) */
+.acp-shell[data-desktop][data-os="mac"] :is([data-session-panel], [data-explorer]) { --foot-bottom: var(--column-pad); }
+.acp-shell[data-desktop][data-os="mac"] :is([data-session-panel], [data-explorer]) [data-foot-row] { --foot-bottom: calc(var(--column-pad) + (var(--lead) - var(--ctl)) / 2 + 8px); }
+.acp-shell[data-desktop][data-os="mac"] [data-settings-rail] { --foot-bottom: calc(var(--column-pad) + var(--lead) / 2 + 8px - var(--row) / 2); }
 /* Windows and Linux (data-caption: the page draws the window's caption and menu): no lights; the title row also holds
    the menu button (chat/DesktopFrame.tsx AppMenus). The header line is the window's title bar (as Codex draws it on Windows): it sits at the window's top on the canvas, the raised
    card begins under it (below), and the caption's three buttons (WindowCaption, 46 px each as Windows 11 draws them) take
@@ -203,8 +218,6 @@
      with the column; the column and the settings rail leave a strip of its height under it */
   .acp-shell[data-desktop] :is([data-title-row], [data-title-space]) { margin-top: var(--title-top); }
   .acp-shell[data-desktop] [data-title-row] { padding-left: var(--title-lead); }
-  /* macOS: the lights follow this padding (Shell.tsx), so it eases with the column and they glide instead of jumping */
-  .acp-shell[data-desktop][data-os="mac"] [data-title-row] { transition: padding-left var(--sidebar-duration) var(--sidebar-ease); }
   /* The column folds away (its title row's first button) and back. Only while it moves (data-column-moving, never under the
      drag that resizes it) its width eases, and the sheet's left inset and its header's room for the lights with it. The
      column's content keeps its open width meanwhile (--column-w, which Shell measures), clipped instead of re-wrapped. The

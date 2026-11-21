@@ -223,7 +223,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
         )}
       </aside>
       {p.cwd && p.sessionId && (
-        <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[var(--title-top)] pr-[calc(var(--sheet-inset)+var(--line-end)+var(--caps-w,0px))]">
+        <div data-panel-toggle className="pointer-events-none absolute top-0 right-0 z-40 flex h-[calc(var(--hdr)+var(--title-top))] items-center pt-[calc(var(--title-top)+var(--hdr-drop,0px))] pr-[calc(var(--sheet-inset)+var(--line-end)+var(--caps-w,0px))]">
           <IconButton ref={toggle} className="pointer-events-auto" title={`${label} ${TOGGLE_KEY}`} aria-label={t('panel.label')} aria-pressed={shown} onClick={() => panel.toggle()}>
             <PanelRight strokeWidth={1.5} />
           </IconButton>
@@ -430,7 +430,7 @@ function ToolPanel(p: ToolPanelProps) {
       {/* The tabs on the window's title line, the line moves the window; the pinned toggle sits at its end. The first tab starts
           on the Files tree's leading edge (panel.css --tree-lead), so the tab and the filter under it line up; a narrow
           window's panel covers the title row, and --tabs-lead (panel.css) starts the tabs after the traffic lights */}
-      <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pr-[calc(var(--start-x)+var(--ctl)+var(--gap)+var(--caps-w,0px))] pl-[var(--tabs-lead,var(--start-x))]">
+      <div data-drag-region data-panel-tabs className="flex h-hdr shrink-0 items-center gap-1 pt-(--hdr-drop) pr-[calc(var(--start-x)+var(--ctl)+var(--gap)+var(--caps-w,0px))] pl-[var(--tabs-lead,var(--start-x))]">
         <PanelTabList>
           {s.tabs.map(tab => {
             const Icon = TAB_ICON[tab.kind];

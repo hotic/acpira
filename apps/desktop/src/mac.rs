@@ -481,30 +481,71 @@ mod wheel {
   }
 }
 
-/// The traffic lights' left edge as a window is built (app/windows.rs): the cards' line at the default density, which the
-/// session column's icons share (desktop.css --lights-x)
-pub const LIGHTS_X: f64 = 22.0;
+/// The traffic lights' left edge as a window is built (app/windows.rs): a pixel inside the cards' line at the default
+/// density, where the round lights read as on it (desktop.css --lights-x)
+pub const LIGHTS_X: f64 = 23.0;
+/// Their vertical centre from the window's top: desktop.css `--title-top` (8) + half `--hdr` (40) + half `--hdr-drop` (4)
+pub const LIGHTS_CENTER_Y: f64 = 30.0;
 
-/// Moves the traffic lights' left edge to `x` (the page's windowLights: the line of whatever lies under them now) and
-/// keeps it there. Tauri has no setter once the window is built: tao puts the buttons back at the built inset on every
-/// draw, and AppKit at its own on a resize or leaving full screen. Both go through each button's frame, so an observer
-/// of that frame puts the button back in the same call, before anything paints. Shifting a superview's bounds instead
-/// does not last: AppKit lays the title bar out to them again on the next resize
+/// Owns a macOS chat window's traffic lights (both `x` and `LIGHTS_CENTER_Y`) instead of Tauri's `traffic_light_position`.
+/// Tao only reapplies its inset in `TaoView::drawRect:` (which a layer-backed WKWebView suppresses on many re-tiles) and
+/// fights dynamic `x`; AppKit also wraps `_updateButtonPositions` in `-[_NSThemeWidget setFrameOrigin:ignoreRentry:]`,
+/// dropping synchronous `setFrameOrigin:` calls from `NSViewFrameDidChangeNotification`. Watching the titlebar container,
+/// titlebar view and all three buttons, then flushing dirty windows in `kCFRunLoopBeforeWaiting` (after AppKit's layout
+/// cycle, before CoreAnimation commits at order 2_000_000) keeps both axes and hover tracking areas locked without flicker.
+pub fn install_lights(window: &tauri::WebviewWindow) {
+  let w = window.clone();
+  let _ = window.run_on_main_thread(move || {
+    if let Ok(ns) = w.ns_window() {
+      lights::install(ns as *mut AnyObject);
+    }
+  });
+}
+
+/// Moves the traffic lights' left edge to `x` (the page's windowLights) while keeping `LIGHTS_CENTER_Y` locked.
 pub fn set_lights_x(window: &tauri::WebviewWindow, x: f64) {
-  let Ok(ns) = window.ns_window() else { return };
-  let (ns, x) = (ns as usize, x.clamp(0.0, 3.0 * LIGHTS_X));
-  let _ = window.run_on_main_thread(move || lights::place(ns as *mut AnyObject, x));
+  let w = window.clone();
+  let x = x.clamp(0.0, 3.0 * LIGHTS_X);
+  let _ = window.run_on_main_thread(move || {
+    if let Ok(ns) = w.ns_window() {
+      lights::set_x(ns as *mut AnyObject, x);
+    }
+  });
 }
 
 mod lights {
   use std::cell::{Cell, RefCell};
   use std::collections::HashMap;
+  use std::ffi::c_void;
+  use std::ptr::{null, null_mut};
 
   use objc2::encode::{Encode, Encoding};
   use objc2::rc::Retained;
-  use objc2::runtime::{AnyClass, AnyObject};
+  use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
   use objc2::{AnyThread, DefinedClass, define_class, msg_send, sel};
   use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
+
+  // NSWindowStyleMaskFullScreen; kCFRunLoopBeforeWaiting; between AppKit layout (~600_000) and CA commit (2_000_000)
+  const FULL_SCREEN: usize = 1 << 14;
+  const BEFORE_WAITING: usize = 1 << 5;
+  const COMMIT_ORDER: isize = 1_900_000;
+
+  type CallBack = extern "C" fn(*mut c_void, usize, *mut c_void);
+
+  #[link(name = "CoreFoundation", kind = "framework")]
+  unsafe extern "C" {
+    static kCFRunLoopCommonModes: *const c_void;
+    fn CFRunLoopGetMain() -> *mut c_void;
+    fn CFRunLoopObserverCreate(
+      alloc: *const c_void,
+      acts: usize,
+      repeats: u8,
+      order: isize,
+      cb: CallBack,
+      ctx: *const c_void,
+    ) -> *mut c_void;
+    fn CFRunLoopAddObserver(rl: *mut c_void, observer: *mut c_void, mode: *const c_void);
+  }
 
   #[repr(C)]
   #[derive(Clone, Copy)]
@@ -512,8 +553,7 @@ mod lights {
     x: f64,
     y: f64,
   }
-
-  // SAFETY: laid out as CGPoint (two CGFloat, f64 on every Mac this app runs on)
+  // SAFETY: CGPoint is two CGFloat (f64 on 64-bit macOS)
   unsafe impl Encode for Point {
     const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
   }
@@ -524,17 +564,28 @@ mod lights {
     origin: Point,
     size: Point,
   }
-
-  // SAFETY: laid out as CGRect (CGSize is two CGFloat like CGPoint)
+  // SAFETY: CGRect is CGPoint + CGSize (each two CGFloat)
   unsafe impl Encode for Rect {
     const ENCODING: Encoding = Encoding::Struct("CGRect", &[Point::ENCODING, Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING])]);
   }
 
-  /// One window's close, minimize and zoom buttons, the first one's left edge and the step to the next
+  struct Guard<'a>(&'a Cell<bool>);
+  impl Drop for Guard<'_> {
+    fn drop(&mut self) {
+      self.0.set(false);
+    }
+  }
+
   struct Ivars {
-    buttons: [usize; 3],
+    window: usize,
+    observed: Cell<[usize; 5]>,
     x: Cell<f64>,
     step: f64,
+    bottom_pad: f64,
+    applying: Cell<bool>,
+    dirty: Cell<bool>,
+    entering_fs: Cell<bool>,
+    closed: Cell<bool>,
   }
 
   define_class!(
@@ -546,73 +597,272 @@ mod lights {
     unsafe impl NSObjectProtocol for Lights {}
 
     impl Lights {
-      // NSViewFrameDidChangeNotification of one of the buttons
-      #[unsafe(method(moved:))]
-      fn moved(&self, note: &AnyObject) {
-        // SAFETY: a notification's object, here the button it was registered for
-        let button: *mut AnyObject = unsafe { msg_send![note, object] };
-        self.put(button);
+      #[unsafe(method(viewMoved:))]
+      fn view_moved(&self, _note: &AnyObject) {
+        if !self.ivars().closed.get() && !self.ivars().applying.get() {
+          self.kick();
+        }
+      }
+
+      #[unsafe(method(willEnterFs:))]
+      fn will_enter_fs(&self, _note: &AnyObject) {
+        self.ivars().entering_fs.set(true);
+      }
+
+      #[unsafe(method(didEnterFs:))]
+      fn did_enter_fs(&self, _note: &AnyObject) {
+        self.ivars().entering_fs.set(false);
+      }
+
+      #[unsafe(method(didExitFs:))]
+      fn did_exit_fs(&self, _note: &AnyObject) {
+        if self.ivars().closed.get() {
+          return;
+        }
+        self.ivars().entering_fs.set(false);
+        self.kick();
+        // SAFETY: selector of this class taking one ignored object argument on the main thread; cancelled on close
+        unsafe {
+          let _: () = msg_send![self, performSelector: sel!(settle:), withObject: null_mut::<AnyObject>(), afterDelay: 0.0f64];
+        }
+      }
+
+      #[unsafe(method(settle:))]
+      fn settle(&self, _note: *mut AnyObject) {
+        if !self.ivars().closed.get() {
+          self.ivars().entering_fs.set(false);
+          self.kick();
+        }
+      }
+
+      #[unsafe(method(closing:))]
+      fn closing(&self, _note: &AnyObject) {
+        let iv = self.ivars();
+        iv.closed.set(true);
+        iv.dirty.set(false);
+        // SAFETY: documented NSObject / NSNotificationCenter teardown on the main thread
+        unsafe {
+          if let Some(cls) = AnyClass::get(c"NSObject") {
+            let _: () = msg_send![cls, cancelPreviousPerformRequestsWithTarget: self];
+          }
+          if let Some(cls) = AnyClass::get(c"NSNotificationCenter") {
+            let center: *mut AnyObject = msg_send![cls, defaultCenter];
+            let _: () = msg_send![center, removeObserver: self];
+          }
+        }
+        let _removed = WATCHED.with_borrow_mut(|w| w.remove(&iv.window));
       }
     }
   );
 
-  impl Lights {
-    fn put(&self, button: *mut AnyObject) {
-      let iv = self.ivars();
-      let Some(i) = iv.buttons.iter().position(|b| *b == button as usize) else { return };
-      let x = iv.x.get() + i as f64 * iv.step;
-      // SAFETY: a live button of the window (it just posted, or place read it from the window), on the main thread.
-      // Setting the origin posts again; by then the button is in place and this returns
-      unsafe {
-        let frame: Rect = msg_send![button, frame];
-        if (frame.origin.x - x).abs() > 0.01 {
-          let _: () = msg_send![button, setFrameOrigin: Point { x, y: frame.origin.y }];
-        }
-      }
+  thread_local! {
+    static WATCHED: RefCell<HashMap<usize, Retained<Lights>>> = RefCell::new(HashMap::new());
+    static ANY_DIRTY: Cell<bool> = const { Cell::new(false) };
+    static OBSERVER: Cell<bool> = const { Cell::new(false) };
+  }
+
+  extern "C" fn before_waiting(_obs: *mut c_void, _act: usize, _info: *mut c_void) {
+    if !ANY_DIRTY.replace(false) {
+      return;
+    }
+    let dirty: Vec<Retained<Lights>> = WATCHED.with_borrow(|w| {
+      w.values().filter(|l| l.ivars().dirty.replace(false) && !l.ivars().closed.get()).cloned().collect()
+    });
+    for lights in dirty {
+      lights.enforce();
     }
   }
 
-  thread_local! {
-    // By NSWindow. A closed window's entry stays until its address is used again: a few words
-    static WATCHED: RefCell<HashMap<usize, Retained<Lights>>> = RefCell::new(HashMap::new());
+  /// `[container (NSTitlebarContainerView), parent (NSTitlebarView), [close, minimize, zoom]]`
+  ///
+  /// # Safety
+  /// `window` is a live `NSWindow` on the main thread
+  unsafe fn titlebar_views(window: *mut AnyObject) -> Option<(*mut AnyObject, *mut AnyObject, [*mut AnyObject; 3])> {
+    // SAFETY: caller guarantees `window` is live on the main thread; standardWindowButton 0/1/2 are close/minimize/zoom
+    unsafe {
+      let btns: [*mut AnyObject; 3] = [
+        msg_send![window, standardWindowButton: 0usize],
+        msg_send![window, standardWindowButton: 1usize],
+        msg_send![window, standardWindowButton: 2usize],
+      ];
+      if btns.iter().any(|b| b.is_null()) {
+        return None;
+      }
+      let parent: *mut AnyObject = msg_send![btns[0], superview];
+      let container: *mut AnyObject = if parent.is_null() { null_mut() } else { msg_send![parent, superview] };
+      (!container.is_null()).then_some((container, parent, btns))
+    }
+  }
+
+  impl Lights {
+    fn kick(&self) {
+      self.ivars().dirty.set(true);
+      ANY_DIRTY.set(true);
+      self.enforce();
+    }
+
+    fn attach(&self) {
+      let iv = self.ivars();
+      if iv.closed.get() {
+        return;
+      }
+      let window = iv.window as *mut AnyObject;
+      let Some(cls) = AnyClass::get(c"NSNotificationCenter") else { return };
+      // SAFETY: `window` is live on the main thread while `closed` is false
+      unsafe {
+        let center: *mut AnyObject = msg_send![cls, defaultCenter];
+        let _: () = msg_send![center, removeObserver: self];
+        if let Some((container, parent, btns)) = titlebar_views(window) {
+          let note = NSString::from_str("NSViewFrameDidChangeNotification");
+          let views = [container, parent, btns[0], btns[1], btns[2]];
+          for v in views {
+            let _: () = msg_send![v, setPostsFrameChangedNotifications: Bool::YES];
+            let _: () = msg_send![center, addObserver: self, selector: sel!(viewMoved:), name: &*note, object: v];
+          }
+          iv.observed.set(views.map(|v| v as usize));
+        }
+        let win_notes: [(&str, Sel); 11] = [
+          ("NSWindowWillEnterFullScreenNotification", sel!(willEnterFs:)),
+          ("NSWindowDidEnterFullScreenNotification", sel!(didEnterFs:)),
+          ("NSWindowDidFailToEnterFullScreenNotification", sel!(settle:)),
+          ("NSWindowDidExitFullScreenNotification", sel!(didExitFs:)),
+          ("NSWindowDidResizeNotification", sel!(settle:)),
+          ("NSWindowDidEndLiveResizeNotification", sel!(settle:)),
+          ("NSWindowDidChangeScreenNotification", sel!(settle:)),
+          ("NSWindowDidChangeBackingPropertiesNotification", sel!(settle:)),
+          ("NSWindowDidDeminiaturizeNotification", sel!(settle:)),
+          ("NSWindowDidBecomeKeyNotification", sel!(settle:)),
+          ("NSWindowWillCloseNotification", sel!(closing:)),
+        ];
+        for (name, sel) in win_notes {
+          let n = NSString::from_str(name);
+          let _: () = msg_send![center, addObserver: self, selector: sel, name: &*n, object: window];
+        }
+      }
+    }
+
+    fn enforce(&self) {
+      let iv = self.ivars();
+      if iv.closed.get() || iv.applying.get() || iv.entering_fs.get() {
+        return;
+      }
+      let window = iv.window as *mut AnyObject;
+      // SAFETY: `window` is live on the main thread while `closed` is false; every view is checked before use
+      unsafe {
+        let mask: usize = msg_send![window, styleMask];
+        if mask & FULL_SCREEN != 0 {
+          return;
+        }
+        let Some((container, parent, btns)) = titlebar_views(window) else { return };
+        let owner: *mut AnyObject = msg_send![container, window];
+        if owner != window {
+          return;
+        }
+        let ids = [container as usize, parent as usize, btns[0] as usize, btns[1] as usize, btns[2] as usize];
+        if iv.observed.get() != ids {
+          self.attach();
+        }
+        iv.applying.set(true);
+        let _guard = Guard(&iv.applying);
+
+        let (wf, close_f): (Rect, Rect) = (msg_send![window, frame], msg_send![btns[0], frame]);
+        let bh = close_f.size.y;
+        if bh <= 0.0 || wf.size.y <= 0.0 {
+          return;
+        }
+        let want_h = (super::LIGHTS_CENTER_Y + bh / 2.0 + iv.bottom_pad).min(wf.size.y);
+        let want_cy = wf.size.y - want_h;
+        let mut cf: Rect = msg_send![container, frame];
+        let mut moved = false;
+        if (cf.size.y - want_h).abs() > 0.01 || (cf.origin.y - want_cy).abs() > 0.01 {
+          cf.size.y = want_h;
+          cf.origin.y = want_cy;
+          let _: () = msg_send![container, setFrame: cf];
+          moved = true;
+        }
+        let mut pf: Rect = msg_send![parent, frame];
+        if (pf.size.y - want_h).abs() > 0.01 || pf.origin.y.abs() > 0.01 {
+          pf.origin.y = 0.0;
+          pf.size.y = want_h;
+          let _: () = msg_send![parent, setFrame: pf];
+          moved = true;
+        }
+        let want_by = pf.size.y - (super::LIGHTS_CENTER_Y + bh / 2.0);
+        let x0 = iv.x.get();
+        for (i, b) in btns.into_iter().enumerate() {
+          let bf: Rect = msg_send![b, frame];
+          let want_x = x0 + i as f64 * iv.step;
+          if (bf.origin.x - want_x).abs() > 0.01 || (bf.origin.y - want_by).abs() > 0.01 {
+            let _: () = msg_send![b, setFrameOrigin: Point { x: want_x, y: want_by }];
+            moved = true;
+          }
+        }
+        if moved {
+          let _: () = msg_send![parent, updateTrackingAreas];
+        }
+      }
+    }
   }
 
   /// Main thread only
-  pub fn place(window: *mut AnyObject, x: f64) {
-    // SAFETY: the caller's own NSWindow on the main thread; NSWindowCloseButton, MiniaturizeButton and ZoomButton are
-    // 0, 1 and 2, nil in a window without them
-    let buttons: [*mut AnyObject; 3] = unsafe { [msg_send![window, standardWindowButton: 0usize], msg_send![window, standardWindowButton: 1usize], msg_send![window, standardWindowButton: 2usize]] };
-    if buttons.iter().any(|b| b.is_null()) {
+  pub fn install(window: *mut AnyObject) {
+    if window.is_null() {
       return;
     }
-    let ids = buttons.map(|b| b as usize);
-    WATCHED.with_borrow_mut(|watched| {
-      let lights = match watched.get(&(window as usize)) {
-        Some(l) if l.ivars().buttons == ids => l.clone(),
-        _ => {
-          // SAFETY: the buttons checked above
-          let (close, minimize): (Rect, Rect) = unsafe { (msg_send![buttons[0], frame], msg_send![buttons[1], frame]) };
-          let this = Lights::alloc().set_ivars(Ivars { buttons: ids, x: Cell::new(x), step: minimize.origin.x - close.origin.x });
-          // SAFETY: NSObject's init on the freshly allocated object whose ivars were just set
-          let this: Retained<Lights> = unsafe { msg_send![super(this), init] };
-          let Some(center) = AnyClass::get(c"NSNotificationCenter") else { return };
-          let name = NSString::from_str("NSViewFrameDidChangeNotification");
-          for button in buttons {
-            // SAFETY: the default center keeps observers weakly, so one outliving its buttons is never called
-            unsafe {
-              let center: *mut AnyObject = msg_send![center, defaultCenter];
-              let _: () = msg_send![center, addObserver: &*this, selector: sel!(moved:), name: &*name, object: button];
-            }
-          }
-          watched.insert(window as usize, this.clone());
-          this
+    if !OBSERVER.replace(true) {
+      // SAFETY: main-thread CoreFoundation call; the observer lives for the process and touches only main-thread statics
+      unsafe {
+        let obs = CFRunLoopObserverCreate(null(), BEFORE_WAITING, 1, COMMIT_ORDER, before_waiting, null());
+        if !obs.is_null() {
+          CFRunLoopAddObserver(CFRunLoopGetMain(), obs, kCFRunLoopCommonModes);
         }
-      };
-      lights.ivars().x.set(x);
-      for button in buttons {
-        lights.put(button);
       }
-    });
+    }
+    let lights = match WATCHED.with_borrow(|w| w.get(&(window as usize)).cloned()) {
+      Some(l) => l,
+      None => {
+        // SAFETY: `window` is a live NSWindow on the main thread; buttons from `titlebar_views` are non-null
+        let Some((close, mini)) = (unsafe {
+          titlebar_views(window).map(|(_, _, b)| -> (Rect, Rect) { (msg_send![b[0], frame], msg_send![b[1], frame]) })
+        }) else {
+          return;
+        };
+        let step = mini.origin.x - close.origin.x;
+        let this = Lights::alloc().set_ivars(Ivars {
+          window: window as usize,
+          observed: Cell::new([0; 5]),
+          x: Cell::new(super::LIGHTS_X),
+          step: if step > 0.0 { step } else { 20.0 },
+          bottom_pad: close.origin.y.clamp(4.0, 12.0),
+          applying: Cell::new(false),
+          dirty: Cell::new(false),
+          entering_fs: Cell::new(false),
+          closed: Cell::new(false),
+        });
+        // SAFETY: NSObject's init on the freshly allocated object whose ivars were just set
+        let this: Retained<Lights> = unsafe { msg_send![super(this), init] };
+        WATCHED.with_borrow_mut(|w| {
+          w.insert(window as usize, this.clone());
+        });
+        this.attach();
+        this
+      }
+    };
+    lights.kick();
+  }
+
+  /// Main thread only
+  pub fn set_x(window: *mut AnyObject, x: f64) {
+    if window.is_null() {
+      return;
+    }
+    let Some(lights) = WATCHED.with_borrow(|w| w.get(&(window as usize)).cloned()) else {
+      return;
+    };
+    if !lights.ivars().closed.get() {
+      lights.ivars().x.set(x);
+      lights.kick();
+    }
   }
 }
 

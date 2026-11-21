@@ -162,7 +162,8 @@ export function PageRail({ page, onPage, onBack, desktop, drawer, railRef, inert
         </>}
       </nav>
       {/* Desktop: About (the version and its updates) at the rail's foot, where apps keep it, by the page sheet's bottom edge like
-          the chat column's gear (chat/DesktopFrame.tsx AppMenu, --foot-bottom), so the two foot glyphs share a line; the IDE shells'
+          the chat column's gear (chat/DesktopFrame.tsx AppMenu, --foot-bottom), so the two foot glyphs share a line (on macOS in the
+          window's corner instead, each glyph's centre as far off its bottom as off its left); the IDE shells'
           extension is updated by their marketplace */}
       {desktop && <div className={cn('mt-auto flex flex-col', inset)}>{item('about', t('settings.nav.about'), <Info />)}</div>}
     </aside>
