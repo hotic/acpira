@@ -6,6 +6,7 @@ import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { PluginKind } from '@acpira/shared/plugins';
 import type { AgentInfo } from '@acpira/shared/transcript';
 import { t } from '../i18n';
+import { UsageGlyph } from '../usage/UsageGlyph';
 import type { SettingsPage } from './Nav';
 
 // The rail's search, Codex-style: every page, every titled group and every field is an entry, and a hit that is not a
@@ -22,11 +23,11 @@ export interface SearchEntry {
   anchor?: string;
 }
 
-export type SearchPage = 'general' | 'appearance' | 'shortcuts' | 'models' | 'subagents' | 'plugins' | 'shared' | 'connections' | 'storage' | 'about';
+export type SearchPage = 'general' | 'appearance' | 'shortcuts' | 'models' | 'subagents' | 'plugins' | 'shared' | 'connections' | 'usage' | 'storage' | 'about';
 
 const ICON: Record<SearchPage, ReactNode> = {
   general: <SlidersHorizontal />, appearance: <Palette />, shortcuts: <Keyboard />, models: <BrainCircuit />, subagents: <Workflow />, plugins: <Blocks />,
-  shared: <Layers />, connections: <Network />, storage: <HardDrive />, about: <Info />,
+  shared: <Layers />, connections: <Network />, usage: <UsageGlyph />, storage: <HardDrive />, about: <Info />,
 };
 
 // The plugins filters' names, plus the words someone looking for one may type

@@ -1,0 +1,22 @@
+/* Settings → Usage (usage/UsagePage.tsx): its measures and its one ink, declared on its root as the settings shell declares
+   its own (tokens.css .acp-settings). Tokens unlayered, rules in the components layer */
+.acp-usage {
+  /* The breakdown's name column, and the tokens and share columns: wide enough for "14.9亿" and "<0.1%", so every row's
+     bar ends at one edge */
+  --usage-name-w: 13rem;
+  --usage-num-w: 7ch;
+  --usage-pct-w: 5.5ch;
+  --usage-ink: color-mix(in srgb, var(--fg-1) 76%, transparent);
+  /* The trend's bars at rest, a step under the ink a hovered bar takes */
+  --usage-bar: color-mix(in srgb, var(--fg-1) 46%, transparent);
+  --usage-dim: color-mix(in srgb, var(--fg-3) 30%, transparent);
+  --usage-rest: color-mix(in srgb, var(--fg-3) 26%, transparent);
+  --usage-track: color-mix(in srgb, var(--fg-1) 6%, transparent);
+  /* A day without use in the lattice: a cell just off the page, so a short history does not read as a block of slots */
+  --usage-cell: color-mix(in srgb, var(--fg-1) 4%, transparent);
+}
+@layer components {
+  /* The lit days sweep from today back over the days a period adds (fill and opacity only) */
+  .acp-usage .usage-mark { transition: fill 260ms var(--ease-close), opacity 260ms var(--ease-close); transition-delay: calc(var(--i, 0) * 0.6ms); }
+  .acp-usage .usage-bar { transform-origin: left center; transition: transform 320ms var(--start-ease, ease); }
+}

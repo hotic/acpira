@@ -44,5 +44,6 @@ pub mod todo_tools;
 pub mod transcript;
 pub mod turn_errors;
 pub mod turn_settings;
+pub mod usage;
 #[cfg(windows)]
 pub mod win_pipe;

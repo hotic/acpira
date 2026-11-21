@@ -546,6 +546,10 @@ impl BridgeCore {
         let reply = self.manager.storage_action(action, &detail).await;
         self.post_now(HostMsg::Storage { view: reply.view, outcome: reply.outcome, error: reply.error });
       }
+      W::Usage => {
+        let view = self.manager.usage_view().await;
+        self.post_now(HostMsg::Usage { view });
+      }
       W::Plugins => self.on_plugins().await?,
       W::PluginAction { action } => self.on_plugin_action(action).await?,
       // A card's thumbnail: the backdrop of the version it offers, read from the frozen copy

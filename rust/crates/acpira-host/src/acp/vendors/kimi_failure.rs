@@ -31,7 +31,7 @@ pub fn read(home: &Path, session_id: &str, since_ms: i64) -> Option<Failure> {
 }
 
 /// The session's main-agent log: the workdir level is a hashed name, so every workdir is looked into
-fn wire_file(home: &Path, session_id: &str) -> Option<PathBuf> {
+pub(crate) fn wire_file(home: &Path, session_id: &str) -> Option<PathBuf> {
   // The id comes from the agent: never let it walk out of the sessions directory
   if session_id.is_empty() || session_id.contains(['/', '\\']) || session_id.contains("..") {
     return None;

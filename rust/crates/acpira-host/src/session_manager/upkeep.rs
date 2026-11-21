@@ -27,6 +27,8 @@ use crate::store::transcript_store::{is_blob_name, is_session_id};
 
 /// How long after the engine starts the first run waits, so a starting window never competes with it for the disk
 pub const UPKEEP_DELAY: Duration = Duration::from_secs(10 * 60);
+/// Long enough for the window and its first session to be up before the scan takes a core
+const USAGE_WARMUP_DELAY: Duration = Duration::from_secs(45);
 /// At most one run per this, across every engine on the machine
 pub const UPKEEP_EVERY: Duration = Duration::from_secs(20 * 3600);
 /// A pause between sessions, so a run stays in the background on a slow disk
@@ -117,6 +119,19 @@ fn clip_log(path: &Path) -> std::io::Result<u64> {
   }
   std::fs::rename(&tmp, path)?;
   Ok(before.saturating_sub(std::fs::metadata(path)?.len()))
+}
+
+/// The usage index's first read after an engine starts, in the background: after an update the backfill scans every
+/// saved record once, which would otherwise make the first open of the usage page wait for it
+pub(super) async fn usage_warmup(weak: std::sync::Weak<SessionManager>) {
+  if upkeep_disabled() {
+    return;
+  }
+  tokio::time::sleep(USAGE_WARMUP_DELAY).await;
+  let Some(m) = weak.upgrade() else { return };
+  if !m.state.lock().disposed {
+    m.usage_view().await;
+  }
 }
 
 /// The upkeep's schedule: a first run `UPKEEP_DELAY` after the engine starts, then a look every few hours (the stamp

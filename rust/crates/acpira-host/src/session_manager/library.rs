@@ -136,6 +136,11 @@ impl SessionManager {
     local
   }
 
+  /// The usage page's view: every saved session's turns by hour (`store/usage_index.rs`)
+  pub async fn usage_view(&self) -> acpira_shared::usage::UsageView {
+    self.usage.view(self.deps.store.clone()).await
+  }
+
   /// Sessions whose saved conversation contains every term of `query`. Records reach the disk within the save debounce,
   /// so a reply still streaming is found a moment later
   pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {

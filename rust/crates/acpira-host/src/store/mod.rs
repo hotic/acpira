@@ -12,3 +12,4 @@ pub mod session_search;
 pub mod shared_settings;
 pub mod storage;
 pub mod transcript_store;
+pub mod usage_index;

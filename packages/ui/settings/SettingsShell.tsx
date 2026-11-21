@@ -31,6 +31,8 @@ import { searchIndex, type SearchPage } from './search';
 import { SharedPage, type SharedState } from './SharedPage';
 import { SubagentsPage } from './SubagentsPage';
 import { StoragePage, type StorageState } from './StoragePage';
+import { UsagePage } from '../usage/UsagePage';
+import type { UsageView } from '@acpira/shared/usage';
 import { ConnectionsPage } from './ConnectionsPage';
 import { useConnections } from '../remote/api';
 import { useRemoteAccess } from '../remote/access';
@@ -87,6 +89,8 @@ export interface SettingsHandlers {
   // Storage tab: measure the data directory (plus what an open review needs), run a cleanup (the reply is the fresh view)
   storage?: (detail?: StorageDetail[]) => void;
   storageAction?: (action: StorageAction, detail?: StorageDetail[]) => void;
+  // Usage tab: ask the engine for a fresh usage view (HostMsg usage)
+  usage?: () => void;
 }
 
 export interface SettingsEnv {
@@ -116,6 +120,10 @@ export interface SettingsShellProps {
   providers?: ProvidersState;
   // The Storage tab's last measurement; undefined until the page asked for it
   storage?: StorageState;
+  // The Usage tab's last view; undefined until the page asked for it
+  usage?: UsageView;
+  // The engine's chats root (InitState.chats): sessions under it count as chats on the Usage tab, not as a project
+  chats?: string;
   // The project list (SessionCategories.projects): a host's page lists its folders from it
   projects?: string[];
   // Per agent, the configOptions of its latest session (the hide lists are built from these)
@@ -147,7 +155,7 @@ export function SettingsShell(p: SettingsShellProps) {
   // An agent's dialog sits on the Models page: the page behind keeps its title and action
   const title = page.kind === 'agent' || page.kind === 'models' ? t('settings.nav.models') : page.kind === 'plugins' ? t('settings.nav.plugins') : page.kind === 'appearance' ? t('settings.appearance.title')
     : page.kind === 'shortcuts' ? t('settings.shortcuts.title') : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
-    : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' ? t('settings.nav.connections')
+    : page.kind === 'usage' ? t('settings.nav.usage') : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' ? t('settings.nav.connections')
     : page.kind === 'about' ? t('settings.nav.about') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
   // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
@@ -183,7 +191,7 @@ export function SettingsShell(p: SettingsShellProps) {
   const trail = usePageTrail(page, p.onPage, p.onBack);
   // The rail's search over the pages this shell shows (About lives in the desktop rail only)
   const searchPages: SearchPage[] = ['general', 'appearance', 'shortcuts', 'models', 'subagents', 'plugins', 'shared',
-    ...(remote || access ? ['connections' as const] : []), 'storage', ...(desktop ? ['about' as const] : [])];
+    ...(remote || access ? ['connections' as const] : []), 'usage', 'storage', ...(desktop ? ['about' as const] : [])];
   const index = useMemo(() => searchIndex(p.agents, searchPages, desktop), [p.agents, searchPages.join(), desktop, p.locale]);
   const search = useRef<HTMLInputElement>(null);
   // Desktop: ⌘[ / ⌘] (Ctrl elsewhere) step through the trail as the title row's buttons do; back past the first page is the chat.
@@ -248,6 +256,7 @@ export function SettingsShell(p: SettingsShellProps) {
                     setAuto: on => postUpdate({ type: 'updateAuto', on }),
                     openExternal: p.on.openExternal,
                   }} onTour={p.onTour} />}
+                  {page.kind === 'usage' && <UsagePage view={p.usage} agents={p.agents} chats={p.chats} onLoad={p.on.usage} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
                   {page.kind === 'connections' && access && <RemoteAccessSection view={access} />}
                   {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} remote={remote} />}

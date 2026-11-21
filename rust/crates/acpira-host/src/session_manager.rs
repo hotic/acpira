@@ -348,6 +348,8 @@ pub struct SessionManager {
   last_sessions: parking_lot::Mutex<Option<Vec<SessionSummary>>>,
   // Extracted conversation text of the saved records, kept between history searches
   search: SessionSearch,
+  // Every turn's usage across the saved records, for the usage page (`store/usage_index.rs`)
+  usage: crate::store::usage_index::UsageIndex,
   // The last export per (session, format): an unchanged transcript hands back the same file instead of writing another one.
   // Held across the write, so rapid repeated clicks run one after another and the later ones hit the cache
   exports: tokio::sync::Mutex<HashMap<(String, ExportFormat), (u64, std::path::PathBuf)>>,
@@ -399,6 +401,7 @@ impl SessionManager {
   pub fn new(registry: Arc<AgentRegistry>, deps: ManagerDeps) -> Arc<Self> {
     let mgr = Arc::new_cyclic(|me: &Weak<SessionManager>| {
       let leases = SessionLeases::new(&deps.lease_root, deps.log.clone());
+      let usage = crate::store::usage_index::UsageIndex::new(&deps.lease_root, crate::store::usage_index::VendorDirs::from_env());
       let bus = Bus::new(&deps.lease_root, deps.log.clone());
       let reg_me = me.clone();
       let env_me = me.clone();
@@ -475,6 +478,7 @@ impl SessionManager {
         viewer_seq: Default::default(),
         last_sessions: Default::default(),
         search: SessionSearch::default(),
+        usage,
         exports: Default::default(),
         staged: Default::default(),
         staging: Default::default(),
@@ -564,6 +568,8 @@ impl SessionManager {
     tokio::spawn(async move { idle_loop(weak).await });
     let weak = mgr.me.clone();
     tokio::spawn(async move { upkeep::upkeep_loop(weak).await });
+    let weak = mgr.me.clone();
+    tokio::spawn(async move { upkeep::usage_warmup(weak).await });
     mgr
   }
 

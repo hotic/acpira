@@ -14,6 +14,7 @@ use crate::remote::{ConnectionOp, ConnectionView, RemoteDirEntry, SshHost};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::shared_config::{SharedAction, SharedView};
 use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
+use crate::usage::UsageView;
 use crate::transcript::{
   AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, DiffSource, Draft, NativeSessionInfo, QuestionAnswers,
   SessionCategories, SessionSummary, SlashCommand, Turn, TurnSettings,
@@ -358,6 +359,10 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The usage page: every session's turns folded by hour
+  Usage {
+    view: UsageView,
+  },
   /// The plugins' theme layer (`docs/dev/plugins.md`): after init, and whenever it changes; empty takes it away.
   /// `skin` names the theme plugin in effect; `generation` is the plugins' state it was built from
   PluginTheme {
@@ -641,6 +646,7 @@ impl HostMsg {
       HostMsg::Inventory { .. } => "inventory",
       HostMsg::Shared { .. } => "shared",
       HostMsg::Storage { .. } => "storage",
+      HostMsg::Usage { .. } => "usage",
       HostMsg::PluginTheme { .. } => "pluginTheme",
       HostMsg::PluginBackdrop { .. } => "pluginBackdrop",
       HostMsg::Plugins { .. } => "plugins",
@@ -1288,6 +1294,8 @@ pub enum WebviewMsg {
     #[serde(default)]
     detail: Vec<StorageDetail>,
   },
+  /// The usage page: read the view (the first read after an update scans every saved session once)
+  Usage,
   /// The plugin page: read the view (and follow its changes from then on), or apply an action and get the view back
   Plugins,
   PluginAction {

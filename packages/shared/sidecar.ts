@@ -97,8 +97,9 @@ export type PlatformEvent =
 
 export type SidecarMsg =
   // features: additions a shell may use without a protocol bump; absent on engines before them ('preview': previewOpen,
-  // 'projects': ShellEnv.projects with newSession / listNativeSessions cwd and the project list ops, 'localDir' and
-  // 'providers': a paired device may browse the computer's folders and edit the built-in agent's model sources)
+  // 'projects': ShellEnv.projects with newSession / listNativeSessions cwd and the project list ops, 'localDir',
+  // 'providers' and 'usage': a paired device may browse the computer's folders, edit the built-in agent's model
+  // sources, and read usage statistics)
   // safeMode: the engine has every user plugin unloaded (docs/dev/plugins.md); features has 'plugins' once it serves them
   | { type: 'helloOk'; requestId: string; protocolVersion: number; sidecar: { version: string; pid: number }; sessionsDir: string; features?: string[]; safeMode?: boolean }
   | { type: 'helloReject'; requestId: string; protocolVersion: number; reason: string }

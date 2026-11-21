@@ -105,6 +105,8 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     // The SSH hosts' state, read only: the list draws each host folder's alias and status from it, and a new session in
     // a host folder picks its agent by the host's run mode. Adding, changing and browsing hosts stay on the computer
     W::Connections => true,
+    // Read-only usage statistics across sessions: hour-bucketed totals for models, agents and projects already in the session list
+    W::Usage => true,
     // Puts something on the computer's screen: the device opens links and files itself
     W::ViewFocus
     | W::OpenPlan { .. }
@@ -409,6 +411,7 @@ mod tests {
     assert!(!allowed(json!({ "type": "removeAccount", "id": "a" })));
     assert!(!allowed(json!({ "type": "addAccountKey", "agent": "droid", "key": "fk-x" })));
     assert!(allowed(json!({ "type": "connections" })));
+    assert!(allowed(json!({ "type": "usage" })));
     assert!(!allowed(json!({ "type": "connectionOp", "op": { "op": "remove", "alias": "h" } })));
     assert!(!allowed(json!({ "type": "remoteDir", "alias": "h", "path": "/", "seq": 1 })));
   }

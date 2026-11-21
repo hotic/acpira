@@ -253,20 +253,22 @@ export function Tabs<V extends string>({ items, value, onChange, label }: {
 
 // A segmented single choice (a radio group drawn like the tab strip): `w-(--ctl-w)` as a row's control, or a line of
 // its own
-export function Segmented<V extends string>({ items, value, onChange, label, className }: {
+// `small`: a switch in a section head's text row (the size of the context report's order switch), not a form field
+export function Segmented<V extends string>({ items, value, onChange, label, className, small }: {
   items: { value: V; label: ReactNode }[];
   value: V;
   onChange: (v: V) => void;
   label: string;
   className?: string;
+  small?: boolean;
 }) {
   return (
     <RadioGroup value={value} onValueChange={v => onChange(v as V)} aria-label={label}
-      className={cn('flex h-ctl min-w-0 shrink-0 items-center gap-0.5 rounded-lg bg-chip p-0.5', className)}>
+      className={cn('flex min-w-0 shrink-0 items-center bg-chip', small ? 'h-ctl-sm gap-px rounded-md p-px' : 'h-ctl gap-0.5 rounded-lg p-0.5', className)}>
       {items.map(it => (
         <Radio.Root key={it.value} value={it.value} render={<button type="button" />} nativeButton
           onKeyDownCapture={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.click(); } }}
-          className={cn('inline-flex h-full min-w-max flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-2 whitespace-nowrap outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 [&_svg]:size-icon',
+          className={cn('inline-flex h-full min-w-max flex-1 items-center justify-center gap-1.5 px-2 whitespace-nowrap outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 [&_svg]:size-icon', small ? 'rounded-sm text-3' : 'rounded-md text-2',
             it.value === value ? 'bg-active text-fg-1' : 'text-fg-2 hover:text-fg-1')}>
           {it.label}
         </Radio.Root>

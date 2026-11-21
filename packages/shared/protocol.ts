@@ -9,6 +9,7 @@ import type { AgentInventory } from './inventory';
 import type { SharedAction, SharedView } from './sharedConfig';
 import type { PluginAction, PluginCardOp, PluginSkin, PluginSlot, PluginsView } from './plugins';
 import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from './storage';
+import type { UsageView } from './usage';
 import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
 import type { SessionEarlier } from './sessionWindow';
@@ -325,6 +326,8 @@ export type HostMsg =
   | { type: 'shared'; view: SharedView; error?: string }
   // The Storage tab; outcome for the action that triggered this reply, error when it failed
   | { type: 'storage'; view: StorageView; outcome?: StorageOutcome; error?: string }
+  // The usage page: every saved session's turns folded by hour
+  | { type: 'usage'; view: UsageView }
   // The plugin page, on request and on every change of the plugins (another engine's included); error when the action
   // that triggered this reply failed
   // The plugins' theme layer: after init and whenever it changes; empty takes it away (docs/dev/plugins.md)
@@ -654,6 +657,8 @@ export type WebviewMsg =
   // Storage tab: scan the data root (plus the details a review needs), or run a cleanup and get the view back
   | { type: 'storage'; detail?: StorageDetail[] }
   | { type: 'storageAction'; action: StorageAction; detail?: StorageDetail[] }
+  // The usage page: read the view (the first read after an update scans every saved session once)
+  | { type: 'usage' }
   // The plugin page: read the view (and follow its changes from then on), or apply an action and get the view back
   | { type: 'plugins' }
   | { type: 'pluginAction'; action: PluginAction }

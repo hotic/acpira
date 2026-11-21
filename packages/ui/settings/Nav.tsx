@@ -7,6 +7,7 @@ import { TitleSpace } from '../chat/DesktopFrame';
 import { NavEmpty, NavSearch } from '../chat/NavRows';
 import { shortcutLabel } from '../desktop';
 import { scrollToAnchor, searchHits, type SearchEntry } from './search';
+import { UsageGlyph } from '../usage/UsageGlyph';
 import { t } from '../i18n';
 
 // Orchestration carries the persona or group opened from its lists, and an agent's page is the Models page with that
@@ -14,13 +15,13 @@ import { t } from '../i18n';
 // back / forward trail and the chat can open the settings straight at one. Plugins carries its open filter, so the
 // rail's search can land on one
 export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'shortcuts' } | { kind: 'models' } | { kind: 'plugins'; tab?: string } | { kind: 'shared' } | { kind: 'connections' }
-  | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'storage' } | { kind: 'about' }
+  | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'usage' } | { kind: 'storage' } | { kind: 'about' }
   | { kind: 'agent'; id: AgentInfo['id']; tab?: 'models' | 'sources' };
 
 // Two pages are the same place (a click on the page already shown adds nothing to the trail)
 export const samePage = (a: SettingsPage, b: SettingsPage) => JSON.stringify(a) === JSON.stringify(b);
 
-type RailId = 'general' | 'appearance' | 'shortcuts' | 'models' | 'plugins' | 'subagents' | 'shared' | 'connections' | 'storage' | 'about';
+type RailId = 'general' | 'appearance' | 'shortcuts' | 'models' | 'plugins' | 'subagents' | 'shared' | 'connections' | 'usage' | 'storage' | 'about';
 // The rail entry a page lights: an agent's dialog sits on the Models page
 export const railOf = (p: SettingsPage): RailId => (p.kind === 'agent' ? 'models' : p.kind);
 
@@ -130,6 +131,7 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
           {item('plugins', t('settings.nav.plugins'), <Blocks />)}
           {item('shared', t('settings.nav.shared'), <Layers />)}
           {connections && item('connections', t('settings.nav.connections'), <Network />)}
+          {item('usage', t('settings.nav.usage'), <UsageGlyph />)}
           {item('storage', t('settings.nav.storage'), <HardDrive />)}
         </>}
       </nav>

@@ -29,6 +29,7 @@ import { deliverRemote, watchConnections } from './remote/api';
 import { deliverRemoteAccess, watchRemoteAccess } from './remote/access';
 import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
+import type { UsageView } from '@acpira/shared/usage';
 import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelection, setEditorCopy, setEditorSelection } from './chat/editorContext';
 import { focusMainComposer, updateMainComposer, writeMainComposer } from './chat/useComposerDraft';
 import { playChime } from './effects/chime';
@@ -230,6 +231,8 @@ export function App() {
   const [providers, setProviders] = useState<ProvidersState>();
   const [providerWrites] = useState(() => new ProviderWrites(action => post({ type: 'providerAction', action }), () => post({ type: 'providers' })));
   const [storage, setStorage] = useState<StorageState>();
+  // Settings → Usage's last view (usage/UsagePage.tsx); each visit asks the engine for a fresh one
+  const [usageView, setUsageView] = useState<UsageView>();
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
   // Each agent's remembered per-model parameters, answered with its controls (the persona page's effort list per model)
   const [modelShapes, setModelShapes] = useState<Partial<Record<AgentId, ModelShapes>>>({});
@@ -395,6 +398,7 @@ export function App() {
         case 'shared': setShared({ view: m.view, error: m.error }); break;
         // A reply without the review lists (a plain refresh) keeps the ones already shown: a review always re-asks on open
         case 'storage': setStorage(s => ({ outcome: m.outcome, error: m.error, view: { ...m.view, sessions: m.view.sessions ?? s?.view.sessions, residue: m.view.residue ?? s?.view.residue } })); break;
+        case 'usage': setUsageView(m.view); break;
         case 'providers': {
           const settled = providerWrites.receive();
           const drafts = providerWrites.drafts;
@@ -646,6 +650,7 @@ export function App() {
     sharedAction: action => post({ type: 'sharedAction', action }),
     storage: detail => post({ type: 'storage', detail }),
     storageAction: (action, detail) => post({ type: 'storageAction', action, detail }),
+    usage: () => post({ type: 'usage' }),
     // Reopening settings while a write is pending uses the cached draft, not a read that could overtake its reply.
     providers: () => providerWrites.refresh(),
     providerAction: (action, optimistic) => {
@@ -750,6 +755,8 @@ export function App() {
         shared={shared}
         providers={providers}
         storage={storage}
+        usage={usageView}
+        chats={init.chats}
         projects={categories?.projects}
         controls={controls}
         modelShapes={modelShapes}
