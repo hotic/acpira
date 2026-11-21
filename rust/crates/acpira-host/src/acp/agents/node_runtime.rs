@@ -236,10 +236,13 @@ pub fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<usize> {
         std::fs::create_dir_all(parent)?;
       }
       #[cfg(unix)]
-      std::os::unix::fs::symlink(target.as_ref(), &out).with_context(|| format!("symlink {}", out.display()))?;
+      {
+        std::os::unix::fs::symlink(target.as_ref(), &out).with_context(|| format!("symlink {}", out.display()))?;
+        files += 1;
+      }
+      // Windows Node.js ships as a zip, so a tar symlink only appears in a malformed archive there.
       #[cfg(not(unix))]
       bail!("symlink in archive unsupported on this platform: {raw_path}");
-      files += 1;
     } else {
       bail!("unsupported tar entry type {:?} for {raw_path}", entry_type);
     }
@@ -391,8 +394,6 @@ fn install_blocking(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use std::io::Write;
-  use sha2::{Digest, Sha256};
 
   #[test]
   fn parses_latest_lts_and_matching_shasum() {
@@ -431,7 +432,12 @@ mod tests {
     assert!(safe_symlink_target(Path::new("node-v26/bin/npm"), Path::new("/etc/passwd")).is_err());
   }
 
-  fn make_tar_gz(entries: &[(&str, Option<&[u8]>, Option<&str>, u32)]) -> Vec<u8> {
+  /// (path, file body, symlink target, mode)
+  #[cfg(unix)]
+  type TarEntry<'a> = (&'a str, Option<&'a [u8]>, Option<&'a str>, u32);
+
+  #[cfg(unix)]
+  fn make_tar_gz(entries: &[TarEntry]) -> Vec<u8> {
     let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     let mut builder = tar::Builder::new(gz);
     for (path, body, link, mode) in entries {
@@ -453,7 +459,8 @@ mod tests {
   #[cfg(unix)]
   #[tokio::test]
   async fn downloads_verifies_and_extracts_managed_node_from_mock_dist() {
-    use std::io::BufRead;
+    use sha2::{Digest, Sha256};
+    use std::io::{BufRead, Write};
     let target = PlatformTarget::for_platform("macos", "aarch64").unwrap();
     let filename = format!("node-v26.13.1-{}", target.suffix);
     let archive_bytes = make_tar_gz(&[
