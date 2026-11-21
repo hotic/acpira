@@ -19,30 +19,31 @@
    (GPT opens each reasoning section with a `**Title**` line) lifts one shade instead of jumping to the strongest foreground. */
 .acp-thought :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; line-height: inherit; }
 .acp-thought :is(h1, h2, h3, h4, h5, h6, strong, [data-streamdown="strong"]) { color: var(--fg-1); }
-/* Lists take the transcript rows' keylines (chat.css puts a row's icon box on the text edge): item text starts where a row's
-   label does, one icon, row gap and 4 px in, and the bullet centres on the rows' icon column, so a list between tool rows adds no lines
-   of its own. The bullet is drawn, since a disc marker's place depends on the font and streamdown's list-inside class; a
-   zero-width float keeps it out of the text's way and on the first line. A task item's checkbox takes the bullet's place
-   (it was drawn after a bullet). Numbers stay native markers, ending just before the text */
-.acp-prose :is(ul, ol) { --list-in: calc(var(--icon) + var(--gap) + 4px); margin: 0; padding-left: var(--list-in); list-style-position: outside; }
+/* Lists follow standard markdown typography in ems (so neither roomy density nor larger text opens a chasm between
+   bullet and copy): 1.65em indent (~23px at 14px, matching Tailwind Typography), a 0.35em bullet 0.75em before the
+   text, and a 0.9em task checkbox (1.65em − 0.9em = 0.75em, the exact same gap to text). The bullet is drawn via a
+   zero-width float so its position does not vary by font or streamdown's list-inside class; numbers stay native
+   markers ending just before the text */
+.acp-prose :is(ul, ol) { --list-in: 1.65em; margin: 0; padding-left: var(--list-in); list-style-position: outside; }
 .acp-prose ul { list-style: none; }
 .acp-prose ol { list-style-type: decimal; }
 .acp-prose li::marker { color: var(--fg-3); }
 .acp-prose ul > li:not(.task-list-item)::before {
-  --dot: 5px;
+  --dot: 0.35em;
+  --dot-gap: 0.75em;
   content: ''; float: left; width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--fg-3);
-  margin: calc((1lh - var(--dot)) / 2) calc(var(--list-in) - (var(--icon) + var(--dot)) / 2) 0 calc((var(--icon) - var(--dot)) / 2 - var(--list-in));
+  margin: calc((1lh - var(--dot)) / 2) var(--dot-gap) 0 calc(-1 * (var(--dot-gap) + var(--dot)));
 }
 .acp-prose .task-list-item input[type="checkbox"] {
-  float: left; width: var(--icon); height: var(--icon);
-  margin: calc((1lh - var(--icon)) / 2) calc(var(--list-in) - var(--icon)) 0 calc(-1 * var(--list-in));
+  --box: 0.9em;
+  float: left; width: var(--box); height: var(--box);
+  margin: calc((1lh - var(--box)) / 2) calc(var(--list-in) - var(--box)) 0 calc(-1 * var(--list-in));
 }
 /* Items sit a little closer than paragraphs: the renderer's own padding on each item is dropped, so this gap is the only one */
 .acp-prose li { padding-block: 0; }
+/* Override streamdown's `[&>p]:inline` when scanned into utilities: with outside markers, paragraphs inside items stay blocks so sibling spacing works on both sides */
+.acp-prose li > :where(p) { display: block; margin: 0; }
 .acp-prose li + li, .acp-prose li > :is(ul, ol) { margin-top: 8px; }
-/* Blocks inside a loose item (a paragraph, then a fence, table or quote) sit apart, or a fenced command lies flush under
-   the sentence that introduced it; half the reply's gap, so they still read as one item */
-.acp-prose li > * + * { margin-top: calc(var(--gap) / 2); }
 .acp-prose blockquote {
   position: relative; margin: 0; padding: var(--gap) var(--pad); border: 0;
   background: transparent; color: var(--fg-2); font-style: normal;
@@ -84,3 +85,8 @@
 /* KaTeX: a wide display formula scrolls inside its own box instead of breaking the column */
 .acp-prose .katex { color: var(--fg-1); }
 .acp-prose .katex-display { margin: 0; padding: 2px 0; overflow-x: auto; overflow-y: hidden; }
+/* Blocks inside a list item (a paragraph, then a fence, table, quote or display formula) sit apart symmetrically;
+   half the reply's gap, so they still read as one item. Placed after the block resets above so blockquote / katex-display
+   do not zero it out, while keeping lower specificity than nested lists (`li > :is(ul, ol)`). */
+.acp-prose li > hr { margin-block: calc(var(--gap) / 2); }
+.acp-prose li > * + *, .acp-prose li > * + .katex-display { margin-top: calc(var(--gap) / 2); }

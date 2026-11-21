@@ -29,7 +29,7 @@ const LINK_SAFETY = { enabled: false };
 const { raw: rehypeRaw, sanitize: rehypeSanitize, harden: rehypeHarden } = defaultRehypePlugins;
 if (!rehypeRaw || !rehypeSanitize || !rehypeHarden) throw new Error('streamdown default rehype plugins missing');
 // Rewrite file:// before sanitize/harden; urlTransform runs too late and harden would paint ` [blocked]`.
-const REHYPE = [rehypeRaw, rewriteFileHrefs, rewriteTaskNotes, withTaskNotes(rehypeSanitize), rehypeHarden];
+const REHYPE = [rehypeRaw, rewriteFileHrefs, rewriteTaskNotes, withTaskNotes(rehypeSanitize), rehypeHarden, wrapListItemRuns];
 const REPLY_CLASS = 'acp-prose flex min-w-0 flex-col gap-gap text-1 text-fg-1';
 const THOUGHT_CLASS = 'acp-prose acp-thought flex min-w-0 flex-col gap-gap text-2 text-fg-2';
 // Static mode renders the whole markdown at once without splitting into blocks; passing a single-element splitter skips
@@ -225,6 +225,62 @@ function MarkdownImage({ src, alt }: ComponentProps<'img'> & ExtraProps) {
     return <AgentImage image={hit ?? { mimeType, uri: written }} />;
   }
   return typeof src === 'string' ? <img src={src} alt={alt ?? ''} className="max-h-agent-image max-w-full rounded-md" /> : null;
+}
+
+// Block elements that may appear inside a Markdown list item (standard HTML blocks plus Acpira's task note).
+const LIST_BLOCKS = new Set([
+  'address', 'article', 'aside', 'blockquote', 'details', 'div', 'dl', 'fieldset', 'figcaption', 'figure',
+  'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'main', 'menu', 'nav', 'ol', 'p',
+  'pre', 'section', 'table', 'ul', TASK_NOTE_TAG,
+]);
+
+interface HastNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+}
+
+function isListBlock(node: HastNode): boolean {
+  if (node.type !== 'element') return false;
+  if (node.tagName && LIST_BLOCKS.has(node.tagName)) return true;
+  const cls = node.properties?.className;
+  if (Array.isArray(cls)) return cls.some(c => c === 'katex-display' || c === 'math-display');
+  return typeof cls === 'string' && /\b(?:katex|math)-display\b/.test(cls);
+}
+
+// CommonMark unwraps paragraphs inside tight list items, leaving bare text and inline nodes directly beside fenced
+// code, tables or quotes. CSS sibling rules cannot target text nodes (so a fence got a top gap when preceded by
+// inline code and none after it, or none on either side after plain text). Wrapping inline runs in `<p>` whenever
+// a list item holds a block child gives tight and loose items the same block structure, streaming and static alike.
+function wrapListItems(node: HastNode): void {
+  const children = node.children;
+  if (!children) return;
+  for (const child of children) wrapListItems(child);
+  if (node.tagName !== 'li' || !children.some(isListBlock)) return;
+  const next: HastNode[] = [];
+  let run: HastNode[] = [];
+  const flush = () => {
+    while (run.length && run[0]!.type === 'text' && !(run[0]!.value ?? '').trim()) run.shift();
+    while (run.length && run[run.length - 1]!.type === 'text' && !(run[run.length - 1]!.value ?? '').trim()) run.pop();
+    if (run.length) next.push({ type: 'element', tagName: 'p', properties: {}, children: run });
+    run = [];
+  };
+  for (const child of children) {
+    if (isListBlock(child)) {
+      flush();
+      next.push(child);
+    } else {
+      run.push(child);
+    }
+  }
+  flush();
+  node.children = next;
+}
+
+function wrapListItemRuns() {
+  return (tree: HastNode) => wrapListItems(tree);
 }
 
 // hast children → plain text (the fenced-code mapping gets elements, not a string)

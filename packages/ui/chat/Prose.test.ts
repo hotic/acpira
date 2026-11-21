@@ -58,6 +58,30 @@ describe('markdown prose', () => {
     }
   });
 
+  it('wraps inline runs beside blocks inside tight list items so spacing stays symmetric', () => {
+    const md = [
+      '1. plain item without blocks',
+      '2. lead with `code`:',
+      '   ```text',
+      '   body',
+      '   ```',
+      '   trailing text with `code`',
+      '3. plain lead:',
+      '   ```text',
+      '   second',
+      '   ```',
+      '   plain tail',
+    ].join('\n');
+    const html = prose(md);
+    const items = [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/g)].map(m => m[1]!);
+    expect(items).toHaveLength(3);
+    // Items with no block children stay unwrapped
+    expect(items[0]).not.toContain('<p>');
+    // Tight items holding a fence wrap both the leading and trailing inline runs into paragraphs
+    expect(items[1]).toMatch(/^<p>lead with <code[^>]*>code<\/code>:\s*<\/p><div class="code-fence[\s\S]*<\/div><p>\s*trailing text with <code[^>]*>code<\/code><\/p>$/);
+    expect(items[2]).toMatch(/^<p>plain lead:\s*<\/p><div class="code-fence[\s\S]*<\/div><p>\s*plain tail<\/p>$/);
+  });
+
   it('leaves an unlabelled fence uncoloured', () => {
     const commit = "fix(webview): keep a steered message inside the running turn's stream\n\n- the fold's clip no longer shaves it";
     const html = renderToStaticMarkup(createElement(CodeBlock, { code: commit }));
