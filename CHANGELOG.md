@@ -11,6 +11,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.7] - 2026-11-22
+
+### Added
+
+- **Usage page.** Settings → Usage adds up every saved session: tokens, working time, the longest turn and the streak, an activity lattice, a trend, and a breakdown by model, agent or project. The chat column's foot has a shortcut beside the gear, and the iOS, Android and HarmonyOS apps show the same page for computers on this version.
+- **Categories in the desktop session list.** Each open project lists its latest loose sessions followed by its categories, and a category takes new sessions in that project's folder. Custom section headers drag to reorder like category headers.
+- **A CLI's own executable path and a private Node.js.** The agent page can point an agent at a custom executable, with a file picker on desktop, and set a built-in agent back to automatic discovery. An npm install that finds no Node.js offers to download the official portable Node.js LTS into `~/.acpira/runtime/node` and continue. That runtime goes last on PATH, so a system Node.js always wins.
+- Images in the lightbox and the share preview zoom with a pinch, on trackpads and touch screens, under the fingers.
+- A provider source's models reorder by dragging a row or with Alt+Up / Alt+Down, and the built-in agent's picker follows. Image input that the configuration leaves open is taken from the model catalogue until the editor saves a choice.
+- An agent in an SSH folder can open a page with `open_browser`: it opens in this machine's browser panel, with the host's loopback ports tunnelled.
+- The Open files with picker shows marks for the system app, VS Code, Zed, Sublime Text and IntelliJ.
+
+### Changed
+
+- **One engine per machine on Windows.** Every shell on Windows now reaches one engine per data folder over an owner-only named pipe, as on macOS and Linux, instead of starting one per window. That engine runs the remote access gateway and winds down the per-window engines left by 2.1.6 and earlier.
+- **Installed agents run on this machine in SSH folders by default.** An installed external ACP agent runs locally for SSH folders unless switched off on its page. The built-in agent and CLIs missing here stay on the host. An earlier opt-in list keeps only an explicit opt-in of the built-in agent.
+- On narrow desktop windows the settings rail becomes a full-window page like the session drawer, toggled with ⌘B and closed with Esc. The Models page in settings is now called Agents.
+- On the macOS desktop app, the traffic lights stay put across layouts, panels, drawers and pages without flickering, and only a density change moves them. The session column's foot moves into the window's corner.
+- About shows the version and update status on one line, and subagent and group sections drop their counts.
+- The built-in model catalogue is refreshed.
+
+### Fixed
+
+- On Windows, agent CLIs installed through npm, pnpm, scoop, bun, volta, WinGet or agy's installer are found, and refreshing the settings page re-reads PATH and the registry, so a CLI installed meanwhile shows without a restart.
+- In an SSH folder, Codex run on this machine keeps Acpira's tools, project shims and stdio MCP servers. Codex 0.170.0 refuses client stdio servers there, so they ride a loopback HTTP bridge.
+- Workspace hooks in SSH folders resolve from a Windows machine.
+- codex-acp 2.8.0's config, deprecation and false model-mismatch warnings around a resume no longer show in the transcript, and an MCP server that fails to start is reported in a toast instead of an empty turn.
+- Antigravity: agy 1.5.13's renamed MCP server alias no longer strips Acpira's tools of their names, cards and SSH routing. A late reply or automatic `/compact` that ends on agy's failure line shows as that error, and an expired sign-in reconnects and continues the task.
+- An imported Antigravity login gets a private copy of its token, so agy no longer writes back into the keyring the Antigravity desktop app signs in with. A different identity in the CLI's store adds an account instead of renaming the old one.
+- Local run of Antigravity on a saved or plugin account honours that account's folder. On Windows, agy's drive-letter file paths are read as the CLI's own, and the tool guard runs through the desktop app, where a missing guard let tools through.
+- Images, videos and widgets a tool shows stay mounted when a fold opens or closes, so later rows no longer flash and video and widget state survives. Long notice titles wrap instead of widening the thread, and connected rail segments stay attached while folds move.
+- Blocks inside list items are spaced evenly, and bullets stay beside their text at every density and text size.
+- The built-in agent's tile in settings shows only Built in until a version is known.
+- On iOS, a session link that launched the app opens once the first paired computer connects instead of reporting the session missing. Long chats open and scroll faster.
+
 ## [2.1.6] - 2026-11-20
 
 ### Added
