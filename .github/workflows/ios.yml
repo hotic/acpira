@@ -32,12 +32,17 @@ jobs:
         with:
           persist-credentials: false
       # The newest released Xcode 27: the app builds against the iOS 27 SDK and the scripts' iPhone 18 Pro device.
-      # Betas and release candidates are skipped: the image that added Xcode_27.3_beta failed WebKit and
-      # ImageRenderer tests that pass on 27.2 and locally
+      # Resolve symlinks first so aliases like Xcode_27.3.0.app -> Xcode_27.3_beta.app do not bypass the release filter
       - name: Select Xcode
         run: |
-          xcode="$(ls -d /Applications/Xcode_27*.app | grep -E '/Xcode_27(\.[0-9]+)*\.app$' | sort -V | tail -n 1)"
+          xcode="$(
+            for app in /Applications/Xcode_27*.app; do
+              if [ -d "$app" ]; then (cd -P "$app" && pwd); fi
+            done | sort -u | grep -E '/Xcode_27(\.[0-9]+)*\.app$' | sort -V | tail -n 1
+          )"
           test -n "$xcode"
+          echo "Selected $xcode"
+          "$xcode/Contents/Developer/usr/bin/xcodebuild" -version
           echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
       - name: check.sh
         env:
