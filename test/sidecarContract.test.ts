@@ -203,9 +203,10 @@ describe('sidecar session contract', () => {
     s.view('V', { type: 'terminalOpen', id: 'T', cwd: at.cwd, cols: 100, rows: 30 });
     expect(await s.hostMsg('V', 'terminalState', m => m.id === 'T' && m.replay !== undefined)).toMatchObject({ cols: 100, rows: 30, title: 'sh', replay: '' });
     s.view('V', { type: 'terminalInput', id: 'T', data: 'echo "term-$((40+2))"; stty size; pwd\r' });
-    await expect.poll(() => text('V'), { timeout: 10_000 }).toContain('30 100');
+    // pwd prints last and may land in a later chunk than stty's size, so wait for it before checking the rest
+    await expect.poll(() => text('V'), { timeout: 10_000 }).toContain(at.cwd.split('/').pop());
     expect(text('V')).toContain('term-42');
-    expect(text('V')).toContain(at.cwd.split('/').pop());
+    expect(text('V')).toContain('30 100');
     // A reload: the old page goes, the new one opens the same terminal and gets everything so far, at the size it asks
     s.send({ type: 'detachView', viewId: 'V' });
     await s.open('W');
