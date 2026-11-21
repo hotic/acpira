@@ -272,6 +272,7 @@ impl AcpSession {
       // The settings files may have changed since the last connection
       c.ultracode.workflows = None;
       c.compaction.auto_eligible = false;
+      c.proc_turn_seen = false;
       (c.proc_gen, c.account_id.clone())
     };
     let facts = read_model_facts(&def, &dir).await;

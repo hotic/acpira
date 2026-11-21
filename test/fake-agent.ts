@@ -433,9 +433,21 @@ const app = acp.agent({ name: 'fake-agent' })
       configOptions: configOptions(),
     };
   })
-  .onRequest(acp.methods.agent.session.resume, ({ params }) => {
+  .onRequest(acp.methods.agent.session.resume, async ({ params, client }) => {
     logMcp('resume', (params as { mcpServers?: unknown }).mcpServers);
     logMeta('resume', params._meta, params.cwd, params.additionalDirectories);
+    const emitResumeNotices = async () => {
+      if (!process.env.FAKE_RESUME_NOTICES) return;
+      const push = (title: string) => client.notify(acp.methods.client.session.update, {
+        sessionId: params.sessionId,
+        update: { sessionUpdate: 'notice', severity: 'warning', title } as unknown as acp.SessionUpdate,
+      });
+      await push('`[features].multi_agent` is deprecated. It still controls the V1 fallback.');
+      setTimeout(() => {
+        void push('Codex is ignoring 2 unrecognized configuration settings. Check for typos or deprecated settings.\n  user (~/.codex/config.toml): `features.remote_connections` is ignored.');
+        void push('This session was recorded with model `gpt-6.2-astra` but is resuming with `gpt-6.1-sol`. Consider switching back to `gpt-6.2-astra` as it may affect Codex performance.');
+      }, 15);
+    };
     if (process.env.FAKE_REBUILD && builtWith.has(params.sessionId)) {
       const settings = settingsOf(params._meta);
       if (!sessions.has(params.sessionId) || builtWith.get(params.sessionId) !== settings) {
@@ -452,7 +464,11 @@ const app = acp.agent({ name: 'fake-agent' })
         configOptions: configOptions() };
     }
   rejectMcp((params as { mcpServers?: unknown[] }).mcpServers);
-    if (sessionDir) return restoreSession(params.sessionId, params.cwd);
+    if (sessionDir) {
+      const restored = restoreSession(params.sessionId, params.cwd);
+      await emitResumeNotices();
+      return restored;
+    }
     // cwd containing "flaky-resume": while a resume.lock file sits in it, restores fail with a transport-level
     // internal error — a transient restore failure, not a missing session; removing the file makes them succeed
     if (params.cwd.includes('flaky-resume')) {
@@ -1373,6 +1389,12 @@ const app = acp.agent({ name: 'fake-agent' })
           ? { sessionUpdate: 'notice', severity: 'info', title: 'Task stopped by user', description: `${name}.` }
           : { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `**Task stopped by user:** ${name}.` } }) as never);
       }, 80);
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'notice-warning') {
+      await send({ sessionUpdate: 'notice', severity: 'warning', title: 'Heads up: Long threads and multiple compactions can reduce accuracy.' } as never);
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'still going' } });
       return { stopReason: 'end_turn' };
     }
 

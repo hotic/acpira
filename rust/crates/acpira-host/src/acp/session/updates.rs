@@ -15,7 +15,7 @@ use crate::acp::transcript::normalize::{WAKEUP_VERBS, activity_of, apply_async_t
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx, native_sidekick_call};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
-use crate::acp::vendors::{Vendor, antigravity, claude_autonomous, claude_wakeup, claude_window, droid_core, goal, hermes, steering};
+use crate::acp::vendors::{Vendor, antigravity, claude_autonomous, claude_wakeup, claude_window, codex_notices, droid_core, goal, hermes, steering};
 use crate::util::now_ms;
 
 const RUNNING_KINDS: [&str; 6] =
@@ -150,6 +150,30 @@ impl AcpSession {
     }
     // ACP notices are live events, not history: a replay that repeats one must not stack another row on every reopen
     if c.replaying && kind == "notice" {
+      return;
+    }
+    if kind == "notice" && self.vendor == Vendor::Codex && codex_notices::drop_on_update(&u, c.proc_turn_seen) {
+      let head: String = u.get("title").and_then(Value::as_str).unwrap_or("").lines().next().unwrap_or("").chars().take(80).collect();
+      drop(c);
+      self.log(&format!("codex resume notice ignored: {head}"));
+      return;
+    }
+    // codex-acp reports MCP startup skips/failures as failed `tool_call` updates after session/new or resume:
+    // keep them out of the transcript so they never fabricate an empty "Done" turn or append to an older turn
+    if matches!(kind.as_str(), "tool_call" | "tool_call_update")
+      && self.vendor == Vendor::Codex
+      && let Some(report) = codex_notices::mcp_startup_report(&u)
+    {
+      drop(c);
+      match report {
+        codex_notices::McpStartupReport::Skipped { server, detail } => {
+          self.log(&format!("codex MCP `{server}` skipped: {detail}"));
+        }
+        codex_notices::McpStartupReport::Failed { ref server, ref detail } => {
+          self.log(&format!("codex MCP `{server}` startup failed: {detail}"));
+          self.notify(&report.toast_text());
+        }
+      }
       return;
     }
     if c.phase.running
@@ -442,4 +466,88 @@ fn is_wakeup_row(turns: &[Turn], id: &str) -> bool {
   find_tool(turns, id).is_some_and(|(ti, bi)| {
     matches!(turns[ti].as_agent().and_then(|a| a.blocks.get(bi)), Some(AgentBlock::ToolCall(tc)) if tc.verb_key.as_deref().is_some_and(|k| WAKEUP_VERBS.contains(&k)))
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use std::sync::Arc;
+
+  use parking_lot::Mutex;
+  use serde_json::json;
+
+  use acpira_shared::transcript::SessionStatus;
+
+  use crate::acp::agents::registry::AgentRegistry;
+  use crate::acp::session::{AcpSession, InertPolicy, SessionDeps};
+  use crate::store::transcript_store::TranscriptStore;
+
+  fn codex_session() -> (Arc<AcpSession>, Arc<Mutex<Vec<String>>>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let notices = Arc::new(Mutex::new(Vec::new()));
+    let notify_sink = notices.clone();
+    let deps = SessionDeps {
+      registry: Arc::new(AgentRegistry::new(&json!({}))),
+      log: Arc::new(|_| {}),
+      on_change: Arc::new(|_, _| {}),
+      blobs: TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_| {}), None),
+      notify: Some(Arc::new(move |msg: &str| notify_sink.lock().push(msg.to_owned()))),
+      accounts: None,
+      policy: Arc::new(InertPolicy),
+      pool: None,
+      shared_mcp: None,
+      plugin_hooks: None,
+      plugin_prompts: None,
+      data_home: None,
+      plugin_runtime: None,
+      host_mcp: None,
+      remote: None,
+    };
+    let s = AcpSession::fresh("codex", &dir.path().to_string_lossy(), deps, None);
+    {
+      let mut c = s.core.lock();
+      c.acp_session_id = Some("codex-thread-1".into());
+      c.status = SessionStatus::Ready;
+    }
+    (s, notices, dir)
+  }
+
+  #[test]
+  fn codex_mcp_startup_reports_never_create_an_empty_done_turn() {
+    let (s, notices, _dir) = codex_session();
+    // Skipped server: logged only, no turn, no toast
+    s.on_update(json!({
+      "sessionId": "codex-thread-1",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "mcp_startup.acpira.1111",
+        "kind": "other",
+        "title": "mcp__acpira__startup",
+        "status": "failed",
+        "content": [{
+          "type": "content",
+          "content": { "type": "text", "text": "[codex-acp] MCP server `acpira` was not started, because the Codex config already defines an MCP server with this name." }
+        }]
+      }
+    }));
+    assert!(s.core.lock().state.turns.is_empty());
+    assert!(notices.lock().is_empty());
+
+    // Failed server: toasted and logged, still no orphan AgentTurn
+    s.on_update(json!({
+      "sessionId": "codex-thread-1",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "mcp_startup.blockbench.2222",
+        "kind": "other",
+        "title": "mcp__blockbench__startup",
+        "status": "failed",
+        "content": [{
+          "type": "content",
+          "content": { "type": "text", "text": "[codex-acp forwarded startup error] MCP server `blockbench` failed to start: missing binary" }
+        }]
+      }
+    }));
+    assert!(s.core.lock().state.turns.is_empty());
+    assert_eq!(notices.lock().as_slice(), ["MCP server `blockbench` failed to start: missing binary"]);
+  }
 }

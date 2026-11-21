@@ -614,6 +614,7 @@ impl AcpSession {
       return;
     }
     c.peer.detached = true;
+    c.proc_turn_seen = true;
     // A prompt still waiting on its response reopens the turn when it settles (`settle`)
     self.reopen_for_detached(c);
     self.log("goal continuation started");

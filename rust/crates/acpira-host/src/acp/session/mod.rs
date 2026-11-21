@@ -292,6 +292,9 @@ pub(crate) struct Core {
   pub retried_turn: Option<i64>,
   pub phase: Phase,
   pub replaying: bool,
+  /// Whether a turn has opened on the current process (`open_turn`, `open_goal_continuation`): before one has,
+  /// `codex-acp` flushes `thread/resume` notices that do not belong to the settled turn before it (`codex_notices`)
+  pub proc_turn_seen: bool,
   pub startup_banner: Option<String>,
   /// The `/goal …` command a goal control steered into the running turn over `_session/goal`: its echo is dropped like
   /// a sent prompt's (`goal::is_command_echo`); cleared when the turn settles
@@ -518,6 +521,7 @@ impl AcpSession {
           retried_turn: None,
           phase: Phase::default(),
           replaying: false,
+          proc_turn_seen: false,
           startup_banner: None,
           goal_steered: None,
           goal_due: false,

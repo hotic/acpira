@@ -606,6 +606,7 @@ impl AcpSession {
   /// Record the user turn, title an untitled session after it and open the agent turn the answer streams into
   fn open_turn(&self, text: &str, origin: Origin, plan_id: Option<&str>, accepted: &mut Accepted) -> OpenTurn {
     let mut c = self.core.lock();
+    c.proc_turn_seen = true;
     c.lineage.agent_title_muted = c.lineage.history_context || c.lineage.forked_from.is_some() || accepted.forked || accepted.edited_staged || (c.unprompted && c.lineage.agent_title_muted);
     c.compaction.completion = Some(CompactionCompletion::new(accepted.compacting.then_some(self.agent.as_str())));
     c.turn_failure = None;

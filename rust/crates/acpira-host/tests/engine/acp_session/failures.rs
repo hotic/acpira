@@ -218,3 +218,36 @@ async fn an_automatic_compaction_on_an_expired_sign_in_is_its_error() {
   // Nothing in flight: the process holding the expired ticket goes at once, a fresh one signs in
   until(|| sign_ins.count() == 2 && view(&s)["status"] == "ready", 10_000).await;
 }
+
+// codex-acp 2.8.0 flushes thread/resume config and model-mismatch warnings around the session/resume response:
+// they must neither append onto the settled turn nor stack on every reopen, while real turn notices stay
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_resume_notices_are_dropped_while_live_notices_stay() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "codex", json!({ "env": { "FAKE_SESSION_DIR": dir.path(), "FAKE_RESUME_NOTICES": "1" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "say:first reply").await;
+  let rec = s.to_record();
+  drop(s);
+
+  let resumed = reopened(&h, rec).await;
+  assert_eq!(view(&resumed)["status"], "ready");
+  // Wait past the post-resume async flush window so late resume notices have reached on_update
+  tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+  let notices: Vec<Value> = agent_blocks(&view(&resumed)).into_iter().filter(|b| b["type"] == "notice").collect();
+  assert!(notices.is_empty(), "resume notices must be dropped: {notices:?}");
+
+  // A real turn notice on the resumed process still renders
+  prompt(&resumed, "notice-warning").await;
+  let notices: Vec<Value> = agent_blocks(&view(&resumed)).into_iter().filter(|b| b["type"] == "notice").collect();
+  expect_match(notices, json!([{ "severity": "warning", "title": "Heads up: Long threads and multiple compactions can reduce accuracy." }]));
+
+  // Reopening a second time drops the resume notices again and keeps only the one real notice
+  let rec2 = resumed.to_record();
+  drop(resumed);
+  let reopened_again = reopened(&h, rec2).await;
+  tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+  let notices: Vec<Value> = agent_blocks(&view(&reopened_again)).into_iter().filter(|b| b["type"] == "notice").collect();
+  expect_match(notices, json!([{ "severity": "warning", "title": "Heads up: Long threads and multiple compactions can reduce accuracy." }]));
+}
