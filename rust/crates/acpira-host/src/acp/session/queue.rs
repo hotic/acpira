@@ -531,21 +531,35 @@ impl AcpSession {
   }
 
   /// The detached peer turn reported its thread idle (or, for an autonomous cycle, its result or a stop): settle it like a
-  /// prompt response, hand a finished one to the workspace gate and let the queue move
-  pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core, stop: TurnStop) {
+  /// prompt response, hand a finished one to the workspace gate and let the queue move. One that ended on a failure the
+  /// CLI sends as text fails like a prompt, and on an expired sign-in reconnects and continues (`reauth_after_expiry`)
+  pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core, mut stop: TurnStop) {
     c.peer.detached = false;
     c.late.open = false;
     let autonomous = std::mem::take(&mut c.peer.autonomous);
     if autonomous && stop == TurnStop::Cancelled {
       c.peer.autonomous_blocked = true;
     }
-    self.note_expired_detached(c);
     if c.phase.running {
-      self.settle(c, stop, None);
+      let error = if stop == TurnStop::EndTurn { self.detached_error(c) } else { None };
+      if error.is_some() {
+        stop = TurnStop::Cancelled;
+      }
+      self.settle(c, stop, error);
     }
     self.log(if autonomous { "autonomous cycle ended" } else { "detached turn ended (thread idle)" });
+    // The reconnect hands off the turn just settled, the transcript's last
+    let reauth = std::mem::take(&mut c.reauth_due)
+      .then(|| {
+        let idx = c.state.turns.len().checked_sub(1)?;
+        Some((idx, c.state.turns.get(idx)?.as_agent()?.started_at?))
+      })
+      .flatten();
     let me = self.clone();
     tokio::spawn(async move { me.hooks_after_detached(stop) });
+    if let Some((idx, started_at)) = reauth {
+      tokio::spawn(self.clone().reauth_after_expiry(idx, started_at));
+    }
   }
 
   /// A user prompt takes the session from a running autonomous cycle (`steer_entry`): the cycle's turn ends here and what

@@ -750,8 +750,9 @@ impl AcpSession {
         cmd.mode = mode;
         cmd.options = options;
       }
-      // Antigravity reports a failed turn as the reply's last text: it becomes the turn's error
-      let failed = if stop == TurnStop::EndTurn && !auto {
+      // Antigravity reports a failed turn as the reply's last text: it becomes the turn's error, an automatic /compact's
+      // too (left as text, it read as a finished turn with a stray warning)
+      let failed = if stop == TurnStop::EndTurn {
         agent_turn_mut(&mut c, agent_idx, started_at).and_then(|turn| take_reply_error(self.vendor, turn))
       } else {
         None
@@ -876,6 +877,18 @@ impl AcpSession {
       ReplyError::Other(text) => (text, "agent_error"),
     };
     TurnError { message, kind: Some(kind.into()), retryable: Some(true), ..Default::default() }
+  }
+
+  /// A detached run (a background command's exit woke the model, `late_reply.rs`) that ended on a failure Antigravity
+  /// sends as text: cut off the last turn into its error, as for a prompt. An expired sign-in reserves the reconnect the
+  /// caller then starts (`reauth_due`)
+  pub(crate) fn detached_error(&self, c: &mut Core) -> Option<TurnError> {
+    let Some(Turn::Agent(turn)) = c.state.turns.last_mut() else { return None };
+    let e = take_reply_error(self.vendor, turn)?;
+    let error = self.reply_error(c, e);
+    self.log(&format!("detached run failed in the reply: {}", error.message));
+    self.reserve_reauth(c, &error, false);
+    Some(error)
   }
 
   /// After a settled turn: the compaction mark, then either park the queue (context overflow), switch accounts

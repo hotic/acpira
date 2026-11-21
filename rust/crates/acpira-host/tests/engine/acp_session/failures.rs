@@ -1,6 +1,7 @@
 //! Agent-published session failures (JetBrains AIR sessionFailure) and async tasks
 
 use super::*;
+use super::late_reply::texts_of;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn failure_retry_upserts_the_warning_revision_and_the_error_settles_the_turn() {
@@ -116,33 +117,46 @@ async fn an_antigravity_failure_reply_becomes_the_turn_error() {
   expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn" }));
 }
 
+/// A saved account whose hand-off always goes through, counted once per process
+struct SignIns(std::sync::atomic::AtomicUsize);
+
+impl acpira_host::acp::session::SessionAccountHooks for SignIns {
+  fn spawn_env(&self, _: String, _: String) -> acpira_host::acp::transport::rpc::BoxFuture<Option<acpira_shared::transcript::StrMap>> {
+    Box::pin(async { None })
+  }
+  fn authenticate(
+    &self,
+    _: String,
+    _: String,
+    _: Arc<acpira_host::acp::transport::process::AgentProcess>,
+  ) -> acpira_host::acp::transport::rpc::BoxFuture<anyhow::Result<()>> {
+    self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    Box::pin(async { Ok(()) })
+  }
+}
+
+impl SignIns {
+  fn count(&self) -> usize {
+    self.0.load(std::sync::atomic::Ordering::SeqCst)
+  }
+}
+
+/// An antigravity session bound to a saved account, started
+async fn signed_in(h: &mut Harness) -> (Disposing, Arc<SignIns>) {
+  let sign_ins = Arc::new(SignIns(std::sync::atomic::AtomicUsize::new(0)));
+  h.deps.accounts = Some(sign_ins.clone());
+  let s = Disposing(AcpSession::fresh("antigravity", "/tmp", h.deps.clone(), Some("acct".into())));
+  s.start().await;
+  (s, sign_ins)
+}
+
 // agy reads its token once per process: a credential renewed in the token file reaches only a new one, so a turn that
 // failed on the expired ticket reconnects on the account and goes on; a second expiry right after is the error
 #[tokio::test(flavor = "multi_thread")]
 async fn an_expired_antigravity_sign_in_reconnects_once_and_continues_the_task() {
-  use acpira_host::acp::session::SessionAccountHooks;
-  use acpira_host::acp::transport::{process::AgentProcess, rpc::BoxFuture};
-  use acpira_shared::transcript::StrMap;
-  use std::sync::atomic::{AtomicUsize, Ordering};
-
-  /// A saved account whose hand-off always goes through, counted once per process
-  struct SignIns(AtomicUsize);
-  impl SessionAccountHooks for SignIns {
-    fn spawn_env(&self, _: String, _: String) -> BoxFuture<Option<StrMap>> {
-      Box::pin(async { None })
-    }
-    fn authenticate(&self, _: String, _: String, _: Arc<AgentProcess>) -> BoxFuture<anyhow::Result<()>> {
-      self.0.fetch_add(1, Ordering::SeqCst);
-      Box::pin(async { Ok(()) })
-    }
-  }
-
   let fake = fake_or_skip!();
   let mut h = Harness::for_agent(&fake, "antigravity", json!({}));
-  let sign_ins = Arc::new(SignIns(AtomicUsize::new(0)));
-  h.deps.accounts = Some(sign_ins.clone());
-  let s = Disposing(AcpSession::fresh("antigravity", "/tmp", h.deps.clone(), Some("acct".into())));
-  s.start().await;
+  let (s, sign_ins) = signed_in(&mut h).await;
   let expired = "say:Running the tests.||\n⚠ Authentication expired. Please log back in.\n";
   prompt(&s, expired).await;
   until(|| turns_in(&view(&s)) == 4 && view(&s)["running"] == false && view(&s)["status"] == "ready", 10_000).await;
@@ -153,13 +167,54 @@ async fn an_expired_antigravity_sign_in_reconnects_once_and_continues_the_task()
   let notices: Vec<&Value> = t[1]["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == "notice").collect();
   expect_match(notices, json!([{ "category": "access", "info": true, "title": acpira_host::i18n::t("host.signInRenewed") }]));
   // A fresh process signed in again, and the hidden continue went to it
-  assert_eq!(sign_ins.0.load(Ordering::SeqCst), 2);
+  assert_eq!(sign_ins.count(), 2);
   expect_match(&t[2], json!({ "role": "user", "auto": true, "text": acpira_host::i18n::t("host.reauthContinuePrompt") }));
   expect_match(&t[3], json!({ "stop": "end_turn", "error": null }));
 
   // The stored credential ran out as well: no second reconnect, the error stays
   prompt(&s, expired).await;
   expect_match(last_turn(&view(&s)), json!({ "stop": "error", "error": { "kind": "auth_expired", "message": "Authentication expired. Please log back in." } }));
-  assert_eq!(sign_ins.0.load(Ordering::SeqCst), 2);
+  assert_eq!(sign_ins.count(), 2);
   expect_match(view(&s), json!({ "status": "ready", "running": false }));
+}
+
+// The model a background command's exit woke (a late reply, no prompt running) hit the expired ticket: the warning line
+// leaves the reply, and the session reconnects and goes on as after a failed prompt
+#[tokio::test(flavor = "multi_thread")]
+async fn a_late_reply_that_ends_on_an_expired_sign_in_reconnects_and_continues() {
+  let fake = fake_or_skip!();
+  let env = json!({ "env": { "FAKE_LATE_REPLY": "600", "FAKE_LATE_LIVE": "1", "FAKE_AGY_FAILURE": "Authentication expired. Please log back in." } });
+  let mut h = Harness::for_agent(&fake, "antigravity", env);
+  let (s, sign_ins) = signed_in(&mut h).await;
+  prompt(&s, "late-command").await;
+  until(|| turns_in(&view(&s)) == 4 && view(&s)["running"] == false && view(&s)["status"] == "ready", 30_000).await;
+  let t = view(&s)["turns"].as_array().unwrap().clone();
+  expect_match(&t[1], json!({ "stop": "end_turn", "error": null }));
+  assert_eq!(texts_of(&t[1], "text", "markdown"), ["Started it.", "Late reply: late-done"]);
+  let notices: Vec<&Value> = t[1]["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == "notice").collect();
+  expect_match(notices, json!([{ "category": "access", "info": true, "title": acpira_host::i18n::t("host.signInRenewed") }]));
+  assert_eq!(sign_ins.count(), 2);
+  expect_match(&t[2], json!({ "role": "user", "auto": true, "text": acpira_host::i18n::t("host.reauthContinuePrompt") }));
+  expect_match(&t[3], json!({ "stop": "end_turn", "error": null }));
+}
+
+// An automatic /compact that hit the expired ticket shows the failure, not a finished turn with a stray warning; there is
+// no task to continue, so the session only moves to a fresh process
+#[tokio::test(flavor = "multi_thread")]
+async fn an_automatic_compaction_on_an_expired_sign_in_is_its_error() {
+  let fake = fake_or_skip!();
+  let env = json!({ "env": { "FAKE_COMPACTION": "antigravity", "FAKE_AGY_FAILURE": "Authentication expired. Please log back in." } });
+  let mut h = Harness::for_agent(&fake, "antigravity", env);
+  h.deps.policy = Arc::new(TestPolicy {
+    compaction: Some(Arc::new(|| acpira_host::acp::session::CompactionPolicy { at_tokens: 300_000.0, auto: true })),
+    ..TestPolicy::default()
+  });
+  let (s, sign_ins) = signed_in(&mut h).await;
+  prompt(&s, "big").await;
+  until(|| turns_in(&view(&s)) == 4 && view(&s)["running"] == false, 15_000).await;
+  let compaction = last_turn(&view(&s));
+  expect_match(&compaction, json!({ "stop": "error", "error": { "kind": "auth_expired", "message": "Authentication expired. Please log back in." } }));
+  assert!(texts_of(&compaction, "text", "markdown").is_empty(), "{compaction}");
+  // Nothing in flight: the process holding the expired ticket goes at once, a fresh one signs in
+  until(|| sign_ins.count() == 2 && view(&s)["status"] == "ready", 10_000).await;
 }

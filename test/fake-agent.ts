@@ -213,6 +213,10 @@ let droidTasks = 0;
 // When each session with a droid Task last streamed: its `session/list` time
 const droidTimes = new Map<string, number>();
 const lateLive = !!process.env.FAKE_LATE_LIVE;
+// FAKE_AGY_FAILURE=<line>: agy's failure chunk (`\n⚠ <line>\n`) ends a streamed late reply, and an antigravity
+// `/compact` sends it in place of compacting (agy 1.5.13 on an expired sign-in)
+const agyFailure = process.env.FAKE_AGY_FAILURE;
+const agyFailureChunk = (): acp.SessionUpdate => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `\n⚠ ${agyFailure}\n` } });
 // When each session's late-command turn ended
 const lateTurns = new Map<string, number>();
 const lateSteps = new Set<string>();
@@ -1333,6 +1337,7 @@ const app = acp.agent({ name: 'fake-agent' })
           await send({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'The command exited.' } });
           if (steps) await send({ sessionUpdate: 'tool_call', toolCallId: 'late-2', title: 'Read out.txt', kind: 'read', status: 'in_progress' });
           else await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Late reply: late-done' } });
+          if (!steps && agyFailure) await send(agyFailureChunk());
         })(), lateMs * 2);
         if (steps) {
           setTimeout(() => void (async () => {
@@ -1536,6 +1541,10 @@ const app = acp.agent({ name: 'fake-agent' })
     if (text.trim() === '/compact') {
       const id = `cp${++compactions}`;
       if (backgroundStyle === 'antigravity') {
+        if (agyFailure) {
+          await send(agyFailureChunk());
+          return { stopReason: 'end_turn' };
+        }
         await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
         usedTokens = Math.round(usedTokens * 0.2);
         return { stopReason: 'end_turn' };

@@ -321,7 +321,7 @@ pub(crate) struct Core {
   /// When the last such reconnect started (ms): another expiry soon after means the stored credential is stale as well
   pub reauth_at: Option<i64>,
   /// The process has to go: its adapter was updated on disk (`adapter_updated`), reopened as soon as nothing is in
-  /// flight, or it holds a sign-in that expired (`note_expired_detached`), reopened before the next prompt
+  /// flight, or it holds a sign-in that expired (`reserve_reauth` on a `/compact`), reopened before the next prompt
   pub adapter_stale: bool,
   /// Summoned children's processes, rounds in flight and root calls waiting for their node (`relay.rs`)
   pub relays: crate::acp::session::relay::Relays,

@@ -90,7 +90,7 @@ async fn another_agents_unfinished_command_still_fails_with_the_turn() {
   expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn", "blocks": [{ "status": "failed" }, { "markdown": "Started it." }] }));
 }
 
-fn texts_of(turn: &Value, kind: &str, field: &str) -> Vec<String> {
+pub(super) fn texts_of(turn: &Value, kind: &str, field: &str) -> Vec<String> {
   turn["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == kind).filter_map(|b| b[field].as_str()).map(str::to_owned).collect()
 }
 

@@ -11,7 +11,6 @@ use crate::acp::session::errors::is_quota_exhausted;
 use crate::acp::session::prompt::{Origin, agent_turn_mut};
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transport::rpc::BoxFuture;
-use crate::acp::vendors::antigravity::ReplyError;
 use crate::i18n::{t, tp};
 use crate::util::{now_ms, random_uuid};
 
@@ -72,19 +71,6 @@ impl AcpSession {
     c.switching = true;
     c.reauth_due = true;
     c.reauth_at = Some(now);
-  }
-
-  /// A detached run (a background command's exit woke the model, `late_reply.rs`) that ended on an expired sign-in: the
-  /// next prompt waits for a fresh process, which reads the stored credential again, instead of failing the same way
-  pub(crate) fn note_expired_detached(&self, c: &mut Core) {
-    let expired = self.deps.accounts.is_some()
-      && c.account_id.is_some()
-      && matches!(c.state.turns.last(), Some(Turn::Agent(t)) if matches!(t.blocks.last(),
-        Some(AgentBlock::Text(x)) if matches!(self.vendor.reply_error(&x.markdown), Some((_, ReplyError::AuthExpired(_))))));
-    if expired {
-      self.log("detached run ended on an expired sign-in: the next prompt reconnects first");
-      self.drop_stale_process(c);
-    }
   }
 
   fn drop_stale_process(&self, c: &mut Core) {
