@@ -1,7 +1,10 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AgentTurn, NoticeBlock } from '@acpira/shared/transcript';
 import { isContextLengthError } from '@acpira/shared/turnErrors';
 import { absorbedNotices, hasTurnContent, hasTurnStats } from '../chat/turnOutcome';
+import { NoticeRow } from '../chat/Turns';
 
 // claude-agent-acp, stored transcript 2026-10-04: a session-scoped connection notice offering new_session, then the
 // prompt failed with -32000 and no AIR failure behind it
@@ -51,5 +54,43 @@ describe('context overflow detection', () => {
 
   it.each(['Tool output was too long', 'Maximum output tokens reached', 'Rate limit exceeded', 'Request took too long'])('keeps unrelated failures on their existing path: %s', message => {
     expect(isContextLengthError({ message })).toBe(false);
+  });
+});
+
+describe('NoticeRow wrapping and truncation', () => {
+  const renderNotice = (block: NoticeBlock) => renderToStaticMarkup(createElement(NoticeRow, { block }));
+
+  it('wraps bare notice titles without shrink-0 and aligns the lead icon to the first line', () => {
+    const html = renderNotice({
+      type: 'notice',
+      id: 'notice:1',
+      revision: 1,
+      category: 'unknown',
+      severity: 'warning',
+      title: '`[features].multi_agent` is deprecated. It still controls the V1 fallback.',
+      actions: [],
+    });
+    expect(html).toContain('items-start lead-top');
+    const span = html.match(/<span class="[^"]*">[^<]*multi_agent[^<]*<\/span>/)?.[0] ?? '';
+    expect(span).toContain('whitespace-pre-wrap');
+    expect(span).toContain('[overflow-wrap:anywhere]');
+    expect(span).not.toContain('shrink-0');
+    expect(span).not.toContain('whitespace-nowrap');
+  });
+
+  it('truncates foldable notice titles without shrink-0 blocking flex shrinking', () => {
+    const html = renderNotice({
+      type: 'notice',
+      id: 'notice:2',
+      revision: 1,
+      category: 'unknown',
+      severity: 'warning',
+      title: 'A very long warning title that must truncate cleanly instead of overflowing the disclosure row',
+      details: 'Extra details line',
+      actions: [],
+    });
+    const span = html.match(/<span class="[^"]*" title="[^"]*">A very long warning title[^<]*<\/span>/)?.[0] ?? '';
+    expect(span).toContain('min-w-0 truncate');
+    expect(span).not.toContain('shrink-0');
   });
 });

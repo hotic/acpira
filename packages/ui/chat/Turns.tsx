@@ -170,7 +170,7 @@ function NoticeDetails({ text }: { text: string }) {
 // the title alone on the folded line (the row opens, so no summary beside it), the full details on the rail once opened.
 // An error opens by default and marks only its glyph with the warn tone; a bare warning or info keeps the quiet color.
 // The adapter's own actions render as small secondary buttons under the fold, in payload order
-function NoticeRow({ block }: { block: NoticeBlock }) {
+export function NoticeRow({ block }: { block: NoticeBlock }) {
   const ctx = useContext(NoticeActionContext);
   // A run of provider retries is an action row with its attempt log, not a notice
   if (block.retry) return <RetryRow log={block.retry} />;
@@ -184,10 +184,10 @@ function NoticeRow({ block }: { block: NoticeBlock }) {
     <div className="flex min-w-0 flex-col gap-0.5">
       {block.details
         ? <Disclosure className={cn(error && 'rail-tint')} lead={lead} defaultOpen={error} body={<NoticeDetails text={block.details} />}>
-            <RowLabel className="min-w-0 truncate">{block.title}</RowLabel>
+            <span className="min-w-0 truncate" title={block.title}>{block.title}</span>
           </Disclosure>
-        : <Row lead={lead} className={error ? 'text-fg-2' : 'text-fg-3'}>
-            <RowLabel className="whitespace-pre-wrap">{block.title}</RowLabel>
+        : <Row lead={lead} className={cn('min-w-0 items-start lead-top', error ? 'text-fg-2' : 'text-fg-3')}>
+            <span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{block.title}</span>
           </Row>}
       {buttons.length > 0 && (
         <div className={cn('flex flex-wrap gap-gap pt-1', UNDER_LABEL)}>
@@ -308,7 +308,7 @@ function FlatMessage({ turn, running, working, fold, onPermission, subagents, al
   const tail = useTailWindow(groups.reduce((n, g) => n + groupSize(g), 0), running, box);
   let at = 0;
   return (
-    <div ref={box} className="flex flex-col gap-gap">
+    <div ref={box} className="flex min-w-0 flex-col gap-gap">
       <Activity turn={turn} running={working} leadKind={lead} />
       <QuietEntranceContext.Provider value={tail.quiet}>
         {groups.map((g, gi) => {
@@ -521,7 +521,7 @@ function Lines({ blocks, fold, skip = 0 }: { blocks: AgentBlock[]; fold: Appeara
   const items = fold === 'cursor' ? foldReadOnly(blocks) : blocks.map(b => ({ kind: 'one' as const, block: b }));
   let at = 0;
   return (
-    <div className="process-rows flex flex-col gap-0.5">
+    <div className="process-rows flex min-w-0 flex-col gap-0.5">
       {items.map((it, i) => {
         at += it.kind === 'one' ? 1 : it.blocks.length;
         if (at <= skip) return null;
@@ -607,7 +607,7 @@ function CodexMessage({ turn, running, working = running, onPermission, memoryKe
   // The process folds away only once the reply has finished drawing, not when its last chunk arrived
   const [replyBusy, setReplyBusy] = useState(false);
   return (
-    <div className="flex flex-col gap-gap">
+    <div className="flex min-w-0 flex-col gap-gap">
       {goalsLead.map((b, i) => <GoalRow key={`goal${i}`} block={b} />)}
       <CodexFold turn={turn} blocks={stableProcess} running={working} replyBusy={replyBusy && reply.length > 0} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
       {notices.map(b => <NoticeRow key={b.id} block={b} />)}
