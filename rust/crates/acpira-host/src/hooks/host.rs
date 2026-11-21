@@ -30,8 +30,8 @@ impl HookHost {
           }
           let root = r.value.get("root").and_then(Value::as_str)?;
           let text = r.value.get("text").and_then(Value::as_str)?;
-          let path = Path::new(root).join(super::HOOKS_FILE);
-          Some(super::parse(Path::new(root), text).map_err(|e| format!("{}: {e}", path.display())))
+          let path = super::join_posix(root, super::HOOKS_FILE);
+          Some(super::parse_posix(root, text).map_err(|e| format!("{path}: {e}")))
         }
       },
     }

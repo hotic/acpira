@@ -159,21 +159,52 @@ fn hook_of(raw: Option<RawHook>, default_timeout: Duration) -> (Option<Hook>, Op
   }
 }
 
+/// Join a POSIX path onto `root` using `/`, regardless of this machine's native separator.
+/// An absolute `rel` (starting with `/`) replaces `root`; a leading `./` or bare `.` resolves to `root`.
+pub(crate) fn join_posix(root: &str, rel: &str) -> String {
+  if rel.starts_with('/') {
+    return rel.to_owned();
+  }
+  let trimmed = rel.trim_start_matches("./");
+  let base = match root.trim_end_matches('/') {
+    "" if root.starts_with('/') => "/",
+    other => other,
+  };
+  if trimmed.is_empty() || trimmed == "." {
+    return if base.is_empty() { ".".to_owned() } else { base.to_owned() };
+  }
+  if base.is_empty() {
+    trimmed.to_owned()
+  } else if base == "/" {
+    format!("/{trimmed}")
+  } else {
+    format!("{base}/{trimmed}")
+  }
+}
+
 /// Parse a hooks file's text for the project at `root`
 pub fn parse(root: &Path, text: &str) -> Result<HooksConfig, String> {
+  parse_with(root.to_path_buf(), text, |p| root.join(p.trim_start_matches("./")))
+}
+
+/// Parse a hooks file's text for a project on a POSIX host (such as over SSH), keeping `/` separators even on Windows
+pub fn parse_posix(root: &str, text: &str) -> Result<HooksConfig, String> {
+  parse_with(PathBuf::from(root), text, |p| PathBuf::from(join_posix(root, p)))
+}
+
+fn parse_with(root: PathBuf, text: &str, join: impl Fn(&str) -> PathBuf) -> Result<HooksConfig, String> {
   let value: Value = parse_json_loose(text).ok_or_else(|| "not valid JSON".to_owned())?;
   let raw: RawConfig = serde_json::from_value(value).map_err(|e| e.to_string())?;
   let (before_prompt, _) = hook_of(raw.before_prompt, BEFORE_PROMPT_TIMEOUT);
   let (before_edit, _) = hook_of(raw.before_edit, BEFORE_EDIT_TIMEOUT);
   let (after_turn, rounds) = hook_of(raw.after_turn, AFTER_TURN_TIMEOUT);
-  let join = |p: &String| root.join(p.trim_start_matches("./"));
   let watch = match raw.watch {
-    Some(list) if !list.is_empty() => list.iter().map(join).collect(),
-    _ => vec![root.to_path_buf()],
+    Some(list) if !list.is_empty() => list.iter().map(|p| join(p)).collect(),
+    _ => vec![root.clone()],
   };
   Ok(HooksConfig {
-    root: root.to_path_buf(),
-    context: raw.context.iter().filter(|p| !p.trim().is_empty()).map(join).collect(),
+    root,
+    context: raw.context.iter().filter(|p| !p.trim().is_empty()).map(|p| join(p)).collect(),
     before_prompt,
     before_edit,
     after_turn,
@@ -410,5 +441,24 @@ mod tests {
   fn context_alone_tracks_nothing() {
     let c = parse(Path::new("/w"), r#"{ "context": ["AGENTS.md"] }"#).unwrap();
     assert!(!c.tracks_changes());
+  }
+
+  #[test]
+  fn parse_posix_always_uses_forward_slashes() {
+    let text = r#"{
+      "context": ["AGENTS.md", "./docs/mobs/production-gate.md", "/etc/shared/rules.md"],
+      "watch": [".", "./", "./vendor/server", "/opt/other"]
+    }"#;
+    let c = parse_posix("/mnt/server/Mobius", text).unwrap();
+    let strs = |ps: &[PathBuf]| ps.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>();
+    assert_eq!(
+      strs(&c.context),
+      ["/mnt/server/Mobius/AGENTS.md", "/mnt/server/Mobius/docs/mobs/production-gate.md", "/etc/shared/rules.md"]
+    );
+    assert_eq!(strs(&c.watch), ["/mnt/server/Mobius", "/mnt/server/Mobius", "/mnt/server/Mobius/vendor/server", "/opt/other"]);
+    assert_eq!(join_posix("/mnt/server/Mobius/", ".agents/hooks.json"), "/mnt/server/Mobius/.agents/hooks.json");
+    assert_eq!(join_posix("/", "AGENTS.md"), "/AGENTS.md");
+    assert_eq!(join_posix("/", "."), "/");
+    assert_eq!(join_posix("///", "a/b"), "/a/b");
   }
 }

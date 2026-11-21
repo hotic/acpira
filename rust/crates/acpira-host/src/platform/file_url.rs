@@ -9,6 +9,11 @@ pub fn path_to_file_url(path: &str) -> String {
   encode(path, cfg!(windows))
 }
 
+/// Encode a POSIX path (such as one on an SSH host) as a `file://` URI regardless of this machine's OS.
+pub fn posix_path_to_file_url(path: &str) -> String {
+  encode(path, false)
+}
+
 pub fn file_url_to_path(uri: &str) -> Option<String> {
   decode(uri, cfg!(windows))
 }
@@ -143,6 +148,8 @@ mod tests {
     let path = "/tmp/中文 #?%\\.png";
     let url = "file:///tmp/%E4%B8%AD%E6%96%87%20%23%3F%25%5C.png";
     assert_eq!(encode(path, false), url);
+    assert_eq!(posix_path_to_file_url(path), url);
+    assert_eq!(posix_path_to_file_url("/mnt/server/Mobius/AGENTS.md"), "file:///mnt/server/Mobius/AGENTS.md");
     assert_eq!(decode(url, false).as_deref(), Some(path));
     assert_eq!(decode("file://LOCALHOST/tmp/a?q#L3", false).as_deref(), Some("/tmp/a"));
   }

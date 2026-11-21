@@ -32,7 +32,7 @@ use crate::hooks::snapshot::Snapshot;
 use crate::hooks::run::{PromptVerdict, Verdict};
 use crate::hooks::{CONTEXT_MAX_BYTES, Hook, HooksConfig};
 use crate::i18n::{t, tp};
-use crate::platform::file_url::path_to_file_url;
+use crate::platform::file_url::{path_to_file_url, posix_path_to_file_url};
 use crate::util::{now_ms, random_uuid};
 
 #[derive(Default)]
@@ -237,9 +237,12 @@ pub(crate) fn read_inputs(turns: &[Turn]) -> Vec<String> {
   out
 }
 
-/// The same file spelled two ways (a symlinked directory, a relative path) counts once
-fn same_file(a: &Path, b: &Path) -> bool {
-  a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+/// The same file spelled two ways (a symlinked directory, a relative path) counts once. Remote paths live on the SSH
+/// host, so local canonicalization does not apply
+fn same_file(host: &HookHost, a: &Path, b: &Path) -> bool {
+  a == b
+    || (matches!(host, HookHost::Local)
+      && matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y))
 }
 
 fn notice(severity: Severity, title: String, details: Option<String>) -> AgentBlock {
@@ -526,7 +529,11 @@ impl AcpSession {
       }
       self.log(&format!("hooks: context {} ({} bytes)", path.display(), text.len()));
       blocks.push(if embedded {
-        json!({ "type": "resource", "resource": { "uri": path_to_file_url(&path_text(path)), "mimeType": "text/markdown", "text": text } })
+        let uri = match host {
+          HookHost::Local => path_to_file_url(&path_text(path)),
+          HookHost::Remote(_) => posix_path_to_file_url(&path_text(path)),
+        };
+        json!({ "type": "resource", "resource": { "uri": uri, "mimeType": "text/markdown", "text": text } })
       } else {
         json!({ "type": "text", "text": format!("<workspace-instructions path=\"{}\">\n{text}\n</workspace-instructions>", path.display()) })
       });
@@ -582,8 +589,11 @@ impl AcpSession {
   }
 
   fn absolute(&self, p: &str) -> PathBuf {
+    if let Some(f) = self.remote_folder() {
+      return PathBuf::from(crate::hooks::join_posix(&f.path, p));
+    }
     let path = Path::new(p);
-    if path.is_absolute() { path.to_path_buf() } else { Path::new(&self.hook_folder()).join(path) }
+    if path.is_absolute() { path.to_path_buf() } else { Path::new(&self.cwd).join(path) }
   }
 
   /// `extra`: keys added to the payload (the audit's attribution)
@@ -711,7 +721,7 @@ impl AcpSession {
     let asked: Vec<PathBuf> = tools.asked.iter().map(|p| self.absolute(p)).collect();
     let unasked: Vec<PathBuf> = tools.unasked.iter().map(|p| self.absolute(p)).collect();
     for p in unasked.iter().chain(&asked) {
-      match turn.iter_mut().find(|(t, _)| same_file(t, p)) {
+      match turn.iter_mut().find(|(t, _)| same_file(&host, t, p)) {
         Some(entry) => entry.1 = Source::Tool,
         None => turn.push((p.clone(), Source::Tool)),
       }
@@ -719,7 +729,7 @@ impl AcpSession {
     // The audit skips a file only when every edit row naming it went through a permission request beforeEdit passed
     let audit: Vec<String> = turn
       .iter()
-      .filter(|(t, _)| !asked.iter().any(|a| same_file(t, a)) || unasked.iter().any(|u| same_file(t, u)))
+      .filter(|(t, _)| !asked.iter().any(|a| same_file(&host, t, a)) || unasked.iter().any(|u| same_file(&host, t, u)))
       .map(|(p, _)| path_text(p))
       .collect();
     let turn_tools: Vec<Value> = tools
