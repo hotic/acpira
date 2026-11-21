@@ -92,7 +92,7 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
   // A dialog's close is a step back to the lists on the trail
   const close = () => toList();
   return <>
-    <Section title={t('subagents.page.list')} count={list.length} desc={t('subagents.page.listDesc')}
+    <Section title={t('subagents.page.list')} desc={t('subagents.page.listDesc')}
       action={<SectionAction icon={<Plus />} disabled={full || adding !== undefined} onClick={add}>{t('subagents.page.add')}</SectionAction>}>
       {list.length === 0 && <Note>{t('subagents.page.empty')}</Note>}
       {list.map(p => (
@@ -103,7 +103,7 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
     </Section>
     {/* A group needs subagents to hold, so it can be added only once there is one; without the save handler (no host
         to merge into the file) the list is shown but not edited */}
-    <Section title={t('subagents.groups.list')} count={groups.length} desc={t('subagents.groups.listDesc')}
+    <Section title={t('subagents.groups.list')} desc={t('subagents.groups.listDesc')}
       action={on.saveSubagentGroups && <SectionAction icon={<Plus />} disabled={!group.canAdd} onClick={group.add}>{t('subagents.page.add')}</SectionAction>}>
       {groups.length === 0 && <Note>{t('subagents.groups.empty')}</Note>}
       {groups.map(g => (

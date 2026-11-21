@@ -22,11 +22,11 @@ const RELEASES_URL = `${REPO_URL}/releases`;
 // The phases with work under way: the status line shimmers and the check button waits
 const BUSY = new Set<UpdateState['phase']>(['checking', 'downloading', 'staging', 'applying']);
 
-// Desktop only: About, at the rail's foot. The first card is the app: its version as the head, where its updates
-// stand (HostMsg updateState, rust/crates/acpira-desktop/src/update/) as the second line with the one next step as the
-// head's action, then the automatic download switch. An install that cannot replace itself (a dmg, App Translocation,
-// a folder it cannot write, a development build) says why and links to the release page instead. Getting started replays
-// the interface tour. The last card links out: the website, then the repository's help, release notes and source
+// Desktop only: About, at the rail's foot. The first card is the app: its version and update status (HostMsg
+// updateState, rust/crates/acpira-desktop/src/update/) on one head line with the one next step at the right, then the
+// automatic download switch. An install that cannot replace itself (a dmg, App Translocation, a folder it cannot write,
+// a development build) says why and links to the release page instead. Getting started replays the interface tour. The
+// last card links out: the website, then the repository's help, release notes and source
 export function AboutPage({ state, on, onTour }: { state: UpdateState | undefined; on: UpdateHandlers; onTour?: () => void }) {
   return <>
     {state && <VersionCard state={state} on={on} />}
@@ -71,11 +71,19 @@ function VersionCard({ state, on }: { state: UpdateState; on: UpdateHandlers }) 
     );
   }
   const error = state.phase === 'failed' ? state.error : undefined;
-  const desc = status && (error
-    ? <span className="flex min-w-0 gap-2"><span className="shrink-0">{status}</span><span className="min-w-0 truncate text-fg-3" title={error}>{error}</span></span>
-    : <Shimmer active={busy}>{status}</Shimmer>);
+  const head = (
+    <span className="flex min-w-0 items-baseline gap-2">
+      <span className="shrink-0">{t('settings.update.version', { version: state.current })}</span>
+      {status && (error ? <>
+        <span className="shrink-0 text-3 font-normal text-fg-3">{status}</span>
+        <span className="min-w-0 truncate text-3 font-normal text-fg-3" title={error}>{error}</span>
+      </> : (
+        <Shimmer active={busy} className="min-w-0 truncate text-3 font-normal text-fg-3">{status}</Shimmer>
+      ))}
+    </span>
+  );
   return (
-    <Section title={t('settings.update.version', { version: state.current })} desc={desc} action={action}>
+    <Section title={head} action={action}>
       <Field label={t('settings.update.auto')} desc={reason && canCheck ? reason : t('settings.update.auto.desc')}>
         <Switch checked={state.auto} disabled={!!manual} onChange={on.setAuto} label={t('settings.update.auto')} />
       </Field>

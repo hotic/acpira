@@ -55,10 +55,10 @@
 @layer components {
   [data-thread-body] {
     --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--msg-gap));
-    /* The action row's own room: its height after a row gap, less the message gap the exchange gives back, which is all
-       of it but --spacing-turn-actions-below (Shell.tsx) */
+    /* The action row's own room: its border-box height (`ctl-sm` + `py-1`) after a row gap, less the message gap the
+       exchange gives back, which is all of it but --spacing-turn-actions-below (Shell.tsx) */
     &:has(> section:last-child > :last-child > [data-turn-actions]:last-child) {
-      --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--ctl-sm) - var(--spacing-turn-actions-below));
+      --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--ctl-sm) - var(--spacing) * 2 - var(--spacing-turn-actions-below));
     }
   }
 }
@@ -189,8 +189,8 @@
      so it takes the icon's width, and the label follows the row gap plus 4 px later: the full slot's air on top of the gap
      left the glyph further from its label than anywhere else in the shell. Bodies under a row (pl-indent) and lists (prose.css) start on
      that label line; a mark filling the slot (Orb, subagent bars) overhangs it by the air on each side */
-  :is([data-thread], [data-plan-dock]) { --row-gap: calc(var(--gap) + 4px); --indent: calc(var(--icon) + var(--row-gap)); }
-  :is([data-thread], [data-plan-dock]) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2); }
+  :is([data-thread], .plan-card) { --row-gap: calc(var(--gap) + 4px); --indent: calc(var(--icon) + var(--row-gap)); }
+  :is([data-thread], .plan-card) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2); }
   /* The to-do dock's card (chat/Plan.tsx): its head row's hover fill stands 8px in from the card's outer edge (the 1px
      border included), on the vertical lines of the composer's chips and send button below, while the row's text stays on
      pad. Set here rather than in tokens.css so --pad is the shell's density, not the root's */
@@ -487,10 +487,6 @@
     background: var(--share-sheet);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 20px rgba(0, 0, 0, 0.07);
   }
-  /* The framed sheet makes a ragged right edge read as a lopsided margin (a Latin word or inline code that does not fit
-     drops whole and leaves up to its width blank). Justify keeps the same line breaks and closes the edge; the last
-     line stays start-aligned. The live transcript stays ragged: a streaming line would respace when it wraps */
-  .acp-share-body .acp-prose :is(p, li) { text-align: justify; }
 
   /* Frameless screenshot presentation (`Lightbox` family): gentle 220ms settle-in; resting state is clean when motion is disabled */
   .acp-share-stage { animation: share-stage-in var(--dur-open) cubic-bezier(0.2, 0.9, 0.3, 1) backwards; }
