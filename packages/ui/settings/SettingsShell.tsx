@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, RotateCcw } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { RefreshCw, RotateCcw, X } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { AgentInventory } from '@acpira/shared/inventory';
@@ -161,18 +161,84 @@ export function SettingsShell(p: SettingsShellProps) {
   // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
   const [storageRefresh, setStorageRefresh] = useState(0);
   const hasCustomShortcuts = Object.keys(p.settings.keybindings ?? {}).length > 0;
-  const action = page.kind === 'shortcuts' ? (
+  // Text actions stay in the page body on narrow desktop windows so the compact header holds icon buttons only
+  const textAction = page.kind === 'shortcuts' ? (
     <SectionAction icon={<RotateCcw />} disabled={!hasCustomShortcuts} onClick={() => p.on.setSetting('keybindings', {})}>
       {t('settings.shortcuts.resetAll')}
     </SectionAction>
-  ) : (page.kind === 'shared' || page.kind === 'storage') && (
+  ) : undefined;
+  const iconAction = (page.kind === 'shared' || page.kind === 'storage') ? (
     <IconButton title={t('common.refresh')} aria-label={t('common.refresh')}
       onClick={() => page.kind === 'shared' ? p.on.shared?.() : (setStorageRefresh(n => n + 1), p.on.storage?.())}>
       <RefreshCw strokeWidth={1.5} />
     </IconButton>
-  );
+  ) : undefined;
+  const action = textAction ?? iconAction;
   const desktop = !!p.desktop;
-  // macOS: the lights on the rail's line, the chat column's (desktop.css --lights-x)
+  // Desktop: dock the rail beside the sheet at the same width threshold (--session-dock-min) as the chat's session column;
+  // narrower windows turn the rail into a full-window slide-in page and give the sheet the whole width
+  const [canDock, setCanDock] = useState(true);
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!desktop || !el) return;
+    const minWidth = Number.parseFloat(getComputedStyle(el).getPropertyValue('--session-dock-min')) || 760;
+    let lastW = -1;
+    const update = (entries?: ResizeObserverEntry[]) => {
+      const w = Math.round(entries?.[0]?.contentRect.width ?? el.clientWidth);
+      if (w === lastW) return;
+      lastW = w;
+      setCanDock(w >= minWidth);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [desktop]);
+  const narrow = desktop && !canDock;
+  const railRef = useRef<HTMLElement>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerOpenNow = useRef(drawerOpen);
+  drawerOpenNow.current = drawerOpen;
+  // Slide only while the user opens or closes the narrow rail, never when crossing the dock width threshold (desktop.css)
+  const [drawerMoving, setDrawerMoving] = useState(0);
+  useEffect(() => {
+    if (!drawerMoving) return;
+    const timer = setTimeout(() => setDrawerMoving(0), 340);
+    return () => clearTimeout(timer);
+  }, [drawerMoving]);
+  const openDrawer = useCallback(() => {
+    if (drawerOpenNow.current) return;
+    setDrawerMoving(m => m + 1);
+    setDrawerOpen(true);
+  }, []);
+  const closeDrawer = useCallback((slide = true) => {
+    if (!drawerOpenNow.current) return;
+    if (railRef.current?.contains(document.activeElement)) {
+      root.current?.querySelector<HTMLButtonElement>('[data-session-toggle]')?.focus();
+    }
+    if (slide) setDrawerMoving(m => m + 1);
+    setDrawerOpen(false);
+  }, []);
+  const toggleDrawer = useCallback(() => {
+    if (drawerOpenNow.current) closeDrawer();
+    else openDrawer();
+  }, [closeDrawer, openDrawer]);
+  useEffect(() => {
+    closeDrawer(false);
+    setDrawerMoving(0);
+  }, [canDock, closeDrawer]);
+  // Desktop, narrow: Esc closes the slide-in navigation page wherever focus sits
+  useEffect(() => {
+    if (!narrow || !drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+      e.preventDefault();
+      closeDrawer();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [narrow, drawerOpen, closeDrawer]);
+  // macOS: the lights stay anchored on the cards' line across pages and width tiers (desktop.css --lights-x)
   useWindowLights(root, desktop, [p.appearance.density]);
   // The desktop updater's state for About (HostMsg updateState, kept in packages/ui/desktop.ts)
   const update = useUpdateState();
@@ -195,23 +261,30 @@ export function SettingsShell(p: SettingsShellProps) {
   const index = useMemo(() => searchIndex(p.agents, searchPages, desktop), [p.agents, searchPages.join(), desktop, p.locale]);
   const search = useRef<HTMLInputElement>(null);
   // Desktop: ⌘[ / ⌘] (Ctrl elsewhere) step through the trail as the title row's buttons do; back past the first page is the chat.
-  // ⌘K focuses the rail's search; ⌘/ jumps straight to the Shortcuts page
-  const keys = useRef(trail);
-  keys.current = trail;
+  // ⌘B toggles the narrow navigation page, ⌘K opens and focuses the rail's search, ⌘/ jumps straight to Shortcuts
+  const keys = useRef({ trail, narrow, openDrawer, toggleDrawer });
+  keys.current = { trail, narrow, openDrawer, toggleDrawer };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.isComposing || e.defaultPrevented) return;
-      if (hitShortcut(e, 'openShortcuts')) { keys.current.go({ kind: 'shortcuts' }); e.preventDefault(); return; }
+      if (hitShortcut(e, 'openShortcuts')) { keys.current.trail.go({ kind: 'shortcuts' }); e.preventDefault(); return; }
       if (!desktop) return;
-      if (hitShortcut(e, 'back')) keys.current.back();
-      else if (hitShortcut(e, 'forward')) keys.current.forward?.();
-      else if (hitShortcut(e, 'searchSessions')) search.current?.focus();
-      else return;
+      if (hitShortcut(e, 'back')) keys.current.trail.back();
+      else if (hitShortcut(e, 'forward')) keys.current.trail.forward?.();
+      else if (hitShortcut(e, 'toggleSidebar') && keys.current.narrow) keys.current.toggleDrawer();
+      else if (hitShortcut(e, 'searchSessions')) {
+        if (keys.current.narrow) keys.current.openDrawer();
+        requestAnimationFrame(() => search.current?.focus());
+      } else return;
       e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [desktop]);
+  const pickPage = (next: SettingsPage) => {
+    if (narrow) closeDrawer();
+    trail.go(next);
+  };
   return (
     <DesktopContext.Provider value={desktop}>
     <AppearanceContext.Provider value={p.appearance}>
@@ -226,20 +299,39 @@ export function SettingsShell(p: SettingsShellProps) {
             data-agent={agent?.id ?? p.settings.defaultAgent}
             {...appearanceDataAttrs(p.appearance)}
             {...lookAttrs(p.look)}
-            // The chat's desktop frame: the lights' room, and the rail always beside the sheet
+            // The chat's desktop frame: the lights' room, the docked rail beside the sheet on wide windows, and the slide-in page on narrow ones
             data-desktop={desktop || undefined}
             data-os={desktop ? desktopOS : undefined}
             data-caption={desktop && pageCaption ? '' : undefined}
-            data-column={desktop || undefined}
+            data-column={(desktop && canDock) || undefined}
+            data-narrow={narrow || undefined}
+            data-drawer-open={(narrow && drawerOpen) || undefined}
+            data-drawer-moving={(narrow && drawerMoving > 0) || undefined}
           >
-            <div className="flex min-h-0 flex-1">
-              <PageRail page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} connections={remote || !!access} index={index} searchRef={search}
+            <div className="relative flex min-h-0 flex-1">
+              <PageRail page={p.page} onPage={pickPage} onBack={p.onBack} desktop={desktop} drawer={narrow} railRef={railRef}
+                inert={narrow && !drawerOpen} onClose={() => closeDrawer()}
+                width={desktop && canDock ? railWidth : undefined} opening={opening && canDock} connections={remote || !!access} index={index} searchRef={search}
                 marks={{ models: agentUpdates(p.agents), about: appUpdatePending(update) }} />
-              {/* No header on this sheet: its top strip is the title bar all the same (the desktop shell reads data-drag-top) */}
-              <div data-sheet={desktop || undefined} data-drag-top={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
+              {/* Wide: no header on this sheet, its top strip is the title bar (data-drag-top). Narrow: a compact header shares the title line with the lights and drawer toggle */}
+              <div data-sheet={desktop || undefined} data-drag-top={(desktop && !narrow) || undefined} inert={(narrow && drawerOpen) || undefined}
+                className="relative flex min-w-0 flex-1 flex-col">
+                {narrow && (
+                  <header data-sheet-header data-drag-region
+                    className="grid h-hdr shrink-0 grid-cols-[minmax(var(--sheet-lead),1fr)_minmax(0,auto)_minmax(calc(var(--sheet-trail)+var(--ctl)),1fr)] items-center gap-gap pt-(--hdr-drop)">
+                    <span aria-hidden />
+                    <span className="min-w-0 truncate text-2 font-medium text-fg-strong">{title}</span>
+                    <div className="flex shrink-0 items-center justify-self-end gap-0.5 pr-(--sheet-trail)">
+                      {iconAction}
+                      <IconButton title={t('settings.back')} aria-label={t('settings.back')} onClick={p.onBack}>
+                        <X strokeWidth={1.5} />
+                      </IconButton>
+                    </div>
+                  </header>
+                )}
               <main key={page.kind === 'agent' ? 'models' : page.kind} className="scroll-none min-h-0 min-w-0 flex-1 overflow-y-auto">
-                <Page>
-                  <PageHeader title={title} action={action} />
+                <Page className={narrow ? 'px-dock pt-gap' : undefined}>
+                  {narrow ? (textAction && <div className="flex justify-end">{textAction}</div>) : <PageHeader title={title} action={action} />}
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} onTour={desktop ? undefined : p.onTour} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {page.kind === 'shortcuts' && <ShortcutsPage settings={p.settings} on={p.on} />}
@@ -289,11 +381,19 @@ export function SettingsShell(p: SettingsShellProps) {
               </main>
               {/* The desktop shell's toasts while this page is up */}
               {desktop && <ShellToasts open={p.on.openPath} />}
+              {/* Desktop, narrow: the sheet dims as the navigation page slides over it */}
+              {narrow && <div data-sheet-dim aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 bg-scrim/45" />}
               </div>
             </div>
-            {/* The chat's pinned title row in the same place, without the column's toggle: back and forward walk the pages
-                visited here, back past the first one returns to the chat */}
-            {desktop && <TitleRow onBack={trail.back} onForward={trail.forward} />}
+            {/* The chat's pinned title row in the same place: wide windows show back / forward; narrow windows match the
+                chat's narrow bar with the navigation page toggle */}
+            {desktop && (
+              <TitleRow
+                onBack={trail.back}
+                onForward={trail.forward}
+                column={narrow ? { open: drawerOpen, drawer: true, onToggle: toggleDrawer } : undefined}
+              />
+            )}
           </div>
         </ShellLayerContext.Provider>
       </LocaleContext.Provider>

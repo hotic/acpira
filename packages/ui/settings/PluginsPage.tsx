@@ -65,7 +65,7 @@ export function ModelsPage({ agents, inventories, onReorder, onDisabled, onOpen,
   const q = query.trim().toLowerCase();
   const match = (a: AgentInfo) => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q);
   return <>
-    <SearchBox value={query} onChange={setQuery} label={t('settings.models.search')} />
+    <SearchBox value={query} onChange={setQuery} label={t('settings.agents.search')} />
     <AgentTiles agents={agents} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen}
       installs={installs} onUpdate={onUpdate} />
   </>;

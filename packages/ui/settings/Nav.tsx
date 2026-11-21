@@ -31,6 +31,13 @@ export interface PageRailProps {
   onBack: () => void;
   // Desktop: the rail lies on the window canvas under the window's pinned title row (back / forward through the pages)
   desktop?: boolean;
+  // Desktop, narrow window: the rail is a full-window slide-in page over the sheet, matching the chat's session drawer
+  drawer?: boolean;
+  railRef?: Ref<HTMLElement>;
+  // Closed narrow drawer: out of tab order and accessibility tree while off-screen
+  inert?: boolean;
+  // Close the narrow drawer (Esc inside it)
+  onClose?: () => void;
   // Desktop: the rail's width as a CSS length (desktop.css reads it as --rail-w)
   width?: string;
   // Desktop: the chat's column was folded, so the rail opens from nothing as the page appears
@@ -52,9 +59,10 @@ const tone = (active: boolean) => active ? 'text-fg-1' : 'text-fg-2 hover:text-f
 
 // Desktop: the rail replaces the chat's session column in the same place, so its rows take that column's box (chat/SessionList.tsx
 // NAV_ROW / NAV_LEAD: row height, inset, a row-sized icon in the lead slot pulled half a gap in) and a page switch moves
-// nothing in the column. Folded to icons, the pull is dropped so the icon centres
-const deskItem = 'flex min-h-row shrink-0 items-center gap-gap rounded-md px-2 text-2 transition-colors settings-narrow:justify-center settings-narrow:px-0';
-const deskLead = '-mr-gap-half flex size-lead shrink-0 items-center justify-center [&_svg]:size-icon [&_svg]:stroke-[1.5] settings-narrow:mr-0';
+// nothing in the column. Narrow desktop windows turn the rail into a full-window slide-in page instead of an icon rail, so
+// labels and search stay visible there
+const deskItem = 'flex min-h-row shrink-0 items-center gap-gap rounded-md px-2 text-2 transition-colors';
+const deskLead = '-mr-gap-half flex size-lead shrink-0 items-center justify-center [&_svg]:size-icon [&_svg]:stroke-[1.5]';
 
 function RailIcon({ children, desktop }: { children: ReactNode; desktop?: boolean }) {
   return <span className={desktop ? deskLead : 'flex size-icon-ctl shrink-0 items-center justify-center [&_svg]:size-icon-ctl [&_svg]:stroke-[1.75]'}>{children}</span>;
@@ -62,10 +70,11 @@ function RailIcon({ children, desktop }: { children: ReactNode; desktop?: boolea
 
 // The fixed pages, or while the search holds words, what it finds: a hit that is not a page names its page as a second
 // line (two entries may share a name, Appearance the page and Appearance the plugins filter), its mark on the title's line
-export function PageRail({ page, onPage, onBack, desktop, width, opening, connections, index, searchRef, marks }: PageRailProps) {
+export function PageRail({ page, onPage, onBack, desktop, drawer, railRef, inert, onClose, width, opening, connections, index, searchRef, marks }: PageRailProps) {
   const cur = railOf(page);
   const [query, setQuery] = useState('');
   const hits = index && query.trim() ? searchHits(index, query) : undefined;
+  const hideNarrow = !desktop && 'settings-narrow:hidden';
   const item = (id: RailId, name: string, icon: ReactNode) => (
     <button
       key={id}
@@ -77,9 +86,9 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
       className={cn(desktop ? deskItem : navItem, tone(cur === id), cur === id ? 'bg-active' : 'hover:bg-hover focus-visible:bg-hover')}
     >
       <RailIcon desktop={desktop}>{icon}</RailIcon>
-      <span className="min-w-0 truncate settings-narrow:hidden">{name}</span>
+      <span className={cn('min-w-0 truncate', hideNarrow)}>{name}</span>
       {/* Held in from the row's end, clear of the selected fill's edge */}
-      {marks?.[id] && <UpdateDot className="mr-gap-half ml-auto settings-narrow:hidden" />}
+      {marks?.[id] && <UpdateDot className={cn('mr-gap-half ml-auto', hideNarrow)} />}
     </button>
   );
   const back = (
@@ -90,25 +99,42 @@ export function PageRail({ page, onPage, onBack, desktop, width, opening, connec
     </button>
   );
   // The inset lives on the nav in the desktop frame, under the title row's strip: the session column's (column-pad,
-  // desktop.css), so the rows line up with its rows. Its widths come from desktop.css there, where the folded rail must still sit under the lights
+  // desktop.css), so the rows line up with its rows
   const inset = desktop ? 'px-column-pad' : 'px-pad settings-narrow:px-2';
   return (
-    <aside data-settings-rail data-opening={opening || undefined} style={width ? { '--rail-w': width } as CSSProperties : undefined} className={cn('flex shrink-0 flex-col', desktop ? 'gap-gap-half pb-(--foot-bottom)' : cn('gap-(--section-gap)', inset, 'w-(--settings-nav-w) py-pad-y settings-narrow:w-(--settings-rail-w)'))}>
+    <aside ref={railRef} data-settings-rail data-docked={desktop ? !drawer : undefined} data-opening={opening || undefined}
+      inert={inert || undefined}
+      onKeyDown={e => { if (e.key === 'Escape' && !e.defaultPrevented && drawer) { e.preventDefault(); e.stopPropagation(); onClose?.(); } }}
+      style={width ? { '--rail-w': width } as CSSProperties : undefined}
+      className={cn(
+        'flex shrink-0 flex-col',
+        desktop
+          ? cn('gap-gap-half pb-(--foot-bottom)', drawer && 'absolute inset-0 z-20')
+          : cn('gap-(--section-gap)', inset, 'w-(--settings-nav-w) py-pad-y settings-narrow:w-(--settings-rail-w)'),
+      )}>
       {/* Desktop: the window's pinned title row sits here; Back to chat leads the list below */}
       {desktop ? <TitleSpace /> : back}
       <nav aria-label={t('settings.title')} className={cn('scroll-none flex min-h-0 flex-col gap-1 overflow-y-auto', desktop && inset)}>
-        {/* Desktop: Back to chat heads the list as the chat column's first row heads it, Codex-style; the title row's back
-            walks the pages visited, this one leaves at once */}
-        {desktop && <button type="button" onClick={onBack} title={t('settings.back')} aria-label={t('settings.back')}
-          className={cn(deskItem, 'mb-gap-half', tone(false), 'hover:bg-hover focus-visible:bg-hover')}>
-          <RailIcon desktop><ArrowLeft /></RailIcon>
-          <span className="min-w-0 truncate settings-narrow:hidden">{t('settings.back')}</span>
-        </button>}
-        {/* The chat column's search row; folded to icons the rail has no room for it */}
-        {index && (
-          <div className="mb-gap-half flex shrink-0 flex-col settings-narrow:hidden" onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}>
-            <NavSearch value={query} onChange={setQuery} quiet={desktop} hint={desktop && shortcutLabel('K')} inputRef={searchRef}
-              placeholder={desktop ? t('common.search') : t('settings.search')} label={t('settings.search')} />
+        {/* Desktop: Back to chat and search sit together as the top action group, matching the chat column's New session + Search
+            so a page switch keeps Search on the same line; the title row's back walks the pages visited, this one leaves at once */}
+        {desktop ? (
+          <div className="mb-gap-half flex shrink-0 flex-col">
+            <button type="button" onClick={onBack} title={t('settings.back')} aria-label={t('settings.back')}
+              className={cn(deskItem, tone(false), 'hover:bg-hover focus-visible:bg-hover')}>
+              <RailIcon desktop><ArrowLeft /></RailIcon>
+              <span className="min-w-0 truncate">{t('settings.back')}</span>
+            </button>
+            {index && (
+              <div className="flex shrink-0 flex-col" onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}>
+                <NavSearch value={query} onChange={setQuery} quiet hint={shortcutLabel('K')} inputRef={searchRef}
+                  placeholder={t('common.search')} label={t('settings.search')} />
+              </div>
+            )}
+          </div>
+        ) : index && (
+          <div className={cn('mb-gap-half flex shrink-0 flex-col', hideNarrow)} onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}>
+            <NavSearch value={query} onChange={setQuery} inputRef={searchRef}
+              placeholder={t('settings.search')} label={t('settings.search')} />
           </div>
         )}
         {hits ? (
