@@ -163,10 +163,24 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
   if (wasShown.current !== shown) {
     wasShown.current = shown;
     if (!p.narrow) {
-      const b = bounds();
-      const open = shown ? clamp(s.width ?? b.initial, b.min, b.max) : aside.current?.offsetWidth;
+      const el = aside.current;
+      const open = shown
+        ? (() => { const b = bounds(); return clamp(s.width ?? b.initial, b.min, b.max); })()
+        : el ? el.getBoundingClientRect().width || el.offsetWidth : undefined;
       // A reversal keeps the full content width instead of freezing it at a half-open frame.
-      if (open && (!moving || shown)) aside.current?.style.setProperty('--tool-panel-open', `${open}px`);
+      if (open && (!moving || shown)) el?.style.setProperty('--tool-panel-open', `${open}px`);
+      // Docked open, flex-shrink: 1000 can squeeze the aside below its computed CSS width. Flush the rendered width
+      // before data-shown drops flex-shrink and starts the transition to 0, or closing animates from the un-shrunk
+      // width and widens past the room on frame 0 (getComputedStyle returns the used width, so flush unconditionally).
+      if (!shown && el && open) {
+        if (moving) el.style.transitionProperty = 'opacity';
+        el.style.setProperty('width', `${open}px`, moving ? 'important' : '');
+        void el.offsetWidth;
+        if (moving) {
+          el.style.transitionProperty = '';
+          el.style.setProperty('width', `${open}px`);
+        }
+      }
       setMoving(m => m + 1);
     }
   }
