@@ -121,6 +121,15 @@ async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   until("the away copy removed", || !away.exists()).await;
   until("the deletion unfiled", || !filed("s-away")).await;
 
+  // Moved off the host to a local folder: the host's standby copy is removed cleanly
+  store.flush(record("s-moved", "ssh://gen1/home/u/app", "2026-10-12T00:00:00.000Z")).await.unwrap();
+  let moved = host_sessions(&lab).join("s-moved.json");
+  until("the moved record's copy", || moved.exists()).await;
+  store.flush(record("s-moved", "/work/local", "2026-10-12T00:00:01.000Z")).await.unwrap();
+  store.notify_left_cwd("s-moved", "ssh://gen1/home/u/app");
+  until("the old host copy removed after move", || !moved.exists()).await;
+  assert_eq!(store.load("s-moved").await.unwrap().cwd, "/work/local");
+
   mirror.stop();
   connections.dispose();
 }

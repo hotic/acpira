@@ -605,9 +605,20 @@ impl HostMirror {
         if self.retiring.lock().contains(&id) { done.push(id); continue; }
         match client.call("storeRemove", json!({ "id": id })).await {
           Ok(reply) if reply.value.get("takenOver").and_then(Value::as_bool) == Some(true) => {
-            if let Err(e) = self.reconcile(&client, &alias, &id).await {
+            // A record that already moved off this host must not be retired in favour of the host's taken-over copy
+            let moved_elsewhere = self
+              .store
+              .load(&id)
+              .await
+              .is_some_and(|r| !parse_remote_folder(&r.cwd).is_some_and(|f| f.alias == alias));
+            if moved_elsewhere {
+              (self.log)(&format!("host store: {alias}: {id} already taken over there, keeping moved local session"));
+              done.push(id);
+            } else if let Err(e) = self.reconcile(&client, &alias, &id).await {
               (self.log)(&format!("host store: {alias}: {id} reconciliation deferred: {e:#}"));
-            } else { done.push(id); }
+            } else {
+              done.push(id);
+            }
           }
           Ok(reply) if reply.value.get("written").and_then(Value::as_bool) == Some(false) => self.schedule(),
           Ok(_) => done.push(id),

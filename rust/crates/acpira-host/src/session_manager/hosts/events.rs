@@ -207,6 +207,25 @@ impl SessionManager {
     *run.items.lock() = items;
     drop(scope);
     self.emit_sessions();
+    // If a viewer was showing a stale copy on another host while this host was reconnecting, switch to this higher-ranked
+    // host now so the viewer sees the authoritative transcript and clears its unread mark there
+    let reclaim: Vec<(String, Arc<crate::session_manager::Viewer>)> = self
+      .viewers()
+      .into_iter()
+      .filter_map(|v| {
+        let id = v.active_id()?;
+        if run.shown.lock().contains_key(&id) || !run.items.lock().iter().any(|s| s.id == id) {
+          return None;
+        }
+        self.host_of(&id).is_some_and(|owner| owner.alias == run.alias).then_some((id, v))
+      })
+      .collect();
+    if !reclaim.is_empty() {
+      for (id, v) in reclaim {
+        self.show_host_session(run, &id, &v);
+      }
+      self.prune_host_views();
+    }
   }
 
   /// `turn.ended` for this engine's plugins when a host-run session's list entry says another turn ended there

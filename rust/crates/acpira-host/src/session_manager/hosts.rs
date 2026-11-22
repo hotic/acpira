@@ -249,11 +249,11 @@ impl HostRun {
     }
   }
 
-  async fn lookup(&self, id: &str) -> bool {
+  async fn lookup(&self, id: &str) -> Option<SessionSummary> {
     // Like `search`: a host that is not connected is not waited for, or every pick of a session this engine does not
     // list would hang on an unreachable host. Sessions a host listed before (`owns`) never come here
     if !*self.up.borrow() {
-      return false;
+      return None;
     }
     let view_id = format!("lookup-{}", self.next_view_id());
     let reply = self
@@ -265,8 +265,12 @@ impl HostRun {
           }),
         )
       })
-      .await;
-    reply.and_then(|v| v.pointer("/state/sessions").and_then(Value::as_array).map(|s| s.iter().any(|s| s["id"] == id))).unwrap_or(false)
+      .await?;
+    let found = reply.pointer("/state/sessions")?.as_array()?.iter().find(|s| s["id"] == id)?;
+    let mut summary: SessionSummary = serde_json::from_value(found.clone()).ok()?;
+    summary.cwd = local_folder(&self.alias, &summary.cwd);
+    summary.category = None;
+    Some(summary)
   }
 
   /// A host session's record as the host's engine holds it, asked as a JSON export (`sessionMarkdown`, the same request
@@ -332,13 +336,13 @@ impl HostRun {
     format!("v{}", self.seq.fetch_add(1, Ordering::Relaxed) + 1)
   }
 
-  fn owns(&self, id: &str) -> bool {
+  fn owns_unlisted(&self, id: &str) -> bool {
     let undo = {
       let mut deleted = self.deleted.lock();
       deleted.retain(|_, until| *until > tokio::time::Instant::now());
       deleted.contains_key(id)
     };
-    self.items.lock().iter().any(|s| s.id == id) || self.shown.lock().contains_key(id) || undo
+    self.shown.lock().contains_key(id) || undo
   }
 }
 
@@ -795,5 +799,33 @@ mod tests {
     let ended: Vec<String> = turns_ended(&before, &items).into_iter().map(|s| s.id).collect();
     // Moved on and newly set count; unchanged and first seen do not
     assert_eq!(ended, ["a", "b"]);
+  }
+
+  #[test]
+  fn host_summary_ranking_prefers_newer_completed_owner_over_stale_copy() {
+    use super::actions::summary_rank;
+    let moved_owner: SessionSummary = serde_json::from_value(json!({
+      "id": "s1", "agent": "antigravity", "title": "done", "cwd": "ssh://box-b/repo",
+      "updatedAt": "2026-11-22T03:05:23.351Z", "completedAt": 1795317095155_i64, "state": "unread"
+    }))
+    .unwrap();
+    let stale_copy: SessionSummary = serde_json::from_value(json!({
+      "id": "s1", "agent": "antigravity", "title": "stopped", "cwd": "ssh://box-a/old",
+      "updatedAt": "2026-11-22T03:04:47.908Z"
+    }))
+    .unwrap();
+    // Even though "box-a" sorts before "box-b", the moved owner's fresher summary wins deterministically
+    assert!(summary_rank(&moved_owner, true, "box-b") > summary_rank(&stale_copy, true, "box-a"));
+
+    // Live activity outranks an idle record even with identical timestamps
+    let working: SessionSummary = serde_json::from_value(json!({
+      "id": "s1", "agent": "antigravity", "title": "busy", "cwd": "ssh://box-c/repo",
+      "updatedAt": "2026-11-22T03:04:47.908Z", "state": "working"
+    }))
+    .unwrap();
+    assert!(summary_rank(&working, true, "box-c") > summary_rank(&moved_owner, true, "box-b"));
+
+    // Completely tied summaries break ties deterministically by alias
+    assert!(summary_rank(&stale_copy, true, "alpha") > summary_rank(&stale_copy, true, "beta"));
   }
 }

@@ -39,26 +39,63 @@ impl SessionManager {
     Some(run.context_raw(id).await)
   }
 
-  fn host_of(&self, id: &str) -> Option<Arc<HostRun>> {
+  pub(super) fn host_of(&self, id: &str) -> Option<Arc<HostRun>> {
     if self.locally_owned(id) {
       return None;
     }
-    self.hosts.runs.lock().values().find(|r| r.owns(id)).cloned()
+    let runs: Vec<Arc<HostRun>> = self.hosts.runs.lock().values().cloned().collect();
+    let mut best_listed: Option<(SummaryRank, Arc<HostRun>)> = None;
+    let mut best_other: Option<(SummaryRank, Arc<HostRun>)> = None;
+    for r in runs {
+      let up = *r.up.borrow();
+      let item = r.items.lock().iter().find(|s| s.id == id).cloned();
+      if let Some(item) = item {
+        let rank = summary_rank(&item, up, &r.alias);
+        if best_listed.as_ref().is_none_or(|(best, _)| rank > *best) {
+          best_listed = Some((rank, r));
+        }
+        continue;
+      }
+      if r.owns_unlisted(id) {
+        let rank = fallback_rank(up, &r.alias);
+        if best_other.as_ref().is_none_or(|(best, _)| rank > *best) {
+          best_other = Some((rank, r));
+        }
+      }
+    }
+    best_listed.map(|(_, r)| r).or_else(|| best_other.map(|(_, r)| r))
   }
 
   /// Search only on demand; the owning host supplies summaries outside the project subscription.
+  /// Deduplicated by session id with the same ranking `host_of` uses so two hosts holding the same id never double-list.
   pub(crate) async fn search_hosts(&self, query: &str) -> Vec<SessionHit> {
     let runs: Vec<_> = self.hosts.runs.lock().values().cloned().collect();
     let mut tasks = tokio::task::JoinSet::new();
     for run in runs {
       let query = query.to_owned();
-      tasks.spawn(async move { run.search(&query).await });
+      tasks.spawn(async move {
+        let alias = run.alias.clone();
+        let up = *run.up.borrow();
+        (alias, up, run.search(&query).await)
+      });
     }
-    let mut hits = vec![];
-    while let Some(Ok(found)) = tasks.join_next().await {
-      hits.extend(found.into_iter().filter(|h| !self.locally_owned(&h.id)));
+    let mut best: std::collections::HashMap<String, (SummaryRank, SessionHit)> = std::collections::HashMap::new();
+    while let Some(Ok((alias, up, found))) = tasks.join_next().await {
+      for hit in found.into_iter().filter(|h| !self.locally_owned(&h.id)) {
+        let rank = hit.summary.as_ref().map_or_else(|| fallback_rank(up, &alias), |s| summary_rank(s, up, &alias));
+        match best.entry(hit.id.clone()) {
+          std::collections::hash_map::Entry::Vacant(e) => {
+            e.insert((rank, hit));
+          }
+          std::collections::hash_map::Entry::Occupied(mut e) => {
+            if rank > e.get().0 {
+              e.insert((rank, hit));
+            }
+          }
+        }
+      }
     }
-    hits
+    best.into_values().map(|(_, hit)| hit).collect()
   }
 
   async fn find_host(&self, id: &str) -> Option<Arc<HostRun>> {
@@ -76,16 +113,18 @@ impl SessionManager {
         let mut tasks = tokio::task::JoinSet::new();
         for run in runs {
           let id = id.to_owned();
-          tasks.spawn(async move { run.lookup(&id).await.then_some(run) });
+          tasks.spawn(async move { run.lookup(&id).await.map(|summary| (run, summary)) });
         }
-        let mut found = None;
+        let mut best: Option<(SummaryRank, Arc<HostRun>)> = None;
         while let Some(reply) = tasks.join_next().await {
-          if let Ok(Some(run)) = reply {
-            found = Some(run);
-            break;
+          if let Ok(Some((run, summary))) = reply {
+            let rank = summary_rank(&summary, *run.up.borrow(), &run.alias);
+            if best.as_ref().is_none_or(|(b, _)| rank > *b) {
+              best = Some((rank, run));
+            }
           }
         }
-        let run = found?;
+        let run = best?.1;
         // A local record may have arrived while the host was queried.
         if self.locally_owned(id) {
           return None;
@@ -107,14 +146,33 @@ impl SessionManager {
     self.host_of(id).is_some()
   }
 
-  /// The host sessions for the list; ids this engine has itself win
+  /// The host sessions for the list; ids this engine has itself win, and duplicate ids across SSH hosts resolve with
+  /// the exact same ranking as `host_of` so the listed row (and its unread dot) always belongs to the host clicked into.
   pub(crate) fn host_summaries(&self, local: &[SessionSummary]) -> Vec<SessionSummary> {
     let runs: Vec<Arc<HostRun>> = self.hosts.runs.lock().values().cloned().collect();
-    let mut out = vec![];
+    let local_ids: std::collections::HashSet<&str> = local.iter().map(|l| l.id.as_str()).collect();
+    let mut best: std::collections::HashMap<String, (SummaryRank, SessionSummary)> = std::collections::HashMap::new();
     for r in runs {
-      out.extend(r.items.lock().iter().filter(|s| !local.iter().any(|l| l.id == s.id)).cloned());
+      let up = *r.up.borrow();
+      let items = r.items.lock().clone();
+      for s in items {
+        if local_ids.contains(s.id.as_str()) {
+          continue;
+        }
+        let rank = summary_rank(&s, up, &r.alias);
+        match best.entry(s.id.clone()) {
+          std::collections::hash_map::Entry::Vacant(e) => {
+            e.insert((rank, s));
+          }
+          std::collections::hash_map::Entry::Occupied(mut e) => {
+            if rank > e.get().0 {
+              e.insert((rank, s));
+            }
+          }
+        }
+      }
     }
-    out
+    best.into_values().map(|(_, s)| s).collect()
   }
 
   /// A message to every connected host's list view (a list action that is not about one session, such as "mark all as read")
@@ -370,7 +428,7 @@ impl SessionManager {
     }
   }
 
-  /// Host views no viewer shows any more are closed there
+  /// Host views no viewer shows any more, or superseded by a higher-ranked host for the same id, are closed there
   pub(crate) fn prune_host_views(&self) {
     let runs: Vec<Arc<HostRun>> = self.hosts.runs.lock().values().cloned().collect();
     if runs.is_empty() {
@@ -378,15 +436,64 @@ impl SessionManager {
     }
     let active: Vec<String> = self.viewers().iter().filter_map(|v| v.active_id()).collect();
     for run in runs {
+      let keys: Vec<String> = run.shown.lock().keys().cloned().collect();
+      let drop_ids: Vec<String> = keys
+        .into_iter()
+        .filter(|id| !active.contains(id) || self.host_of(id).is_some_and(|owner| owner.alias != run.alias))
+        .collect();
+      if drop_ids.is_empty() {
+        continue;
+      }
       let gone: Vec<String> = {
         let mut shown = run.shown.lock();
-        let ids: Vec<String> = shown.keys().filter(|id| !active.contains(id)).cloned().collect();
-        ids.into_iter().filter_map(|id| shown.remove(&id).map(|s| s.view_id)).collect()
+        drop_ids.into_iter().filter_map(|id| shown.remove(&id).map(|s| s.view_id)).collect()
       };
       for view_id in gone {
         run.send(json!({ "type": "detachView", "viewId": view_id }));
       }
     }
+  }
+}
+
+/// Deterministic preference when two SSH hosts both hold a record for the same session id (for example an orphaned
+/// standby copy left behind after a move). Higher wins: live activity > newer updatedAt > newer completedAt >
+/// any list state > connected host > lexicographically earlier alias.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct SummaryRank {
+  active: bool,
+  updated_at: String,
+  completed_at: i64,
+  marked: bool,
+  up: bool,
+  alias: std::cmp::Reverse<String>,
+}
+
+pub(super) fn summary_rank(s: &SessionSummary, up: bool, alias: &str) -> SummaryRank {
+  SummaryRank {
+    active: matches!(
+      s.state,
+      Some(
+        acpira_shared::transcript::SummaryState::Working
+          | acpira_shared::transcript::SummaryState::Waiting
+          | acpira_shared::transcript::SummaryState::Background
+      )
+    ),
+    updated_at: s.updated_at.clone(),
+    completed_at: s.completed_at.unwrap_or(0),
+    marked: s.state.is_some(),
+    up,
+    alias: std::cmp::Reverse(alias.to_owned()),
+  }
+}
+
+fn fallback_rank(up: bool, alias: &str) -> SummaryRank {
+  SummaryRank {
+    active: false,
+    updated_at: String::new(),
+    completed_at: 0,
+    marked: false,
+    up,
+    alias: std::cmp::Reverse(alias.to_owned()),
   }
 }
 

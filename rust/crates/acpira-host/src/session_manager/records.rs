@@ -338,6 +338,11 @@ impl SessionManager {
     };
     // A category belongs to the project the session leaves; only one of the destination's survives the move
     let category = self.category_for(category, &cwd).flatten();
+    // Moving off an SSH host must remove the standby copy left on that host, or both hosts end up holding the same id
+    let left_host = |old_cwd: &str, new_cwd: &str| {
+      acpira_shared::remote::parse_remote_folder(old_cwd)
+        .is_some_and(|old| acpira_shared::remote::parse_remote_folder(new_cwd).is_none_or(|next| next.alias != old.alias))
+    };
     if let Some(live) = self.live(id) {
       if live.cwd == cwd {
         // Already there: a category given is still a filing
@@ -350,6 +355,7 @@ impl SessionManager {
       if live.is_running() {
         return Err(anyhow!(t("host.moveWhileRunning")));
       }
+      let old_cwd = live.cwd.clone();
       let mut record = live.to_record();
       self.forget(id);
       record.cwd = cwd;
@@ -358,7 +364,9 @@ impl SessionManager {
         record.pinned = None;
       }
       record.category = category;
-      self.deps.store.flush(Arc::new(record.clone())).await.ok();
+      if self.deps.store.flush(Arc::new(record.clone())).await.is_ok() && left_host(&old_cwd, &record.cwd) {
+        self.deps.store.notify_left_cwd(id, &old_cwd);
+      }
       self.replace_summary(&record);
       self.bus.touch("index");
       for v in self.viewers_on(id, None) {
@@ -367,10 +375,15 @@ impl SessionManager {
       }
       return Ok(());
     }
+    let mut old_cwd = None;
+    let moved_to = cwd.clone();
     self
       .patch_record(id, |r| {
         if r.cwd == cwd && category.is_none() {
           return;
+        }
+        if r.cwd != cwd {
+          old_cwd = Some(r.cwd.clone());
         }
         r.cwd = cwd;
         if category.is_some() {
@@ -378,7 +391,13 @@ impl SessionManager {
         }
         r.category = category;
       })
-      .await
+      .await?;
+    if let Some(old_cwd) = old_cwd
+      && left_host(&old_cwd, &moved_to)
+    {
+      self.deps.store.notify_left_cwd(id, &old_cwd);
+    }
+    Ok(())
   }
 
   /// The working directory of a session a viewer shows: live, a mirror of another engine's session,

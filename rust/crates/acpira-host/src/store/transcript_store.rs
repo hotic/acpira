@@ -460,6 +460,13 @@ impl TranscriptStore {
     }
   }
 
+  /// Notify change hooks that a record moved away from `old_cwd` so `HostMirror` drops any copy left on that host
+  pub fn notify_left_cwd(&self, id: &str, old_cwd: &str) {
+    if self.on_change.read().is_some() {
+      self.changed(id, RecordChange::Gone { cwd: old_cwd });
+    }
+  }
+
   async fn ensure(&self) -> Result<()> {
     fs::create_dir_all(&self.dir).await?;
     Ok(())
