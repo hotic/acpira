@@ -351,7 +351,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'usage' && <UsagePage view={p.usage} agents={p.agents} chats={p.chats} onLoad={p.on.usage} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
                   {page.kind === 'connections' && access && <RemoteAccessSection view={access} />}
-                  {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} remote={remote} />}
+                  {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} agents={p.agents} settings={p.settings} on={p.on} remote={remote} />}
                   {page.kind === 'subagents' && <SubagentsPage page={page} onPage={trail.go} onReplace={trail.replace} settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
                   {agent && (
                     <AgentDialog

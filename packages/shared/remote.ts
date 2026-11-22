@@ -14,14 +14,17 @@ export const SSH_LOCAL_AGENTS: readonly string[] = ['acpira', 'claude', 'antigra
 /** Whether an agent of this machine can run here in a folder on an SSH host, only its tools there */
 export const canRunHere = (a: { id: string; sshLocal?: boolean }): boolean => a.sshLocal ?? SSH_LOCAL_AGENTS.includes(a.id);
 
-/** Whether `agent` runs on this machine in an SSH host folder: requires `canRunHere`, then honours an explicit
- * `sshLocalAgents[id]` override; otherwise installed external ACPs default to on, while the built-in agent and
- * uninstalled CLIs default to off */
+/** Whether `agent` runs on this machine in an SSH host folder: requires `canRunHere`, then honours the host's own
+ * say (`host`, that host's `ConnectionView.localAgents`), then an explicit `sshLocalAgents[id]` override; otherwise
+ * installed external ACPs default to on, while the built-in agent and uninstalled CLIs default to off. Without `host`
+ * the answer is the agent's own, the one a host follows unless it says otherwise */
 export function runsHereOnSsh(
   agent: { id: string; sshLocal?: boolean; available?: boolean },
   setting: SshLocalMap | undefined,
+  host?: SshLocalMap,
 ): boolean {
   if (!canRunHere(agent)) return false;
+  if (host && Object.hasOwn(host, agent.id)) return host[agent.id] === true;
   if (setting && Object.hasOwn(setting, agent.id)) return setting[agent.id] === true;
   return agent.id !== BUILTIN_AGENT_ID && agent.available === true;
 }
@@ -39,12 +42,14 @@ export function setSshLocal(
   return next;
 }
 
-/** The agents that currently run on this machine in a folder on an SSH host, mirroring `SessionManager::runs_here_on_ssh` */
+/** The agents that currently run on this machine in a folder on an SSH host (`host`: that host's own say), mirroring
+ * `SessionManager::runs_here_on_ssh` */
 export function sshLocalAgents(
   agents: readonly { id: string; sshLocal?: boolean; available?: boolean }[],
   setting: SshLocalMap | undefined,
+  host?: SshLocalMap,
 ): string[] {
-  return agents.filter(a => runsHereOnSsh(a, setting)).map(a => a.id);
+  return agents.filter(a => runsHereOnSsh(a, setting, host)).map(a => a.id);
 }
 
 export interface RemoteFolder { alias: string; path: string }
@@ -119,6 +124,9 @@ export interface ConnectionView {
   remoteVersion?: string;
   /** The host's folders in the project list, as `ssh://` forms */
   projects: string[];
+  /** Where an agent runs in this host's folders when the host says so itself (`agent -> on this machine`); it outranks
+   * the agent's own `sshLocalAgents` entry */
+  localAgents?: SshLocalMap;
 }
 
 /** A host ~/.ssh/config names, for the add dialog */
@@ -134,6 +142,8 @@ export type ConnectionOp =
   | { op: 'setDisabled'; alias: string; disabled: boolean }
   // Whether this machine's model sources go to the host; off takes back what was brought
   | { op: 'setModels'; alias: string; on: boolean }
+  // Where `agent` runs in this host's folders: on this machine, on the host, or without `on` as the agent's own setting says
+  | { op: 'setLocalAgent'; alias: string; agent: string; on?: boolean }
   // acceptNewMachine: the alias now leads to another machine and the user confirmed it is the right one
   | { op: 'connect'; alias: string; acceptNewMachine?: boolean }
   | { op: 'disconnect'; alias: string }

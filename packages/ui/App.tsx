@@ -3,7 +3,7 @@ import type { AccountAction, AgentInstallProgress, DetectedAgent, EditTurnReques
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, PanelScope, SettingKey, SettingsView, SshLocalMap } from '@acpira/shared/settings';
-import { runsHereOnSsh, setSshLocal } from '@acpira/shared/remote';
+import { parseRemoteFolder, runsHereOnSsh, setSshLocal } from '@acpira/shared/remote';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import { isLocale, resolveLocale, type Locale } from '@acpira/shared/i18n/core';
 import { reuse, reuseById } from '@acpira/shared/reuse';
@@ -25,7 +25,7 @@ import { vscodeApi } from './vscodeApi';
 import { requestTable } from './requestTable';
 import { desktopShell, postWindowControl, pushShellToast, runShellCommand, setDesktopMenu, setUpdateState, setWindowMaximized } from './desktop';
 import { setActiveKeybindings } from './keybindings';
-import { deliverRemote, watchConnections } from './remote/api';
+import { connectionOp, deliverRemote, useConnections, watchConnections } from './remote/api';
 import { deliverRemoteAccess, watchRemoteAccess } from './remote/access';
 import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
@@ -505,21 +505,29 @@ export function App() {
   }, [view, page, controls, personaAgents]);
 
 
-  // "Run it on this computer" from a session in a folder on an SSH host: update `sshLocalAgents`, then start a new
-  // session in the same folder once the engine's settings say so, since it routes new sessions by that setting
+  // "Run it on this computer" from a session in a folder on an SSH host: update `sshLocalAgents` (or that host's own
+  // say, where it keeps the agent on itself), then start a new session in the same folder once the engine's settings
+  // and host list say so, since it routes new sessions by them
   const sshLocal = useRef<SshLocalMap>(undefined);
   sshLocal.current = settings?.sshLocalAgents;
   const agentsRef = useRef<AgentInfo[]>([]);
   agentsRef.current = agents;
+  const hosts = useConnections();
+  const hostsRef = useRef(hosts);
+  hostsRef.current = hosts;
+  const hostSay = (cwd: string) => {
+    const alias = parseRemoteFolder(cwd)?.alias;
+    return alias ? { alias, say: hostsRef.current?.find(c => c.alias === alias)?.localAgents } : undefined;
+  };
   const runHerePending = useRef<{ agent: string; cwd: string }>(undefined);
   useEffect(() => {
     const want = runHerePending.current;
     if (!want || !settings) return;
     const info = agents.find(a => a.id === want.agent);
-    if (!info || !runsHereOnSsh(info, settings.sshLocalAgents)) return;
+    if (!info || !runsHereOnSsh(info, settings.sshLocalAgents, hostSay(want.cwd)?.say)) return;
     runHerePending.current = undefined;
     post({ type: 'newSession', agent: want.agent, cwd: want.cwd });
-  }, [settings, agents]);
+  }, [settings, agents, hosts]);
 
   const on = useMemo<ShellHandlers>(() => ({
     editTurn,
@@ -565,7 +573,11 @@ export function App() {
     runHere: (agent, cwd) => {
       runHerePending.current = { agent, cwd };
       const info = agentsRef.current.find(a => a.id === agent) ?? { id: agent };
-      post({ type: 'setSetting', key: 'sshLocalAgents', value: setSshLocal(sshLocal.current, info, true) });
+      // A host that keeps this agent on itself outranks the agent's own setting: its say is the one to change, and
+      // the agent's setting stays as it is for every other host
+      const host = hostSay(cwd);
+      if (host?.say && Object.hasOwn(host.say, agent)) connectionOp({ op: 'setLocalAgent', alias: host.alias, agent, on: true });
+      else post({ type: 'setSetting', key: 'sshLocalAgents', value: setSshLocal(sshLocal.current, info, true) });
     },
     compact: () => post({ type: 'compact', sessionId: activeId.current }),
     login: methodId => post({ type: 'login', sessionId: activeId.current, methodId }),

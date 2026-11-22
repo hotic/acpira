@@ -7,6 +7,7 @@
 //! backoff when it drops. Failures only the user can settle (a host key, a locked key, a refusal, another machine behind
 //! the alias, an unsupported platform, no ssh) stop the driver; the rest retry. Every change is pushed to the pages
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
@@ -67,7 +68,8 @@ impl Default for ConnectionsOpts {
 #[serde(rename_all = "camelCase")]
 struct Saved {
   alias: String,
-  // A `mode` left by engines that had a per-host run mode is ignored: the agent decides now (`sshLocalAgents`)
+  // A `mode` left by engines that had one run mode per host is ignored: the agent decides (`sshLocalAgents`), unless
+  // `local_agents` says otherwise for it here
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   disabled: bool,
   /// What the first connection found behind the alias (`/etc/machine-id`, the Mac's hardware UUID)
@@ -76,6 +78,9 @@ struct Saved {
   /// This machine's model sources stay off the host (`host_models.rs`)
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   models_off: bool,
+  /// `ConnectionView::local_agents`
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  local_agents: BTreeMap<String, bool>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -213,6 +218,7 @@ impl Connections {
         alias: e.saved.alias.clone(),
         disabled: e.saved.disabled,
         models_off: e.saved.models_off,
+        local_agents: e.saved.local_agents.clone(),
         state: e.live.state,
         step: e.live.step,
         detail: e.live.detail.clone(),
@@ -272,6 +278,12 @@ impl Connections {
   /// Whether this machine's model sources go to the host (its `modelsOff` switch is off)
   pub fn models_on(&self, alias: &str) -> bool {
     self.hosts.lock().iter().find(|e| e.saved.alias == alias).is_some_and(|e| !e.saved.models_off)
+  }
+
+  /// Where the host itself says `agent` runs in its folders (`ConnectionView::local_agents`): on this machine or not;
+  /// None when it leaves that to the agent's own setting
+  pub fn local_agent(&self, alias: &str, agent: &str) -> Option<bool> {
+    self.hosts.lock().iter().find(|e| e.saved.alias == alias).and_then(|e| e.saved.local_agents.get(agent).copied())
   }
 
   /// Whether the host's engine takes `feature`; None until this engine has reached it through the helper channel
@@ -423,7 +435,7 @@ impl Connections {
         self
           .edit(move |hosts| match hosts.iter_mut().find(|h| h.alias == a) {
             Some(h) => h.disabled = false,
-            None => hosts.push(Saved { alias: a, disabled: false, machine_id: None, models_off: false }),
+            None => hosts.push(Saved { alias: a, disabled: false, machine_id: None, models_off: false, local_agents: BTreeMap::new() }),
           })
           .await?;
         self.connect(&alias, false);
@@ -443,6 +455,22 @@ impl Connections {
       ConnectionOp::SetModels { alias, on } => {
         let a = alias.clone();
         self.edit(move |hosts| hosts.iter_mut().filter(|h| h.alias == a).for_each(|h| h.models_off = !on)).await?;
+      }
+      ConnectionOp::SetLocalAgent { alias, agent, on } => {
+        let (a, agent) = (alias.clone(), agent.trim().to_owned());
+        if agent.is_empty() {
+          bail!("no agent named");
+        }
+        self
+          .edit(move |hosts| {
+            for h in hosts.iter_mut().filter(|h| h.alias == a) {
+              match on {
+                Some(on) => h.local_agents.insert(agent.clone(), on),
+                None => h.local_agents.remove(&agent),
+              };
+            }
+          })
+          .await?;
       }
       ConnectionOp::Connect { alias, accept_new_machine } => {
         let disabled = self.hosts.lock().iter().find(|e| e.saved.alias == alias).map(|e| e.saved.disabled);
@@ -854,4 +882,30 @@ fn progress_text(sent: u64, total: u64) -> String {
 fn is_env_name(name: &str) -> bool {
   !name.is_empty()
     && name.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && b.is_ascii_digit()))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// A host's own say on where an agent runs is saved with the host, shown in its view, and gone again when taken back
+  #[tokio::test]
+  async fn a_host_keeps_its_own_say_on_where_an_agent_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("connections.json"), r#"{ "hosts": [{ "alias": "box" }, { "alias": "other" }] }"#).unwrap();
+    let c = Connections::new(dir.path(), dir.path(), Arc::new(|_| {}), None, ConnectionsOpts::default());
+    assert_eq!(c.local_agent("box", "claude"), None);
+
+    c.op(ConnectionOp::SetLocalAgent { alias: "box".into(), agent: "claude".into(), on: Some(false) }).await.unwrap();
+    assert_eq!((c.local_agent("box", "claude"), c.local_agent("other", "claude"), c.local_agent("box", "codex")), (Some(false), None, None));
+    let view = c.views().into_iter().find(|v| v.alias == "box").unwrap();
+    assert_eq!(view.local_agents.get("claude"), Some(&false));
+    // Another engine of the machine reads it from the file
+    let again = Connections::new(dir.path(), dir.path(), Arc::new(|_| {}), None, ConnectionsOpts::default());
+    assert_eq!(again.local_agent("box", "claude"), Some(false));
+
+    c.op(ConnectionOp::SetLocalAgent { alias: "box".into(), agent: "claude".into(), on: None }).await.unwrap();
+    assert_eq!(c.local_agent("box", "claude"), None);
+    assert!(!std::fs::read_to_string(dir.path().join("connections.json")).unwrap().contains("localAgents"));
+  }
 }

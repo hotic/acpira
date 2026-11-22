@@ -162,6 +162,10 @@ describe('SSH folder agent selection', () => {
     expect(setSshLocal({ acpira: true }, { id: 'acpira', available: true }, false)).toEqual({});
     expect(runsHereOnSsh({ id: 'custom-acp', available: true, sshLocal: true }, {})).toBe(true);
     expect(runsHereOnSsh({ id: 'custom-acp', available: false, sshLocal: true }, {})).toBe(false);
+    // A host's own say outranks the agent's setting and its default, either way; it cannot make a withheld agent run here
+    expect(sshLocalAgents(newer, {}, { droid: false, acpira: true, claude: true })).toEqual(['acpira']);
+    expect(sshLocalAgents(newer, { droid: false, acpira: true }, { droid: true, acpira: false })).toEqual(['droid']);
+    expect(sshLocalAgents(newer, { droid: false }, {})).toEqual([]);
   });
 
   it('falls back when an agent is set to remote-run and missing on the SSH host, or defers to an unprobed host', () => {

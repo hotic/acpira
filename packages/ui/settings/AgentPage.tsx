@@ -21,7 +21,7 @@ import { useScrollFade } from '../ui/useScrollFade';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
 import { localLoginNeeded } from '../chat/AccountPanel';
-import { remoteOffered } from '../remote/api';
+import { remoteOffered, useConnections } from '../remote/api';
 import { ModelMark } from '../chat/ModelMark';
 import {
   DialogBody, Dot, FactRow, Field, FormField, Group, inputBox, ItemRow, Meta, Note, PathText, SearchRow, Section, SectionAction, Select, SettingsDialog,
@@ -411,9 +411,12 @@ function PermissionsSection({ agent, settings, on }: { agent: AgentInfo; setting
 
 // Where the agent runs in a folder on an SSH host (`sshLocalAgents`), for the agents that can run on this machine there
 // (`canRunHere`): off, the host's own engine runs it like every other agent. Only where SSH hosts are offered (the
-// desktop app). Every CLI keeps its sign-in here; only the built-in agent stops with this machine
+// desktop app). Every CLI keeps its sign-in here; only the built-in agent stops with this machine. A host may say
+// otherwise for itself (its dialog, `ConnectionView.localAgents`) and then outranks this switch there: the hosts that
+// do are named under it
 const SSH_LOCAL_DESC: Record<string, MsgKey> = { acpira: 'settings.agent.sshLocal.descBuiltin' };
 function SshHostSection({ agent, settings, on }: { agent: AgentInfo; settings: SettingsView; on: SettingsHandlers }) {
+  const own = (useConnections() ?? []).filter(c => c.localAgents && Object.hasOwn(c.localAgents, agent.id)).map(c => c.alias);
   if (!canRunHere(agent) || !remoteOffered()) return null;
   const enabled = runsHereOnSsh(agent, settings.sshLocalAgents);
   const toggle = (v: boolean) => on.setSetting('sshLocalAgents', setSshLocal(settings.sshLocalAgents, agent, v));
@@ -422,6 +425,7 @@ function SshHostSection({ agent, settings, on }: { agent: AgentInfo; settings: S
       <Field label={t('settings.agent.sshLocal')} desc={t(SSH_LOCAL_DESC[agent.id] ?? 'settings.agent.sshLocal.descClaude')}>
         <Switch checked={enabled} onChange={toggle} label={t('settings.agent.sshLocal')} />
       </Field>
+      {own.length > 0 && <Note>{t('settings.agent.sshLocal.hosts', { hosts: own.join(t('common.listSep')) })}</Note>}
     </Section>
   );
 }

@@ -53,6 +53,7 @@ import { mediaKind } from '../panel/files';
 import { agentsForFolder, launchable, pickFolderAgent } from '@acpira/shared/agentOrder';
 import { canRunHere, parseRemoteFolder, sshLocalAgents } from '@acpira/shared/remote';
 import type { SshLocalMap } from '@acpira/shared/settings';
+import { useConnections } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { ProjectDialog } from './ProjectDialog';
 import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, pageCaption, postWindowControl, useShellCommands, useShellToasts, useWindowLights } from '../desktop';
@@ -157,7 +158,8 @@ export interface ShellHandlers {
   refreshQuota?: (agent: AgentInfo['id']) => void;
   // AgentInfo.credentialsLocked: unlock the credential store in a host terminal
   unlockCredentials?: (agent: AgentInfo['id']) => void;
-  // Run the agent on this machine in folders on SSH hosts from now on (`sshLocalAgents`) and start a session here in `cwd`
+  // Run the agent on this machine from now on, in folders on SSH hosts (`sshLocalAgents`) or, where the host of `cwd`
+  // keeps it on itself, on that host only (`ConnectionView.localAgents`), and start a session here in `cwd`
   runHere?: (agent: AgentInfo['id'], cwd: string) => void;
   installAgent?: (agent: AgentInfo['id'], installNode?: boolean) => void;
   cancelInstall?: (agent: AgentInfo['id']) => void;
@@ -692,13 +694,21 @@ export function Shell(p: ShellProps) {
   // with the agent last used; a folder picked in the dialog or dropped on the column joins the projects and opens there.
   // The start page shows while the session on screen has not said a word
   const startPage = desktop && !p.noProject && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
-  // The agents the setting runs here that can (`canRunHere`), as the engine routes new sessions
-  const localOnSsh = useMemo(() => sshLocalAgents(p.agents, p.sshLocalAgents), [p.agents, p.sshLocalAgents]);
+  // Each SSH host's own say on where agents run (`ConnectionView.localAgents`), which outranks the setting. Keyed by
+  // its content: the host list is pushed again with every round-trip measure
+  const hostSayKey = JSON.stringify((useConnections() ?? []).filter(c => c.localAgents).map(c => [c.alias, c.localAgents]));
+  const hostSay = useMemo(() => new Map<string, SshLocalMap>(JSON.parse(hostSayKey)), [hostSayKey]);
+  // The agents that run here in `folder` that can (`canRunHere`), as the engine routes new sessions there
+  const localFor = useCallback((folder?: string) => {
+    const alias = folder ? parseRemoteFolder(folder)?.alias : undefined;
+    return sshLocalAgents(p.agents, p.sshLocalAgents, alias ? hostSay.get(alias) : undefined);
+  }, [p.agents, p.sshLocalAgents, hostSay]);
+  const localOnSsh = useMemo(() => localFor(p.cwd), [localFor, p.cwd]);
   const startAgents = useMemo(() => agentsForFolder(p.agents, p.cwd, p.hostAgents, localOnSsh), [p.agents, p.cwd, p.hostAgents, localOnSsh]);
   const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
   const folderAgent = useCallback((dir?: string): AgentId | undefined => (
-    pickFolderAgent(p.agents, p.agent.id, dir ?? p.cwd, p.cwd, p.hostAgents, localOnSsh)
-  ), [p.agents, p.agent.id, p.cwd, p.hostAgents, localOnSsh]);
+    pickFolderAgent(p.agents, p.agent.id, dir ?? p.cwd, p.cwd, p.hostAgents, localFor(dir ?? p.cwd))
+  ), [p.agents, p.agent.id, p.cwd, p.hostAgents, localFor]);
   // A session in a folder on an SSH host, of an agent that runs in the host's engine but could run here (the host lacks
   // its CLI or its login, or cannot reach the vendor): its notice offers to run it on this machine instead
   const runHere = on.runHere && p.cwd && parseRemoteFolder(p.cwd) && p.agents.some(a => a.id === p.agent.id && canRunHere(a)) && !localOnSsh.includes(p.agent.id)

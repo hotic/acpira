@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link2, Plus, Server, Unplug, X } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n/core';
-import { isAlias, parseRemoteFolder, type ConnectionState, type ConnectionView, type SshHost } from '@acpira/shared/remote';
+import { launchable } from '@acpira/shared/agentOrder';
+import type { SettingsView } from '@acpira/shared/settings';
+import type { AgentInfo } from '@acpira/shared/transcript';
+import { canRunHere, isAlias, parseRemoteFolder, runsHereOnSsh, type ConnectionState, type ConnectionView, type SshHost } from '@acpira/shared/remote';
 import { cn } from '../ui/cn';
 import { Button, IconButton } from '../ui/Button';
 import { Command } from '../ui/Command';
@@ -9,12 +12,15 @@ import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
 import { CONNECTION_STATE_NAME as STATE_NAME, connectionOp, listSshHosts, remoteProjectOp, useConnections, type SshHostList } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
+import { AgentMark } from '../chat/AgentMark';
 import { ConnectStatus, failureReason, hasConnectStatus, reconnect } from '../remote/ConnectStatus';
 import { Collapsible } from '../ui/Collapsible';
+import { DropdownMenu } from '../ui/DropdownMenu';
+import { OptionContent } from '../ui/Panel';
 import { usePresence } from '../ui/usePresence';
 import {
   blockItem, blockList, DangerAction, DialogBody, Dot, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
-  SettingsDialog, Status, shortPath, Switch, useSettingRow,
+  Select, SettingsDialog, Status, shortPath, Switch, useSettingRow,
 } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
@@ -30,7 +36,7 @@ const STATES: ConnectionState[] = ['off', 'connecting', 'connected', 'error'];
 // brings (the engine refused the alias and said so in a toast) closes its dialog after this long
 const ADD_WAIT_MS = 5000;
 
-export function ConnectionsPage({ env, projects, on, remote = true }: { env: SettingsEnv; projects?: string[]; on: SettingsHandlers; remote?: boolean }) {
+export function ConnectionsPage({ env, projects, agents, settings, on, remote = true }: { env: SettingsEnv; projects?: string[]; agents?: AgentInfo[]; settings?: SettingsView; on: SettingsHandlers; remote?: boolean }) {
   const list = useConnections() ?? [];
   const [open, setOpen] = useState<string>();
   const [added, setAdded] = useState<string>();
@@ -62,7 +68,7 @@ export function ConnectionsPage({ env, projects, on, remote = true }: { env: Set
       ))}
     </Section>}
     {picking && <AddHostDialog taken={list.map(c => c.alias)} onAdd={add} onClose={() => setPicking(false)} />}
-    {current && <HostDialog view={current} env={env} projects={projects} on={on} fresh={added === open} onClose={() => setOpen(undefined)} />}
+    {current && <HostDialog view={current} env={env} projects={projects} agents={agents} settings={settings} on={on} fresh={added === open} onClose={() => setOpen(undefined)} />}
   </>;
 }
 
@@ -147,10 +153,18 @@ function AddHostDialog({ taken, onAdd, onClose }: { taken: string[]; onAdd: (ali
   );
 }
 
+type RunAt = 'here' | 'host';
+
 // One host in a dialog: the connection (its state, round trip and remote version, the one action that moves it on,
-// the attempt's steps while it runs or why it failed), the host's projects (browsable only while connected); the footer removes the host. `fresh`: it just replaced the add dialog in the same box, so its body fades in
-function HostDialog({ view, env, projects, on, fresh, onClose }: { view: ConnectionView; env: SettingsEnv; projects?: string[]; on: SettingsHandlers; fresh?: boolean; onClose: () => void }) {
+// the attempt's steps while it runs or why it failed), where agents run in its folders, the host's projects (browsable only while connected); the footer removes the host. `fresh`: it just replaced the add dialog in the same box, so its body fades in
+function HostDialog({ view, env, projects, agents, settings, on, fresh, onClose }: { view: ConnectionView; env: SettingsEnv; projects?: string[]; agents?: AgentInfo[]; settings?: SettingsView; on: SettingsHandlers; fresh?: boolean; onClose: () => void }) {
   const { alias, state } = view;
+  // The agents that can run on this machine in a host folder (`canRunHere`); every other always runs on the host
+  const movable = launchable(agents ?? []).filter(canRunHere);
+  // The agents this host has its own say on, and the ones an exception can still be added for
+  const said = Object.keys(view.localAgents ?? {});
+  const saidRows = usePresence(said, id => id);
+  const free = movable.filter(a => !said.includes(a.id));
   const [picking, setPicking] = useState(false);
   // Held from the first render: `fresh` clears as soon as the pushed list brings the host, which would cut the fade short
   const [enter] = useState(fresh);
@@ -187,6 +201,43 @@ function HostDialog({ view, env, projects, on, fresh, onClose }: { view: Connect
           <ItemRow title={t('connections.models')} desc={t('connections.modelsDesc')}
             trailing={<Switch checked={!view.modelsOff} label={t('connections.models')} onChange={on => connectionOp({ op: 'setModels', alias, on })} />} />
         </Section>
+        {/* Where agents run in this host's folders, as exceptions only (`ConnectionView.localAgents`): an agent listed
+            here runs where its row says, which outranks its own switch (Settings → the agent → SSH hosts); every other
+            follows that switch. A row per agent would grow with every agent installed. A new exception starts as the
+            opposite of what the agent does by itself */}
+        {(movable.length > 0 || said.length > 0) && <Section title={t('connections.agents')} count={said.length || undefined} desc={t('connections.agentsDesc')}
+          action={<DropdownMenu.Root>
+            <DropdownMenu.Trigger render={<SectionAction icon={<Plus />} disabled={!free.length} className="data-[popup-open]:bg-hover data-[popup-open]:text-fg-1">{t('connections.agentsAdd')}</SectionAction>} />
+            <DropdownMenu.Portal><DropdownMenu.Positioner align="end" width="sm"><DropdownMenu.Popup>
+              {free.map(a => (
+                <DropdownMenu.Item key={a.id} onClick={() => connectionOp({ op: 'setLocalAgent', alias, agent: a.id, on: !runsHereOnSsh(a, settings?.sshLocalAgents) })}>
+                  <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
+                </DropdownMenu.Item>
+              ))}
+            </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+          </DropdownMenu.Root>}>
+          {saidRows.map(({ key: id, open }) => {
+            const name = agents?.find(a => a.id === id)?.name ?? id;
+            const here = view.localAgents?.[id] !== false;
+            // The dialog's other rows: a title over its second line, no lead column. The mark rides the name at text
+            // size (the status section's dot), and the second line says what the row's choice means
+            return <Collapsible.Section key={id} open={open}>
+              <ItemRow title={<span className="flex min-w-0 items-center gap-1.5"><AgentMark id={id} name={name} className="size-icon shrink-0" /><span className="truncate">{name}</span></span>}
+                desc={t(here ? 'connections.run.hereDesc' : 'connections.run.hostDesc')}
+                trailing={<span className="flex items-center gap-1">
+                  {/* Remove sits ahead of the field, so the field ends on the section's right edge whether or not
+                      the button shows */}
+                  <IconButton size="sm" title={t('common.remove')} aria-label={t('common.remove')} onClick={() => connectionOp({ op: 'setLocalAgent', alias, agent: id })}
+                    className="text-fg-3 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"><X strokeWidth={1.5} /></IconButton>
+                  {/* A dropdown like every other setting that picks one value; segments are the pages' view filters */}
+                  <Select<RunAt> label={name} value={here ? 'here' : 'host'}
+                    options={[{ value: 'here', label: t('connections.run.here') }, { value: 'host', label: t('connections.run.host') }]}
+                    onChange={v => connectionOp({ op: 'setLocalAgent', alias, agent: id, on: v === 'here' })} />
+                </span>} />
+            </Collapsible.Section>;
+          })}
+          <Collapsible.Section open={said.length === 0}><Note>{t('connections.agentsNone')}</Note></Collapsible.Section>
+        </Section>}
         <Section title={t('connections.projects')} count={folders.length} desc={t('connections.projectsDesc')}
           action={<SectionAction icon={<Plus />} disabled={!live} title={live ? undefined : t('connections.connectFirst')} onClick={() => setPicking(true)}>{t('connections.addFolder')}</SectionAction>}>
           {/* Rows fold in and out as folders are added and removed; the empty note comes last, so while it is folded

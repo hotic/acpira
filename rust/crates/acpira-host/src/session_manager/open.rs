@@ -129,11 +129,11 @@ impl SessionManager {
         return Err(anyhow!(t("host.noProject")));
       };
       let id = agent.unwrap_or_else(|| me.default_agent());
-      // A folder on an SSH host starts a session here only for an agent routed locally (`sshLocalAgents`). Any other
+      // A folder on an SSH host starts a session here only for an agent routed locally (`runs_here_on_ssh`). Any other
       // starts in the host's engine (`host_action`), and one that got this far found no engine there to ask: it never
       // falls back to this machine's login
       if let Some(f) = acpira_shared::remote::parse_remote_folder(&cwd)
-        && !me.runs_here_on_ssh(&id).await
+        && !me.runs_here_on_ssh(&id, &f.alias).await
       {
         let name = me.registry().try_get(&id).map(|d| d.name.clone()).unwrap_or_else(|| id.clone());
         return Err(anyhow!(tp("host.remoteBuiltinOnly", &[("agent", &name), ("host", &f.alias)])));

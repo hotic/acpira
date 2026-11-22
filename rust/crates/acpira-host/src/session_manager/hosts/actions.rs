@@ -151,7 +151,7 @@ impl SessionManager {
   /// host is away. None when the session would start here, so the caller answers from this machine
   pub async fn host_controls(&self, agent: &str, cwd: &str, fresh: bool) -> Option<HostControls> {
     let folder = parse_remote_folder(cwd)?;
-    if self.runs_here_on_ssh(agent).await {
+    if self.runs_here_on_ssh(agent, &folder.alias).await {
       return None;
     }
     // The built-in agent on a host that keeps this machine's settings (as the last push found, not merely offered): a
@@ -188,13 +188,16 @@ impl SessionManager {
     })
   }
 
-  /// A new session of `agent` in a host folder runs on this machine: its definition supports local run
-  /// (`AgentDef::local_run`), and either `sshLocalAgents` sets it explicitly or it is an external CLI installed here
-  /// (the built-in agent defaults to the host's engine)
-  pub(crate) async fn runs_here_on_ssh(&self, agent: &str) -> bool {
+  /// A new session of `agent` in a folder on the host `alias` runs on this machine: its definition supports local run
+  /// (`AgentDef::local_run`), and the host says so for this agent (`Connections::local_agent`), else `sshLocalAgents`
+  /// sets it explicitly, else it is an external CLI installed here (the built-in agent defaults to the host's engine)
+  pub(crate) async fn runs_here_on_ssh(&self, agent: &str, alias: &str) -> bool {
     let reg = self.registry();
     if !reg.try_get(agent).is_some_and(|d| d.local_run.is_some()) {
       return false;
+    }
+    if let Some(on) = self.deps.remote.as_ref().and_then(|c| c.local_agent(alias, agent)) {
+      return on;
     }
     let setting = (self.deps.ssh_local_agents)();
     if let Some(&on) = setting.get(agent) {
@@ -222,7 +225,7 @@ impl SessionManager {
       W::NewSession { cwd, agent, category, chat } if *chat != Some(true) => {
         if let Some(f) = self.new_session_folder(v, cwd.clone(), category.as_ref()).as_deref().and_then(parse_remote_folder) {
           let agent = agent.clone().unwrap_or_else(|| self.default_agent());
-          if self.runs_here_on_ssh(&agent).await {
+          if self.runs_here_on_ssh(&agent, &f.alias).await {
             None
           } else {
             self.hosts.runs.lock().get(&f.alias).cloned().map(|r| (f, r))

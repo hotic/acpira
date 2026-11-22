@@ -3,6 +3,8 @@
 //! in ~/.ssh/config (or a typed `user@host:port`) and is the host's identity. Parsing and formatting live here and
 //! nowhere else, so two spellings of one folder never become two projects. Both sides run test/fixtures/remote-folders.json
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 pub const REMOTE_SCHEME: &str = "ssh://";
@@ -158,6 +160,10 @@ pub struct ConnectionView {
   /// The host's folders in the project list, as `ssh://` forms
   #[serde(default)]
   pub projects: Vec<String>,
+  /// Where an agent runs in this host's folders when the host says so itself: `agent -> on this machine`. It outranks
+  /// the agent's own `sshLocalAgents` entry; an agent without one follows that setting
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub local_agents: BTreeMap<String, bool>,
 }
 
 /// A host ~/.ssh/config names, for the add dialog
@@ -192,6 +198,14 @@ pub enum ConnectionOp {
   SetDisabled { alias: String, disabled: bool },
   /// Whether this machine's model sources go to the host; off takes back what was brought
   SetModels { alias: String, on: bool },
+  /// Where `agent` runs in this host's folders (`ConnectionView::local_agents`): on this machine, on the host, or
+  /// without `on` as the agent's own setting says
+  SetLocalAgent {
+    alias: String,
+    agent: String,
+    #[serde(default)]
+    on: Option<bool>,
+  },
   /// `accept_new_machine`: the alias now leads to another machine and the user confirmed it is the right one
   Connect {
     alias: String,
