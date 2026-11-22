@@ -211,7 +211,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     let pack = if members.iter().any(|p| args.changes.unwrap_or(p.changes)) {
       let scope = caller_scope(&self.core.lock(), caller.as_deref());
       let recipe = handoff::recipe_in(&roster.dir());
-      let built = self.handoff_build(scope.as_ref(), &recipe).await.unwrap_or_else(|e| {
+      let built = self.handoff_build(scope.as_ref(), &recipe, &crate::acp::transport::cancel::Cancel::new()).await.unwrap_or_else(|e| {
         self.log(&format!("relay group {}: handoff pack: {e:#}", group.id));
         None
       });
@@ -448,6 +448,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     let round = latest.as_ref().map(|r| r.harness.round + 1).unwrap_or(1);
     let peer = latest.as_ref().and_then(|r| r.native.clone());
     let (tx, rx) = watch::channel::<RoundEnd>(None);
+    let cancel = crate::acp::transport::cancel::Cancel::new();
     // Everything that decides whether the round may start, and the round's registration, happen under one lock: two
     // calls on one thread cannot both start a round, and a waiter always finds the round it was told about
     let (node, thread, starting) = {
@@ -493,6 +494,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
         tree.relay_link_call(&node, &call.tool_call_id, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
       }
       c.relays.rounds.insert(thread.clone(), rx);
+      c.relays.cancels.insert(node.clone(), cancel.clone());
       let cohort = match caller.as_deref() {
         None => turn_index,
         Some(th) => c.relays.follow_ups.get(th).copied().unwrap_or(0),
@@ -504,7 +506,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       (node, thread, starting)
     };
     let me = self.clone();
-    let round = Round { thread: thread.clone(), node, persona: persona.clone(), mode, approval, peer, depth, prompt: prompt.clone(), handoff };
+    let round = Round { thread: thread.clone(), node, persona: persona.clone(), mode, approval, peer, depth, prompt: prompt.clone(), handoff, cancel };
     tokio::spawn(async move {
       let end = me.clone().relay_round(&round, starting).await;
       let reply = {
@@ -514,7 +516,13 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
             let cancelled = stop == "cancelled" || c.tree.relay_cancel_requested(&round.node);
             c.tree.relay_end(&round.node, if cancelled { SubagentState::Cancelled } else { SubagentState::Completed }, None);
           }
-          Err(e) => c.tree.relay_end(&round.node, SubagentState::Failed, Some(e.to_string())),
+          Err(e) => {
+            if c.tree.relay_cancel_requested(&round.node) {
+              c.tree.relay_end(&round.node, SubagentState::Cancelled, None);
+            } else {
+              c.tree.relay_end(&round.node, SubagentState::Failed, Some(e.to_string()));
+            }
+          }
         }
         let waited = c.relays.waiters.get(&round.thread).is_some_and(|n| *n > 0);
         if let Some(o) = c.relays.owing(&round.node).filter(|o| o.state == Owed::Running) {
@@ -522,6 +530,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
         }
         me.drain_terminal(&mut c);
         c.relays.rounds.remove(&round.thread);
+        c.relays.cancels.remove(&round.node);
         c.relays.ended.send_modify(|n| *n += 1);
         me.touch(&mut c);
         round_result(&c, &round.node)

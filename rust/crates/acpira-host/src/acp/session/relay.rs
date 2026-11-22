@@ -112,6 +112,8 @@ pub(crate) struct Relays {
   pub procs: HashMap<String, RelayProc>,
   /// Rounds in flight, by thread: the call waiting on one watches its end
   pub rounds: HashMap<String, watch::Receiver<RoundEnd>>,
+  /// Per-node cancellation signals for running rounds (aborts connect, snapshot, handoff build and waits immediately)
+  pub cancels: HashMap<String, Cancel>,
   /// Root `ask_agent` rows seen before their round existed
   calls: Vec<PendingCall>,
   /// Root rows recognized as `ask_agent` by name: claude-agent-acp 0.83.0 names the tool only on the first `tool_call`
@@ -216,6 +218,7 @@ impl Default for Relays {
     Relays {
       procs: HashMap::new(),
       rounds: HashMap::new(),
+      cancels: HashMap::new(),
       calls: vec![],
       rows: HashSet::new(),
       notes: HashMap::new(),
@@ -386,6 +389,8 @@ struct Round {
   /// The caller's task, which `compose_brief` wraps
   prompt: String,
   handoff: Option<Handoff>,
+  /// Fired when this round is cancelled or the session closes, aborting pre-prompt work and waits immediately
+  cancel: Cancel,
 }
 
 /// A round one group call started among others: the group's id goes on the node, and the pack built once for every

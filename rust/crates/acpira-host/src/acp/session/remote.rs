@@ -227,16 +227,30 @@ impl AcpSession {
     }
   }
 
-  /// The handoff pack of the session folder's changes (`handoff::build`), on its SSH host for a folder there
-  pub(crate) async fn handoff_build(&self, scope: Option<&crate::handoff::Scope>, recipe: &crate::handoff::Recipe) -> anyhow::Result<Option<crate::handoff::Pack>> {
-    let Some(f) = self.remote_folder() else { return crate::handoff::build(std::path::Path::new(&self.cwd), None, scope, recipe).await };
+  /// The handoff pack of the session folder's changes (`handoff::build_cancellable`), on its SSH host for a folder there
+  pub(crate) async fn handoff_build(
+    &self,
+    scope: Option<&crate::handoff::Scope>,
+    recipe: &crate::handoff::Recipe,
+    cancel: &crate::acp::transport::cancel::Cancel,
+  ) -> anyhow::Result<Option<crate::handoff::Pack>> {
+    let Some(f) = self.remote_folder() else {
+      return crate::handoff::build_cancellable(std::path::Path::new(&self.cwd), None, scope, recipe, cancel).await;
+    };
     let v = self.host_handoff(&f, json!({ "scope": scope, "recipe": recipe })).await?;
     Ok(serde_json::from_value(v.get("pack").cloned().unwrap_or(Value::Null))?)
   }
 
-  /// The stats of the files a pack covers now (`handoff::file_stats`), on the folder's SSH host for one there
-  pub(crate) async fn handoff_stats(&self, base: &str, scope: Option<&crate::handoff::Scope>) -> anyhow::Result<Option<Vec<crate::handoff::PackFile>>> {
-    let Some(f) = self.remote_folder() else { return crate::handoff::file_stats(std::path::Path::new(&self.cwd), Some(base), scope).await };
+  /// The stats of the files a pack covers now (`handoff::file_stats_cancellable`), on the folder's SSH host for one there
+  pub(crate) async fn handoff_stats(
+    &self,
+    base: &str,
+    scope: Option<&crate::handoff::Scope>,
+    cancel: &crate::acp::transport::cancel::Cancel,
+  ) -> anyhow::Result<Option<Vec<crate::handoff::PackFile>>> {
+    let Some(f) = self.remote_folder() else {
+      return crate::handoff::file_stats_cancellable(std::path::Path::new(&self.cwd), Some(base), scope, cancel).await;
+    };
     let v = self.host_handoff(&f, json!({ "stats": true, "base": base, "scope": scope })).await?;
     Ok(serde_json::from_value(v.get("files").cloned().unwrap_or(Value::Null))?)
   }

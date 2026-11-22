@@ -224,6 +224,9 @@ impl AcpSession {
   pub(crate) fn relay_close(&self, c: &mut Core) -> (Vec<Arc<AgentProcess>>, watch::Receiver<usize>) {
     c.relays.closed = true;
     c.relays.rounds.clear();
+    for (_, cancel) in c.relays.cancels.drain() {
+      cancel.cancel();
+    }
     c.relays.calls.clear();
     c.relays.notes.clear();
     c.relays.ledger.clear();
@@ -247,12 +250,15 @@ impl AcpSession {
     c.relays.procs.get(&thread).filter(|rp| !rp.peer.is_empty()).map(|rp| (rp.proc.clone(), rp.peer.clone()))
   }
 
-  /// Cancel summoned rounds (and their pending cards): each child's own process gets the `session/cancel`; a round still
-  /// connecting sees the request before it sends its prompt
+  /// Cancel summoned rounds (and their pending cards): each child's own process gets the `session/cancel`, and its
+  /// round cancel token fires immediately so connect, snapshot and handoff pack work abort without sending a prompt
   pub(crate) fn relay_cancel(&self, c: &mut Core, nodes: &[String]) {
     for id in nodes {
       if !c.tree.relay_cancel(id) {
         continue;
+      }
+      if let Some(cancel) = c.relays.cancels.get(id) {
+        cancel.cancel();
       }
       self.cancel_permissions_for(c, id);
       self.cancel_questions_for(c, id);

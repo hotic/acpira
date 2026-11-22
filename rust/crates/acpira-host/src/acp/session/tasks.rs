@@ -131,6 +131,9 @@ impl AcpSession {
       if !c.tree.relay_cancel(id) {
         return;
       }
+      if let Some(cancel) = c.relays.cancels.get(id) {
+        cancel.cancel();
+      }
       let ids: Vec<String> = std::iter::once(id.to_owned()).chain(descendants).collect();
       for node in &ids {
         self.cancel_permissions_for(&mut c, node);

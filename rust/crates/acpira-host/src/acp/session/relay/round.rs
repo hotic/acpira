@@ -30,7 +30,9 @@ impl AcpSession {
   /// with the node, so a later read of the round says them too
   pub(super) async fn relay_round(self: Arc<Self>, r: &Round, starting: Starting) -> Result<String> {
     let mut notes = vec![];
-    let (proc, sid, (model, effort)) = self.relay_connect(r, &mut notes, starting).await?;
+    let Some((proc, sid, (model, effort))) = self.relay_connect(r, &mut notes, starting).await? else {
+      return Ok("cancelled".into());
+    };
     for n in &notes {
       self.log(&format!("relay {}: {n}", short(&r.thread)));
     }
@@ -47,7 +49,7 @@ impl AcpSession {
       tree.relay_bind(&r.node, &route_key(&r.thread), &sid, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
       tree.relay_set_controls(&r.node, model, effort);
       // Cancelled while connecting: the prompt never goes out
-      let cancelled = tree.relay_cancel_requested(&r.node);
+      let cancelled = r.cancel.is_cancelled() || tree.relay_cancel_requested(&r.node);
       self.touch(&mut c);
       if cancelled {
         return Ok("cancelled".into());
@@ -55,14 +57,28 @@ impl AcpSession {
     }
     self.core.lock().relays.follow_ups.remove(&r.thread);
     // The work tree before the prompt: a round that runs commands is told what changed meanwhile, not only what its
-    // edit rows name
+    // edit rows name. Both snapshot and handoff pack abort immediately on cancel so a stop never waits on git work
     let watch = [PathBuf::from(self.hook_folder())];
-    let host = self.hook_host().await;
-    let before = match &host {
-      Some(h) if h.in_work_tree(&watch[0]).await => Some(h.snapshot(&watch).await),
-      _ => None,
+    let (host, before) = tokio::select! {
+      biased;
+      _ = r.cancel.cancelled() => return Ok("cancelled".into()),
+      res = async {
+        let host = self.hook_host().await;
+        let before = match &host {
+          Some(h) if h.in_work_tree(&watch[0]).await => Some(h.snapshot(&watch).await),
+          _ => None,
+        };
+        (host, before)
+      } => res,
     };
-    let (blocks, handed) = self.relay_blocks(r, &proc).await;
+    let (blocks, handed) = tokio::select! {
+      biased;
+      _ = r.cancel.cancelled() => return Ok("cancelled".into()),
+      res = self.relay_blocks(r, &proc) => res,
+    };
+    if r.cancel.is_cancelled() || self.core.lock().tree.relay_cancel_requested(&r.node) {
+      return Ok("cancelled".into());
+    }
     if let Some(n) = handed {
       self.core.lock().relays.notes.entry(r.node.clone()).or_default().push(n);
     }
@@ -99,6 +115,12 @@ impl AcpSession {
 
   /// One session/prompt of the round; its token tally goes on the turn it closes in the node's transcript
   async fn relay_prompt(&self, proc: &AgentProcess, sid: &str, r: &Round, blocks: Vec<Value>) -> Result<String> {
+    if r.cancel.is_cancelled() || {
+      let c = self.core.lock();
+      c.relays.closed || c.tree.relay_cancel_requested(&r.node)
+    } {
+      return Ok("cancelled".into());
+    }
     let mut params = json!({ "sessionId": sid, "prompt": blocks });
     // A child reads the settings its caller reads now
     self.with_client_settings(&mut params, &r.persona.agent);
@@ -106,7 +128,7 @@ impl AcpSession {
       Some(dir) => {
         let baseline = droid_usage::Baseline::capture(dir.clone(), sid.to_owned()).await;
         let c = self.core.lock();
-        if c.relays.closed || c.tree.relay_cancel_requested(&r.node) {
+        if r.cancel.is_cancelled() || c.relays.closed || c.tree.relay_cancel_requested(&r.node) {
           return Ok("cancelled".into());
         }
         baseline
@@ -133,7 +155,7 @@ impl AcpSession {
     let Some(h) = &r.handoff else { return (plain(None), None) };
     let told = self.core.lock().relays.packs.get(&r.thread).cloned();
     if let Some((base, before)) = told {
-      let now = match self.handoff_stats(&base, h.scope.as_ref()).await {
+      let now = match self.handoff_stats(&base, h.scope.as_ref(), &r.cancel).await {
         Ok(Some(now)) => now,
         _ => return (plain(None), None),
       };
@@ -151,7 +173,7 @@ impl AcpSession {
     }
     let pack = match &h.shared {
       Some(p) => (**p).clone(),
-      None => self.handoff_build(h.scope.as_ref(), &h.recipe).await.unwrap_or_else(|e| {
+      None => self.handoff_build(h.scope.as_ref(), &h.recipe, &r.cancel).await.unwrap_or_else(|e| {
         self.log(&format!("relay {}: handoff pack: {e:#}", short(&r.thread)));
         None
       }),
@@ -228,6 +250,8 @@ impl AcpSession {
         }
         None => {
           tokio::select! {
+            biased;
+            _ = r.cancel.cancelled() => return Ok("cancelled".into()),
             _ = ended.changed() => {}
             _ = asked.changed() => {}
           }
@@ -237,9 +261,12 @@ impl AcpSession {
   }
 
   /// The thread's live process and native session (with the round's settings applied), started when there is none.
-  /// Answers the model and reasoning effort the session really runs
+  /// Answers `Ok(None)` when cancelled before the session finishes opening, and the model / reasoning effort otherwise.
   /// `_starting` keeps the session's close waiting until this returns (the process registered, or ended)
-  async fn relay_connect(self: &Arc<Self>, r: &Round, notes: &mut Vec<String>, _starting: Starting) -> Result<(Arc<AgentProcess>, String, (Option<String>, Option<String>))> {
+  async fn relay_connect(self: &Arc<Self>, r: &Round, notes: &mut Vec<String>, _starting: Starting) -> Result<Option<(Arc<AgentProcess>, String, (Option<String>, Option<String>))>> {
+    if r.cancel.is_cancelled() {
+      return Ok(None);
+    }
     let thread = r.thread.as_str();
     let wanted = (r.persona.model.clone(), r.persona.effort.clone(), r.persona.fast);
     let live = {
@@ -268,13 +295,16 @@ impl AcpSession {
         rp.mode = mode;
         rp.applied = wanted;
       }
+      if r.cancel.is_cancelled() {
+        return Ok(None);
+      }
       if stuck {
         return Err(anyhow!("{} stayed in its full-access mode, so this {:?} round was not sent: {}", r.persona.agent, r.mode, notes.join("; ")));
       }
       if let Some(e) = unbound {
         return Err(e);
       }
-      return Ok((proc, sid, controls));
+      return Ok(Some((proc, sid, controls)));
     }
     let def = self.deps.registry.get(&r.persona.agent)?.clone();
     if let Some(f) = self.remote_folder().filter(|_| r.persona.agent != crate::acp::agents::registry::SELF_AGENT_ID) {
@@ -299,14 +329,20 @@ impl AcpSession {
       (Some(a), Some(h)) => h.spawn_env(r.persona.agent.clone(), a.clone()).await,
       _ => None,
     };
+    if r.cancel.is_cancelled() {
+      return Ok(None);
+    }
     // A summoned agent starts the way the plugins' `agent.launch` hooks have it too, on the parent session's behalf
     let def = crate::acp::session::plugin_hooks::plugin_launch(self.deps.plugin_runtime.as_ref(), &def, &self.id, &self.process_cwd()).await;
+    if r.cancel.is_cancelled() {
+      return Ok(None);
+    }
     self.log(&format!("relay {}: spawn {bin} {} for {}", short(thread), def.args.join(" "), r.persona.name));
     let proc = AgentProcess::spawn(&def, &bin, &self.process_cwd(), handlers, env.as_ref(), None).await?;
     // Registered before anything else can fail, so the close or a failed open always ends it
     let closed = {
       let mut c = self.core.lock();
-      if !c.relays.closed {
+      if !c.relays.closed && !r.cancel.is_cancelled() {
         let rp = RelayProc { proc: proc.clone(), peer: String::new(), opened: Value::Null, start_mode: None, mode: None, applied: (None, None, None) };
         c.relays.procs.insert(thread.to_owned(), rp);
       }
@@ -316,21 +352,31 @@ impl AcpSession {
       proc.kill().await;
       return Err(anyhow!("the session closed"));
     }
-    let signed_in = match (&account, &self.deps.accounts) {
-      (Some(a), Some(h)) => {
-        h.authenticate(r.persona.agent.clone(), a.clone(), proc.clone()).await.map_err(|e| anyhow!("{} could not sign in with its saved account: {e}", def.name))
-      }
-      _ => Ok(()),
-    };
-    let opened = match signed_in {
-      Ok(()) => self.relay_open_session(&proc, r, &quiet, notes).await,
-      Err(e) => Err(e),
+    if r.cancel.is_cancelled() {
+      proc.kill().await;
+      return Ok(None);
+    }
+    let opened = tokio::select! {
+      biased;
+      _ = r.cancel.cancelled() => Ok(None),
+      res = async {
+        let signed_in = match (&account, &self.deps.accounts) {
+          (Some(a), Some(h)) => {
+            h.authenticate(r.persona.agent.clone(), a.clone(), proc.clone()).await.map_err(|e| anyhow!("{} could not sign in with its saved account: {e}", def.name))
+          }
+          _ => Ok(()),
+        };
+        match signed_in {
+          Ok(()) => self.relay_open_session(&proc, r, &quiet, notes).await.map(Some),
+          Err(e) => Err(e),
+        }
+      } => res,
     };
     let kept = {
       let mut c = self.core.lock();
       let closed = c.relays.closed;
       match (&opened, c.relays.procs.get_mut(thread).filter(|rp| Arc::ptr_eq(&rp.proc, &proc))) {
-        (Ok((sid, opened, start_mode, mode_ok)), Some(rp)) if !closed => {
+        (Ok(Some((sid, opened, start_mode, mode_ok))), Some(rp)) if !closed && !r.cancel.is_cancelled() => {
           rp.peer = sid.clone();
           rp.opened = opened.clone();
           rp.start_mode = start_mode.clone();
@@ -349,11 +395,16 @@ impl AcpSession {
         c.relays.procs.remove(thread);
       }
     }
-    let (sid, opened, ..) = opened?;
+    let Some((sid, opened, ..)) = opened? else {
+      return Ok(None);
+    };
     if !kept {
+      if r.cancel.is_cancelled() {
+        return Ok(None);
+      }
       return Err(anyhow!("the session closed"));
     }
-    Ok((proc, sid, running_controls(&opened)))
+    Ok(Some((proc, sid, running_controls(&opened))))
   }
 
   /// Open the thread's native session on a fresh process: resume / load the earlier one (never silently a new one in
