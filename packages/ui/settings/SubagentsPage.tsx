@@ -228,7 +228,7 @@ function PersonaDialog({ persona: p, agents, controls, shapes, onClose, onChange
   const readOnly = READ_ONLY[p.agent];
   const readOnlyText = readOnly ? t('subagents.page.readOnlyMode', { mode: readOnly })
     : readOnly === null ? t('subagents.page.readOnlyNone') : t('subagents.page.readOnlyUnknown');
-  const hintLine = 'text-3 text-fg-3';
+  const hintLine = 'px-(--form-label-inset) text-3 text-fg-3';
   return (
     <SettingsDialog icon={<AgentMark id={p.agent} name={p.name} />} title={p.name} sub={t('subagents.page.kind')} onClose={onClose}
       control={<Switch checked={p.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />}

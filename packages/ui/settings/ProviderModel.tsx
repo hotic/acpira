@@ -180,9 +180,9 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
         <Button variant="primary" disabled={!ok} onClick={() => onSave(draft())}>{t('settings.providers.save')}</Button>
       </>}>
       <div className="scroll-thin flex min-h-0 flex-col overflow-y-auto" onKeyDown={keys}>
-        {model.estimated.length > 0 && <p className="m-0 px-pad pt-pad text-3 text-fg-3">
+        {model.estimated.length > 0 && <div className="px-pad pt-pad"><p className="m-0 px-(--form-label-inset) text-3 text-fg-3">
           {t('settings.providers.unconfirmed.hint', { fields: model.estimated.join(', ') })}
-        </p>}
+        </p></div>}
         <FormGrid>
           <FormField label={t('settings.providers.model.name')} className="col-span-full">
             <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder={model.id} aria-label={t('settings.providers.model.name')}

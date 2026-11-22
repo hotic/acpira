@@ -358,8 +358,8 @@ export function DangerAction({ onClick, children, disabled, title, icon = <Trash
 }
 
 // A footer's note (where a file lives, what is picked): the secondary role, taking the room between the actions
-export function FooterNote({ children, className }: { children: ReactNode; className?: string }) {
-  return <span className={cn('min-w-0 flex-1 truncate text-3 text-fg-3', className)}>{children}</span>;
+export function FooterNote({ children, className, title }: { children: ReactNode; className?: string; title?: string }) {
+  return <span title={title} className={cn('min-w-0 flex-1 truncate text-3 text-fg-3', className)}>{children}</span>;
 }
 
 // A dialog form's field: its label above the control (the source form, the model editor); `hint` is the label's tooltip

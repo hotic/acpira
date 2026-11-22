@@ -750,7 +750,6 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete, onMode
   // Only a new answer saves; the draft is read as it stands then
   }, [verify.outcome]);
   const failure = verify.outcome?.kind === 'failed' ? verify.outcome.error : error && error.id !== seen ? error.text : undefined;
-  const failureLine = failure && <span className="text-3 text-danger [overflow-wrap:anywhere]">{failure}</span>;
   // Escape is the dialog's own close
   const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && e.target instanceof HTMLInputElement) submit(); };
   const field = cn(inputBox, 'h-ctl w-full');
@@ -765,7 +764,10 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete, onMode
     <SettingsDialog icon={provider ? <SourceMark provider={provider} /> : <Globe />} title={provider ? t('settings.providers.edit', { name: provider.name || provider.id }) : t('settings.providers.add')} onClose={onClose}
       footer={<>
         {onDelete && <DangerAction disabled={busy} onClick={onDelete}>{t('common.remove')}</DangerAction>}
-        <span className="flex-1" />
+        {/* Form-level save / probe failures live in the footer beside Save, so the dialog keeps its height */}
+        {failure
+          ? <FooterNote title={failure} className={cn('text-danger', !onDelete && 'px-(--form-label-inset)')}>{failure}</FooterNote>
+          : <span className="flex-1" />}
         <Button onClick={onClose}>{t('settings.providers.cancel')}</Button>
         <Button variant="primary" disabled={!ok} onClick={submit} className="relative">
           <Waiting on={verify.pending}>{t('settings.providers.save')}</Waiting>
@@ -785,15 +787,14 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete, onMode
               aria-label={t('settings.providers.baseUrl')} placeholder={fullUrl ? t('settings.providers.fullUrl.placeholder') : t('settings.providers.baseUrl.placeholder')} className={cn(field, 'font-mono text-mono')} />
             {/* What the agent will actually call, so a root missing its /v1 shows before the first request fails; the text
                 button flips between appending the format's path and using the URL as typed */}
-            {valid && <div className="flex min-w-0 items-center gap-2">
+            {valid && <div className="flex min-w-0 items-center gap-2 px-(--form-label-inset)">
               <span className="min-w-0 flex-1 truncate text-3 text-fg-3" title={endpointOf(baseUrl, format, fullUrl)}>
                 {t('settings.providers.endpoint', { url: endpointOf(baseUrl, format, fullUrl) })}
               </span>
-              <Chip caret={false} aria-pressed={fullUrl} className="h-ctl-sm shrink-0 text-3" onClick={() => { setFullOverride(!fullUrl); touch(); }}>
+              <Chip caret={false} aria-pressed={fullUrl} className="-mr-1.5 h-ctl-sm shrink-0 text-3" onClick={() => { setFullOverride(!fullUrl); touch(); }}>
                 {fullUrl ? t('settings.providers.appendPath') : t('settings.providers.asTyped')}
               </Chip>
             </div>}
-            {local && failureLine}
           </FormField>
           {!local && <FormField label={t('settings.providers.key')} className="col-span-full">
             {/* The visibility toggle sits inside the box, so the key field spans the same width as the URL */}
@@ -805,7 +806,6 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete, onMode
                 {showKey ? <EyeOff strokeWidth={1.5} /> : <Eye strokeWidth={1.5} />}
               </IconButton>
             </div>
-            {failureLine}
           </FormField>}
         </FormGrid>
         {provider && onModels && <FormRows>
