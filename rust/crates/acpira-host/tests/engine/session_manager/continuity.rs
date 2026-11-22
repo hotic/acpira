@@ -43,13 +43,32 @@ async fn standby_streams_new_copies_keeps_picks_and_promotes_on_send() {
   until(|| m.active().is_some_and(|s| turns_in(&s) == 4), 5000).await;
   assert_eq!(m.active().unwrap()["controls"]["modeId"], "plan");
   assert!(m.m.live_session(&record.id).is_none());
+  let before_send = m.events.lock().unwrap().len();
   m.handle(json!({ "type": "send", "text": "inspect-history" })).await;
+  // The very first view pushed during promotion must already carry the user's message in `queued` while `starting`,
+  // so pages show the sent bubble immediately (via heldPrompt) instead of hiding it until the CLI finishes booting,
+  // and the landed user turn keeps that queued entry's id so the bubble does not remount.
+  let starting_queued_id = {
+    let events = m.events.lock().unwrap();
+    let first_starting = events[before_send..]
+      .iter()
+      .find_map(|e| {
+        let s = e.get("session").filter(|s| s["id"] == record.id && s["status"] == "starting")?;
+        Some(s.clone())
+      })
+      .expect("expected a starting view during copy promotion");
+    let queued = first_starting["queued"].as_array().expect("starting view must carry queued prompt");
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0]["text"], "inspect-history");
+    queued[0]["id"].as_str().unwrap().to_owned()
+  };
   let session = m.m.live_session(&record.id).unwrap();
   let saved = session.to_record();
   assert_eq!(saved.controls.mode_id.as_deref(), Some("plan"));
   assert_eq!(saved.controls.options.iter().find(|c| c.id == "model").unwrap().value.as_deref(), Some("m2"));
   assert!(saved.copy_of.is_none() && !saved.history_pending && saved.history_context);
   assert!(m.active().unwrap()["rev"].as_i64().unwrap() >= 0);
+  assert_eq!(m.active().unwrap()["turns"][4]["id"].as_str(), Some(starting_queued_id.as_str()));
   assert!(m.active().unwrap()["turns"][5].to_string().contains("new remote answer"));
   m.store.flush(session).await.unwrap();
   assert!(m.store.load(&record.id).await.unwrap().copy_of.is_none());
@@ -70,7 +89,9 @@ async fn a_failed_promotion_never_claims_the_disk_record_even_when_the_manager_c
   m.init().await;
   m.handle(json!({ "type": "selectSession", "id": record.id })).await;
   m.handle(json!({ "type": "send", "text": "do not lose this record" })).await;
-  assert_eq!(m.active().unwrap()["status"], "error");
+  let failed = m.active().unwrap();
+  assert_eq!(failed["status"], "error");
+  assert_eq!(failed["queued"][0]["text"], "do not lose this record");
   assert!(m.store.load(&record.id).await.unwrap().copy_of.is_some());
   m.dispose().await;
   assert!(m.store.load(&record.id).await.unwrap().copy_of.is_some());

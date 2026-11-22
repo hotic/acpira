@@ -55,6 +55,25 @@ impl Drop for SessionOp<'_> {
   }
 }
 
+/// The user prompt that triggered a standby-copy promotion, staged onto the session before `start()` so pages render
+/// it immediately via `heldPrompt` instead of hiding it behind "Starting…"
+pub(super) struct PromotePrompt {
+  pub text: String,
+  pub attachments: Vec<Draft>,
+  pub client_id: Option<String>,
+  pub from: crate::acp::session::SentFrom,
+  pub wire: Option<u64>,
+}
+
+pub(super) enum PromoteOutcome {
+  /// Not a foreign standby copy (or already live): caller handles the message normally.
+  NotCopy,
+  /// Promotion finished (or failed start) with no initial prompt left for the caller to run.
+  Done,
+  /// Promotion succeeded and popped the staged initial prompt for the caller to await directly.
+  RunPrompt(Arc<AcpSession>, crate::acp::session::queue::QueuedEntry),
+}
+
 impl SessionManager {
   pub(super) async fn session_op<'a>(&'a self, id: &'a str) -> SessionOp<'a> {
     loop {
@@ -257,15 +276,27 @@ impl SessionManager {
 
   /// Promote only on execution; an unavailable local CLI leaves the authoritative foreign record untouched.
   pub(super) async fn promote_copy(self: &Arc<Self>, id: &str) -> Result<()> {
+    self.promote_copy_with(id, None).await.map(|_| ())
+  }
+
+  /// Promote a foreign standby copy on execution. When triggered by a user send (`initial`), stage and enqueue that
+  /// prompt onto the new `Starting` session before `start()` so pages show the sent message at once while the agent
+  /// boots, then commit ownership before popping it for direct execution.
+  pub(super) async fn promote_copy_with(self: &Arc<Self>, id: &str, initial: Option<PromotePrompt>) -> Result<PromoteOutcome> {
+    // Fast path for an already-live session (including one still in `Starting` under `load_session` or a concurrent
+    // promotion): never block sends or follow-ups behind `session_op` while the agent is booting.
+    if self.live(id).is_some() && !self.state.lock().deleting.contains_key(id) {
+      return Ok(PromoteOutcome::NotCopy);
+    }
     let _op = self.session_op(id).await;
     if self.live(id).is_some() {
-      return Ok(());
+      return Ok(PromoteOutcome::NotCopy);
     }
-    let Some(mut record) = self.deps.store.load(id).await else { return Ok(()) };
+    let Some(mut record) = self.deps.store.load(id).await else { return Ok(PromoteOutcome::NotCopy) };
     if !record.copy_of.as_ref().is_some_and(|c| c.machine != crate::remote::host_store::this_machine().0)
       && !self.state.lock().copies.contains(id)
     {
-      return Ok(());
+      return Ok(PromoteOutcome::NotCopy);
     }
     let pin = match self.leases.claim(id) {
       crate::store::session_lease::Claim::Held(pin) => pin,
@@ -291,6 +322,18 @@ impl SessionManager {
     self.prepare_copy_takeover(&mut record);
     let s = AcpSession::new(record, self.session_deps());
     s.hold_settings(&settings);
+    let queued_id = match initial {
+      Some(prompt) => {
+        s.sent_by(&prompt.from);
+        s.set_last_wire(prompt.wire);
+        if s.claim_client_id(prompt.client_id.as_deref()) {
+          s.enqueue(prompt.text, prompt.attachments, None).await
+        } else {
+          None
+        }
+      }
+      None => None,
+    };
     {
       let mut st = self.state.lock();
       st.copies.remove(id);
@@ -300,8 +343,11 @@ impl SessionManager {
       st.live.insert(id.to_owned(), s.clone());
     }
     self.emit_session(&s);
+    if queued_id.is_some() {
+      self.emit_sessions();
+    }
     s.start().await;
-    s.adopt_controls(settings).await;
+    s.adopt_controls_held(settings).await;
     self.sync_leases();
     if s.status() == SessionStatus::Ready {
       if let Some(old) = old_native.filter(|old| s.acp_session_id().as_deref() != Some(old.as_str())) {
@@ -311,11 +357,23 @@ impl SessionManager {
       }
       s.mark_owned();
       self.state.lock().pending_copies.remove(id);
-      self.deps.store.flush(s.clone()).await?;
+      if let Err(e) = self.deps.store.flush(s.clone()).await {
+        let _ = s.release_holds_and_take(None);
+        return Err(e);
+      }
       self.process_change(id);
     }
+    let taken = s.release_holds_and_take(queued_id.as_deref());
+    if taken.is_none() && s.status() != SessionStatus::Ready {
+      self.emit_session(&s);
+      self.emit_sessions();
+    }
     drop(hold);
-    Ok(())
+    drop(_op);
+    Ok(match taken {
+      Some(entry) => PromoteOutcome::RunPrompt(s, entry),
+      None => PromoteOutcome::Done,
+    })
   }
 
   async fn load_session(self: &Arc<Self>, v: &Arc<Viewer>, id: &str, previous: Option<String>) {

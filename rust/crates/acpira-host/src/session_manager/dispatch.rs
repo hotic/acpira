@@ -249,7 +249,38 @@ impl SessionManager {
         }
       }
     }
-    if is_execution(&m) && !matches!(m, W::SetMode { .. } | W::SetConfig { .. } | W::Stop { .. })
+    if let W::Send { text, attachments, client_id, .. } = &m
+      && let Some(id) = target_id.as_deref()
+      && self.live(id).is_none()
+    {
+      match self
+        .promote_copy_with(
+          id,
+          Some(super::open::PromotePrompt {
+            text: text.clone(),
+            attachments: attachments.clone(),
+            client_id: client_id.clone(),
+            from: v.sent_from(),
+            wire: v.wire(),
+          }),
+        )
+        .await?
+      {
+        super::open::PromoteOutcome::RunPrompt(s, entry) => {
+          s.prompt(
+            entry.text,
+            vec![],
+            false,
+            Some(crate::acp::session::prompt::Staged { prepared: entry.prepared, edited: false, id: Some(entry.id) }),
+            None,
+          )
+          .await;
+          return Ok(());
+        }
+        super::open::PromoteOutcome::Done => return Ok(()),
+        super::open::PromoteOutcome::NotCopy => {}
+      }
+    } else if is_execution(&m) && !matches!(m, W::SetMode { .. } | W::SetConfig { .. } | W::Stop { .. })
       && let Some(id) = target_id.as_deref()
     {
       self.promote_copy(id).await?;

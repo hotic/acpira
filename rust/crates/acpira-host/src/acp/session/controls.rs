@@ -510,16 +510,64 @@ impl AcpSession {
     self.flush_queue();
   }
 
+  /// Drop any held settings and, when ready and `take_id` is still at the head of the queue, pop it so the caller can
+  /// await the turn directly instead of flushing it onto a detached task. Any other queued prompts flush normally.
+  pub(crate) fn release_holds_and_take(self: &Arc<Self>, take_id: Option<&str>) -> Option<crate::acp::session::queue::QueuedEntry> {
+    let (taken, flush) = {
+      let mut c = self.core.lock();
+      let mut changed = false;
+      if c.picks.adopt_pending || !c.picks.holds.is_empty() {
+        for (key, token) in std::mem::take(&mut c.picks.holds) {
+          if c.picks.values.get(&key).is_some_and(|(_, t)| *t == token) {
+            c.picks.values.remove(&key);
+          }
+        }
+        c.picks.adopt_pending = false;
+        changed = true;
+      }
+      let taken = if c.status == SessionStatus::Ready
+        && let Some(id) = take_id
+        && c.queue.entries.first().is_some_and(|q| q.id == id)
+        && !c.queue.in_flight(id)
+      {
+        Some(c.queue.entries.remove(0))
+      } else {
+        None
+      };
+      let flush = taken.is_none() && c.status == SessionStatus::Ready;
+      if changed && taken.is_none() {
+        self.touch(&mut c);
+      }
+      (taken, flush)
+    };
+    if flush {
+      self.flush_queue();
+    }
+    taken
+  }
+
   /// Replay what was chosen last time in this agent, one request per difference in control order; choices the agent
   /// no longer offers are skipped, a refused one is logged and the rest go on. Runs under the pick lock, so a composer
   /// pick made meanwhile lands after the replay and wins. Picks made while the session started replace the values they
   /// held and are returned, for the caller to remember like any other pick
   pub async fn adopt_controls(self: &Arc<Self>, settings: TurnSettings) -> TurnSettings {
+    self.adopt_controls_inner(settings, true).await
+  }
+
+  /// Like `adopt_controls`, but leaves `adopt_pending` set so the caller can commit ownership before releasing the
+  /// queued prompt via `release_holds_and_take` (`SessionManager::promote_copy_with`)
+  pub(crate) async fn adopt_controls_held(self: &Arc<Self>, settings: TurnSettings) -> TurnSettings {
+    self.adopt_controls_inner(settings, false).await
+  }
+
+  async fn adopt_controls_inner(self: &Arc<Self>, settings: TurnSettings, release: bool) -> TurnSettings {
     {
       let mut c = self.core.lock();
       if c.status != SessionStatus::Ready || c.proc.is_none() {
         drop(c);
-        self.release_holds();
+        if release {
+          self.release_holds();
+        }
         return TurnSettings::default();
       }
       c.picks.adopting = true;
@@ -533,7 +581,9 @@ impl AcpSession {
     self.replay_settings(&settings, |key| self.superseded(key)).await;
     self.core.lock().picks.adopting = false;
     drop(serial);
-    self.release_holds();
+    if release {
+      self.release_holds();
+    }
     picked
   }
 
