@@ -185,7 +185,8 @@ pub(crate) fn pid_alive(pid: Option<i64>) -> bool {
   }
 }
 
-/// tmp + rename so a reader in another host never sees a half-written file; mode applies to the temp file and travels with the rename
+/// tmp + fsync + rename so a reader in another host never sees a half-written file and a crash does not leave a
+/// zeroed target; mode applies to the temp file and travels with the rename
 pub async fn write_atomic(path: &Path, data: &[u8], mode: Option<u32>) -> Result<()> {
   let tmp = with_suffix(path, &format!(".{}.tmp", std::process::id()));
   let mut opts = fs::OpenOptions::new();
@@ -199,6 +200,7 @@ pub async fn write_atomic(path: &Path, data: &[u8], mode: Option<u32>) -> Result
   let mut f = opts.open(&tmp).await?;
   f.write_all(data).await?;
   f.flush().await?;
+  f.sync_all().await?;
   drop(f);
   fs::rename(&tmp, path).await?;
   Ok(())

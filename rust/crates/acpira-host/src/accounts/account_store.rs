@@ -28,48 +28,91 @@ pub const META_AUTH: &str = "auth";
 pub const AUTH_API_KEY: &str = "apiKey";
 
 /// Persistent vault at secrets.json: every change re-reads the file under its lock, so a secret another host stored
-/// meanwhile survives. A corrupt file is logged and never overwritten
+/// meanwhile survives. A corrupt file is never overwritten in place: reads report it and the next store quarantines
+/// it beside the file (`secrets.json.corrupt-<stamp>`) before writing a clean table
 pub struct FileVault {
   file: PathBuf,
   log: LogFn,
-  frozen: parking_lot::Mutex<bool>,
+  corrupt: parking_lot::Mutex<Option<String>>,
+}
+
+enum VaultRead {
+  Ok(Map<String, Value>),
+  Corrupt(String),
+  Io(std::io::Error),
 }
 
 impl FileVault {
   pub fn new(file: PathBuf, log: LogFn) -> Self {
-    FileVault { file, log, frozen: parking_lot::Mutex::new(false) }
+    FileVault { file, log, corrupt: parking_lot::Mutex::new(None) }
   }
 
-  // None = unreadable (frozen); an absent file reads as an empty table
-  async fn read(&self) -> Option<Map<String, Value>> {
-    let Ok(raw) = fs::read(&self.file).await else { return Some(Map::new()) };
+  /// Why secrets.json could not be read on the last access, if it is corrupt
+  pub fn error(&self) -> Option<String> {
+    let why = self.corrupt.lock().clone()?;
+    Some(format!("{} cannot be read ({why}); saving a new key will archive the corrupt file and recreate it", self.file.display()))
+  }
+
+  // An absent file reads as an empty table; a corrupt file records why and returns Corrupt
+  async fn read(&self) -> VaultRead {
+    let raw = match fs::read(&self.file).await {
+      Ok(raw) => raw,
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        *self.corrupt.lock() = None;
+        return VaultRead::Ok(Map::new());
+      }
+      Err(e) => return VaultRead::Io(e),
+    };
     match serde_json::from_slice::<Value>(&raw) {
       Ok(Value::Object(m)) => {
-        *self.frozen.lock() = false;
-        Some(m.into_iter().filter(|(_, v)| v.is_string()).collect())
+        *self.corrupt.lock() = None;
+        VaultRead::Ok(m.into_iter().filter(|(_, v)| v.is_string()).collect())
       }
       other => {
-        let mut frozen = self.frozen.lock();
-        if !*frozen {
-          let why = match other {
-            Err(e) => e.to_string(),
-            Ok(_) => "not an object".into(),
-          };
-          (self.log)(&format!("secrets.json unreadable, leaving file untouched ({why})"));
+        let why = match other {
+          Err(e) => e.to_string(),
+          Ok(_) => "not an object".into(),
+        };
+        let mut corrupt = self.corrupt.lock();
+        if corrupt.is_none() {
+          (self.log)(&format!("secrets.json unreadable ({why})"));
         }
-        *frozen = true;
-        None
+        *corrupt = Some(why.clone());
+        VaultRead::Corrupt(why)
       }
     }
   }
 
+  async fn quarantine_corrupt(&self, why: &str) -> Result<PathBuf> {
+    let stamp = crate::util::now_ms();
+    let mut name = self.file.as_os_str().to_owned();
+    name.push(format!(".corrupt-{stamp}"));
+    let mut target = PathBuf::from(name);
+    if fs::metadata(&target).await.is_ok() {
+      let mut name = self.file.as_os_str().to_owned();
+      name.push(format!(".corrupt-{stamp}-{}", crate::util::random_hex(4)));
+      target = PathBuf::from(name);
+    }
+    fs::rename(&self.file, &target).await?;
+    *self.corrupt.lock() = None;
+    (self.log)(&format!("secrets.json unreadable ({why}); moved corrupt file to {} and starting fresh", target.display()));
+    Ok(target)
+  }
+
   pub async fn get(&self, key: &str) -> Result<Option<String>> {
-    with_file_lock(&self.file, || async { Ok(self.read().await.and_then(|m| m.get(key).and_then(Value::as_str).map(str::to_owned))) }).await
+    with_file_lock(&self.file, || async {
+      match self.read().await {
+        VaultRead::Ok(m) => Ok(m.get(key).and_then(Value::as_str).map(str::to_owned)),
+        VaultRead::Corrupt(_) => Ok(None),
+        VaultRead::Io(e) => Err(e.into()),
+      }
+    })
+    .await
   }
 
   pub async fn store(&self, key: &str, value: &str) -> Result<()> {
     self
-      .mutate(|d| {
+      .mutate(true, |d| {
         d.insert(key.to_owned(), Value::from(value));
       })
       .await
@@ -77,15 +120,23 @@ impl FileVault {
 
   pub async fn delete(&self, key: &str) -> Result<()> {
     self
-      .mutate(|d| {
+      .mutate(false, |d| {
         d.remove(key);
       })
       .await
   }
 
-  async fn mutate(&self, f: impl FnOnce(&mut Map<String, Value>)) -> Result<()> {
+  async fn mutate(&self, recover_corrupt: bool, f: impl FnOnce(&mut Map<String, Value>)) -> Result<()> {
     with_file_lock(&self.file, || async {
-      let Some(mut data) = self.read().await else { return Ok(()) };
+      let mut data = match self.read().await {
+        VaultRead::Ok(data) => data,
+        VaultRead::Corrupt(why) if recover_corrupt => {
+          self.quarantine_corrupt(&why).await?;
+          Map::new()
+        }
+        VaultRead::Corrupt(_) => return Ok(()),
+        VaultRead::Io(e) => return Err(e.into()),
+      };
       f(&mut data);
       if let Some(dir) = self.file.parent() {
         fs::create_dir_all(dir).await?;
@@ -436,9 +487,21 @@ mod tests {
     store.remove(&a.id).await.unwrap();
     assert!(store.list(None).is_empty());
     assert_eq!(vault.get(&account_secret_key(&a.id)).await.unwrap(), None);
-    // A corrupt vault is never overwritten
+    // A corrupt vault reports its error, leaves delete as a no-op, and quarantines itself on the next store
     std::fs::write(dir.path().join("secrets.json"), "{oops").unwrap();
-    vault.store("k", "v").await.unwrap();
+    assert_eq!(vault.get("k").await.unwrap(), None);
+    assert!(vault.error().is_some());
+    vault.delete("k").await.unwrap();
     assert_eq!(std::fs::read_to_string(dir.path().join("secrets.json")).unwrap(), "{oops");
+    vault.store("k", "v").await.unwrap();
+    assert_eq!(vault.error(), None);
+    assert_eq!(vault.get("k").await.unwrap().as_deref(), Some("v"));
+    let backup = std::fs::read_dir(dir.path())
+      .unwrap()
+      .filter_map(Result::ok)
+      .map(|e| e.path())
+      .find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("secrets.json.corrupt-")))
+      .expect("corrupt vault archived");
+    assert_eq!(std::fs::read_to_string(backup).unwrap(), "{oops");
   }
 }

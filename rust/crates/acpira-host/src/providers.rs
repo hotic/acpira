@@ -115,7 +115,7 @@ impl ProviderStore {
       }
     }
     let scratch_place = file.scratch_place_of().to_owned();
-    ProvidersView { providers, error: None, approval: file.approval, raw_mode: file.raw_mode == Some(true), scratch_folder_off: file.scratch_folder == Some(false), scratch_place, fast_model: file.fast_model, fast_model_auto, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
+    ProvidersView { providers, error: self.vault.error(), approval: file.approval, raw_mode: file.raw_mode == Some(true), scratch_folder_off: file.scratch_folder == Some(false), scratch_place, fast_model: file.fast_model, fast_model_auto, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -586,5 +586,31 @@ mod tests {
     assert!(s.view().await.error.is_some());
     assert!(s.apply(ProviderAction::Delete { id: "x".into() }).await.is_err());
     assert_eq!(std::fs::read_to_string(dir.path().join(PROVIDERS_FILE)).unwrap(), "{ not json");
+  }
+
+  #[tokio::test]
+  async fn corrupt_secrets_surfaces_in_view_and_recovers_on_key_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    s.apply(ProviderAction::Save { provider: draft("Asgard", "https://gw.test/v1", &["m"]), key: Some("sk-old".into()) }).await.unwrap();
+    // Simulate a crash leaving zeroed / truncated bytes in secrets.json
+    std::fs::write(dir.path().join("secrets.json"), "\0\0\0").unwrap();
+    let broken = s.view().await;
+    assert_eq!(broken.providers.len(), 1);
+    assert!(!broken.providers[0].has_key);
+    assert!(broken.error.as_deref().is_some_and(|e| e.contains("secrets.json")));
+
+    // Saving a new key archives the corrupt file and restores the source
+    let saved = broken.providers[0].provider.clone();
+    s.apply(ProviderAction::Save { provider: saved, key: Some("sk-new".into()) }).await.unwrap();
+    let fixed = s.view().await;
+    assert_eq!(fixed.error, None);
+    assert!(fixed.providers[0].has_key);
+    assert_eq!(s.vault.get(&provider_secret_key("asgard")).await.unwrap().as_deref(), Some("sk-new"));
+    let archived = std::fs::read_dir(dir.path())
+      .unwrap()
+      .filter_map(Result::ok)
+      .any(|e| e.file_name().to_string_lossy().starts_with("secrets.json.corrupt-"));
+    assert!(archived);
   }
 }
