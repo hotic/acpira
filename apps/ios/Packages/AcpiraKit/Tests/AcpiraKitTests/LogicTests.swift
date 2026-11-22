@@ -265,6 +265,33 @@ private let command = block(#"{"type":"tool_call","id":"x","kind":"execute","ver
     #expect(s.notices.map(\.id) == ["t1:error"])
     #expect(s.reply.map(\.markdown) == ["Done."])
   }
+
+  @Test func trailingCompactionKeepsTheReply() {
+    let think = block(#"{"type":"thought","text":"checking"}"#)
+    let reply = block(#"{"type":"text","markdown":"Found it."}"#)
+    let done = block(#"{"type":"compaction","id":"c","status":"completed"}"#)
+    let live = block(#"{"type":"compaction","id":"c","status":"in_progress"}"#)
+    let goal = block(#"{"type":"goal","event":"paused","objective":"ship"}"#)
+    // A compaction after the reply follows it as a status row instead of swallowing the reply into the fold
+    var s = splitCodexBlocks([read, run, think, reply, done, goal])
+    #expect(ids(s.process) == ["read", "run", "thought:checking"])
+    #expect(s.reply.map(\.markdown) == ["Found it."])
+    #expect(s.compactions.map(\.id) == ["c"])
+    #expect(s.goals.count == 1)
+    s = splitCodexBlocks([read, reply, live])
+    #expect(s.reply.map(\.markdown) == ["Found it."])
+    #expect(s.compactions.map(\.id) == ["c"])
+    // A compaction before the reply text stays in the process where it happened
+    s = splitCodexBlocks([read, done, reply])
+    #expect(s.process.map(\.blockId) == ["read", "c"])
+    #expect(s.reply.map(\.markdown) == ["Found it."])
+    #expect(s.compactions.isEmpty)
+    // A /compact reply with nothing but its row keeps it in place
+    s = splitCodexBlocks([done])
+    #expect(s.process.map(\.blockId) == ["c"])
+    #expect(s.reply.isEmpty)
+    #expect(s.compactions.isEmpty)
+  }
 }
 
 // MARK: - Tool details

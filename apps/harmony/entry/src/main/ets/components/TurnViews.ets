@@ -12,7 +12,7 @@ import { ThreadContext } from '../store/Thread';
 import { Bubble } from './Bubble';
 import { PermissionCard, PlanDocumentCard, showsTurnActions, TurnActions } from './Cards';
 import { Prose } from './Prose';
-import { GoalMilestone, itemSig, NoticeRow, OutcomeRow, ProcessHistory, SteeredMessage } from './ProcessViews';
+import { CompactionRow, GoalMilestone, itemSig, NoticeRow, OutcomeRow, ProcessHistory, SteeredMessage } from './ProcessViews';
 import { folds, RowSpec, TapRow } from './Rows';
 import { ChildPermissions, DelegatedSubagents, SubagentGroup } from './SubagentViews';
 import { blockSig, ImageResults } from './ToolViews';
@@ -261,6 +261,10 @@ struct CodexMessage {
           Prose({ markdown: b.markdown ?? '', streaming: b.streaming === true })
         }
       }, (b: Block, i: number) => `${i}:${blockSig(b)}`)
+      // A compaction run after the reply was written: a status row under it, outside the fold
+      ForEach(this.split.compactions, (b: Block) => {
+        CompactionRow({ block: b })
+      }, (b: Block) => blockSig(b))
       // Later milestones (paused, met, cleared …) close the reply they followed
       ForEach(this.split.goals, (b: Block) => {
         GoalMilestone({ block: b })

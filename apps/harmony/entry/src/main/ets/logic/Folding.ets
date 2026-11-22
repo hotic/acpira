@@ -40,6 +40,7 @@ export class CodexSplit {
   notices: Block[] = [];
   goalsLead: Block[] = [];
   goals: Block[] = [];
+  compactions: Block[] = [];
 }
 
 /** isAdvisory: a notice that only informs, with nothing to act on and no known transient cause */
@@ -64,10 +65,19 @@ function isAction(b: Block): boolean {
 export function splitCodexBlocks(blocks: Block[]): CodexSplit {
   const out = new CodexSplit();
   const content: Block[] = [];
+  // A compaction after the reply is upkeep for the next turn, not work the reply came out of: counted as an action
+  // it turned the whole reply into process history, and a collapsed fold showed nothing of it. It follows the reply
+  // as a status row instead; a compaction before the reply text stays in the process where it happened
+  let lastWork = blocks.length - 1;
+  while (lastWork >= 0 && (!isAction(blocks[lastWork]) || blocks[lastWork].type === 'compaction')) {
+    lastWork -= 1;
+  }
+  const firstReply = blocks.findIndex((b: Block, i: number) => i > lastWork && b.type === 'text');
+  const isUpkeep = (b: Block, i: number): boolean => b.type === 'compaction' && firstReply >= 0 && i > firstReply;
   const firstOther = blocks.findIndex((b: Block) => b.type !== 'goal');
   let lastAction = -1;
   blocks.forEach((b: Block, i: number) => {
-    if (isAction(b)) {
+    if (isAction(b) && !isUpkeep(b, i)) {
       lastAction = i;
     }
   });
@@ -79,6 +89,8 @@ export function splitCodexBlocks(blocks: Block[]): CodexSplit {
       out.notices.push(b);
     } else if (b.type === 'question' && b.outcome === undefined) {
       // The open card waits in the dock
+    } else if (isUpkeep(b, i)) {
+      out.compactions.push(b);
     } else if (b.type === 'goal' && (firstOther < 0 || i < firstOther)) {
       out.goalsLead.push(b);
     } else if (b.type === 'goal' && (lastAction < 0 || i > lastAction)) {

@@ -70,6 +70,7 @@ data class CodexSplit(
   val notices: List<NoticeBlock>,
   val goalsLead: List<GoalBlock>,
   val goals: List<GoalBlock>,
+  val compactions: List<CompactionBlock> = emptyList(),
 )
 
 /** isAdvisory: a notice that only informs, with nothing to act on and no known transient cause */
@@ -85,13 +86,20 @@ fun splitCodexBlocks(blocks: List<AgentBlock>): CodexSplit {
   val content = ArrayList<AgentBlock>()
   val goalsLead = ArrayList<GoalBlock>()
   val goals = ArrayList<GoalBlock>()
+  val compactions = ArrayList<CompactionBlock>()
   fun isAction(b: AgentBlock) = when (b) {
     is GoalBlock, is TextBlock, is PermissionBlock, is NoticeBlock -> false
     is QuestionBlock -> b.outcome != null
     else -> true
   }
+  // A compaction after the reply is upkeep for the next turn, not work the reply came out of: counted as an action
+  // it turned the whole reply into process history, and a collapsed fold showed nothing of it. It follows the reply
+  // as a status row instead; a compaction before the reply text stays in the process where it happened
+  val lastWork = blocks.indexOfLast { isAction(it) && it !is CompactionBlock }
+  val firstReply = blocks.indices.firstOrNull { it > lastWork && blocks[it] is TextBlock }
+  fun isUpkeep(b: AgentBlock, i: Int) = b is CompactionBlock && firstReply != null && i > firstReply
   val firstOther = blocks.indexOfFirst { it !is GoalBlock }.takeIf { it >= 0 }
-  val lastAction = blocks.indexOfLast(::isAction).takeIf { it >= 0 }
+  val lastAction = blocks.indices.lastOrNull { isAction(blocks[it]) && !isUpkeep(blocks[it], it) }
   blocks.forEachIndexed { i, block ->
     when {
       block is PermissionBlock -> permissions += block
@@ -99,6 +107,7 @@ fun splitCodexBlocks(blocks: List<AgentBlock>): CodexSplit {
       // process (a retry row is a step of the work, and lifted out it stacked under the live fold for the whole turn)
       block is NoticeBlock && !isAdvisory(block) && block.retry == null -> notices += block
       block is QuestionBlock && block.outcome == null -> {}
+      block is CompactionBlock && isUpkeep(block, i) -> compactions += block
       block is GoalBlock && (firstOther == null || i < firstOther) -> goalsLead += block
       block is GoalBlock && (lastAction == null || i > lastAction) -> goals += block
       else -> content += block
@@ -117,7 +126,7 @@ fun splitCodexBlocks(blocks: List<AgentBlock>): CodexSplit {
     if (block is TextBlock && (block.phase == "final" || (i >= end && block.phase != "commentary"))) reply += block
     else process += block
   }
-  return CodexSplit(process, reply, permissions, notices, goalsLead, goals)
+  return CodexSplit(process, reply, permissions, notices, goalsLead, goals, compactions)
 }
 
 enum class GroupKind { read, edit }

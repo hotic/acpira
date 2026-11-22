@@ -53,6 +53,8 @@ public struct CodexSplit {
   public var goalsLead: [GoalBlock] = []
   /// Goal milestones after the turn's last action, which follow the reply
   public var goals: [GoalBlock] = []
+  /// Compactions run after the reply, which follow it as status rows instead of swallowing it into the fold
+  public var compactions: [CompactionBlock] = []
 }
 
 /// splitCodexBlocks: the text after the last action stays outside the process fold; explicit phases win. Goal
@@ -64,6 +66,7 @@ public func splitCodexBlocks(_ blocks: [AgentBlock]) -> CodexSplit {
   var content: [AgentBlock] = []
   var goalsLead: [GoalBlock] = []
   var goals: [GoalBlock] = []
+  var compactions: [CompactionBlock] = []
   func isAction(_ b: AgentBlock) -> Bool {
     switch b {
     case .goal, .text, .permission, .notice: false
@@ -71,8 +74,21 @@ public func splitCodexBlocks(_ blocks: [AgentBlock]) -> CodexSplit {
     default: true
     }
   }
+  func isCompaction(_ b: AgentBlock) -> Bool { if case .compaction = b { true } else { false } }
+  // A compaction after the reply is upkeep for the next turn, not work the reply came out of: counted as an action
+  // it turned the whole reply into process history, and a collapsed fold showed nothing of it. It follows the reply
+  // as a status row instead; a compaction before the reply text stays in the process where it happened
+  let lastWork = blocks.lastIndex { isAction($0) && !isCompaction($0) } ?? -1
+  let firstReply = blocks.indices.first { i in
+    guard i > lastWork, case .text = blocks[i] else { return false }
+    return true
+  }
+  func isUpkeep(_ b: AgentBlock, at i: Int) -> Bool {
+    guard case .compaction = b, let firstReply else { return false }
+    return i > firstReply
+  }
   let firstOther = blocks.firstIndex { if case .goal = $0 { false } else { true } }
-  let lastAction = blocks.lastIndex(where: isAction)
+  let lastAction = blocks.indices.last { isAction(blocks[$0]) && !isUpkeep(blocks[$0], at: $0) }
   for (i, block) in blocks.enumerated() {
     switch block {
     case .permission(let p): permissions.append(p)
@@ -80,6 +96,7 @@ public func splitCodexBlocks(_ blocks: [AgentBlock]) -> CodexSplit {
     // process (a retry row is a step of the work, and lifted out it stacked under the live fold for the whole turn)
     case .notice(let n) where !isAdvisory(n) && n.retry == nil: notices.append(n)
     case .question(let q) where q.outcome == nil: break
+    case .compaction(let c) where isUpkeep(block, at: i): compactions.append(c)
     case .goal(let g) where firstOther.map({ i < $0 }) ?? true: goalsLead.append(g)
     case .goal(let g) where lastAction.map({ i > $0 }) ?? true: goals.append(g)
     default: content.append(block)
@@ -106,7 +123,7 @@ public func splitCodexBlocks(_ blocks: [AgentBlock]) -> CodexSplit {
     }
   }
   return CodexSplit(process: process, reply: reply, permissions: permissions, notices: notices, goalsLead: goalsLead,
-                    goals: goals)
+                    goals: goals, compactions: compactions)
 }
 
 // MARK: - Process items

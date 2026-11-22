@@ -393,6 +393,8 @@ private fun CodexMessage(
       CompositionLocalProvider(LocalMarkdownImages provides reply.images) { StreamProse(reply, Modifier.testTag("reply"), onQuote = LocalQuote.current) }
     }
   }
+  // A compaction run after the reply was written: a status row under it, outside the fold
+  for (compaction in split.compactions) CompactionRow(compaction)
   // Later milestones (paused, met, cleared …) close the reply they followed
   for (goal in split.goals) GoalMilestone(goal)
   for (p in split.permissions.filter { it.planId == null }) PermissionCard(p) { onPermission(p.id, it) }

@@ -169,6 +169,8 @@ struct CodexMessage: View {
         }
       }
       if cut.closes {
+        // A compaction run after the reply was written: a status row under it, outside the fold
+        ForEach(split.compactions, id: \.id) { CompactionRow(block: $0) }
         // Later milestones (paused, met, cleared …) close the reply they followed
         ForEach(Array(split.goals.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
         ForEach(split.permissions.filter { $0.planId == nil }, id: \.id) { block in
