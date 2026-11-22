@@ -60,8 +60,13 @@ impl SessionManager {
     // A turn starting or ending moves this session's lease (another engine must not open it mid-turn)
     self.sync_leases();
     // Decided before the list goes out, so the push that shows the turn ending already carries the unread dot. Nobody looked
-    // means nobody anywhere: a page of another engine showing it subscribes, which the bus counts as watching
-    if idle_edge && self.viewers_on(id, None).is_empty() && !self.bus.watching(id) {
+    // means nobody anywhere: a page of another engine showing it subscribes, which the bus counts as watching.
+    // Cancelled or errored turns have no finished reply to mark unread (errored turns carry the error dot instead).
+    let finished_reply = matches!(
+      s.last_stop(),
+      Some(TurnStop::EndTurn | TurnStop::MaxTokens | TurnStop::MaxTurnRequests | TurnStop::Refusal)
+    );
+    if idle_edge && finished_reply && self.viewers_on(id, None).is_empty() && !self.bus.watching(id) {
       self.mark_unread(id);
     }
     self.emit_session(&s);

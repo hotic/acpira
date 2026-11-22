@@ -80,7 +80,10 @@ impl AcpSession {
       return (Some(SummaryState::Working), false);
     }
     let state = match visible_turns(&c).last() {
-      Some(Turn::Agent(a)) if a.stop == Some(TurnStop::Error) => Some(SummaryState::Error),
+      // A process crash / lost connection settles the running turn as Cancelled with SessionStatus::Error (matching `lost_connection`)
+      Some(Turn::Agent(a)) if a.stop == Some(TurnStop::Error) || (a.stop == Some(TurnStop::Cancelled) && c.status == SessionStatus::Error) => {
+        Some(SummaryState::Error)
+      }
       _ if has_live_async_task(&c.state) || Self::relay_background(&c) || c.wake.pending(now_ms()).is_some() => Some(SummaryState::Background),
       _ => None,
     };
@@ -584,5 +587,51 @@ mod attention_tests {
     assert_eq!(plain_opening(md), "Done\nFixed the build in main.rs.\ntests pass\nnote");
     assert_eq!(plain_opening(&"x".repeat(900)).chars().count(), 400);
     assert_eq!(plain_opening("```\nonly code\n```"), "");
+  }
+
+  #[test]
+  fn list_marks_reports_error_when_turn_is_cut_by_session_error() {
+    use super::*;
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::store::transcript_store::TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_| {}), None);
+    let deps = crate::acp::session::SessionDeps {
+      registry: Arc::new(crate::acp::agents::registry::AgentRegistry::new(&serde_json::json!({}))),
+      log: Arc::new(|_| {}),
+      on_change: Arc::new(|_, _| {}),
+      blobs: store,
+      notify: None,
+      accounts: None,
+      policy: Arc::new(crate::acp::session::InertPolicy),
+      pool: None,
+      host_mcp: None,
+      shared_mcp: None,
+      plugin_hooks: None,
+      plugin_prompts: None,
+      data_home: None,
+      plugin_runtime: None,
+      remote: None,
+    };
+    let record: SessionRecord = serde_json::from_value(serde_json::json!({
+      "id": "cut-turn", "agent": "antigravity", "cwd": "/work", "title": "cut", "updatedAt": "2026-01-01T00:00:00.000Z",
+      "turns": [
+        { "role": "user", "text": "go" },
+        { "role": "agent", "blocks": [], "stop": "cancelled" }
+      ]
+    }))
+    .unwrap();
+    let s = AcpSession::new(record, deps);
+    {
+      let mut c = s.core.lock();
+      c.status = SessionStatus::Ready;
+    }
+    // User-stopped turn with a healthy session is not an error
+    assert_eq!(s.list_marks(), (None, false));
+    {
+      let mut c = s.core.lock();
+      c.status = SessionStatus::Error;
+      c.error = Some("process exited".into());
+    }
+    // Same cancelled turn after process crash / lost connection shows the error dot
+    assert_eq!(s.list_marks(), (Some(SummaryState::Error), false));
   }
 }
