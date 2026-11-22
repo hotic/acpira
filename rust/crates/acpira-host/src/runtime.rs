@@ -603,6 +603,7 @@ impl HostRuntime {
 /// The registry for an agents.json snapshot plus the plugins' agents (an agents.json entry of the same id wins), with
 /// the built-in agent first when the engine binary is known
 fn registry_of(custom: &Value, self_agent: Option<&(String, PathBuf)>, plugin_agents: &serde_json::Map<String, Value>) -> AgentRegistry {
+  let mut native_plugins = Vec::new();
   let merged = if plugin_agents.is_empty() {
     custom.clone()
   } else {
@@ -612,6 +613,9 @@ fn registry_of(custom: &Value, self_agent: Option<&(String, PathBuf)>, plugin_ag
         // A specialised agent is this binary's own loop with the plugin's profile; without the binary there is none
         Some(dir) => {
           let Some((exe, root)) = self_agent else { continue };
+          if custom.get(id).is_none() {
+            native_plugins.push(id.clone());
+          }
           all.insert(id.clone(), serde_json::json!({
             "name": entry.get("name").cloned().unwrap_or_else(|| serde_json::json!(id)),
             "command": exe,
@@ -630,7 +634,10 @@ fn registry_of(custom: &Value, self_agent: Option<&(String, PathBuf)>, plugin_ag
     }
     Value::Object(all)
   };
-  let registry = AgentRegistry::new(&merged);
+  let mut registry = AgentRegistry::new(&merged);
+  for id in native_plugins {
+    registry.set_local_run(&id, crate::acp::local_run::LocalRun::Native);
+  }
   match self_agent {
     Some((exe, root)) => registry.with_self_agent(exe, root),
     None => registry,
@@ -670,6 +677,7 @@ mod tests {
     let d = r.try_get("ledger").expect("the profile agent");
     assert_eq!((d.name.as_str(), d.command.as_str()), ("Ledger", "/x/acpira"));
     assert_eq!(d.args, ["agent", "--home", "/data", "--profile", "/v/ledger/abc"]);
+    assert_eq!(d.local_run, Some(crate::acp::local_run::LocalRun::Native));
     assert!(!d.subagents && !d.terminal_auth);
     assert!(registry_of(&serde_json::json!({}), None, &plugins).try_get("ledger").is_none());
   }

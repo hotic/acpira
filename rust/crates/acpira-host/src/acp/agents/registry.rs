@@ -623,6 +623,13 @@ impl AgentRegistry {
     self
   }
 
+  /// Override how an agent runs locally in SSH folders (used for specialised plugin agents running the built-in loop)
+  pub(crate) fn set_local_run(&mut self, id: &str, local_run: crate::acp::local_run::LocalRun) {
+    if let Some(def) = self.defs.get_mut(id) {
+      def.local_run = Some(local_run);
+    }
+  }
+
   pub fn ids(&self) -> &[AgentId] {
     &self.order
   }
@@ -1167,6 +1174,7 @@ mod tests {
     assert_eq!((d.command.as_str(), d.args.clone()), ("/x/acpira", vec!["agent".to_owned(), "--home".into(), "/data/acpira".into()]));
     let custom = AgentRegistry::with_os(&json!({ "acpira": { "command": "/y/other" } }), Os::Posix).with_self_agent("/x/acpira", root);
     assert_eq!(custom.get(SELF_AGENT_ID).unwrap().command, "/y/other");
+    assert_eq!(custom.get(SELF_AGENT_ID).unwrap().local_run, Some(crate::acp::local_run::LocalRun::Native));
     assert_ne!(custom.ids()[0], SELF_AGENT_ID);
   }
 

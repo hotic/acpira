@@ -412,9 +412,11 @@ fn withheld(agent: &str) -> bool {
 
 /// A custom agent's `localRun` (agents.json): `false` runs it in the host's engine, anything else in a stand-in on the
 /// generic profile, which an object tunes (`prefix`, `instructions`). Unset counts as on, so every ACP agent can run
-/// here but a `withheld` one. `inherited`, the built-in of the same id's, wins over anything but `false`: its gate, its
-/// brief and its stand-in folder are what the real CLI was checked against
+/// here but a `withheld` one. `inherited`, the built-in of the same id's (falling back to `builtin(agent)` so `acpira`
+/// keeps `LocalRun::Native` even when `agents.json` defines it before `with_self_agent`), wins over anything but
+/// `false`: its gate, its brief and its stand-in folder are what the real CLI was checked against
 pub fn from_setting(agent: &str, label: &str, raw: Option<&Value>, inherited: Option<LocalRun>) -> Option<LocalRun> {
+  let inherited = inherited.or_else(|| builtin(agent));
   let raw = match raw {
     Some(Value::Bool(false)) => return None,
     _ if withheld(agent) => return None,
@@ -480,6 +482,10 @@ mod tests {
     assert_eq!(from_setting("claude", "Claude", Some(&json!(true)), inherited.clone()), inherited);
     assert_eq!(from_setting("claude", "Claude", Some(&json!({ "prefix": "x_" })), inherited.clone()), inherited);
     assert_eq!(from_setting("codex", "Codex", Some(&json!(true)), builtin("codex")), Some(LocalRun::Exec));
+    // An agents.json entry for the built-in agent keeps LocalRun::Native unless localRun is false
+    assert_eq!(from_setting("acpira", "Acpira", None, None), Some(LocalRun::Native));
+    assert_eq!(from_setting("acpira", "Acpira", Some(&json!(true)), None), Some(LocalRun::Native));
+    assert_eq!(from_setting("acpira", "Acpira", Some(&json!(false)), None), None);
     let Some(LocalRun::Stand(p)) = from_setting("mine", "Mine", Some(&json!(true)), None) else { panic!() };
     assert_eq!((p.dir.as_str(), p.prefix.as_str(), &p.brief), ("stand/mine", DEFAULT_PREFIX, &Brief::StandFile("AGENTS.md".into())));
     assert!(p.gates.is_empty());
