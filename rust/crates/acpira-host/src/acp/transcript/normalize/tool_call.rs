@@ -229,7 +229,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       locs
         .iter()
         .map(|l| Location {
-          path: str_of(l, "path").unwrap_or("").to_owned(),
+          path: crate::acp::local_run::stand::located_path(str_of(l, "path").unwrap_or("")).to_owned(),
           line: l.get("line").and_then(Value::as_f64).map(|n| n.max(0.0) as u64),
         })
         .collect(),

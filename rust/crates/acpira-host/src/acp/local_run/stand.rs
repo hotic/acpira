@@ -254,11 +254,59 @@ pub fn unjudged(stand: &Stand, tc: &Value) -> bool {
 
 /// A location's path as the platform reads it: on Windows `agy` sends a file URL's path (`/C:/Users/me/x`), which is
 /// not absolute there until the slash before the drive goes
-fn located_path(p: &str) -> &str {
+pub fn located_path(p: &str) -> &str {
+  located_path_for(p, cfg!(windows))
+}
+
+fn located_path_for(p: &str, windows: bool) -> &str {
   match p.strip_prefix('/') {
-    Some(rest) if cfg!(windows) && matches!(rest.as_bytes(), [d, b':', ..] if d.is_ascii_alphabetic()) => rest,
+    Some(rest) if windows && matches!(rest.as_bytes(), [d, b':', b'/' | b'\\', ..] if d.is_ascii_alphabetic()) => rest,
     _ => p,
   }
+}
+
+/// Whether `path` sits under `root`, comparing components case-insensitively on Windows where drive and folder casing
+/// can differ between what a CLI reports and what `USERPROFILE` holds
+fn path_under(path: &Path, root: &Path) -> bool {
+  if path.starts_with(root) {
+    return true;
+  }
+  #[cfg(windows)]
+  {
+    let mut p = path.components();
+    for want in root.components() {
+      let Some(got) = p.next() else { return false };
+      if !got.as_os_str().eq_ignore_ascii_case(want.as_os_str()) {
+        return false;
+      }
+    }
+    true
+  }
+  #[cfg(not(windows))]
+  {
+    false
+  }
+}
+
+/// Whether `path` names one of a local-run CLI's own files on this machine (its config / artifact / step-media
+/// folders, the engine's data root outside `<data_root>/remote`, or its temp prefixes), returning the normalized local
+/// path. Stand-in paths, relative paths, `~` paths, `..` climbs and SSH host paths return `None`
+pub fn local_own_path(stand: &Stand, path: &str, home: &Path, data_root: &Path) -> Option<PathBuf> {
+  let p = located_path(path);
+  if p.is_empty() || p == "~" || p.starts_with("~/") || (cfg!(windows) && p.starts_with("~\\")) || climbs(p) {
+    return None;
+  }
+  let candidate = Path::new(p);
+  if !candidate.is_absolute() {
+    return None;
+  }
+  if path_under(candidate, &stand.local) || path_under(candidate, &data_root.join("remote")) {
+    return None;
+  }
+  let roots = here_roots(stand, home, data_root);
+  let matches_temp = stand.profile.own.temp_prefixes.iter().any(|t| p.starts_with(t.as_str()));
+  let matches_root = roots.iter().any(|r| path_under(candidate, r));
+  (matches_temp || matches_root).then(|| crate::store::data_dir::normalize(candidate))
 }
 
 /// The engine's refusal under every profile: a permission request of a native tool (not one of Acpira's, `caller`
@@ -659,5 +707,32 @@ mod tests {
     assert!(blocked_native(&dsh, &json!({ "title": "write", "kind": "other", "rawInput": { "file_path": "/tmp/x", "content": "x" } }), home, data));
     assert!(!blocked_native(&dsh, &json!({ "title": "todo_write", "kind": "other" }), home, data));
     assert!(!unjudged(&dsh, &json!({ "title": "todo_write", "kind": "other" })), "its gate took the shell away");
+  }
+
+  #[test]
+  fn local_own_path_resolves_cli_files_and_rejects_host_or_stand_paths() {
+    let me = if cfg!(windows) { "C:/Users/Administrator" } else { "/Users/me" };
+    let home = Path::new(me);
+    let data = home.join(".acpira");
+    let agy = Stand::new(profile("antigravity"), "asgard-gen1", "/home/u/proj", &data);
+    let media = format!("{me}/.acpira/plugins/.data/asgard-gateway/agy-sessions/s1/.gemini/antigravity-cli/brain/b1/.system_generated/steps/114/media_0.png");
+    let expected = crate::store::data_dir::normalize(Path::new(&media));
+    assert_eq!(local_own_path(&agy, &media, home, &data), Some(expected.clone()));
+    #[cfg(windows)]
+    assert_eq!(local_own_path(&agy, &format!("/{media}"), home, &data), Some(expected));
+    assert_eq!(
+      local_own_path(&agy, &format!("{me}/.gemini/antigravity-cli/brain/b1/plan.md"), home, &data),
+      Some(crate::store::data_dir::normalize(Path::new(&format!("{me}/.gemini/antigravity-cli/brain/b1/plan.md"))))
+    );
+    // Stand-in paths, host paths, relative paths, `~`, and `..` climbs never resolve as local CLI files
+    assert_eq!(local_own_path(&agy, &agy.local.join("src/a.rs").to_string_lossy(), home, &data), None);
+    assert_eq!(local_own_path(&agy, "/home/u/proj/a.rs", home, &data), None);
+    assert_eq!(local_own_path(&agy, "src/a.rs", home, &data), None);
+    assert_eq!(local_own_path(&agy, "~/.gemini/antigravity-cli/brain/b1/plan.md", home, &data), None);
+    assert_eq!(local_own_path(&agy, &format!("{me}/.gemini/../../etc/passwd"), home, &data), None);
+    // On Windows only drive paths lose a leading slash
+    assert_eq!(located_path_for("/C:/Users/me/a.png", true), "C:/Users/me/a.png");
+    assert_eq!(located_path_for("/c:relative.png", true), "/c:relative.png");
+    assert_eq!(located_path_for("/C:/Users/me/a.png", false), "/C:/Users/me/a.png");
   }
 }

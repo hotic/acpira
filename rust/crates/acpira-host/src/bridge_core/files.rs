@@ -19,9 +19,14 @@ impl BridgeCore {
     let Some(active) = self.viewer.active_id().filter(|a| *a == session_id) else { return Ok(()) };
     let Some(cwd) = manager.session_cwd(&active) else { return Ok(()) };
     // A file on an SSH host opens as a read-only copy fetched here, so the editor of choice works with the file the
-    // agent names; the copy has no folder worth revealing
+    // agent names; the copy has no folder worth revealing. A local-run CLI's own file (plans, step media under
+    // ~/.gemini or <data_root>) lives on this machine and opens here directly
     if let Some(f) = acpira_shared::remote::parse_remote_folder(&cwd) {
       let named = if crate::platform::file_url::is_file_url(&path) { file_url_to_path(&path) } else { Some(path.clone()) };
+      if let Some(local) = named.as_deref().and_then(|p| manager.local_cli_path(&active, &cwd, p)) {
+        self.open_local_file(&local.to_string_lossy(), line, reveal).await;
+        return Ok(());
+      }
       let root = manager.data_root();
       let host_path = named
         .filter(|p| !reveal && *p != "~" && !p.starts_with("~/"))
@@ -59,23 +64,27 @@ impl BridgeCore {
             }
           }
         }
-        // Localize a missing link before the OS opener returns its own untranslated error.
-        if missing(&p).await {
-          platform.toast("error", &tp("host.fileMissing", &[("path", &p)]));
-          return Ok(());
-        }
-        let res = if reveal {
-          platform.reveal_in_os(&p).await
-        } else {
-          platform.open_resolved_file(&p, line.filter(|l| *l > 0)).await
-        };
-        if let Err(e) = res {
-          platform.toast("error", &e.to_string());
-        }
+        self.open_local_file(&p, line, reveal).await;
       }
       Err(e) => platform.toast("error", &e.to_string()),
     }
     Ok(())
+  }
+
+  async fn open_local_file(&self, p: &str, line: Option<i64>, reveal: bool) {
+    // Localize a missing link before the OS opener returns its own untranslated error.
+    if tokio::fs::metadata(p).await.is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+      self.platform.toast("error", &tp("host.fileMissing", &[("path", p)]));
+      return;
+    }
+    let res = if reveal {
+      self.platform.reveal_in_os(p).await
+    } else {
+      self.platform.open_resolved_file(p, line.filter(|l| *l > 0)).await
+    };
+    if let Err(e) = res {
+      self.platform.toast("error", &e.to_string());
+    }
   }
 
   pub(super) async fn on_search_files(self: &Arc<Self>, query: String, seq: i64) -> anyhow::Result<()> {
@@ -115,8 +124,7 @@ impl BridgeCore {
           return None;
         }
         let cwd = cwd?;
-        let resolved = core.staged_path(&cwd, &path)?;
-        let ws = core.workspace(Some(cwd)).await.ok()?;
+        let (ws, resolved) = core.stage_target(&session_id, &cwd, &path).await.ok()?;
         core.manager.stage_file(&session_id, &ws, &resolved).await
       }
       .await;
@@ -130,8 +138,8 @@ impl BridgeCore {
     let (core, cwd) = (self.clone(), manager.session_cwd(&session_id));
     spawn_on(self.wire, async move {
       let staged = async {
-        let ws = core.workspace(cwd.clone()).await?;
-        let resolved = cwd.as_deref().and_then(|c| core.staged_path(c, &path)).ok_or(project_files::ProjectError::Outside)?;
+        let cwd = cwd.ok_or_else(|| project_files::ProjectError::Other("noProject".into()))?;
+        let (ws, resolved) = core.stage_target(&session_id, &cwd, &path).await?;
         core.manager.stage_any_file(&session_id, &ws, &resolved).await
       }
       .await;
@@ -147,16 +155,27 @@ impl BridgeCore {
   pub(super) async fn on_project_file(self: &Arc<Self>, session_id: String, path: String, base: Option<ProjectBase>, seq: i64) -> anyhow::Result<()> {
     let manager = &self.manager;
     let (core, mut root) = (self.clone(), manager.session_cwd(&session_id));
+    let mut local_cli = false;
     // A `~` / `~/…` path on a local workspace resolves against the user's home, and an absolute path inside `root`
-    // shortens to its relative path so git marks and HEAD lookups apply
+    // shortens to its relative path so git marks and HEAD lookups apply. A local-run CLI's own file in an SSH session
+    // reads from this machine rather than the host
     let path = match root.clone() {
-      Some(r) if !crate::workspace::is_remote(&r) => {
+      Some(r) if crate::workspace::is_remote(&r) => {
+        let named = if crate::platform::file_url::is_file_url(&path) { file_url_to_path(&path) } else { Some(path.clone()) };
+        if let Some(local) = named.as_deref().and_then(|p| manager.local_cli_path(&session_id, &r, p)) {
+          local_cli = true;
+          local.to_string_lossy().into_owned()
+        } else {
+          path
+        }
+      }
+      Some(r) => {
         let expanded = if path == "~" {
           home_dir().to_string_lossy().into_owned()
         } else if let Some(rest) = path.strip_prefix("~/").or_else(|| if cfg!(windows) { path.strip_prefix("~\\") } else { None }) {
           home_dir().join(rest).to_string_lossy().into_owned()
         } else {
-          path
+          crate::acp::local_run::stand::located_path(&path).to_owned()
         };
         let root_path = crate::workspace::folder_path(&r);
         match Path::new(&expanded).strip_prefix(&root_path) {
@@ -175,10 +194,10 @@ impl BridgeCore {
           }
         }
       }
-      _ => path,
+      None => path,
     };
     // The session's base is looked up now, while its view is at hand
-    let session_base = match root.as_ref() {
+    let session_base = match root.as_ref().filter(|_| !local_cli) {
       Some(r) => {
         let abs = crate::workspace::folder_path(r).join(&path);
         manager.edit_bases(&session_id).await.into_iter().find(|(p, _)| Path::new(p) == abs).and_then(|(_, b)| b)
@@ -186,11 +205,15 @@ impl BridgeCore {
       None => None,
     };
     spawn_on(self.wire, async move {
-      let ws = match core.workspace(root).await {
-        Ok(ws) => ws,
-        Err(e) => {
-          core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some(e.code()) });
-          return;
+      let ws = if local_cli {
+        crate::workspace::Workspace::Local(core.manager.data_root())
+      } else {
+        match core.workspace(root).await {
+          Ok(ws) => ws,
+          Err(e) => {
+            core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some(e.code()) });
+            return;
+          }
         }
       };
       let text = match ws.read_text(&path).await {
@@ -200,10 +223,14 @@ impl BridgeCore {
           return;
         }
       };
-      let base_text = match base {
-        Some(ProjectBase::Session) => session_base,
-        Some(ProjectBase::Head) => ws.head_text(&path).await.or(session_base),
-        None => None,
+      let base_text = if local_cli {
+        None
+      } else {
+        match base {
+          Some(ProjectBase::Session) => session_base,
+          Some(ProjectBase::Head) => ws.head_text(&path).await.or(session_base),
+          None => None,
+        }
       };
       let (text, hunks) = match base_text {
         Some(b) => tokio::task::spawn_blocking(move || {
@@ -217,6 +244,22 @@ impl BridgeCore {
       core.post_now(HostMsg::ProjectFile { seq, text: Some(text), hunks, error: None });
     });
     Ok(())
+  }
+
+  /// Where a staging request reads from: a local-run CLI's own file on this machine stays on a local workspace even
+  /// when the session folder is on an SSH host
+  async fn stage_target(&self, session_id: &str, cwd: &str, path: &str) -> Result<(crate::workspace::Workspace, std::path::PathBuf), project_files::ProjectError> {
+    let named = if crate::platform::file_url::is_file_url(path) {
+      file_url_to_path(path).ok_or(project_files::ProjectError::Outside)?
+    } else {
+      path.to_owned()
+    };
+    if let Some(local) = self.manager.local_cli_path(session_id, cwd, &named) {
+      return Ok((crate::workspace::Workspace::Local(self.manager.data_root()), local));
+    }
+    let resolved = self.staged_path(cwd, &named).ok_or(project_files::ProjectError::Outside)?;
+    let ws = self.workspace(Some(cwd.to_owned())).await?;
+    Ok((ws, resolved))
   }
 
   /// A session folder's files (`workspace.rs`); "noProject" without one
@@ -296,6 +339,7 @@ async fn write_read_only(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 fn resolve_open_path(cwd: &str, path: &str) -> std::path::PathBuf {
+  let path = crate::acp::local_run::stand::located_path(path);
   if path == "~" {
     return home_dir();
   }

@@ -397,6 +397,35 @@ impl SessionManager {
     indexed.or_else(|| self.sessions().into_iter().find(|s| s.id == id).map(|s| s.cwd).filter(|c| !c.is_empty()))
   }
 
+  /// Whether `path` in a local-run SSH session names one of the CLI's own files on this machine (plans, skills,
+  /// saved step media under `~/.gemini`, `~/.claude`, or `<data_root>` outside `<data_root>/remote`) rather than a
+  /// file on the SSH host. Sessions running on the host's own engine never resolve paths here
+  pub fn local_cli_path(&self, session_id: &str, cwd: &str, path: &str) -> Option<std::path::PathBuf> {
+    if self.is_host_session(session_id) {
+      return None;
+    }
+    let stand = if let Some(s) = self.live(session_id) {
+      s.remote_stand()?
+    } else {
+      let folder = acpira_shared::remote::parse_remote_folder(cwd)?;
+      let agent = {
+        let st = self.state.lock();
+        st.mirrors
+          .get(session_id)
+          .map(|s| s.agent.clone())
+          .or_else(|| st.index.iter().find(|s| s.id == session_id).map(|s| s.agent.clone()))?
+      };
+      let profile = self
+        .registry()
+        .try_get(&agent)
+        .and_then(|d| d.local_run.clone())
+        .or_else(|| crate::acp::local_run::builtin(&agent))
+        .and_then(|l| l.stand().cloned())?;
+      crate::acp::local_run::stand::Stand::new(profile, &folder.alias, &folder.path, &self.data_root())
+    };
+    crate::acp::local_run::stand::local_own_path(&stand, path, &crate::store::data_dir::home_dir(), &self.data_root())
+  }
+
   pub fn blob_path(&self, session_id: &str, name: &str) -> Option<std::path::PathBuf> {
     self.deps.store.blob_path(session_id, name)
   }
