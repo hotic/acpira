@@ -88,10 +88,15 @@ pub fn cancel_note(text: &str) -> Option<usize> {
 }
 
 /// `agy acp` 1.5.13 compacts on `/compact` with nothing on the wire: no `compaction_update`, no words, only `end_turn`
-/// (its own transcript logs the checkpoint). A `/compact` turn that holds nothing but empty words is that compaction;
-/// one with anything else (a failure line, a reply) is left as the CLI sent it
+/// (its own transcript logs the checkpoint). A `/compact` turn with no compaction row and no reply or failure text is
+/// that compaction, even if stray tool calls or thoughts from an overlapping detached run landed in it before `/compact`
+/// ran; any failure line, reply, or explicit compaction row is left as the CLI sent it
 pub fn compacted_silently(blocks: &[AgentBlock]) -> bool {
-  blocks.iter().all(|b| matches!(b, AgentBlock::Text(t) if t.markdown.trim().is_empty()))
+  !blocks.iter().any(|b| match b {
+    AgentBlock::Compaction(_) => true,
+    AgentBlock::Text(t) => !t.markdown.trim().is_empty(),
+    _ => false,
+  })
 }
 
 /// `agy acp` 1.5.9 finishes a `run_command` row with a receipt as its text (and `rawOutput.output`): `Created At: …`,
@@ -199,13 +204,18 @@ mod tests {
   }
 
   #[test]
-  fn only_a_compact_turn_with_nothing_but_empty_words_compacted_silently() {
+  fn only_a_compact_turn_without_reply_or_compaction_row_compacted_silently() {
     use acpira_shared::transcript::{CompactionBlock, CompactionStatus, TextBlock};
-    let text = |m: &str| AgentBlock::Text(TextBlock { id: None, phase: None, markdown: m.into(), streaming: None, images: None });
+    let text = |m: &str| AgentBlock::Text(TextBlock { id: None, phase: None, markdown: m.into(), streaming: None, images: None, ended_at: None, resumed_at: None });
+    let edit: AgentBlock = serde_json::from_value(serde_json::json!({ "type": "tool_call", "id": "c1", "kind": "edit", "verb": "Edit", "status": "completed" })).unwrap();
     assert!(compacted_silently(&[]));
     assert!(compacted_silently(&[text(""), text("\n")]));
+    // Stray work from an overlapping detached run does not hide the silent compaction
+    assert!(compacted_silently(&[edit.clone()]));
+    assert!(compacted_silently(&[edit.clone(), text("\n")]));
     // A failure line or a reply is the CLI's own word on it
     assert!(!compacted_silently(&[text("\n⚠ Individual quota reached.\n")]));
+    assert!(!compacted_silently(&[edit, text("\n⚠ Individual quota reached.\n")]));
     // A compaction the CLI reported itself needs no stand-in
     let row = AgentBlock::Compaction(CompactionBlock { id: "c1".into(), status: CompactionStatus::Completed, error: None });
     assert!(!compacted_silently(&[row]));

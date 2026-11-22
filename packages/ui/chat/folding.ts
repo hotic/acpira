@@ -69,14 +69,16 @@ export function splitCodexBlocks(blocks: AgentBlock[], live = false) {
   // actions follow (a `/goal` steered into a running turn) keeps its place in the process history; lifted out, it would
   // sit under the whole live process until the turn ends
   const isAction = (b: AgentBlock) => b.type !== 'goal' && b.type !== 'text' && b.type !== 'permission' && b.type !== 'notice' && (b.type !== 'question' || !!b.outcome);
-  // A compaction after the reply (the built-in agent's threshold compaction once the last call is answered) is upkeep
-  // for the next turn, not work the reply came out of: counted as an action it turned the whole reply into process
-  // history, and a collapsed fold showed nothing of it. It follows the reply as a status row instead; a compaction
-  // before the reply text stays in the process where it happened
+  // A compaction after the reply (the built-in agent's threshold compaction once the last call is answered) or after
+  // trailing work with no reply is upkeep for the next turn, not work the reply came out of: counted as an action it
+  // turned the whole reply into process history, and a collapsed fold showed nothing of it. It follows as a status row
+  // instead; a compaction before the reply text stays in the process where it happened, and a compaction-only turn
+  // keeps its row in place
   let lastWork = blocks.length - 1;
   while (lastWork >= 0 && (!isAction(blocks[lastWork]!) || blocks[lastWork]!.type === 'compaction')) lastWork--;
   const firstReply = blocks.findIndex((b, i) => i > lastWork && b.type === 'text');
-  const upkeep = (b: AgentBlock, i: number): b is CompactionBlock => b.type === 'compaction' && firstReply >= 0 && i > firstReply;
+  const upkeep = (b: AgentBlock, i: number): b is CompactionBlock =>
+    b.type === 'compaction' && (firstReply >= 0 ? i > firstReply : lastWork >= 0 && i > lastWork);
   const firstOther = blocks.findIndex(b => b.type !== 'goal');
   let lastAction = blocks.length - 1;
   while (lastAction >= 0 && (!isAction(blocks[lastAction]!) || upkeep(blocks[lastAction]!, lastAction))) lastAction--;

@@ -27,5 +27,7 @@ export function compactionForDisplay(turn: AgentTurn, running: boolean): AgentTu
   // Preserve unrelated content and concrete failure details for diagnosis.
   const blocks = turn.blocks.filter(b => b.type !== 'compaction' && !(b.type === 'text' && known));
   if (known && status === 'failed' && text) blocks.push({ type: 'text', markdown: text });
-  return { ...turn, blocks: [block, ...blocks] };
+  // Keep a trailing compaction after unrelated blocks so `splitCodexBlocks` lifts it outside a collapsed fold.
+  const trailing = structured.length > 0 && blocks.length > 0 && turn.blocks.at(-1)?.type === 'compaction';
+  return { ...turn, blocks: trailing ? [...blocks, block] : [block, ...blocks] };
 }

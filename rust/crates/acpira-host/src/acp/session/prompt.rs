@@ -1129,15 +1129,15 @@ impl AcpSession {
 
 impl AcpSession {
   /// A `/compact` that ended on its own with nothing on the wire (`Vendor::compacted_silently`): the turn gets the
-  /// completed compaction row the CLI never sent. Errors and stops never reach here (only an `end_turn` does)
+  /// completed compaction row the CLI never sent. Errors and stops never reach here (only an `end_turn` does). Empty
+  /// text placeholders drop; real blocks from an overlapping detached run stay before the compaction row
   fn mark_silent_compaction(&self, c: &mut Core, turn: &OpenTurn) -> bool {
     let vendor = self.vendor;
     let Some(t) = agent_turn_mut(c, turn.agent_idx, turn.started_at) else { return false };
     if t.error.is_some() || !vendor.compacted_silently(&t.blocks) {
       return false;
     }
-    // Nothing but empty words: the row stands in for them
-    t.blocks.clear();
+    t.blocks.retain(|b| !matches!(b, AgentBlock::Text(x) if x.markdown.trim().is_empty()));
     let id = format!("{SILENT_COMPACTION}{}", turn.started_at);
     t.blocks.push(AgentBlock::Compaction(CompactionBlock { id, status: CompactionStatus::Completed, error: None }));
     self.log("/compact ended with nothing on the wire: counted as a finished compaction");

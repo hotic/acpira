@@ -101,6 +101,8 @@ describe('Codex process folding', () => {
     expect(splitCodexBlocks([read, reply, live], true)).toMatchObject({ process: [read], reply: [reply], compactions: [live] });
     // A compaction before the reply text stays in the process where it happened
     expect(splitCodexBlocks([read, done, reply])).toMatchObject({ process: [read, done], reply: [reply], compactions: [] });
+    // A compaction after tool calls with no reply still lifts outside the collapsed fold
+    expect(splitCodexBlocks([read, run, done])).toMatchObject({ process: [read, run], reply: [], compactions: [done] });
     // A /compact reply with nothing but its row keeps it in place
     expect(splitCodexBlocks([done])).toMatchObject({ process: [done], reply: [], compactions: [] });
   });

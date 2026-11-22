@@ -47,6 +47,14 @@ describe('compaction presentation', () => {
     expect(compactionForDisplay(turn, false).blocks).toEqual([{ type: 'compaction', id: 'text-compaction-1', status: 'failed', error: 'Compaction failed: too large' }]);
   });
 
+  it('keeps a trailing compaction after unrelated blocks in order', () => {
+    const turn: AgentTurn = { role: 'agent', stop: 'end_turn', blocks: [
+      { type: 'tool_call', id: 'e1', kind: 'edit', verb: 'Edit', status: 'completed' },
+      { type: 'compaction', id: 'silent-compaction-1', status: 'completed' },
+    ] };
+    expect(compactionForDisplay(turn, false).blocks).toEqual(turn.blocks);
+  });
+
   it('does not turn unrecognized output into a successful compaction', () => {
     const original = reply('The command is not supported.');
     expect(compactionForDisplay(original, false)).toBe(original);
