@@ -69,22 +69,25 @@ pub fn reclassify(s: &mut NormalizeState, turn: usize, original: &Prose, parts: 
   let Some(Turn::Agent(t)) = turns.get_mut(turn) else { return false };
   let Some(at) = t.blocks.iter().position(|b| Prose::of(b).as_ref() == Some(original)) else { return false };
   let old = t.blocks[at].clone();
-  let (mut timing, mut identity, images, streaming) = match &old {
-    AgentBlock::Thought(th) => (Some((th.started_at, th.duration_sec)), None, None, th.streaming),
-    AgentBlock::Text(tx) => (None, Some((tx.id.clone(), tx.phase)), tx.images.clone(), tx.streaming),
+  let (mut timing, mut identity, boundary, images, streaming) = match &old {
+    AgentBlock::Thought(th) => (Some((th.started_at, th.duration_sec)), None, (None, None), None, th.streaming),
+    AgentBlock::Text(tx) => (None, Some((tx.id.clone(), tx.phase)), (tx.ended_at, tx.resumed_at), tx.images.clone(), tx.streaming),
     _ => return false,
   };
+  let last_text = parts.iter().rposition(|p| !p.thought);
   let blocks: Vec<AgentBlock> = parts
     .iter()
-    .map(|p| {
+    .enumerate()
+    .map(|(i, p)| {
       if p.thought {
         let (started_at, duration_sec) = timing.take().unwrap_or((None, None));
         return AgentBlock::Thought(ThoughtBlock { text: p.text.clone(), started_at, duration_sec, streaming });
       }
       let (id, phase) = identity.take().unwrap_or((None, None));
+      let (ended_at, resumed_at) = if Some(i) == last_text { boundary } else { (None, None) };
       let kept: Vec<ImageRef> =
         images.iter().flatten().filter(|i| i.uri.as_deref().is_some_and(|u| p.text.contains(u))).cloned().collect();
-      let mut block = TextBlock { id, phase, markdown: p.text.clone(), streaming, images: (!kept.is_empty()).then_some(kept) };
+      let mut block = TextBlock { id, phase, markdown: p.text.clone(), streaming, images: (!kept.is_empty()).then_some(kept), ended_at, resumed_at };
       resolve_markdown_images(&mut block, 0, ctx);
       AgentBlock::Text(block)
     })
@@ -122,7 +125,7 @@ mod tests {
   fn a_split_thought_keeps_its_timing_and_place() {
     let mut s = NormalizeState::default();
     let thought = ThoughtBlock { text: "Plan.\n\n结论。".into(), started_at: Some(5), duration_sec: Some(acpira_shared::num::Num(3.0)), streaming: Some(false) };
-    s.turns.push(Turn::Agent(AgentTurn { blocks: vec![AgentBlock::Thought(thought.clone()), AgentBlock::Text(TextBlock { id: None, phase: None, markdown: "after".into(), streaming: None, images: None })], ..Default::default() }));
+    s.turns.push(Turn::Agent(AgentTurn { blocks: vec![AgentBlock::Thought(thought.clone()), AgentBlock::Text(TextBlock { id: None, phase: None, markdown: "after".into(), streaming: None, images: None, ended_at: None, resumed_at: None })], ..Default::default() }));
     let original = prose(true, "Plan.\n\n结论。");
     assert!(reclassify(&mut s, 0, &original, &[prose(true, "Plan."), prose(false, "结论。")]));
     let Turn::Agent(t) = &s.turns[0] else { panic!() };

@@ -113,6 +113,13 @@ async fn a_late_reply_that_streams_lands_once_and_reads_no_replay() {
   expect_match(&turn, json!({ "stop": "end_turn" }));
   assert_eq!(texts_of(&turn, "text", "markdown"), ["Started it.", "Late reply: late-done"]);
   assert_eq!(texts_of(&turn, "thought", "text"), ["The command exited."]);
+  // Stretch boundaries carry independent timing, and the late reply's settle does not include the 10s quiet wait
+  let first_reply = turn["blocks"].as_array().unwrap().iter().find(|b| b["markdown"] == "Started it.").unwrap();
+  let first_end = first_reply["endedAt"].as_i64().expect("first stretch endedAt");
+  let resumed = first_reply["resumedAt"].as_i64().expect("late stretch resumedAt");
+  let final_end = turn["endedAt"].as_i64().expect("turn endedAt");
+  assert!(resumed >= first_end && final_end >= resumed, "monotonic stretch timing: {first_end} <= {resumed} <= {final_end}");
+  assert!(final_end - resumed < 8_000, "settle wait must not inflate late reply duration: {} ms", final_end - resumed);
   // The streamed exit settled the command's task and closed its row, receipt stripped
   let first = &calls(&s)[0];
   expect_match(first, json!({ "status": "completed" }));

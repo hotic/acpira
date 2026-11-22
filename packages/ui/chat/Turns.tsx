@@ -252,12 +252,15 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   // `ProcessBlocks`) so streamed content stays in step while closed
   return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div data-part="agent-message" data-turn={turnIndex} className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
+      const firstSection = i === 0;
       const lastSection = i === sections.length - 1;
-      // Only the continuation owns live activity and the turn outcome. Earlier
-      // sections have no independent timing; repeating the full duration lies.
+      // Only the continuation owns live activity and the turn outcome. Each stretch reads its own boundary timestamps
+      // (undefined on legacy records, so an untimed split still shows bare Done instead of repeating the whole turn)
       const content = { ...shown, blocks: section.blocks,
         ...(!lastSection ? { stop: undefined, error: undefined, command: undefined } : {}),
-        ...(sections.length > 1 ? { startedAt: undefined, respondedAt: undefined, endedAt: undefined } : {}),
+        startedAt: firstSection ? shown.startedAt : section.startedAt,
+        respondedAt: firstSection ? shown.respondedAt : section.startedAt,
+        endedAt: lastSection ? shown.endedAt : section.endedAt,
       };
       // A plan approval renders on its card. A section holding nothing else while the card waits has no working row to
       // show: the Codex fold head there used to say "awaiting approval" under the card that already asks for it
@@ -768,6 +771,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   && prev.memoryKey === next.memoryKey
   && prev.lead === next.lead
   && clockStart(prev.turn) === clockStart(next.turn)
+  && prev.turn.startedAt === next.turn.startedAt
   && prev.turn.stop === next.turn.stop
   && prev.turn.endedAt === next.turn.endedAt
   && prev.turn.retry === next.turn.retry

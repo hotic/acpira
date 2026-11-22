@@ -134,7 +134,7 @@ pub fn stub(head: &[u8], names: &[String]) -> Result<Vec<u8>> {
     id.push_str(name);
   }
   let placeholder = Turn::Agent(AgentTurn {
-    blocks: vec![AgentBlock::Text(TextBlock { id: Some(id), phase: None, markdown: t("host.packedNotice"), streaming: None, images: None })],
+    blocks: vec![AgentBlock::Text(TextBlock { id: Some(id), phase: None, markdown: t("host.packedNotice"), streaming: None, images: None, ended_at: None, resumed_at: None })],
     ..Default::default()
   });
   let mut value: Value = serde_json::from_slice(head)?;

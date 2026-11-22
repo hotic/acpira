@@ -48,6 +48,9 @@ data class PlanSection(
   val key: String,
   val blocks: List<AgentBlock>,
   val plan: PlanDocumentBlock? = null,
+  /** Independent stretch bounds (epoch ms) carried by boundary blocks (`PlanDocumentBlock`, final `TextBlock`) */
+  val startedAt: Double? = null,
+  val endedAt: Double? = null,
 )
 
 /**
@@ -63,33 +66,37 @@ fun splitPlanSections(blocks: List<AgentBlock>, placed: Set<String>? = null): Li
   val questionTools = blocks.mapNotNull { (it as? QuestionBlock)?.toolCallId }.toSet()
   // A reply marked final that more work follows ends a stretch (planSections.ts): the reply stays in view after its own
   // closed fold and the new work opens a fold under it
-  var replied = false
+  var replied: TextBlock? = null
   blocks.forEachIndexed { i, block ->
     if (block is ToolCallBlock && block.status != ToolStatus.failed && block.id in questionTools) return@forEachIndexed
     val delegated = (block as? ToolCallBlock)?.subagentId
     if (delegated != null && placed != null && (delegated !in placed || delegated in seen)) return@forEachIndexed
     if (block is ThoughtBlock && block.text.isBlank()) return@forEachIndexed
     if (block is TextBlock && block.phase == "final") {
-      replied = true
-    } else if (replied && startsStretch(block)) {
-      replied = false
-      sections += MutableSection("resume:$i")
+      replied = block
+    } else if (replied != null && startsStretch(block)) {
+      val boundary = replied
+      boundary.endedAt?.let { sections.last().endedAt = it }
+      replied = null
+      sections += MutableSection("resume:$i", startedAt = boundary.resumedAt)
     }
     if (block is PlanDocumentBlock) {
-      replied = false
+      replied = null
       sections.last().plan = block
-      sections += MutableSection(block.id)
+      block.endedAt?.let { sections.last().endedAt = it }
+      sections += MutableSection(block.id, startedAt = block.resumedAt)
     } else {
       if (delegated != null) seen += delegated
       sections.last().blocks += block
     }
   }
-  return sections.map { PlanSection(it.key, it.blocks, it.plan) }
+  return sections.map { PlanSection(it.key, it.blocks, it.plan, it.startedAt, it.endedAt) }
 }
 
-private class MutableSection(val key: String) {
+private class MutableSection(val key: String, val startedAt: Double? = null) {
   val blocks = ArrayList<AgentBlock>()
   var plan: PlanDocumentBlock? = null
+  var endedAt: Double? = null
 }
 
 /** Work, not the status rows and cards that stand beside a reply */

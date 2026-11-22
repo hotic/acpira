@@ -660,7 +660,7 @@ impl AcpSession {
 
   /// A detached peer turn ended (`end_detached`). A finished one is gated like a prompt's turn, over what it added after
   /// the last gate; a stopped one leaves that for the next gate. Then the queue moves as after any turn
-  pub(crate) fn hooks_after_detached(self: &Arc<Self>, stop: TurnStop) {
+  pub(crate) fn hooks_after_detached(self: &Arc<Self>, stop: TurnStop, auto_compact: bool) {
     if stop == TurnStop::EndTurn {
       if self.hooks_after_turn() {
         return;
@@ -671,7 +671,7 @@ impl AcpSession {
         c.hooks.before = c.hooks.settled.take();
       }
     }
-    self.after_prompt(false, stop);
+    self.after_prompt(!auto_compact, stop);
   }
 
   /// Reserve the session for a gate run (`gating`) and take what it needs; None: the project gates nothing

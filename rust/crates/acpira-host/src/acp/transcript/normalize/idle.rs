@@ -40,6 +40,13 @@ pub struct IdleState {
   detached_since: Option<i64>,
 }
 
+impl IdleState {
+  /// Where the current detached continuation's idle accounting starts, if one is open
+  pub(super) fn detached_since(&self) -> Option<i64> {
+    self.detached_since
+  }
+}
+
 /// An update the model itself produced: text, reasoning, a call or its streamed input, a plan. Status changes,
 /// progress beats and usage come from the agent around the model and do not end a silence
 pub(super) fn model_activity(u: &Value) -> bool {

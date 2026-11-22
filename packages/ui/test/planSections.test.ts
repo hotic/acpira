@@ -108,4 +108,21 @@ describe('chronological plan sections', () => {
     // Unmarked prose after tools stays one stretch, as before
     expect(splitPlanSections([write, reply, write]).map(s => s.key)).toEqual(['start']);
   });
+
+  it('carries per-stretch boundary timestamps from final replies and plan documents', () => {
+    const timedPlan: PlanDocumentBlock = { ...plan, endedAt: 10_000, resumedAt: 25_000 };
+    const timedFinal: AgentBlock = { type: 'text', markdown: 'Waiting.', phase: 'final', endedAt: 40_000, resumedAt: 90_000 };
+    const sections = splitPlanSections([write, timedPlan, thought, timedFinal, { ...write, id: 'after' }, reply]);
+    expect(sections.map(s => ({ key: s.key, startedAt: s.startedAt, endedAt: s.endedAt }))).toEqual([
+      { key: 'start', startedAt: undefined, endedAt: 10_000 },
+      { key: 'plan', startedAt: 25_000, endedAt: 40_000 },
+      { key: 'resume:4', startedAt: 90_000, endedAt: undefined },
+    ]);
+    // Legacy splits without boundary timestamps leave them undefined
+    const legacy = splitPlanSections([write, plan, thought, reply]);
+    expect(legacy.map(s => ({ startedAt: s.startedAt, endedAt: s.endedAt }))).toEqual([
+      { startedAt: undefined, endedAt: undefined },
+      { startedAt: undefined, endedAt: undefined },
+    ]);
+  });
 });

@@ -26,6 +26,9 @@ struct PlanSection: Identifiable {
   var key: String
   var blocks: [AgentBlock]
   var plan: PlanDocumentBlock?
+  /// Independent stretch bounds (epoch ms) carried by boundary blocks (`PlanDocumentBlock`, final `TextBlock`)
+  var startedAt: Double?
+  var endedAt: Double?
   var id: String { key }
 }
 
@@ -40,7 +43,7 @@ func splitPlanSections(_ blocks: [AgentBlock], placed: Set<String> = []) -> [Pla
   let questionTools = Set(blocks.compactMap { block -> String? in if case .question(let q) = block { q.toolCallId } else { nil } })
   // A reply marked final that more work follows ends a stretch (planSections.ts): the reply stays in view after its own
   // closed fold and the new work opens a fold under it
-  var replied = false
+  var replied: TextBlock?
   for (i, block) in blocks.enumerated() {
     switch block {
     case .toolCall(let call) where call.status != .failed && questionTools.contains(call.id):
@@ -54,16 +57,18 @@ func splitPlanSections(_ blocks: [AgentBlock], placed: Set<String> = []) -> [Pla
     default: break
     }
     if case .text(let text) = block, text.phase == .final {
-      replied = true
-    } else if replied, startsStretch(block) {
-      replied = false
-      sections.append(PlanSection(key: "resume:\(i)", blocks: []))
+      replied = text
+    } else if let boundary = replied, startsStretch(block) {
+      if let ended = boundary.endedAt { sections[sections.count - 1].endedAt = ended }
+      replied = nil
+      sections.append(PlanSection(key: "resume:\(i)", blocks: [], startedAt: boundary.resumedAt))
     }
     switch block {
     case .planDocument(let plan):
-      replied = false
+      replied = nil
       sections[sections.count - 1].plan = plan
-      sections.append(PlanSection(key: plan.id, blocks: []))
+      if let ended = plan.endedAt { sections[sections.count - 1].endedAt = ended }
+      sections.append(PlanSection(key: plan.id, blocks: [], startedAt: plan.resumedAt))
     default:
       if case .toolCall(let call) = block, let id = call.subagentId { seen.insert(id) }
       sections[sections.count - 1].blocks.append(block)

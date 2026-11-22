@@ -786,6 +786,7 @@ pub enum TextPhase {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TextBlock {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub id: Option<String>,
@@ -797,6 +798,13 @@ pub struct TextBlock {
   /// Local image files the markdown embeds (`![](/abs/shot.png)`), read into the blob store; `uri` is the source as written
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub images: Option<Vec<ImageRef>>,
+  /// When the stretch this final reply closed ended (epoch ms), stamped before a detached continuation clears
+  /// `AgentTurn.ended_at` (`mark_reply_final`)
+  #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
+  pub ended_at: Option<i64>,
+  /// When the stretch that followed this final reply first produced output (epoch ms)
+  #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
+  pub resumed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -855,6 +863,12 @@ pub struct PlanDocumentBlock {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub approval_tool_call_id: Option<String>,
   pub status: PlanDocStatus,
+  /// When the stretch ahead of this plan card finished (epoch ms)
+  #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
+  pub ended_at: Option<i64>,
+  /// When the continuation stretch after this plan card first produced output (epoch ms)
+  #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
+  pub resumed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

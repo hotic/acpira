@@ -118,6 +118,7 @@ export interface Block extends AgentBlock {
   // text
   phase?: string;
   images?: ImageRef[];
+  resumedAt?: number;
   // thought
   startedAt?: number;
   durationSec?: number;

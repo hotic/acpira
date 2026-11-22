@@ -425,6 +425,8 @@ public struct TextBlock: Codable, Hashable, Sendable {
   public var markdown: String
   public var streaming: Bool?
   public var images: [ImageRef]?
+  public var endedAt: Double?
+  public var resumedAt: Double?
 }
 
 public struct PermissionOption: Codable, Hashable, Sendable, Identifiable {
@@ -453,6 +455,8 @@ public struct PlanDocumentBlock: Codable, Hashable, Sendable {
   public var approvalToolCallId: String?
   /// draft | ready | approved | rejected | executing
   public var status: String
+  public var endedAt: Double?
+  public var resumedAt: Double?
 }
 
 public struct CompactionBlock: Codable, Hashable, Sendable {

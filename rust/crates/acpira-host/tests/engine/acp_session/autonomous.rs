@@ -18,8 +18,12 @@ async fn a_claude_followup_after_end_turn_runs_the_last_turn_until_its_result() 
   let vw = view(&s);
   assert_eq!(vw["running"], true);
   expect_absent(&vw["turns"][1], "stop");
-  // The reply the turn ended on stays its reply; the cycle's prose starts a stretch of its own
+  // The reply the turn ended on stays its reply with its stretch boundary; the cycle's prose starts a stretch of its own
   expect_match(&vw["turns"][1]["blocks"], json!([{ "markdown": "waiting in background", "phase": "final" }, { "type": "text" }]));
+  let boundary = &vw["turns"][1]["blocks"][0];
+  let first_end = boundary["endedAt"].as_i64().expect("first stretch endedAt");
+  let second_start = boundary["resumedAt"].as_i64().expect("second stretch resumedAt");
+  assert!(second_start >= first_end, "second stretch starts at or after first ended: {boundary}");
   expect_absent(&vw["turns"][1]["blocks"][1], "phase");
   prompt(&s, "next").await;
   expect_match(&view(&s)["queued"], json!([{ "text": "next" }]));
@@ -117,7 +121,20 @@ async fn a_second_background_task_s_cycle_opens_after_the_first_one_s_result() {
   // The first cycle settles on its result; the second one reopens the turn until its own result
   until(|| s.is_running() && agent_text(&view(&s)["turns"][1]).contains("second"), 5000).await;
   until(|| !s.is_running(), 5000).await;
-  expect_match(&view(&s)["turns"][1], json!({ "stop": "end_turn", "usage": { "context": { "used": 30 } } }));
+  let vw = view(&s);
+  expect_match(&vw["turns"][1], json!({ "stop": "end_turn", "usage": { "context": { "used": 30 } } }));
+  let finals: Vec<&Value> = vw["turns"][1]["blocks"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .filter(|b| b["phase"] == "final")
+    .collect();
+  assert_eq!(finals.len(), 2, "two reopened boundaries: {finals:?}");
+  for b in finals {
+    let e = b["endedAt"].as_i64().expect("stretch endedAt");
+    let r = b["resumedAt"].as_i64().expect("stretch resumedAt");
+    assert!(r >= e, "resumedAt >= endedAt: {b}");
+  }
 }
 
 // A cycle is no turn of the adapter's to steer into: from claude-agent-acp 0.95.0 a steer goes out as an ordinary prompt at

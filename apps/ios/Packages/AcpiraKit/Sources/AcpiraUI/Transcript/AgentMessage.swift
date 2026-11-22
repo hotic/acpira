@@ -73,7 +73,7 @@ struct AgentMessage: View {
         // A child row that never renders anywhere would be worse than a turn with nothing else to show. A later row of
         // a cut reply draws the last stretch's reply alone
         if (lastSection || cut.opens) && (visible || (lastSection && ((running && !planWait) || outcome || !placement.rest.isEmpty))) {
-          CodexMessage(turn: sectionTurn(shown, section, last: lastSection, split: sections.count > 1),
+          CodexMessage(turn: sectionTurn(shown, section, first: i == 0, last: lastSection),
                        running: lastSection && running, onPermission: sessionActions.permission,
                        subagents: lastSection ? placement.rest : [], stretch: i == 0 ? nil : section.key,
                        cut: lastSection ? cut : .whole)
@@ -105,13 +105,15 @@ struct AgentMessage: View {
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  /// A stretch as its own message: only the continuation owns the live activity and the turn's outcome, and with more
-  /// than one stretch none has timing of its own (repeating the whole turn's duration would lie)
-  private func sectionTurn(_ turn: AgentTurn, _ section: PlanSection, last: Bool, split: Bool) -> AgentTurn {
+  /// A stretch as its own message: only the continuation owns the live activity and the turn's outcome; each stretch
+  /// reads its own boundary timestamps (nil on legacy records, so an untimed split keeps showing bare Done)
+  private func sectionTurn(_ turn: AgentTurn, _ section: PlanSection, first: Bool, last: Bool) -> AgentTurn {
     var content = turn
     content.blocks = section.blocks
     if !last { content.stop = nil; content.error = nil; content.command = nil }
-    if split { content.startedAt = nil; content.respondedAt = nil; content.endedAt = nil }
+    content.startedAt = first ? turn.startedAt : section.startedAt
+    content.respondedAt = first ? turn.respondedAt : section.startedAt
+    content.endedAt = last ? turn.endedAt : section.endedAt
     return content
   }
 }

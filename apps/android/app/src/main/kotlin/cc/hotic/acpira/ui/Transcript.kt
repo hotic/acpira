@@ -340,7 +340,7 @@ fun AgentMessage(
           val planWait = section.blocks.any { it is PermissionBlock && it.planId != null }
           // A child row that never renders anywhere would be worse than a turn with nothing else to show
           if (visible || (lastSection && ((running && !planWait) || outcome || placement.rest.isNotEmpty()))) {
-            val part = remember(shown, section) { sectionTurn(shown, section, lastSection, sections.size > 1) }
+            val part = remember(shown, section, i == 0, lastSection) { sectionTurn(shown, section, i == 0, lastSection) }
             CodexMessage(
               part, if (sections.size > 1 && i > 0) "$key/${section.key}" else key, lastSection && running, now, onPermission,
               subagents = if (lastSection) placement.rest else emptyList(),
@@ -400,13 +400,17 @@ private fun CodexMessage(
 }
 
 /**
- * A stretch as its own message: only the continuation owns the live activity and the turn's outcome, and with more than
- * one stretch none has timing of its own (repeating the whole turn's duration would lie)
+ * A stretch as its own message: only the continuation owns the live activity and the turn's outcome; each stretch reads
+ * its own boundary timestamps (null on legacy records, so an untimed split keeps showing bare Done)
  */
-private fun sectionTurn(turn: AgentTurn, section: PlanSection, last: Boolean, split: Boolean): AgentTurn {
-  var content = turn.copy(blocks = section.blocks)
+private fun sectionTurn(turn: AgentTurn, section: PlanSection, first: Boolean, last: Boolean): AgentTurn {
+  var content = turn.copy(
+    blocks = section.blocks,
+    startedAt = if (first) turn.startedAt else section.startedAt,
+    respondedAt = if (first) turn.respondedAt else section.startedAt,
+    endedAt = if (last) turn.endedAt else section.endedAt,
+  )
   if (!last) content = content.copy(stop = null, error = null, command = null)
-  if (split) content = content.copy(startedAt = null, respondedAt = null, endedAt = null)
   return content
 }
 

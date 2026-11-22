@@ -130,13 +130,13 @@ fn agent(s: &mut NormalizeState, i: usize) -> &mut AgentTurn {
 }
 
 /// Seal the streaming body / thought when the block changes
-fn seal_streaming(thought_started_at: &mut Option<i64>, t: &mut AgentTurn) {
+fn seal_streaming(thought_started_at: &mut Option<i64>, t: &mut AgentTurn, now: i64) {
   for b in &mut t.blocks {
     match b {
       AgentBlock::Thought(th) if th.streaming == Some(true) => {
         th.streaming = Some(false);
         if let Some(from) = th.started_at.or(*thought_started_at) {
-          th.duration_sec = Some(Num(((now_ms() - from) as f64 / 1000.0).round().max(1.0)));
+          th.duration_sec = Some(Num(((now - from) as f64 / 1000.0).round().max(1.0)));
         }
         *thought_started_at = None;
       }
@@ -149,7 +149,7 @@ fn seal_streaming(thought_started_at: &mut Option<i64>, t: &mut AgentTurn) {
 fn seal(s: &mut NormalizeState, i: usize) {
   let NormalizeState { turns, thought_started_at, .. } = s;
   if let Some(t) = turns[i].as_agent_mut() {
-    seal_streaming(thought_started_at, t);
+    seal_streaming(thought_started_at, t, now_ms());
   }
 }
 
@@ -192,18 +192,61 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
   changed
 }
 
-/// Stamp the live prompt's first output: the first update that leaves a block in the turn (a thought, text, tool,
-/// plan …). Usage, command and config updates add no block and keep the clock waiting; replayed turns have no
-/// `started_at` and are never stamped
+/// Work that opens a new stretch after a final reply or plan card (mirrors `planSections.ts` `startsStretch`)
+pub(crate) fn starts_stretch(b: &AgentBlock) -> bool {
+  match b {
+    AgentBlock::Permission(_) | AgentBlock::Notice(_) | AgentBlock::Goal(_) | AgentBlock::Compaction(_) | AgentBlock::PlanDocument(_) => false,
+    AgentBlock::Thought(th) => !th.text.trim().is_empty(),
+    AgentBlock::Question(q) => q.outcome.is_some(),
+    _ => true,
+  }
+}
+
+/// Stamp the live prompt's first output (and each reopened or post-plan stretch's first output): the first update that
+/// leaves a block in that stretch. Usage, command and config updates add no block and keep the clock waiting; replayed
+/// turns have no `started_at` and are never stamped
 pub fn mark_responded(s: &mut NormalizeState) {
-  if let Some(Turn::Agent(t)) = s.turns.last_mut()
-    && t.started_at.is_some()
-    && t.responded_at.is_none()
-    && t.stop.is_none()
-    && t.ended_at.is_none()
-    && t.blocks.iter().any(|b| !matches!(b, AgentBlock::Steer(_)))
-  {
+  let Some(Turn::Agent(t)) = s.turns.last_mut() else { return };
+  if t.started_at.is_none() || t.stop.is_some() || t.ended_at.is_some() {
+    return;
+  }
+  if t.responded_at.is_none() && t.blocks.iter().any(|b| !matches!(b, AgentBlock::Steer(_))) {
     t.responded_at = Some(now_ms());
+  }
+  mark_stretch_resumed(t);
+}
+
+/// Stamp `resumed_at` on the latest stretch boundary (`TextBlock` marked final with `ended_at`, or `PlanDocumentBlock`)
+/// once real work lands after it
+fn mark_stretch_resumed(t: &mut AgentTurn) {
+  for idx in (0..t.blocks.len()).rev() {
+    match &t.blocks[idx] {
+      AgentBlock::Text(tx) if tx.phase == Some(TextPhase::Final) && tx.ended_at.is_some() => {
+        if tx.resumed_at.is_none() && t.blocks[idx + 1..].iter().any(starts_stretch)
+          && let AgentBlock::Text(tx) = &mut t.blocks[idx]
+        {
+          tx.resumed_at = Some(now_ms());
+        }
+        break;
+      }
+      AgentBlock::PlanDocument(plan) => {
+        if plan.resumed_at.is_none() {
+          let tail = &t.blocks[idx + 1..];
+          let waiting = tail.iter().any(|b| matches!(b, AgentBlock::Permission(p) if p.plan_id.as_deref() == Some(plan.id.as_str())));
+          let pre_approval = matches!(plan.status, PlanDocStatus::Draft | PlanDocStatus::Ready);
+          let approval_id = plan.approval_tool_call_id.as_deref();
+          let started = !waiting
+            && tail.iter().any(|b| {
+              starts_stretch(b) && !(pre_approval && matches!(b, AgentBlock::ToolCall(tc) if approval_id == Some(tc.id.as_str())))
+            });
+          if started && let AgentBlock::PlanDocument(plan) = &mut t.blocks[idx] {
+            plan.resumed_at = Some(now_ms());
+          }
+        }
+        break;
+      }
+      _ => {}
+    }
   }
 }
 
@@ -271,7 +314,7 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
         return false;
       }
       seal(s, i);
-      let mut block = TextBlock { id: None, phase: None, markdown: text, streaming: Some(true), images: None };
+      let mut block = TextBlock { id: None, phase: None, markdown: text, streaming: Some(true), images: None, ended_at: None, resumed_at: None };
       resolve_markdown_images(&mut block, 0, &s.ctx);
       agent(s, i).blocks.push(AgentBlock::Text(block));
       true
@@ -468,9 +511,38 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
   }
 }
 
+/// The highest timestamp already recorded on the last agent turn, so a caller-supplied settle time (such as a late
+/// reply's last streamed chunk) never goes earlier than anything in the turn
+fn last_turn_floor(turns: &[Turn], detached_since: Option<i64>) -> i64 {
+  let mut floor = detached_since.unwrap_or(0);
+  if let Some(Turn::Agent(t)) = turns.last() {
+    floor = floor.max(t.started_at.unwrap_or(0)).max(t.responded_at.unwrap_or(0));
+    for b in &t.blocks {
+      match b {
+        AgentBlock::ToolCall(tc) => floor = floor.max(tc.started_at.unwrap_or(0)).max(tc.ended_at.unwrap_or(0)),
+        AgentBlock::Thought(th) => floor = floor.max(th.started_at.unwrap_or(0)),
+        AgentBlock::Text(tx) => floor = floor.max(tx.ended_at.unwrap_or(0)).max(tx.resumed_at.unwrap_or(0)),
+        AgentBlock::PlanDocument(p) => floor = floor.max(p.ended_at.unwrap_or(0)).max(p.resumed_at.unwrap_or(0)),
+        _ => {}
+      }
+    }
+  }
+  floor
+}
+
 /// Turn ended: seal streaming blocks, record how it ended; tools still running are marked per stop reason
 pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
-  let now = now_ms();
+  end_turn_at(s, stop, None);
+}
+
+/// Like [`end_turn`], settling at `at` (clamped between the turn's recorded timestamps and now) when the caller knows
+/// when the stream actually stopped (such as a late reply that waited out a quiet window before settling)
+pub fn end_turn_at(s: &mut NormalizeState, stop: TurnStop, at: Option<i64>) {
+  let wall = now_ms();
+  let now = match at {
+    Some(ts) => ts.max(last_turn_floor(&s.turns, s.idle.detached_since())).min(wall),
+    None => wall,
+  };
   idle::close_before_seal(s, now);
   // Content after a retry row closes it as recovered, so one still open when the turn ends never got through
   settle_retry(s, if stop == TurnStop::Cancelled { ToolStatus::Cancelled } else { ToolStatus::Failed });
@@ -478,13 +550,10 @@ pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
   {
     let NormalizeState { turns, thought_started_at, pending_input, .. } = s;
     let Some(Turn::Agent(t)) = turns.last_mut() else { return };
-    seal_streaming(thought_started_at, t);
-    // Replay-only turns have no live start time; never invent a duration for them
-    if t.started_at.is_some() && t.ended_at.is_none() {
-      t.ended_at = Some(now);
-    }
+    seal_streaming(thought_started_at, t, now);
     t.activity = None;
     t.stop = Some(stop);
+    let mut end = now;
     for b in &mut t.blocks {
       if let AgentBlock::ToolCall(tc) = b
         && !async_task_live(tc)
@@ -492,7 +561,14 @@ pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
       {
         tc.status = if stop == TurnStop::Cancelled { ToolStatus::Cancelled } else { ToolStatus::Failed };
         time_tool(tc, false, false, pending_input);
+        if let Some(te) = tc.ended_at {
+          end = end.max(te);
+        }
       }
+    }
+    // Replay-only turns have no live start time; never invent a duration for them
+    if t.started_at.is_some() && t.ended_at.is_none() {
+      t.ended_at = Some(end);
     }
     pending_input.clear();
   }
@@ -639,5 +715,99 @@ mod notice_tests {
     assert_eq!(n.details.as_deref(), Some("grep \"^[08:(0[0-9]\" log."));
     let AgentBlock::Notice(n) = &t.blocks[2] else { panic!("second notice row") };
     assert_eq!((n.id.as_str(), n.severity, n.info), ("notice:2", Severity::Warning, false));
+  }
+}
+
+#[cfg(test)]
+mod stretch_timing_tests {
+  use super::*;
+  use crate::acp::transcript::plans::capture_plan;
+  use serde_json::json;
+
+  fn live_state(started_at: i64) -> NormalizeState {
+    NormalizeState::new(vec![Turn::Agent(AgentTurn { started_at: Some(started_at), responded_at: Some(started_at + 100), ..Default::default() })])
+  }
+
+  #[test]
+  fn resumed_at_lands_on_the_first_work_block_after_a_final_reply() {
+    let mut s = live_state(1_000);
+    s.turns[0].as_agent_mut().unwrap().blocks.push(AgentBlock::Text(TextBlock {
+      id: None,
+      phase: Some(TextPhase::Final),
+      markdown: "waiting".into(),
+      streaming: Some(false),
+      images: None,
+      ended_at: Some(5_000),
+      resumed_at: None,
+    }));
+    // Status rows beside the reply do not start the next stretch's clock
+    apply_update(&mut s, &json!({ "sessionUpdate": "notice", "severity": "info", "title": "note" }));
+    let AgentBlock::Text(tx) = &s.turns[0].as_agent().unwrap().blocks[0] else { panic!("final text") };
+    assert_eq!(tx.resumed_at, None);
+    // Real work opens the stretch and stamps resumed_at once
+    apply_update(&mut s, &json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "checking" } }));
+    let first = match &s.turns[0].as_agent().unwrap().blocks[0] {
+      AgentBlock::Text(tx) => tx.resumed_at.expect("resumed_at stamped"),
+      _ => panic!("final text"),
+    };
+    apply_update(&mut s, &json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "all done" } }));
+    let AgentBlock::Text(tx) = &s.turns[0].as_agent().unwrap().blocks[0] else { panic!("final text") };
+    assert_eq!(tx.resumed_at, Some(first));
+  }
+
+  #[test]
+  fn plan_boundary_waits_for_post_approval_work_before_stamping_resumed_at() {
+    let mut s = live_state(1_000);
+    let write = json!({
+      "sessionUpdate": "tool_call", "toolCallId": "w1", "title": "Write plan", "kind": "edit", "status": "completed",
+      "rawInput": { "path": "/repo/.grok/sessions/s1/plan.md", "content": "# Plan\n\nDo it." }
+    });
+    apply_update(&mut s, &write);
+    let pid = capture_plan(&mut s.turns, &write).expect("plan captured");
+    let plan = |s: &NormalizeState| match s.turns[0].as_agent().unwrap().blocks.iter().find(|b| matches!(b, AgentBlock::PlanDocument(_))).unwrap() {
+      AgentBlock::PlanDocument(p) => p.clone(),
+      _ => unreachable!(),
+    };
+    assert!(plan(&s).ended_at.is_some());
+    assert_eq!(plan(&s).resumed_at, None);
+    // Pre-approval exit_plan_mode arrives after the plan card: capture_plan clears any premature resumed_at
+    let exit = json!({ "sessionUpdate": "tool_call", "toolCallId": "exit1", "title": "exit_plan_mode", "kind": "switch_mode", "status": "pending" });
+    apply_update(&mut s, &exit);
+    capture_plan(&mut s.turns, &exit);
+    assert_eq!(plan(&s).resumed_at, None);
+    // While the approval card is pending, resumed_at stays unset
+    s.turns[0].as_agent_mut().unwrap().blocks.push(AgentBlock::Permission(PermissionBlock {
+      id: "perm1".into(), title: "Build".into(), command: None, description: None, plan_id: Some(pid), default_to_no: None, options: vec![],
+    }));
+    mark_responded(&mut s);
+    assert_eq!(plan(&s).resumed_at, None);
+    // Approval clears the card and marks the plan approved; the next update starts the continuation clock
+    s.turns[0].as_agent_mut().unwrap().blocks.retain(|b| !matches!(b, AgentBlock::Permission(_)));
+    if let Some(AgentBlock::PlanDocument(p)) = s.turns[0].as_agent_mut().unwrap().blocks.iter_mut().find(|b| matches!(b, AgentBlock::PlanDocument(_))) {
+      p.status = PlanDocStatus::Approved;
+    }
+    apply_update(&mut s, &json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "building" } }));
+    assert!(plan(&s).resumed_at.is_some());
+  }
+
+  #[test]
+  fn end_turn_at_uses_the_supplied_time_and_clamps_to_the_turn_floor() {
+    let base = now_ms() - 30_000;
+    let mut s = live_state(base);
+    s.turns[0].as_agent_mut().unwrap().blocks.push(AgentBlock::Text(TextBlock {
+      id: None, phase: Some(TextPhase::Final), markdown: "first".into(), streaming: Some(false), images: None,
+      ended_at: Some(base + 5_000), resumed_at: Some(base + 12_000),
+    }));
+    // Settling at last stream time (base + 16_000) drops the trailing quiet wait instead of stamping now_ms()
+    end_turn_at(&mut s, TurnStop::EndTurn, Some(base + 16_000));
+    assert_eq!(s.turns[0].as_agent().unwrap().ended_at, Some(base + 16_000));
+    // A timestamp earlier than the stretch's own resumed_at clamps up to the floor
+    let mut s2 = live_state(base);
+    s2.turns[0].as_agent_mut().unwrap().blocks.push(AgentBlock::Text(TextBlock {
+      id: None, phase: Some(TextPhase::Final), markdown: "first".into(), streaming: Some(false), images: None,
+      ended_at: Some(base + 5_000), resumed_at: Some(base + 12_000),
+    }));
+    end_turn_at(&mut s2, TurnStop::EndTurn, Some(base + 11_000));
+    assert_eq!(s2.turns[0].as_agent().unwrap().ended_at, Some(base + 12_000));
   }
 }

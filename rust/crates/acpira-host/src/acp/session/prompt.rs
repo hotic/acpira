@@ -20,7 +20,7 @@ use crate::acp::session::failure::{failure_of, failure_turn_error};
 use crate::acp::session::queue::PromptSteerEnd;
 use crate::acp::session::turn_usage::{add_wire_usage, prompt_usage_of};
 use crate::acp::session::{AcpSession, Core, num};
-use crate::acp::transcript::normalize::{activity_of, apply_goal, apply_session_failure, end_turn, fail_turn};
+use crate::acp::transcript::normalize::{activity_of, apply_goal, apply_session_failure, end_turn_at, fail_turn};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::acp::vendors::antigravity::ReplyError;
@@ -940,9 +940,15 @@ impl AcpSession {
   }
 
   pub(crate) fn settle(&self, c: &mut Core, stop: TurnStop, error: Option<TurnError>) {
+    self.settle_at(c, stop, error, None);
+  }
+
+  pub(crate) fn settle_at(&self, c: &mut Core, stop: TurnStop, error: Option<TurnError>, at: Option<i64>) {
     // Whatever settles the turn of a late reply still being written (`late_reply.rs`) ends its hold with it
     if std::mem::take(&mut c.late.open) {
       c.peer.detached = false;
+      c.late.stirred = None;
+      c.late.stirred_at = None;
     }
     if let Some(f) = c.usage.finish_refresh.take() {
       let _ = f.send(false);
@@ -980,7 +986,7 @@ impl AcpSession {
     }
     match error {
       Some(e) => fail_turn(&mut c.state, e),
-      None => end_turn(&mut c.state, stop),
+      None => end_turn_at(&mut c.state, stop, at),
     }
     self.plugin_settled(c, true);
     c.goal_steered = None;

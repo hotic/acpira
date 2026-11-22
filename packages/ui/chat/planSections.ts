@@ -1,9 +1,13 @@
-import type { AgentBlock, PlanDocumentBlock } from '@acpira/shared/transcript';
+import type { AgentBlock, PlanDocumentBlock, TextBlock } from '@acpira/shared/transcript';
 
 export interface PlanSection {
   key: string;
   blocks: AgentBlock[];
   plan?: PlanDocumentBlock;
+  // Independent stretch bounds (epoch ms) carried by boundary blocks (`PlanDocumentBlock`, final `TextBlock`).
+  // Undefined on legacy records, where multi-stretch turns omit per-stretch durations instead of guessing
+  startedAt?: number;
+  endedAt?: number;
 }
 
 // A plan is a chronological boundary, outside both adjacent process folds.
@@ -24,23 +28,26 @@ export function splitPlanSections(blocks: AgentBlock[], placed?: ReadonlySet<str
   // The question card owns both the pending interaction and its answer receipt.
   // Match explicit IDs only; standalone tools and failed-tool diagnostics remain visible.
   const questionTools = new Set(blocks.flatMap(b => b.type === 'question' && b.toolCallId ? [b.toolCallId] : []));
-  let replied = false;
+  let replied: TextBlock | undefined;
   blocks.forEach((block, i) => {
     if (block.type === 'tool_call' && block.status !== 'failed' && questionTools.has(block.id)) return;
     if (block.type === 'tool_call' && block.subagentId !== undefined
       && (!placed?.has(block.subagentId) || seen.has(block.subagentId))) return;
     if (block.type === 'thought' && !block.text.trim()) return;
     if (block.type === 'text' && block.phase === 'final') {
-      replied = true;
+      replied = block;
     } else if (replied && startsStretch(block)) {
-      replied = false;
-      sections.push({ key: `resume:${i}`, blocks: [] });
+      if (replied.endedAt !== undefined) sections[sections.length - 1]!.endedAt = replied.endedAt;
+      const resumed = replied.resumedAt;
+      replied = undefined;
+      sections.push({ key: `resume:${i}`, blocks: [], ...(resumed !== undefined ? { startedAt: resumed } : {}) });
     }
     const section = sections[sections.length - 1]!;
     if (block.type === 'plan_document') {
-      replied = false;
+      replied = undefined;
       section.plan = block;
-      sections.push({ key: block.id, blocks: [] });
+      if (block.endedAt !== undefined) section.endedAt = block.endedAt;
+      sections.push({ key: block.id, blocks: [], ...(block.resumedAt !== undefined ? { startedAt: block.resumedAt } : {}) });
     } else {
       if (block.type === 'tool_call' && block.subagentId !== undefined) seen.add(block.subagentId);
       section.blocks.push(block);

@@ -115,6 +115,9 @@ export class PlanSection {
   key: string = '';
   blocks: Block[] = [];
   plan: Block | undefined = undefined;
+  /** Independent stretch bounds (epoch ms) carried by boundary blocks (`plan_document`, final `text`) */
+  startedAt: number | undefined = undefined;
+  endedAt: number | undefined = undefined;
 }
 
 /** Work, not the status rows and cards that stand beside a reply */
@@ -141,7 +144,7 @@ export function splitPlanSections(blocks: Block[], placed: Set<string>): PlanSec
       questionTools.add(b.toolCallId);
     }
   });
-  let replied = false;
+  let replied: Block | undefined = undefined;
   blocks.forEach((b: Block, i: number) => {
     if (b.type === 'tool_call' && b.status !== 'failed' && questionTools.has(b.id ?? '')) {
       return;
@@ -154,18 +157,26 @@ export function splitPlanSections(blocks: Block[], placed: Set<string>): PlanSec
       return;
     }
     if (b.type === 'text' && b.phase === 'final') {
-      replied = true;
-    } else if (replied && startsStretch(b)) {
-      replied = false;
+      replied = b;
+    } else if (replied !== undefined && startsStretch(b)) {
+      if (replied.endedAt !== undefined) {
+        sections[sections.length - 1].endedAt = replied.endedAt;
+      }
       const next = new PlanSection();
       next.key = `resume:${i}`;
+      next.startedAt = replied.resumedAt;
+      replied = undefined;
       sections.push(next);
     }
     if (b.type === 'plan_document') {
-      replied = false;
+      replied = undefined;
       sections[sections.length - 1].plan = b;
+      if (b.endedAt !== undefined) {
+        sections[sections.length - 1].endedAt = b.endedAt;
+      }
       const next = new PlanSection();
       next.key = b.id ?? `plan:${i}`;
+      next.startedAt = b.resumedAt;
       sections.push(next);
     } else {
       if (delegated !== undefined) {

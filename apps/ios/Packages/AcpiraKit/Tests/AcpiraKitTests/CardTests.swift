@@ -70,6 +70,21 @@ private let claudeOptions: [PermissionOption] = decode("""
     #expect(splitPlanSections([blocks[0], blocks[3], blocks[2]]).count == 1)
   }
 
+  @Test func stretchBoundariesCarryIndependentTiming() {
+    let blocks: [AgentBlock] = decode(#"""
+      [{"type":"tool_call","id":"t1","kind":"read","verb":"Read","status":"completed"},
+       {"type":"plan_document","id":"p1","title":"Plan","markdown":"# Plan","toolCallId":"t1","status":"approved","endedAt":10000,"resumedAt":25000},
+       {"type":"tool_call","id":"t2","kind":"edit","verb":"Edit","status":"completed"},
+       {"type":"text","markdown":"Waiting.","phase":"final","endedAt":40000,"resumedAt":90000},
+       {"type":"tool_call","id":"t3","kind":"read","verb":"Read","status":"completed"},
+       {"type":"text","markdown":"Done."}]
+      """#)
+    let sections = splitPlanSections(blocks)
+    #expect(sections.map(\.key) == ["start", "p1", "resume:4"])
+    #expect(sections.map(\.startedAt) == [nil, 25_000, 90_000])
+    #expect(sections.map(\.endedAt) == [10_000, 40_000, nil])
+  }
+
   @Test func headingNamesTheCardAndLeavesTheBody() {
     let doc: PlanDocumentBlock = decode(#"{"id":"d","title":"Ship it","markdown":"\n# Ship it\n\nStep one.","toolCallId":"t","status":"ready"}"#)
     #expect(planHeading(doc).title == "Ship it")

@@ -26,6 +26,7 @@ use crate::acp::transcript::normalize::async_task_live;
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::wire::{AsyncTaskEvent, TaskEventKind};
 use crate::acp::vendors::antigravity;
+use crate::util::now_ms;
 
 /// Between two looks at the session's time: often at first, when a command is most likely to exit
 const POLL: Duration = Duration::from_secs(2);
@@ -34,9 +35,10 @@ const SLOW_AFTER: Duration = Duration::from_secs(300);
 /// How long after the last command exited its reply may still land
 const QUIET: Duration = Duration::from_secs(90);
 /// How long the session's time must stand still before an open late reply counts as over: short once the replay ends
-/// on the agent's words, as a finished reply does, long while it ends on a call or a thought
+/// on the agent's words, as a finished reply does, long while it ends on a call or a thought (high-effort reasoning or
+/// generating large multi-file tool arguments streams nothing on ACP until tool execution starts)
 const SETTLE: Duration = Duration::from_secs(10);
-const SETTLE_MID: Duration = Duration::from_secs(60);
+const SETTLE_MID: Duration = Duration::from_secs(300);
 /// A watcher gives up here; a command still running keeps its row, and the next turn's end watches again
 const LIMIT: Duration = Duration::from_secs(1800);
 const LIST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -60,6 +62,8 @@ pub struct LateReply {
   pub streams: Option<u64>,
   /// When the stream last added to the open late reply
   pub stirred: Option<Instant>,
+  /// Wall-clock time of the last late-reply update (epoch ms), so `close_late` does not count the quiet settle window
+  pub stirred_at: Option<i64>,
   /// A stop ended the late reply: what the CLI still streams of it is dropped until the next prompt's turn
   pub stopped: bool,
 }
@@ -223,7 +227,17 @@ impl AcpSession {
   /// reply it wakes the model for opens the late reply's detached turn, with a watcher to end it. False when the update
   /// is dropped: what still streams of a late reply a stop ended
   pub(crate) fn late_live(self: &Arc<Self>, c: &mut Core, session_id: &str, kind: &str, u: &Value) -> bool {
-    if !self.vendor.late_replies() || c.replaying || c.acp_session_id.as_deref() != Some(session_id) || !antigravity::REPLAY_AGENT_KINDS.contains(&kind) {
+    if !self.vendor.late_replies() || c.replaying || c.acp_session_id.as_deref() != Some(session_id) {
+      return true;
+    }
+    // `usage_update` between model steps confirms an open detached run is still alive without opening one on its own
+    if kind == "usage_update" {
+      if c.late.open {
+        c.late.stirred = Some(Instant::now());
+      }
+      return true;
+    }
+    if !antigravity::REPLAY_AGENT_KINDS.contains(&kind) {
       return true;
     }
     if kind == "tool_call_update"
@@ -259,6 +273,7 @@ impl AcpSession {
       }
     }
     c.late.stirred = Some(Instant::now());
+    c.late.stirred_at = Some(now_ms());
     true
   }
 
@@ -309,7 +324,7 @@ impl AcpSession {
           None if self.core.lock().late.streams == Some(proc_gen) => false,
           None => {
             self.log("late replies: the session is not in session/list, giving up");
-            self.close_late();
+            self.close_late(false);
             return;
           }
         }
@@ -359,7 +374,9 @@ impl AcpSession {
         let last = grew.max(stirred);
         let still = free && !moved && !unread && !waiting && last.is_none_or(|at| at.elapsed() > if on_reply { SETTLE } else { SETTLE_MID });
         if still {
-          self.close_late();
+          // Only trigger auto-compaction when the late reply actually ended on prose; a mid-step timeout has no proof
+          // the CLI stopped, and sending /compact into a still-generating run steers into it and cuts off its reply
+          self.close_late(on_reply);
         }
       } else if live {
         quiet = None;
@@ -369,7 +386,7 @@ impl AcpSession {
       }
       if started.elapsed() > LIMIT {
         self.log("late replies: gave up watching");
-        self.close_late();
+        self.close_late(false);
         return;
       }
       tokio::time::sleep(if started.elapsed() > SLOW_AFTER { SLOW_POLL } else { POLL }).await;
@@ -383,10 +400,11 @@ impl AcpSession {
   }
 
   /// The late reply stopped growing (or can no longer be followed): its detached turn ends, once
-  fn close_late(self: &Arc<Self>) {
+  fn close_late(self: &Arc<Self>, auto_compact: bool) {
     let mut c = self.core.lock();
     if c.late.open {
-      self.end_detached(&mut c, TurnStop::EndTurn);
+      let at = c.late.stirred_at.take();
+      self.end_detached_at(&mut c, TurnStop::EndTurn, at, auto_compact);
       self.touch(&mut c);
     }
   }
@@ -475,7 +493,8 @@ impl AcpSession {
       return;
     }
     if c.late.open {
-      self.end_detached(c, TurnStop::EndTurn);
+      let at = c.late.stirred_at.take();
+      self.end_detached_at(c, TurnStop::EndTurn, at, false);
       self.touch(c);
     } else if !c.phase.running {
       c.peer.detached = false;
@@ -555,6 +574,7 @@ impl AcpSession {
     for update in tail {
       self.on_update(json!({ "sessionId": acp_id, "update": update, REPLAYED: true }));
     }
+    self.core.lock().late.stirred_at = Some(now_ms());
     true
   }
 }

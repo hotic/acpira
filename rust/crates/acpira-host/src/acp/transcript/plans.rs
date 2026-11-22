@@ -7,7 +7,9 @@ use serde_json::Value;
 
 use acpira_shared::transcript::{AgentBlock, PlanDocStatus, PlanDocumentBlock, ToolKind, Turn};
 
+use crate::acp::transcript::normalize::starts_stretch;
 use crate::json::str_of;
+use crate::util::now_ms;
 
 static FRONT_MATTER: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^---\r?\n(?s:.*?)\r?\n---\r?\n"));
 static HEADING: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?m)^#\s+(.+)$"));
@@ -158,6 +160,7 @@ pub fn capture_plan(turns: &mut [Turn], u: &Value) -> Option<String> {
     .or_else(|| whole_diff.and_then(|d| str_of(d, "newText")).map(str::to_owned))
     .or_else(|| r("content"))
     .or_else(|| if full_plan { r("plan") } else { None });
+  let live = matches!(turns.last(), Some(Turn::Agent(t)) if t.started_at.is_some() && t.stop.is_none() && t.ended_at.is_none());
   let id = match id {
     Some(i) => i,
     None => {
@@ -171,6 +174,8 @@ pub fn capture_plan(turns: &mut [Turn], u: &Value) -> Option<String> {
         tool_call_id: tool_call_id.clone(),
         approval_tool_call_id: None,
         status: PlanDocStatus::Draft,
+        ended_at: live.then(now_ms),
+        resumed_at: None,
       }));
       pid
     }
@@ -192,12 +197,36 @@ pub fn capture_plan(turns: &mut [Turn], u: &Value) -> Option<String> {
     if p.approval_tool_call_id.as_ref().is_some_and(|a| a != &tool_call_id) {
       p.status = PlanDocStatus::Draft;
     }
-    p.approval_tool_call_id = Some(tool_call_id);
+    p.approval_tool_call_id = Some(tool_call_id.clone());
     if !p.markdown.is_empty() && p.status == PlanDocStatus::Draft {
       p.status = PlanDocStatus::Ready;
     }
   } else if str_of(u, "status") == Some("completed") && p.status == PlanDocStatus::Draft {
     p.status = PlanDocStatus::Ready;
+  }
+  // Keep the pre-plan stretch's end time current until real post-plan work begins. On Grok / Devin / Kimi,
+  // `exit_plan_mode` arrives as a tool call after `PlanDocumentBlock` before `capture_plan` binds its id, so clear any
+  // premature `resumed_at` it caused while the plan still awaits approval
+  if live
+    && let Some(Turn::Agent(last)) = turns.last_mut()
+    && let Some(at) = last.blocks.iter().position(|b| matches!(b, AgentBlock::PlanDocument(p) if p.id == id))
+  {
+    let approval_id = match &last.blocks[at] {
+      AgentBlock::PlanDocument(p) => p.approval_tool_call_id.clone(),
+      _ => None,
+    };
+    let has_continuation = last.blocks[at + 1..].iter().any(|b| {
+      starts_stretch(b)
+        && !matches!(b, AgentBlock::ToolCall(tc) if tc.id == tool_call_id || approval_id.as_deref() == Some(tc.id.as_str()))
+    });
+    if !has_continuation
+      && let AgentBlock::PlanDocument(p) = &mut last.blocks[at]
+    {
+      p.ended_at = Some(now_ms());
+      if exit && matches!(p.status, PlanDocStatus::Draft | PlanDocStatus::Ready) {
+        p.resumed_at = None;
+      }
+    }
   }
   Some(id)
 }

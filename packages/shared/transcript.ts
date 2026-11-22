@@ -351,6 +351,9 @@ export interface TextBlock {
   // Local image files the markdown embeds (`![](/abs/shot.png)`), read into the blob store by the host; `uri` is the source as written.
   // An entry without `blob` was tried and could not be read
   images?: ImageRef[];
+  // Stretch boundary timing (epoch ms) on a closing final reply before a reopened continuation (`mark_reply_final`)
+  endedAt?: number;
+  resumedAt?: number;
 }
 
 export type PermissionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';
@@ -377,6 +380,9 @@ export interface PlanDocumentBlock {
   toolCallId: string;
   approvalToolCallId?: string;
   status: 'draft' | 'ready' | 'approved' | 'rejected' | 'executing';
+  // Stretch boundary timing (epoch ms): end of the planning stretch ahead of the card, start of the continuation after it
+  endedAt?: number;
+  resumedAt?: number;
 }
 
 // Context compaction (ACP compaction_update): a single status line

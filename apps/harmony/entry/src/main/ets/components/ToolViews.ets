@@ -113,7 +113,7 @@ export function blockSig(b: Block): string {
     size += (c.text ?? '').length + (c.lines ?? []).length + (c.items ?? []).length;
   }
   return `${b.type}:${b.id ?? ''}:${b.status ?? ''}:${(b.markdown ?? '').length}:${(b.text ?? '').length}:` +
-    `${b.streaming === true}:${size}:${b.endedAt ?? ''}:${b.asyncTask?.state ?? ''}:${b.outcome ?? ''}:` +
+    `${b.streaming === true}:${size}:${b.endedAt ?? ''}:${b.resumedAt ?? ''}:${b.asyncTask?.state ?? ''}:${b.outcome ?? ''}:` +
     `${(b.entries ?? b.todoEntries ?? []).map((e: PlanEntry) => e.status).join('')}:${b.retry?.attempts.length ?? ''}` +
     `${b.retry?.status ?? ''}:${b.diffStat?.add ?? ''}:${b.diffStat?.del ?? ''}`;
 }

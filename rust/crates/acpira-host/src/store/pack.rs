@@ -51,7 +51,7 @@ fn placeholder(names: &[String]) -> Turn {
     id.push_str(n);
   }
   Turn::Agent(AgentTurn {
-    blocks: vec![AgentBlock::Text(TextBlock { id: Some(id), phase: None, markdown: t("host.packedNotice"), streaming: None, images: None })],
+    blocks: vec![AgentBlock::Text(TextBlock { id: Some(id), phase: None, markdown: t("host.packedNotice"), streaming: None, images: None, ended_at: None, resumed_at: None })],
     ..Default::default()
   })
 }

@@ -27,6 +27,8 @@ pub fn restore_interrupted_turns(mut turns: Vec<Turn>, updated_at: &str) -> Vec<
       match b {
         AgentBlock::ToolCall(x) => observed = observed.max(x.started_at.unwrap_or(0)).max(x.ended_at.unwrap_or(0)),
         AgentBlock::Thought(x) => observed = observed.max(x.started_at.unwrap_or(0)),
+        AgentBlock::Text(x) => observed = observed.max(x.ended_at.unwrap_or(0)).max(x.resumed_at.unwrap_or(0)),
+        AgentBlock::PlanDocument(x) => observed = observed.max(x.ended_at.unwrap_or(0)).max(x.resumed_at.unwrap_or(0)),
         _ => {}
       }
     }

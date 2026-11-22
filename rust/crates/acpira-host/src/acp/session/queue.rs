@@ -524,18 +524,26 @@ impl AcpSession {
     c.phase.running = true;
     reopen_idle(&mut c.state);
     if let Some(Turn::Agent(t)) = c.state.turns.last_mut() {
+      let ended_at = t.ended_at.take();
       t.stop = None;
-      t.ended_at = None;
-      mark_reply_final(t);
+      mark_reply_final(t, ended_at);
     }
   }
 
   /// The detached peer turn reported its thread idle (or, for an autonomous cycle, its result or a stop): settle it like a
   /// prompt response, hand a finished one to the workspace gate and let the queue move. One that ended on a failure the
   /// CLI sends as text fails like a prompt, and on an expired sign-in reconnects and continues (`reauth_after_expiry`)
-  pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core, mut stop: TurnStop) {
+  pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core, stop: TurnStop) {
+    self.end_detached_at(c, stop, None, true);
+  }
+
+  /// Like [`Self::end_detached`], settling at a caller-supplied wall-clock timestamp (e.g. a late reply's last update).
+  /// `auto_compact` is false when a late reply closed on a mid-step timeout rather than a finished reply
+  pub(crate) fn end_detached_at(self: &Arc<Self>, c: &mut Core, mut stop: TurnStop, at: Option<i64>, auto_compact: bool) {
     c.peer.detached = false;
     c.late.open = false;
+    c.late.stirred = None;
+    c.late.stirred_at = None;
     let autonomous = std::mem::take(&mut c.peer.autonomous);
     if autonomous && stop == TurnStop::Cancelled {
       c.peer.autonomous_blocked = true;
@@ -545,7 +553,7 @@ impl AcpSession {
       if error.is_some() {
         stop = TurnStop::Cancelled;
       }
-      self.settle(c, stop, error);
+      self.settle_at(c, stop, error, at);
     }
     self.log(if autonomous { "autonomous cycle ended" } else { "detached turn ended (thread idle)" });
     // The reconnect hands off the turn just settled, the transcript's last
@@ -556,7 +564,7 @@ impl AcpSession {
       })
       .flatten();
     let me = self.clone();
-    tokio::spawn(async move { me.hooks_after_detached(stop) });
+    tokio::spawn(async move { me.hooks_after_detached(stop, auto_compact) });
     if let Some((idx, started_at)) = reauth {
       tokio::spawn(self.clone().reauth_after_expiry(idx, started_at));
     }
@@ -720,15 +728,24 @@ pub(crate) fn queue_snapshot(c: &Core) -> Option<Vec<QueuedPrompt>> {
 }
 
 /// A finished turn running again for work detached from any prompt (Claude's autonomous cycle, Codex's goal
-/// continuation, a steer's own peer turn): the prose it closed on is that stretch's reply. It is marked final, so the
-/// clients keep it in view as a reply and start a new stretch at what follows (`splitPlanSections`), instead of folding
-/// it into the process as text that more work came after. Prose that already carries a phase keeps it
-fn mark_reply_final(t: &mut AgentTurn) {
+/// continuation, a steer's own peer turn): the prose it closed on is that stretch's reply. It is marked final, and its
+/// closing block keeps `ended_at` before the reopen clears `AgentTurn.ended_at`, so the clients keep it in view with
+/// its own duration and start a new stretch at what follows (`splitPlanSections`). Prose that already carries a phase
+/// keeps it; an earlier stretch's boundary is left alone
+fn mark_reply_final(t: &mut AgentTurn, ended_at: Option<i64>) {
+  let mut stamped = false;
   for block in t.blocks.iter_mut().rev() {
     match block {
       AgentBlock::Text(text) => {
+        if text.ended_at.is_some() {
+          break;
+        }
         if text.phase.is_none() {
           text.phase = Some(TextPhase::Final);
+        }
+        if !stamped {
+          text.ended_at = ended_at;
+          stamped = true;
         }
       }
       // What the clients set aside from the process, and thinking or to-dos between closing paragraphs, which join the fold
@@ -744,18 +761,28 @@ mod tests {
   use super::*;
 
   fn text(markdown: &str) -> AgentBlock {
-    AgentBlock::Text(TextBlock { id: None, phase: None, markdown: markdown.into(), streaming: None, images: None })
+    AgentBlock::Text(TextBlock { id: None, phase: None, markdown: markdown.into(), streaming: None, images: None, ended_at: None, resumed_at: None })
   }
 
   fn phases(t: &AgentTurn) -> Vec<Option<TextPhase>> {
     t.blocks.iter().filter_map(|b| if let AgentBlock::Text(t) = b { Some(t.phase) } else { None }).collect()
   }
 
+  fn ends(t: &AgentTurn) -> Vec<Option<i64>> {
+    t.blocks.iter().filter_map(|b| if let AgentBlock::Text(t) = b { Some(t.ended_at) } else { None }).collect()
+  }
+
   #[test]
   fn reopening_marks_only_the_closing_prose_final() {
     let steer = AgentBlock::Steer(SteerBlock { id: "s1".into(), text: "and then".into(), attachments: None });
     let mut t = AgentTurn { blocks: vec![text("looking"), steer, text("done"), text("more")], ..Default::default() };
-    mark_reply_final(&mut t);
+    mark_reply_final(&mut t, Some(5000));
     assert_eq!(phases(&t), vec![None, Some(TextPhase::Final), Some(TextPhase::Final)]);
+    assert_eq!(ends(&t), vec![None, None, Some(5000)]);
+    // A second reopen marks only the new stretch's closing prose and leaves the first boundary untouched
+    t.blocks.push(text("later"));
+    mark_reply_final(&mut t, Some(9000));
+    assert_eq!(phases(&t), vec![None, Some(TextPhase::Final), Some(TextPhase::Final), Some(TextPhase::Final)]);
+    assert_eq!(ends(&t), vec![None, None, Some(5000), Some(9000)]);
   }
 }

@@ -350,6 +350,8 @@ data class TextBlock(
   val markdown: String = "",
   val streaming: Boolean? = null,
   val images: List<ImageRef>? = null,
+  val endedAt: Double? = null,
+  val resumedAt: Double? = null,
 ) : AgentBlock
 
 @Serializable
@@ -375,6 +377,8 @@ data class PlanDocumentBlock(
   val toolCallId: String = "",
   val approvalToolCallId: String? = null,
   val status: String = "",
+  val endedAt: Double? = null,
+  val resumedAt: Double? = null,
 ) : AgentBlock
 
 @Serializable

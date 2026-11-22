@@ -139,6 +139,7 @@ impl Env {
           m.remove("startedAt");
           m.remove("endedAt");
           m.remove("respondedAt");
+          m.remove("resumedAt");
           // Wall-clock measurements, never the same twice
           m.remove("decodeMs");
           m.remove("idleMs");

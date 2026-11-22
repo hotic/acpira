@@ -52,10 +52,10 @@ export struct UserBubble {
 }
 
 /**
- * A stretch as its own message: only the continuation owns the live activity and the turn's outcome, and with more than
- * one stretch none has timing of its own (repeating the whole turn's duration would lie)
+ * A stretch as its own message: only the continuation owns the live activity and the turn's outcome; each stretch reads
+ * its own boundary timestamps (undefined on legacy records, so an untimed split keeps showing bare Done)
  */
-function sectionTurn(turn: TurnX, section: PlanSection, last: boolean, split: boolean): TurnX {
+function sectionTurn(turn: TurnX, section: PlanSection, first: boolean, last: boolean): TurnX {
   const out: TurnX = { role: turn.role };
   out.id = turn.id;
   out.blocks = section.blocks;
@@ -67,17 +67,15 @@ function sectionTurn(turn: TurnX, section: PlanSection, last: boolean, split: bo
     out.error = turn.error;
     out.command = turn.command;
   }
-  if (!split) {
-    out.startedAt = turn.startedAt;
-    out.respondedAt = turn.respondedAt;
-    out.endedAt = turn.endedAt;
-  }
+  out.startedAt = first ? turn.startedAt : section.startedAt;
+  out.respondedAt = first ? turn.respondedAt : section.startedAt;
+  out.endedAt = last ? turn.endedAt : section.endedAt;
   return out;
 }
 
 /** A section's identity for a ForEach key: its key and what its message would show differently */
 function sectionSig(s: PlanSection): string {
-  return `${s.key}|${s.blocks.map(blockSig).join(',')}|${s.plan !== undefined ? blockSig(s.plan) : ''}`;
+  return `${s.key}|${s.startedAt ?? ''}:${s.endedAt ?? ''}|${s.blocks.map(blockSig).join(',')}|${s.plan !== undefined ? blockSig(s.plan) : ''}`;
 }
 
 /** One agent turn: its stretches (each a CodexMessage) with the plan cards between them, then the reply's actions */
@@ -173,7 +171,7 @@ export struct AgentMessage {
         Column({ space: Metrics.gap }) {
           if (this.shows(section, i)) {
             CodexMessage({
-              turn: sectionTurn(this.turnX(), section, i === this.sections.length - 1, this.sections.length > 1),
+              turn: sectionTurn(this.turnX(), section, i === 0, i === this.sections.length - 1),
               scopeKey: this.sections.length > 1 && i > 0 ? `${this.scopeKey()}/${section.key}` : this.scopeKey(),
               running: i === this.sections.length - 1 && this.running,
               now: this.now,
