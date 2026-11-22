@@ -240,8 +240,8 @@ mod tests {
   fn local_paths_are_never_remote() {
     assert!(!is_remote_folder("/ssh:/x"));
     assert!(!is_remote_folder("ssh:/x"));
-    assert!(is_remote_folder("ssh://gen1/x"));
+    assert!(is_remote_folder("ssh://example-host/x"));
     assert_eq!(format_remote_folder("-x", "/a"), None);
-    assert_eq!(format_remote_folder("gen1", "relative"), None);
+    assert_eq!(format_remote_folder("example-host", "relative"), None);
   }
 }

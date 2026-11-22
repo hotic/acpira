@@ -50,15 +50,15 @@ async fn until(what: &str, mut pred: impl FnMut() -> bool) {
 async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   let lab = Lab::new();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   // `add` connects at once: stop it, so the first record is written while the host is away
-  connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Disconnect { alias: "example-host".into() }).await.unwrap();
   let local = lab.path().join("engine").join("sessions");
   let store = TranscriptStore::new(local.clone(), Arc::new(|_: &str| {}), None);
 
   // Written before the host is reached, with a blob: copied once it connects (the comparison reads the index)
   let (blob, _) = store.save_blob("s-early", ".png", b"picture").await.unwrap();
-  store.flush(record("s-early", "ssh://gen1/home/u/app", "2026-10-01T00:00:00.000Z")).await.unwrap();
+  store.flush(record("s-early", "ssh://example-host/home/u/app", "2026-10-01T00:00:00.000Z")).await.unwrap();
   store.flush(record("s-here", "/work/x", "2026-10-01T00:00:00.000Z")).await.unwrap();
   store.sync_index(&[], &HashSet::new()).await.unwrap();
 
@@ -67,7 +67,7 @@ async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   let g = gone.clone();
   mirror.set_gone_hook(Arc::new(move |alias: &str, id: Option<&str>| g.lock().unwrap().push((alias.to_owned(), id.map(str::to_owned)))));
   mirror.start();
-  connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
+  connections.op(ConnectionOp::Connect { alias: "example-host".into(), accept_new_machine: false }).await.unwrap();
 
   let early = host_sessions(&lab).join("s-early.json");
   until("the early record's copy", || early.exists()).await;
@@ -78,7 +78,7 @@ async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   assert!(!host_sessions(&lab).join("s-here.json").exists(), "a local folder's record never leaves");
 
   // Written while connected: copied with the next batch
-  store.flush(record("s-live", "ssh://gen1/home/u/app", "2026-10-02T00:00:00.000Z")).await.unwrap();
+  store.flush(record("s-live", "ssh://example-host/home/u/app", "2026-10-02T00:00:00.000Z")).await.unwrap();
   let live = host_sessions(&lab).join("s-live.json");
   until("the live record's copy", || live.exists()).await;
 
@@ -87,46 +87,46 @@ async fn records_in_a_host_folder_have_their_copy_in_the_hosts_store() {
   newer["updatedAt"] = json!("2026-10-09T00:00:00.000Z");
   newer["title"] = json!("continued on the host");
   std::fs::write(&live, serde_json::to_vec(&newer).unwrap()).unwrap();
-  store.flush(record("s-live", "ssh://gen1/home/u/app", "2026-10-03T00:00:00.000Z")).await.unwrap();
+  store.flush(record("s-live", "ssh://example-host/home/u/app", "2026-10-03T00:00:00.000Z")).await.unwrap();
   tokio::time::sleep(Duration::from_millis(500)).await;
   assert_eq!(read(&live).unwrap()["title"], "continued on the host");
 
   // Deleted here: the host's list drops it at once, then the copy and its blobs go
   store.trash("s-early").await.unwrap();
-  assert!(gone.lock().unwrap().contains(&("gen1".into(), Some("s-early".into()))));
+  assert!(gone.lock().unwrap().contains(&("example-host".into(), Some("s-early".into()))));
   until("the early copy removed", || !early.exists() && !host_sessions(&lab).join("s-early").exists()).await;
-  until("the host's list asked for again", || gone.lock().unwrap().contains(&("gen1".into(), None))).await;
+  until("the host's list asked for again", || gone.lock().unwrap().contains(&("example-host".into(), None))).await;
 
   // Deleted on the host and still in its trash: not brought back
   let trash = host_sessions(&lab).join("trash");
   std::fs::create_dir_all(&trash).unwrap();
   std::fs::rename(&live, trash.join("s-live.json")).unwrap();
-  store.flush(record("s-live", "ssh://gen1/home/u/app", "2026-10-10T00:00:00.000Z")).await.unwrap();
+  store.flush(record("s-live", "ssh://example-host/home/u/app", "2026-10-10T00:00:00.000Z")).await.unwrap();
   tokio::time::sleep(Duration::from_millis(500)).await;
   assert!(!live.exists(), "a deletion on the host stands while its undo window lasts");
 
   // Deleted while the host is away, and this engine restarted before it is back: the deletion still reaches it
-  store.flush(record("s-away", "ssh://gen1/home/u/app", "2026-10-11T00:00:00.000Z")).await.unwrap();
+  store.flush(record("s-away", "ssh://example-host/home/u/app", "2026-10-11T00:00:00.000Z")).await.unwrap();
   let away = host_sessions(&lab).join("s-away.json");
   until("the away record's copy", || away.exists()).await;
-  connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Disconnect { alias: "example-host".into() }).await.unwrap();
   store.trash("s-away").await.unwrap();
   let tombs = lab.path().join("engine").join("run").join("remote").join("gone.json");
-  let filed = |id: &str| read(&tombs).is_some_and(|t| t["gen1"].as_array().is_some_and(|ids| ids.contains(&json!(id))));
+  let filed = |id: &str| read(&tombs).is_some_and(|t| t["example-host"].as_array().is_some_and(|ids| ids.contains(&json!(id))));
   until("the deletion filed", || filed("s-away")).await;
   mirror.stop();
   let mirror = HostMirror::with_batch(connections.clone(), store.clone(), &lab.path().join("engine"), Arc::new(|_: &str| {}), Duration::from_millis(50));
   mirror.start();
-  connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
+  connections.op(ConnectionOp::Connect { alias: "example-host".into(), accept_new_machine: false }).await.unwrap();
   until("the away copy removed", || !away.exists()).await;
   until("the deletion unfiled", || !filed("s-away")).await;
 
   // Moved off the host to a local folder: the host's standby copy is removed cleanly
-  store.flush(record("s-moved", "ssh://gen1/home/u/app", "2026-10-12T00:00:00.000Z")).await.unwrap();
+  store.flush(record("s-moved", "ssh://example-host/home/u/app", "2026-10-12T00:00:00.000Z")).await.unwrap();
   let moved = host_sessions(&lab).join("s-moved.json");
   until("the moved record's copy", || moved.exists()).await;
   store.flush(record("s-moved", "/work/local", "2026-10-12T00:00:01.000Z")).await.unwrap();
-  store.notify_left_cwd("s-moved", "ssh://gen1/home/u/app");
+  store.notify_left_cwd("s-moved", "ssh://example-host/home/u/app");
   until("the old host copy removed after move", || !moved.exists()).await;
   assert_eq!(store.load("s-moved").await.unwrap().cwd, "/work/local");
 
@@ -139,8 +139,8 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
   use acpira_shared::transcript::Turn;
   let lab = Lab::new();
   let connections = lab.engine("continuity");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
   let root = lab.path().join("continuity");
   let store = TranscriptStore::new(root.join("sessions"), Arc::new(|_: &str| {}), None);
   store.set_agent_home(root.clone());
@@ -150,7 +150,7 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
   for diverged in [false, true] {
     let id = if diverged { "diverged-copy" } else { "ancestor-copy" };
     let sid = format!("native-{id}");
-    let mut local = (*record(id, "ssh://gen1/work", "2026-10-01T00:00:00.000Z")).clone();
+    let mut local = (*record(id, "ssh://example-host/work", "2026-10-01T00:00:00.000Z")).clone();
     local.acp_session_id = Some(sid.clone());
     local.turns = serde_json::from_value(json!([
       { "role": "user", "text": "shared question" },
@@ -169,7 +169,7 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
     local.updated_at = "2026-10-01T00:00:05.000Z".into();
     store.flush(Arc::new(local.clone())).await.unwrap();
     until("native log appended incrementally", || std::fs::read_to_string(&remote_log).ok().as_deref() == Some(&appended)).await;
-    connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+    connections.op(ConnectionOp::Disconnect { alias: "example-host".into() }).await.unwrap();
     let mut remote = host.load(id).await.unwrap();
     remote.copy_of = None;
     remote.updated_at = "2026-10-02T00:00:00.000Z".into();
@@ -180,7 +180,7 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
       local.updated_at = "2026-10-03T00:00:00.000Z".into();
       store.flush(Arc::new(local)).await.unwrap();
     }
-    connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
+    connections.op(ConnectionOp::Connect { alias: "example-host".into(), accept_new_machine: false }).await.unwrap();
     until("local identity retired", || !crate::support::listed(&root.join("sessions"), id)).await;
     assert_eq!(host.load(id).await.unwrap().turns, remote.turns);
     assert!(std::fs::read_to_string(&remote_log).unwrap() == appended);
@@ -197,7 +197,7 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
     } else {
       assert!(list.iter().all(|s| s.id != id));
     }
-    let stamp = connections.client("gen1").unwrap().call("storeStat", json!({ "ids": [id] })).await.unwrap();
+    let stamp = connections.client("example-host").unwrap().call("storeStat", json!({ "ids": [id] })).await.unwrap();
     assert_eq!(stamp.value["records"][id]["takenOver"], true);
   }
   mirror.stop();

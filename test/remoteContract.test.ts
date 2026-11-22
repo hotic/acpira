@@ -31,7 +31,7 @@ describe.skipIf(process.platform === 'win32')('sidecar SSH connections', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'acpira-remote-')));
     const data = join(root, 'data'), home = join(root, 'home'), hostHome = join(root, 'host');
     for (const d of [data, join(home, '.ssh'), join(hostHome, 'work')]) mkdirSync(d, { recursive: true });
-    writeFileSync(join(home, '.ssh', 'config'), 'Host gen1\n  HostName 10.0.0.9\n  User dev\n  Port 2222\n\nHost *\n  ServerAliveInterval 30\n');
+    writeFileSync(join(home, '.ssh', 'config'), 'Host example-host\n  HostName 10.0.0.9\n  User dev\n  Port 2222\n\nHost *\n  ServerAliveInterval 30\n');
     const { ssh, bin } = fakeSsh(root, hostHome);
     const s = new Shell(data, '', undefined, { HOME: home, ACPIRA_SSH: ssh, ACPIRA_REMOTE_BIN: bin });
     cleanups.push(async () => { await s.kill(); rmSync(root, { recursive: true, force: true }); });
@@ -43,27 +43,27 @@ describe.skipIf(process.platform === 'win32')('sidecar SSH connections', () => {
     s.view('V', { type: 'connections' });
     expect((await s.hostMsg('V', 'connections')).connections).toEqual([]);
     s.view('V', { type: 'sshHosts' });
-    expect((await s.hostMsg('V', 'sshHosts')).hosts).toEqual([{ alias: 'gen1', address: 'dev@10.0.0.9:2222' }]);
+    expect((await s.hostMsg('V', 'sshHosts')).hosts).toEqual([{ alias: 'example-host', address: 'dev@10.0.0.9:2222' }]);
 
-    s.view('V', { type: 'connectionOp', op: { op: 'add', alias: 'gen1' } });
+    s.view('V', { type: 'connectionOp', op: { op: 'add', alias: 'example-host' } });
     const up = await s.hostMsg('V', 'connections', m => m.connections[0]?.state === 'connected', 30_000);
-    expect(up.connections[0]).toMatchObject({ alias: 'gen1', address: 'dev@10.0.0.9:2222', projects: [] });
+    expect(up.connections[0]).toMatchObject({ alias: 'example-host', address: 'dev@10.0.0.9:2222', projects: [] });
     expect(up.connections[0]?.remoteVersion).toMatch(/^\d+\.\d+\.\d+/);
     // The steps went by on the way
     const steps = new Set(s.hostMsgs('V').flatMap(m => (m.type === 'connections' ? m.connections.map(c => c.step) : [])));
     expect([...steps]).toEqual(expect.arrayContaining(['ssh', 'probe', 'upload', 'start']));
 
-    s.view('V', { type: 'remoteDir', alias: 'gen1', seq: 7 });
+    s.view('V', { type: 'remoteDir', alias: 'example-host', seq: 7 });
     const dir = await s.hostMsg('V', 'remoteDir', m => m.seq === 7, 30_000);
     expect(dir.error).toBeUndefined();
     expect(dir.path).toBe(hostHome);
     expect(dir.entries).toEqual(expect.arrayContaining([{ name: 'work', dir: true }]));
-    s.view('V', { type: 'remoteDir', alias: 'gen1', path: '/no/such/folder', seq: 8 });
+    s.view('V', { type: 'remoteDir', alias: 'example-host', path: '/no/such/folder', seq: 8 });
     expect((await s.hostMsg('V', 'remoteDir', m => m.seq === 8)).error).toBeTruthy();
 
-    s.view('V', { type: 'connectionOp', op: { op: 'disconnect', alias: 'gen1' } });
+    s.view('V', { type: 'connectionOp', op: { op: 'disconnect', alias: 'example-host' } });
     await s.hostMsg('V', 'connections', m => m.connections[0]?.state === 'off');
-    s.view('V', { type: 'connectionOp', op: { op: 'remove', alias: 'gen1' } });
+    s.view('V', { type: 'connectionOp', op: { op: 'remove', alias: 'example-host' } });
     await s.hostMsg('V', 'connections', m => m.connections.length === 0 && s.hostMsgs('V').filter(x => x.type === 'connections').length > 3);
   });
 });

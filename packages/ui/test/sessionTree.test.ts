@@ -90,8 +90,8 @@ describe('session tree', () => {
   });
 
   it('a project shell groups only the host folders it added; the rest of a host list shows in a search', () => {
-    const added = 'ssh://gen1/home/u/app';
-    const other = 'ssh://gen1/home/u/scratch';
+    const added = 'ssh://example-host/home/u/app';
+    const other = 'ssh://example-host/home/u/scratch';
     const shown = [s('a', { cwd: added, updatedAt: at(9) }), s('b', { cwd: other, updatedAt: at(8) }), s('c', { cwd: '/work/local', updatedAt: at(7) })];
     const input = { ...base, categories: [], workspace: undefined, shown, grouped: true, registered: [WS, added] };
     // A local folder a session ran in still joins the list on its own
@@ -104,9 +104,9 @@ describe('session tree', () => {
   });
 
   it.each([false, true])('pins obey the project list with pinInProject=%s', pinInProject => {
-    const added = 'ssh://gen1/home/u/app';
-    const other = 'ssh://gen1/home/u/scratch';
-    const removed = 'ssh://gen1/home/u/removed';
+    const added = 'ssh://example-host/home/u/app';
+    const other = 'ssh://example-host/home/u/scratch';
+    const removed = 'ssh://example-host/home/u/removed';
     const shown = [s('added', { cwd: added, pinned: true }), s('other', { cwd: other, pinned: true }), s('removed', { cwd: removed, pinned: true }), s('local', { pinned: true })];
     const input = { ...base, categories: [], shown, grouped: true, registered: [WS, added], removed: [removed], pinInProject };
     const pins = (tree: ReturnType<typeof buildSessionTree>) => [...tree.pinned, ...tree.projects.flatMap(p => p.pinned)].map(x => x.id).sort();
@@ -119,7 +119,7 @@ describe('session tree', () => {
   });
 
   it('filters project sessions before any layout, keeping ordinary and pinned rows under the same rules', () => {
-    const remote = 'ssh://gen1/home/u/other';
+    const remote = 'ssh://example-host/home/u/other';
     const gone = '/work/gone';
     const shown = [s('local'), s('remote', { cwd: remote }), s('pin', { cwd: remote, pinned: true }), s('gone', { cwd: gone }), s('gone-pin', { cwd: gone, pinned: true })];
     const input = { registered: [WS], removed: [gone], filtering: false };

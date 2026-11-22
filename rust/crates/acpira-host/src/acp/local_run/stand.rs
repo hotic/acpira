@@ -489,11 +489,11 @@ mod tests {
   }
 
   fn stand() -> Stand {
-    Stand::new(profile("claude"), "gen1", "/home/u/proj/", Path::new("/Users/me/.acpira"))
+    Stand::new(profile("claude"), "example-host", "/home/u/proj/", Path::new("/Users/me/.acpira"))
   }
 
   fn agy_stand() -> Stand {
-    Stand::new(profile("antigravity"), "gen1", "/home/u/proj/", Path::new("/Users/me/.acpira"))
+    Stand::new(profile("antigravity"), "example-host", "/home/u/proj/", Path::new("/Users/me/.acpira"))
   }
 
   #[cfg(unix)]
@@ -504,7 +504,7 @@ mod tests {
     let remote = root.path().join("remote");
     std::fs::create_dir_all(remote.join("hosts")).unwrap();
     std::fs::set_permissions(&remote, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let s = Stand::new(profile("claude"), "gen1", "/mnt/proj", root.path());
+    let s = Stand::new(profile("claude"), "example-host", "/mnt/proj", root.path());
     s.make(root.path()).unwrap();
     assert!(s.local.is_dir());
     assert!(!s.local.join(".agents").exists());
@@ -514,7 +514,7 @@ mod tests {
   #[test]
   fn antigravity_stand_in_writes_pre_tool_use_hooks_keeping_claude_empty() {
     let root = tempfile::tempdir().unwrap();
-    let s = Stand::new(profile("antigravity"), "gen1", "/mnt/proj", root.path());
+    let s = Stand::new(profile("antigravity"), "example-host", "/mnt/proj", root.path());
     s.make(root.path()).unwrap();
     let hooks: Value = serde_json::from_slice(&std::fs::read(s.local.join(".agents/hooks.json")).unwrap()).unwrap();
     let rules = hooks["hooks"]["PreToolUse"].as_array().unwrap();
@@ -527,12 +527,12 @@ mod tests {
   #[test]
   fn a_profiles_own_files_land_in_the_stand_in() {
     let root = tempfile::tempdir().unwrap();
-    let s = Stand::new(profile("dsh"), "gen1", "/mnt/proj", root.path());
+    let s = Stand::new(profile("dsh"), "example-host", "/mnt/proj", root.path());
     s.make(root.path()).unwrap();
     let patch = std::fs::read_to_string(s.local.join(".acpira/dsh.patch.yml")).unwrap();
     assert!(patch.starts_with("- id: tool-bash\n  disabled: true\n"), "{patch}");
     assert!(s.profile.args().any(|a| a == ".acpira/dsh.patch.yml"));
-    let droid = Stand::new(profile("droid"), "gen1", "/mnt/proj", root.path());
+    let droid = Stand::new(profile("droid"), "example-host", "/mnt/proj", root.path());
     droid.make(root.path()).unwrap();
     let hooks: Value = serde_json::from_slice(&std::fs::read(droid.local.join(".factory/settings.json")).unwrap()).unwrap();
     assert_eq!(hooks["hooks"]["PreToolUse"][0]["matcher"], "^(Execute|Grep|Glob|LS)$");
@@ -545,9 +545,9 @@ mod tests {
     p.gates.push(Gate::Hook(HookFormat::Claude(".mine/settings.json".into())));
     p.native.shell = vec!["Execute".into()];
     p.native.files = vec!["Read".into(), "Create".into()];
-    let s = Stand::new(Arc::new(p), "gen1", "/mnt/proj", root.path());
+    let s = Stand::new(Arc::new(p), "example-host", "/mnt/proj", root.path());
     s.make(root.path()).unwrap();
-    assert!(s.local.starts_with(root.path().join("remote/stand/mine/gen1")));
+    assert!(s.local.starts_with(root.path().join("remote/stand/mine/example-host")));
     let hooks: Value = serde_json::from_slice(&std::fs::read(s.local.join(".mine/settings.json")).unwrap()).unwrap();
     let rules = hooks["hooks"]["PreToolUse"].as_array().unwrap();
     assert_eq!(rules[0]["matcher"], "^(Execute)$");
@@ -606,22 +606,22 @@ mod tests {
   fn the_stand_in_maps_to_the_host_folder() {
     let data = Path::new("/Users/me/.acpira");
     let s = stand();
-    assert_eq!(s.local, PathBuf::from("/Users/me/.acpira/remote/hosts/gen1/home/u/proj"));
-    assert_eq!(s.host_path("/Users/me/.acpira/remote/hosts/gen1/home/u/proj"), "/home/u/proj");
-    assert_eq!(s.host_path("/Users/me/.acpira/remote/hosts/gen1/home/u/proj/src/a.rs"), "/home/u/proj/src/a.rs");
+    assert_eq!(s.local, PathBuf::from("/Users/me/.acpira/remote/hosts/example-host/home/u/proj"));
+    assert_eq!(s.host_path("/Users/me/.acpira/remote/hosts/example-host/home/u/proj"), "/home/u/proj");
+    assert_eq!(s.host_path("/Users/me/.acpira/remote/hosts/example-host/home/u/proj/src/a.rs"), "/home/u/proj/src/a.rs");
     // A sibling whose name only starts the same is not inside
-    assert_eq!(s.host_path("/Users/me/.acpira/remote/hosts/gen1/home/u/project2/a"), "/Users/me/.acpira/remote/hosts/gen1/home/u/project2/a");
+    assert_eq!(s.host_path("/Users/me/.acpira/remote/hosts/example-host/home/u/project2/a"), "/Users/me/.acpira/remote/hosts/example-host/home/u/project2/a");
     assert_eq!(s.host_path("src/a.rs"), "/home/u/proj/src/a.rs");
     assert_eq!(s.host_path("./a.rs"), "/home/u/proj/a.rs");
     assert_eq!(s.host_path("/etc/hosts"), "/etc/hosts");
     assert_eq!(Stand::new(profile("claude"), "h", "/", Path::new("/d")).host_path("/d/remote/hosts/h/x"), "/x");
-    assert_eq!(resolve_host_path("gen1", "/home/u/proj", data, "/Users/me/.acpira/remote/antigravity/gen1/home/u/proj/src/lib.rs"), "/home/u/proj/src/lib.rs");
-    assert_eq!(resolve_host_path("gen1", "/home/u/proj/", data, "/Users/me/.acpira/remote/hosts/gen1/home/u/proj/a"), "/home/u/proj/a");
-    assert_eq!(resolve_host_path("gen1", "/home/u/proj", data, "/Users/me/.acpira/remote/stand/droid/gen1/home/u/proj/b.rs"), "/home/u/proj/b.rs");
-    assert_eq!(resolve_host_path("gen1", "/home/u/proj", data, "src/c.rs"), "/home/u/proj/src/c.rs");
-    assert_eq!(resolve_host_path("gen1", "/home/u/proj", data, "/etc/hosts"), "/etc/hosts");
+    assert_eq!(resolve_host_path("example-host", "/home/u/proj", data, "/Users/me/.acpira/remote/antigravity/example-host/home/u/proj/src/lib.rs"), "/home/u/proj/src/lib.rs");
+    assert_eq!(resolve_host_path("example-host", "/home/u/proj/", data, "/Users/me/.acpira/remote/hosts/example-host/home/u/proj/a"), "/home/u/proj/a");
+    assert_eq!(resolve_host_path("example-host", "/home/u/proj", data, "/Users/me/.acpira/remote/stand/droid/example-host/home/u/proj/b.rs"), "/home/u/proj/b.rs");
+    assert_eq!(resolve_host_path("example-host", "/home/u/proj", data, "src/c.rs"), "/home/u/proj/src/c.rs");
+    assert_eq!(resolve_host_path("example-host", "/home/u/proj", data, "/etc/hosts"), "/etc/hosts");
     // Another host's stand-in is not this folder
-    assert_eq!(resolve_host_path("gen1", "/home/u/proj", data, "/Users/me/.acpira/remote/stand/droid/gen2/home/u/proj/b.rs"), "/Users/me/.acpira/remote/stand/droid/gen2/home/u/proj/b.rs");
+    assert_eq!(resolve_host_path("example-host", "/home/u/proj", data, "/Users/me/.acpira/remote/stand/droid/other-host/home/u/proj/b.rs"), "/Users/me/.acpira/remote/stand/droid/other-host/home/u/proj/b.rs");
   }
 
   #[test]
@@ -635,7 +635,7 @@ mod tests {
     assert!(is_quiet_write(&s, "/Users/me/.claude/plans/p.md", home));
     assert!(!is_quiet_write(&s, "/Users/me/.acpira/plans/p.md", home), "the data root is no plan folder");
     assert!(here("Read", json!({ "file_path": "/private/tmp/claude-501/out.txt" })));
-    assert!(!here("Read", json!({ "file_path": "/Users/me/.acpira/remote/hosts/gen1/home/u/proj/a.rs" })));
+    assert!(!here("Read", json!({ "file_path": "/Users/me/.acpira/remote/hosts/example-host/home/u/proj/a.rs" })));
     assert!(!here("Read", json!({ "file_path": "src/a.rs" })));
     assert!(!here("Bash", json!({ "command": "cat /Users/me/.claude/x" })));
     assert!(!here("Grep", json!({ "pattern": "x" })));
@@ -649,7 +649,7 @@ mod tests {
     let agy_roots = here_roots(&agy, home, data);
     assert!(runs_here("Write", &json!({ "file_path": "/Users/me/.gemini/antigravity-cli/brain/id/plan.md", "content": "x" }), &agy, data, &agy_roots));
     assert!(is_quiet_write(&agy, "/Users/me/.gemini/antigravity-cli/brain/id/plan.md", home));
-    assert!(!runs_here("Read", &json!({ "file_path": "/Users/me/.acpira/remote/antigravity/gen1/home/u/proj/a.rs" }), &agy, data, &agy_roots));
+    assert!(!runs_here("Read", &json!({ "file_path": "/Users/me/.acpira/remote/antigravity/example-host/home/u/proj/a.rs" }), &agy, data, &agy_roots));
     assert!(!runs_here("Read", &json!({ "file_path": "/tmp/claude-501/out.txt" }), &agy, data, &agy_roots), "Claude's temp files are Claude's");
   }
 
@@ -660,7 +660,7 @@ mod tests {
     let agy = agy_stand();
     assert!(blocked_native(&agy, &json!({ "name": "run_command", "rawInput": { "CommandLine": "ls" } }), home, data));
     assert!(blocked_native(&agy, &json!({ "name": "read_file", "rawInput": { "Path": "/etc/hosts" } }), home, data));
-    assert!(blocked_native(&agy, &json!({ "name": "read_file", "rawInput": { "Path": "/Users/me/.acpira/remote/antigravity/gen1/home/u/proj/a" } }), home, data));
+    assert!(blocked_native(&agy, &json!({ "name": "read_file", "rawInput": { "Path": "/Users/me/.acpira/remote/antigravity/example-host/home/u/proj/a" } }), home, data));
     // agy's own files pass under an absolute home (`/Users/me` has no drive on Windows)
     let me = if cfg!(windows) { "C:/Users/me" } else { "/Users/me" };
     let own = format!("{me}/.gemini/skills/a/SKILL.md");
@@ -685,7 +685,7 @@ mod tests {
     assert!(!blocked_native(&agy, &json!({ "title": "Run mcp_playwright_click", "kind": "execute" }), home, data));
 
     // A CLI the profile knows nothing of: refused by kind
-    let mine = Stand::new(Arc::new(generic("mine", "Mine")), "gen1", "/home/u/proj", data);
+    let mine = Stand::new(Arc::new(generic("mine", "Mine")), "example-host", "/home/u/proj", data);
     assert!(blocked_native(&mine, &json!({ "title": "exec", "kind": "execute", "rawInput": { "command": "ls" } }), home, data));
     assert!(blocked_native(&mine, &json!({ "title": "Edit a.rs", "kind": "edit", "locations": [{ "path": "/home/u/proj/a.rs" }] }), home, data));
     assert!(blocked_native(&mine, &json!({ "title": "Delete", "kind": "delete" }), home, data), "a write naming no path cannot be checked");
@@ -700,10 +700,10 @@ mod tests {
     assert!(!unjudged(&mine, &json!({ "title": "Read a.rs", "kind": "read" })));
 
     // Grok names the tool in `_meta`, under a title that is the command; DSH files every tool under `other`
-    let grok = Stand::new(profile("grok"), "gen1", "/home/u/proj", data);
+    let grok = Stand::new(profile("grok"), "example-host", "/home/u/proj", data);
     let run = json!({ "title": "Execute `hostname`", "kind": "other", "_meta": { "x.ai/tool": { "name": "run_terminal_command" } } });
     assert!(blocked_native(&grok, &run, home, data));
-    let dsh = Stand::new(profile("dsh"), "gen1", "/home/u/proj", data);
+    let dsh = Stand::new(profile("dsh"), "example-host", "/home/u/proj", data);
     assert!(blocked_native(&dsh, &json!({ "title": "write", "kind": "other", "rawInput": { "file_path": "/tmp/x", "content": "x" } }), home, data));
     assert!(!blocked_native(&dsh, &json!({ "title": "todo_write", "kind": "other" }), home, data));
     assert!(!unjudged(&dsh, &json!({ "title": "todo_write", "kind": "other" })), "its gate took the shell away");
@@ -714,7 +714,7 @@ mod tests {
     let me = if cfg!(windows) { "C:/Users/dev" } else { "/Users/me" };
     let home = Path::new(me);
     let data = home.join(".acpira");
-    let agy = Stand::new(profile("antigravity"), "asgard-gen1", "/home/u/proj", &data);
+    let agy = Stand::new(profile("antigravity"), "example-host", "/home/u/proj", &data);
     let media = format!("{me}/.acpira/plugins/.data/asgard-gateway/agy-sessions/s1/.gemini/antigravity-cli/brain/b1/.system_generated/steps/114/media_0.png");
     let expected = crate::store::data_dir::normalize(Path::new(&media));
     assert_eq!(local_own_path(&agy, &media, home, &data), Some(expected.clone()));

@@ -154,7 +154,7 @@ mod tests {
     assert!(!Remote::runs_there(&local, own));
     let there = Action::Bash { command: "ls".into(), workdir: cwd.into(), timeout_ms: 1000, background: false, interactive: false };
     assert!(Remote::runs_there(&there, own));
-    assert!(Remote::of(&json!({ "_meta": { "acpira/remote": { "alias": "gen1" } } })).is_some_and(|r| r.alias == "gen1"));
+    assert!(Remote::of(&json!({ "_meta": { "acpira/remote": { "alias": "example-host" } } })).is_some_and(|r| r.alias == "example-host"));
     assert!(Remote::of(&json!({ "cwd": "/x" })).is_none());
   }
 }

@@ -162,26 +162,26 @@ async fn a_folder_on_an_ssh_host_is_a_project_in_one_spelling() {
   std::fs::create_dir_all(real.join("work")).unwrap();
   lab.map_root("/acpira-virtual-host", &real);
   let connections = lab.engine("engine");
-  connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   // An installed external ACP runs here in a stand-in by default (`localRun`, `sshLocalAgents`), so the folder checks are this engine's
   let mut opts = Opts::with_agents(fake.setting(json!({ "localRun": true })), "fake").cwd(&home).projects();
   opts.remote = Some(connections.clone());
   let m = Mgr::new(&dir.path().join("sessions"), opts);
   m.init().await;
 
-  m.handle(json!({ "type": "categoryOp", "op": "addProject", "cwd": "ssh://gen1//acpira-virtual-host/./work/" })).await;
-  let canonical = "ssh://gen1/acpira-virtual-host/work";
+  m.handle(json!({ "type": "categoryOp", "op": "addProject", "cwd": "ssh://example-host//acpira-virtual-host/./work/" })).await;
+  let canonical = "ssh://example-host/acpira-virtual-host/work";
   assert_eq!(projects_of(&m), json!([canonical]));
   m.handle(json!({ "type": "categoryOp", "op": "addProject", "cwd": canonical })).await;
   assert_eq!(projects_of(&m), json!([canonical]), "the same folder once");
 
   // Missing on the host: refused like a missing local folder
-  m.handle(json!({ "type": "newSession", "cwd": "ssh://gen1/acpira-virtual-host/nope" })).await;
+  m.handle(json!({ "type": "newSession", "cwd": "ssh://example-host/acpira-virtual-host/nope" })).await;
   assert!(m.toasts().iter().any(|t| t.contains("nope")), "{:?}", m.toasts());
   assert_eq!(m.active_id(), None);
 
   // There: the session takes the canonical folder and its agent starts here
-  m.handle(json!({ "type": "newSession", "cwd": "ssh://gen1/acpira-virtual-host/work/" })).await;
+  m.handle(json!({ "type": "newSession", "cwd": "ssh://example-host/acpira-virtual-host/work/" })).await;
   assert_eq!(cwd_of(&m), json!(canonical));
   until(|| m.active().is_some_and(|v| v["status"] == "ready"), 10000).await;
   assert!(m.active().is_some_and(|v| v["error"].is_null()), "{:?}", m.active());
@@ -239,11 +239,11 @@ async fn a_host_file_the_page_shows_is_read_once_until_it_changes() {
   std::fs::create_dir_all(real.join("work")).unwrap();
   lab.map_root("/acpira-virtual-host", &real);
   let connections = lab.engine("engine");
-  connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let mut opts = Opts::fake(&fake).cwd(&folder(dir.path(), "home"));
   opts.remote = Some(connections.clone());
   let m = Mgr::new(&dir.path().join("sessions"), opts);
-  let ws = acpira_host::workspace::Workspace::open("ssh://gen1/acpira-virtual-host/work", Some(&connections)).await.unwrap();
+  let ws = acpira_host::workspace::Workspace::open("ssh://example-host/acpira-virtual-host/work", Some(&connections)).await.unwrap();
   let shot = Path::new("/acpira-virtual-host/work/shot.png");
   std::fs::write(real.join("work/shot.png"), b"\x89PNG first").unwrap();
 

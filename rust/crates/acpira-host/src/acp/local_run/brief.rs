@@ -87,13 +87,13 @@ mod tests {
 
   fn stand(id: &str) -> Stand {
     let profile = builtin(id).and_then(|l| l.stand().cloned()).unwrap();
-    Stand::new(profile, "gen1", "/home/u/proj/", Path::new("/Users/me/.acpira"))
+    Stand::new(profile, "example-host", "/home/u/proj/", Path::new("/Users/me/.acpira"))
   }
 
   #[test]
   fn the_request_runs_in_the_stand_in_with_the_native_tools_off() {
     let s = stand("claude");
-    let req = json!({ "cwd": "/home/u/proj", "_meta": { "acpira/remote": { "alias": "gen1" }, "claudeCode": { "options": { "thinking": { "type": "adaptive" } } } } });
+    let req = json!({ "cwd": "/home/u/proj", "_meta": { "acpira/remote": { "alias": "example-host" }, "claudeCode": { "options": { "thinking": { "type": "adaptive" } } } } });
     let places = json!({ "os": "linux", "arch": "x86_64", "shell": "/bin/bash" });
     let text = note(&s, Some(&places), &[("/home/u/proj/CLAUDE.md".into(), "Use pnpm.".into())]);
     let out = with_stand(req, &s, &text);
@@ -112,12 +112,12 @@ mod tests {
     );
     let text = out["systemPrompt"]["content"][0]["text"].as_str().unwrap();
     assert_eq!(out["systemPrompt"]["mode"], "append");
-    assert!(text.contains("SSH host gen1 (linux x86_64, shell /bin/bash), in /home/u/proj"));
+    assert!(text.contains("SSH host example-host (linux x86_64, shell /bin/bash), in /home/u/proj"));
     assert!(text.contains("Use pnpm."));
     assert!(stand_file(&s, text).is_none());
 
     let agy = stand("antigravity");
-    let agy_req = json!({ "cwd": "/home/u/proj", "_meta": { "acpira/remote": { "alias": "gen1" } } });
+    let agy_req = json!({ "cwd": "/home/u/proj", "_meta": { "acpira/remote": { "alias": "example-host" } } });
     let agy_note = note(&agy, Some(&places), &[("/home/u/proj/GEMINI.md".into(), "Use cargo.".into())]);
     let agy_out = with_stand(agy_req, &agy, &agy_note);
     assert_eq!(agy_out["cwd"], json!(agy.local));
@@ -130,13 +130,13 @@ mod tests {
 
   #[test]
   fn another_cli_reads_the_note_from_the_stand_in() {
-    let s = Stand::new(Arc::new(generic("mine", "Mine")), "gen1", "/home/u/proj", Path::new("/Users/me/.acpira"));
+    let s = Stand::new(Arc::new(generic("mine", "Mine")), "example-host", "/home/u/proj", Path::new("/Users/me/.acpira"));
     let text = note(&s, None, &[("/home/u/proj/AGENTS.md".into(), "Use make.".into())]);
     let out = with_stand(json!({ "cwd": "/home/u/proj", "_meta": { "acpira/remote": {} } }), &s, &text);
     assert_eq!(out["cwd"], json!(s.local));
     assert!(out.get("systemPrompt").is_none() && out["_meta"].as_object().unwrap().is_empty(), "{out}");
     let (path, body) = stand_file(&s, &text).unwrap();
-    assert_eq!(path, Path::new("/Users/me/.acpira/remote/stand/mine/gen1/home/u/proj/AGENTS.md"));
-    assert!(body.contains("SSH host gen1, in /home/u/proj") && body.contains("Use make.") && body.contains("mcp__acpira__Bash"));
+    assert_eq!(path, Path::new("/Users/me/.acpira/remote/stand/mine/example-host/home/u/proj/AGENTS.md"));
+    assert!(body.contains("SSH host example-host, in /home/u/proj") && body.contains("Use make.") && body.contains("mcp__acpira__Bash"));
   }
 }

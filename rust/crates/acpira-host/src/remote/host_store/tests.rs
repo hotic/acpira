@@ -239,7 +239,7 @@ async fn push_deduplicates_unchanged_copies_and_sends_only_log_deltas_over_the_w
   }
   std::fs::write(&local_log, &log_bytes).unwrap();
   let mut rec: SessionRecord = serde_json::from_value(json!({
-    "id": "s-wire", "agent": "acpira", "acpSessionId": "native-wire", "cwd": "ssh://gen1/work/proj",
+    "id": "s-wire", "agent": "acpira", "acpSessionId": "native-wire", "cwd": "ssh://example-host/work/proj",
     "title": "wire", "category": Some("cat-a"), "createdAt": "2026-10-01T00:00:00.000Z",
     "updatedAt": "2026-10-01T00:00:00.000Z", "turns": [], "controls": { "modes": [], "options": [] }, "commands": []
   }))
@@ -250,17 +250,17 @@ async fn push_deduplicates_unchanged_copies_and_sends_only_log_deltas_over_the_w
 
   // 1. First push sends the whole ~130 KiB log
   uplink.store(0, Ordering::Relaxed);
-  mirror.push_to(&client, "gen1", "s-wire", Some(&host_root)).await.unwrap();
+  mirror.push_to(&client, "example-host", "s-wire", Some(&host_root)).await.unwrap();
   let first_bytes = uplink.load(Ordering::Relaxed);
   assert!(first_bytes > 20_000, "initial push should carry the full compressed log ({first_bytes} B)");
   assert_eq!(std::fs::read(&host_log).unwrap(), log_bytes);
 
   // 2. Duplicate push and local-only `category` move send 0 wire bytes
   uplink.store(0, Ordering::Relaxed);
-  mirror.push_to(&client, "gen1", "s-wire", Some(&host_root)).await.unwrap();
+  mirror.push_to(&client, "example-host", "s-wire", Some(&host_root)).await.unwrap();
   rec.category = Some("cat-b".into());
   store.flush(Arc::new(rec.clone())).await.unwrap();
-  mirror.push_to(&client, "gen1", "s-wire", Some(&host_root)).await.unwrap();
+  mirror.push_to(&client, "example-host", "s-wire", Some(&host_root)).await.unwrap();
   assert_eq!(uplink.load(Ordering::Relaxed), 0, "unchanged host copy must not re-upload");
 
   // 3. One appended step sends only the small record + tiny log delta (a fraction of `first_bytes`)
@@ -269,7 +269,7 @@ async fn push_deduplicates_unchanged_copies_and_sends_only_log_deltas_over_the_w
   rec.updated_at = "2026-10-01T00:00:05.000Z".into();
   store.flush(Arc::new(rec.clone())).await.unwrap();
   uplink.store(0, Ordering::Relaxed);
-  mirror.push_to(&client, "gen1", "s-wire", Some(&host_root)).await.unwrap();
+  mirror.push_to(&client, "example-host", "s-wire", Some(&host_root)).await.unwrap();
   let step_bytes = uplink.load(Ordering::Relaxed);
   assert!(step_bytes < 2_500 && step_bytes * 10 < first_bytes, "incremental step sent {step_bytes} B vs initial {first_bytes} B");
   assert_eq!(std::fs::read(&host_log).unwrap(), log_bytes);

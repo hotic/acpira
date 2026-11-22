@@ -180,8 +180,8 @@ mod tests {
   #[test]
   fn a_folder_names_its_machine() {
     assert_eq!(machine(&std::env::temp_dir().join("web").to_string_lossy()).unwrap(), Machine::Here);
-    assert_eq!(machine("ssh://gen1/home/a/web").unwrap(), Machine::Ssh("gen1".into()));
-    for bad in ["web", "", "ssh://gen1", "ssh://-oProxyCommand=x/a", "ssh://gen1/a/../b"] {
+    assert_eq!(machine("ssh://example-host/home/a/web").unwrap(), Machine::Ssh("example-host".into()));
+    for bad in ["web", "", "ssh://example-host", "ssh://-oProxyCommand=x/a", "ssh://example-host/a/../b"] {
       assert_eq!(machine(bad).unwrap_err().code, TcpCode::Denied, "{bad}");
     }
   }

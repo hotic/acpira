@@ -105,7 +105,7 @@ import Testing
 
   @Test func hostFoldersListOnlyOnceAdded() {
     let m = model("list")
-    let folder = "ssh://gen1/home/u/scratch"
+    let folder = "ssh://example-host/home/u/scratch"
     var s = m.summaries[0]
     s.id = "host-session"
     s.cwd = folder

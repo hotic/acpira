@@ -14,6 +14,6 @@ describe('remote folders', () => {
   it('never takes a local path for a remote one', () => {
     expect(isRemoteFolder('/ssh:/x')).toBe(false);
     expect(formatRemoteFolder('-x', '/a')).toBeUndefined();
-    expect(formatRemoteFolder('gen1', 'relative')).toBeUndefined();
+    expect(formatRemoteFolder('example-host', 'relative')).toBeUndefined();
   });
 });

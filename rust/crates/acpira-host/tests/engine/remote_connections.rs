@@ -12,7 +12,7 @@ use acpira_host::remote::connections::{Connections, ConnectionsOpts};
 use acpira_shared::remote::{ConnectFailure, ConnectStep, ConnectionOp, ConnectionState, ConnectionView};
 
 const VERSION: &str = "9.9.9-test";
-const ALIAS: &str = "gen1";
+const ALIAS: &str = "example-host";
 
 /// A fake host: `fake-ssh` runs remote commands with `host/` as HOME; `rootmap` (when present) is the helper's
 /// ACPIRA_REMOTE_ROOT_MAP, so a path the engine reads here instead of through the helper does not exist

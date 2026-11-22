@@ -426,7 +426,7 @@ mod tests {
   }
 
   fn stand() -> Stand {
-    Stand::new(profile("claude"), "gen1", "/home/u/proj/", Path::new("/Users/me/.acpira"))
+    Stand::new(profile("claude"), "example-host", "/home/u/proj/", Path::new("/Users/me/.acpira"))
   }
 
   #[test]
@@ -461,7 +461,7 @@ mod tests {
     assert_eq!((tool, a), ("job", json!({ "id": "2", "kill": true })));
     assert!(builtin_call("BashOutput", &json!({}), &s, false).is_err());
     // Every offered tool has a definition and a mapping, and the built-in agent takes the mapped call
-    let defs = tool_defs("gen1");
+    let defs = tool_defs("example-host");
     for name in acpira_shared::host_tools::REMOTE {
       assert!(defs.iter().any(|d| d["name"] == *name), "{name} has no definition");
     }
@@ -543,7 +543,7 @@ mod tests {
     assert_eq!((v.kind, v.title.as_str()), ("read", "List src"));
     assert_eq!(view("BashOutput", &json!({ "bash_id": "2" }), &s, data, &[]).title, "Check job 2");
     assert_eq!(view("KillShell", &json!({ "shell_id": "2" }), &s, data, &[]).title, "Stop job 2");
-    let v = view("Read", &json!({ "file_path": "/Users/me/.acpira/remote/hosts/gen1/home/u/proj/README.md", "offset": 5 }), &s, data, &[]);
+    let v = view("Read", &json!({ "file_path": "/Users/me/.acpira/remote/hosts/example-host/home/u/proj/README.md", "offset": 5 }), &s, data, &[]);
     assert_eq!(v.locations, vec![json!({ "path": "/home/u/proj/README.md", "line": 5 })]);
   }
 }

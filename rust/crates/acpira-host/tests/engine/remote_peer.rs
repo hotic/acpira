@@ -71,8 +71,8 @@ async fn peer_list_scopes_filter_the_wire_and_leave_other_views_independent() {
     std::fs::write(host.join(format!("{id}.json")), serde_json::to_vec(&list_record(id, cwd, id, pinned)).unwrap()).unwrap();
   }
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  let client = connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
   let mut link = PeerLink::connect(&client, None, ME).await.unwrap();
   for (view, initial, expected) in [
     ("P", json!({ "sessionList": { "folders": ["/visible"] } }), vec!["s-visible"]),
@@ -125,8 +125,8 @@ async fn a_page_taking_list_patches_gets_only_the_changed_entries() {
     std::fs::write(host.join(format!("{id}.json")), serde_json::to_vec(&list_record(id, "/w", id, false)).unwrap()).unwrap();
   }
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  let client = connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
   let mut link = PeerLink::connect(&client, None, ME).await.unwrap();
   link.send(&json!({ "type": "attachView", "viewId": "L", "host": "sidebar", "initial": { "empty": true } }));
   link.send(&json!({ "type": "webviewMessage", "viewId": "L", "message": { "type": "ready", "listPatches": true } }));
@@ -171,15 +171,15 @@ async fn project_subscriptions_prune_caches_and_query_hidden_sessions_on_demand(
     std::fs::write(host.join(format!("{id}.json")), serde_json::to_vec(&list_record(id, &path.to_string_lossy(), title, true)).unwrap())
       .unwrap();
   }
-  let folder = format!("ssh://gen1{}", work.display());
-  let hidden_folder = format!("ssh://gen1{}", hidden.display());
+  let folder = format!("ssh://example-host{}", work.display());
+  let hidden_folder = format!("ssh://example-host{}", hidden.display());
   let dir = tempfile::tempdir().unwrap();
   std::fs::write(
     dir.path().join("categories.json"),
     serde_json::to_vec(&json!({ "categories": [], "collapsedProjects": [], "projects": [folder] })).unwrap(),
   )
   .unwrap();
-  let cache = dir.path().join("lease-home/run/remote/gen1.sessions.json");
+  let cache = dir.path().join("lease-home/run/remote/example-host.sessions.json");
   std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
   std::fs::write(
     &cache,
@@ -191,7 +191,7 @@ async fn project_subscriptions_prune_caches_and_query_hidden_sessions_on_demand(
   .unwrap();
   let cached = || serde_json::from_slice::<Value>(&std::fs::read(&cache).unwrap()).unwrap();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake).projects();
   opts.remote = Some(connections.clone());
   let m = crate::session_manager::Mgr::new(dir.path(), opts.clone());
@@ -254,10 +254,10 @@ async fn a_workspace_window_widens_a_host_list_the_project_shells_narrow() {
     std::fs::write(host.join(format!("{id}.json")), serde_json::to_vec(&list_record(id, &path.to_string_lossy(), id, false)).unwrap()).unwrap();
   }
   let dir = tempfile::tempdir().unwrap();
-  let projects = json!({ "categories": [], "collapsedProjects": [], "projects": [format!("ssh://gen1{}", work.display())] });
+  let projects = json!({ "categories": [], "collapsedProjects": [], "projects": [format!("ssh://example-host{}", work.display())] });
   std::fs::write(dir.path().join("categories.json"), serde_json::to_vec(&projects).unwrap()).unwrap();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake).projects();
   opts.remote = Some(connections.clone());
   let m = crate::session_manager::Mgr::new(dir.path(), opts);
@@ -282,8 +282,8 @@ async fn a_peer_reaches_the_hosts_engine_which_outlives_the_connection() {
   let lab = Lab::new();
   let _stop = StopEngines::for_lab(&lab);
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  let client = connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
 
   let mut link = PeerLink::connect(&client, None, ME).await.expect("connected to the host's engine");
   let pid = link.hello_ok["sidecar"]["pid"].as_u64().expect("the engine's pid") as i32;
@@ -327,10 +327,10 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   std::fs::create_dir_all(&home).unwrap();
   std::fs::write(home.join("agents.json"), serde_json::to_vec(&fake.setting(json!({}))).unwrap()).unwrap();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let work = lab.path().join("hostfs").join("work");
   std::fs::create_dir_all(&work).unwrap();
-  let folder = format!("ssh://gen1{}", work.display());
+  let folder = format!("ssh://example-host{}", work.display());
   let dir = tempfile::tempdir().unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake).projects();
   opts.remote = Some(connections.clone());
@@ -433,11 +433,11 @@ async fn a_cli_agent_in_a_host_folder_runs_in_the_hosts_engine_and_lists_here() 
   wait(&m, "the host's engine to go", 15_000, || m.m.host_engines().is_empty()).await;
   assert!(m.sessions().iter().any(|s| s["id"] == id.as_str() && s["title"] == "On the host"), "the cached list stays");
   let error = m.m.edit_turn(edit).await.expect_err("an offline host must reject an edit");
-  assert_eq!(error.to_string(), acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "gen1")]));
+  assert_eq!(error.to_string(), acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "example-host")]));
   assert!(m.m.session_context(&id, false).await.is_none(), "an offline host has no context report");
   assert_eq!(
     m.m.session_context_raw(&id).await,
-    Err(acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "gen1")])),
+    Err(acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "example-host")])),
     "an offline host reports unreachable for raw context"
   );
   m.dispose().await;
@@ -465,10 +465,10 @@ async fn a_host_edit_lost_in_flight_reports_an_unknown_outcome() {
   std::fs::write(home.join("agents.json"), serde_json::to_vec(&fake.setting(json!({ "env": { "FAKE_NEW_DELAY_MS": "5000" } }))).unwrap()).unwrap();
   let work = lab.path().join("hostfs/work");
   std::fs::create_dir_all(&work).unwrap();
-  let folder = format!("ssh://gen1{}", work.display());
+  let folder = format!("ssh://example-host{}", work.display());
   let dir = tempfile::tempdir().unwrap();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake).projects();
   opts.remote = Some(connections.clone());
   // An installed external ACP runs here by default now; these cases test the host engine's run
@@ -491,7 +491,7 @@ async fn a_host_edit_lost_in_flight_reports_an_unknown_outcome() {
   let manager = m.m.clone();
   let pending = tokio::spawn(async move { manager.edit_turn(edit).await });
   wait(&m, "the host accepting the edit", 15_000, || m.active().is_some_and(|v| v["running"] == true)).await;
-  connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Disconnect { alias: "example-host".into() }).await.unwrap();
   let error = tokio::time::timeout(Duration::from_secs(15), pending).await.unwrap().unwrap().expect_err("the receipt was lost");
   assert!(error.to_string().contains(&acpira_host::i18n::t("subagents.disconnectedNote")), "{error}");
   m.dispose().await;
@@ -511,7 +511,7 @@ async fn a_new_session_page_in_a_host_folder_gets_the_hosts_models() {
     "options": [{ "id": "host-model", "name": "Host model" }] }]);
   std::fs::write(store.join("s-host.json"), serde_json::to_vec(&record).unwrap()).unwrap();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let dir = tempfile::tempdir().unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake).projects();
   opts.remote = Some(connections.clone());
@@ -520,7 +520,7 @@ async fn a_new_session_page_in_a_host_folder_gets_the_hosts_models() {
   let m = crate::session_manager::Mgr::new(dir.path(), opts);
   m.init().await;
 
-  let folder = "ssh://gen1/work";
+  let folder = "ssh://example-host/work";
   let value = |c: &[acpira_shared::transcript::ConfigControl]| c.first().and_then(|c| c.value.clone());
   let t0 = std::time::Instant::now();
   let answer = loop {
@@ -535,8 +535,8 @@ async fn a_new_session_page_in_a_host_folder_gets_the_hosts_models() {
   assert!(m.m.host_controls("fake", "/work", false).await.is_none(), "a local folder is answered here");
   assert!(m.m.known_controls("fake").await.is_empty(), "the host's models never join this machine's");
   // The built-in agent there reads this machine's settings once a push found them kept apart (`settings_apart`): answered here
-  assert_eq!(connections.engine_offers("gen1", acpira_host::remote::host_models::SET_FEATURE), Some(true));
-  connections.set_settings_apart("gen1", true);
+  assert_eq!(connections.engine_offers("example-host", acpira_host::remote::host_models::SET_FEATURE), Some(true));
+  connections.set_settings_apart("example-host", true);
   assert!(m.m.host_controls("acpira", folder, false).await.is_none());
 
   // The host's engine goes away: the last answer stands in
@@ -557,10 +557,10 @@ async fn sessions_driven_here_and_the_hosts_own_list_once() {
   let lab = Lab::new();
   let _stop = StopEngines::for_lab(&lab);
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let work = lab.path().join("hostfs").join("work");
   std::fs::create_dir_all(&work).unwrap();
-  let folder = format!("ssh://gen1{}", work.display());
+  let folder = format!("ssh://example-host{}", work.display());
   let record = |id: &str, cwd: &str, title: &str| {
     let at = "2026-10-01T00:00:00.000Z";
     serde_json::to_vec(&json!({ "id": id, "agent": "fake", "cwd": cwd, "title": title, "createdAt": at, "updatedAt": at,
@@ -622,10 +622,10 @@ async fn switching_agents_replaces_an_empty_host_session() {
   std::fs::create_dir_all(&home).unwrap();
   std::fs::write(home.join("agents.json"), serde_json::to_vec(&agents).unwrap()).unwrap();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let work = lab.path().join("hostfs/work");
   std::fs::create_dir_all(&work).unwrap();
-  let folder = format!("ssh://gen1{}", work.display());
+  let folder = format!("ssh://example-host{}", work.display());
   let dir = tempfile::tempdir().unwrap();
   let mut opts = crate::session_manager::Opts::with_agents(agents, "fake").projects();
   opts.remote = Some(connections.clone());
@@ -701,7 +701,7 @@ async fn host_account_metadata_and_actions_never_use_the_local_account_store() {
   store.load().await.unwrap();
   let accounts = AccountManager::new(store, vec![], log, Arc::new(|_, _, _, _| {}), Arc::new(|_, _| {}));
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let work = lab.path().join("hostfs/work");
   std::fs::create_dir_all(&work).unwrap();
   // The viewing machine lacks the CLI; only the host's registry may decide whether it can start there.
@@ -713,7 +713,7 @@ async fn host_account_metadata_and_actions_never_use_the_local_account_store() {
   let m = crate::session_manager::Mgr::new(&dir.path().join("sessions"), opts);
   m.init().await;
   assert_eq!(m.m.agents().iter().find(|a| a.id == "fake").unwrap().available, Some(false));
-  m.handle(json!({ "type": "newSession", "agent": "fake", "cwd": format!("ssh://gen1{}", work.display()) })).await;
+  m.handle(json!({ "type": "newSession", "agent": "fake", "cwd": format!("ssh://example-host{}", work.display()) })).await;
   wait(&m, "host account metadata", 30_000, || m.active().is_some_and(|v| v["remoteAuth"]["accounts"][0]["label"] == "host@example.test")).await;
   let id = m.active_id().unwrap();
   assert_eq!(accounts.list()[0].label, "local@example.test");
@@ -731,12 +731,12 @@ async fn host_account_metadata_and_actions_never_use_the_local_account_store() {
     let terminals = m.terminals.lock().unwrap();
     let (cmd, args, env) = &terminals[0];
     assert!(cmd.ends_with("fake-ssh"), "terminal must invoke ssh: {cmd}");
-    assert_eq!(&args[..3], ["-t", "--", "gen1"], "{args:?}");
+    assert_eq!(&args[..3], ["-t", "--", "example-host"], "{args:?}");
     assert!(args.iter().any(|a| a.contains("export FAKE_LOGIN=1") && a.contains("--login")), "{args:?}");
     assert!(env.is_none(), "remote env rides inside the ssh command: {env:?}");
   }
   wait(&m, "the host login retry hint", 15_000, || {
-    m.toasts.lock().unwrap().iter().any(|t| t.starts_with("gen1:") && !t.contains("FAKE_LOGIN=1"))
+    m.toasts.lock().unwrap().iter().any(|t| t.starts_with("example-host:") && !t.contains("FAKE_LOGIN=1"))
   })
   .await;
   assert!(!auth_log.exists(), "terminal auth must not call ACP authenticate");
@@ -777,10 +777,10 @@ async fn a_host_sessions_view_shows_at_once_and_its_blobs_follow() {
   let lab = Lab::new();
   let _stop = StopEngines::for_lab(&lab);
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let work = lab.path().join("hostfs").join("work");
   std::fs::create_dir_all(&work).unwrap();
-  let folder = format!("ssh://gen1{}", work.display());
+  let folder = format!("ssh://example-host{}", work.display());
   let pixels = b"\x89PNG\r\n\x1a\nnot really a picture".to_vec();
   let name = acpira_host::store::transcript_store::blob_name(".png", &pixels);
   let host = lab.host_home().join(".acpira").join("sessions");
@@ -840,10 +840,10 @@ async fn opening_a_host_session_reaches_the_host_or_says_why_not() {
   let lab = Lab::new();
   let _stop = StopEngines::for_lab(&lab);
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let work = lab.path().join("hostfs").join("work");
   std::fs::create_dir_all(&work).unwrap();
-  let folder = format!("ssh://gen1{}", work.display());
+  let folder = format!("ssh://example-host{}", work.display());
   let host = lab.host_home().join(".acpira").join("sessions");
   std::fs::create_dir_all(&host).unwrap();
   std::fs::write(host.join("s-away.json"), serde_json::to_vec(&list_record("s-away", &work.to_string_lossy(), "While away", false)).unwrap())
@@ -858,7 +858,7 @@ async fn opening_a_host_session_reaches_the_host_or_says_why_not() {
 
   // Disconnected by the user, and every new attempt turned away
   std::fs::write(lab.path().join("fail"), "Host key verification failed.\n").unwrap();
-  connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Disconnect { alias: "example-host".into() }).await.unwrap();
   wait(&m, "the host's engine to go", 15_000, || m.m.host_engines().is_empty()).await;
   m.handle(json!({ "type": "selectSession", "id": "s-away" })).await;
   let refused = || {
@@ -866,7 +866,7 @@ async fn opening_a_host_session_reaches_the_host_or_says_why_not() {
   };
   wait(&m, "the reason no view comes", 15_000, || refused().is_some()).await;
   let reason = refused().unwrap();
-  assert!(reason.contains(&acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "gen1")])), "{reason}");
+  assert!(reason.contains(&acpira_host::i18n::tp("host.remoteUnreachable", &[("host", "example-host")])), "{reason}");
   assert!(reason.contains("Host key verification failed"), "{reason}");
 
   // Reachable again: opening it once more connects and brings the view
@@ -891,7 +891,7 @@ async fn source_reconciliation_reselects_the_host_peer_without_tombstoning_its_s
   std::fs::create_dir_all(&work).unwrap();
   std::fs::write(host_home.join("agents.json"), fake.setting(json!({})).to_string()).unwrap();
   let connections = lab.engine("source");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let dir = lab.path().join("source/sessions");
   std::fs::create_dir_all(&dir).unwrap();
   let mut opts = crate::session_manager::Opts::fake(&fake);
@@ -904,7 +904,7 @@ async fn source_reconciliation_reselects_the_host_peer_without_tombstoning_its_s
   }, None);
   let mut record = source.to_record();
   record.id = "reconciled-peer".into();
-  record.cwd = format!("ssh://gen1{}", work.display());
+  record.cwd = format!("ssh://example-host{}", work.display());
   record.turns = serde_json::from_value(json!([{ "role": "user", "text": "shared question" }])).unwrap();
   m.store.flush(Arc::new(record.clone())).await.unwrap();
   let mirror = HostMirror::with_batch(connections.clone(), m.store.clone(), &lab.path().join("source"), Arc::new(|_: &str| {}), Duration::from_millis(50));
@@ -917,14 +917,14 @@ async fn source_reconciliation_reselects_the_host_peer_without_tombstoning_its_s
   m.handle(json!({ "type": "selectSession", "id": record.id })).await;
   assert_eq!(m.active_id().as_deref(), Some("reconciled-peer"));
   // Closing the connection makes both histories stable while the host takes ownership.
-  connections.op(ConnectionOp::Disconnect { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Disconnect { alias: "example-host".into() }).await.unwrap();
   let host_store = acpira_host::store::transcript_store::TranscriptStore::new(host_home.join("sessions"), Arc::new(|_: &str| {}), None);
   let mut host: SessionRecord = host_store.load(&record.id).await.unwrap();
   host.copy_of = None;
   host.title = "Host now owns this".into();
   host.turns.push(serde_json::from_value(json!({ "role": "agent", "stop": "end_turn", "blocks": [{ "type": "text", "markdown": "host answer" }] })).unwrap());
   host_store.flush(Arc::new(host)).await.unwrap();
-  connections.op(ConnectionOp::Connect { alias: "gen1".into(), accept_new_machine: false }).await.unwrap();
+  connections.op(ConnectionOp::Connect { alias: "example-host".into(), accept_new_machine: false }).await.unwrap();
   wait(&m, "the source record retired", 30_000, || !dir.join("reconciled-peer.json").exists()).await;
   wait(&m, "the viewer reattached to the host peer", 30_000, || m.active().is_some_and(|s| s["title"] == "Host now owns this")).await;
   assert!(host_store.load("reconciled-peer").await.is_some());
@@ -974,27 +974,27 @@ async fn remote_missing_cli_installs_on_the_host_and_starts_the_waiting_session(
     },
   });
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let mut opts = crate::session_manager::Opts::with_agents(local_agents, "made").projects();
   opts.remote = Some(connections.clone());
   let m = crate::session_manager::Mgr::new(&dir.path().join("sessions"), opts);
   m.init().await;
 
-  m.handle(json!({ "type": "newSession", "agent": "made", "cwd": format!("ssh://gen1{}", work.display()) })).await;
+  m.handle(json!({ "type": "newSession", "agent": "made", "cwd": format!("ssh://example-host{}", work.display()) })).await;
   wait(&m, "missing CLI error on SSH host", 30_000, || {
     m.active().is_some_and(|v| v["status"] == "error" && v["remoteAuth"]["agent"]["available"] == false)
   })
   .await;
   let id = m.active_id().unwrap();
 
-  // Terminal install on the remote session opens an interactive `ssh -t` terminal targeting `gen1`.
+  // Terminal install on the remote session opens an interactive `ssh -t` terminal targeting `example-host`.
   m.handle(json!({ "type": "installInTerminal", "sessionId": id, "agent": "made" })).await;
   wait(&m, "remote installInTerminal over ssh -t", 15_000, || !m.terminals.lock().unwrap().is_empty()).await;
   {
     let terminals = m.terminals.lock().unwrap();
     let (cmd, args, _) = &terminals[0];
     assert!(cmd.ends_with("fake-ssh"), "{cmd}");
-    assert_eq!(&args[..3], ["-t", "--", "gen1"], "{args:?}");
+    assert_eq!(&args[..3], ["-t", "--", "example-host"], "{args:?}");
     assert!(args.iter().any(|a| a.contains("installing-on-host")), "{args:?}");
   }
 
@@ -1073,7 +1073,7 @@ async fn remote_agent_open_browser_forwards_to_local_shell_with_remote_folder() 
 
   let dir = tempfile::tempdir().unwrap();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let browser = Arc::new(RecordingBrowser { calls: Default::default() });
   let mut opts = crate::session_manager::Opts::with_agents(fake.setting(json!({})), "fake").projects();
   opts.remote = Some(connections.clone());
@@ -1083,7 +1083,7 @@ async fn remote_agent_open_browser_forwards_to_local_shell_with_remote_folder() 
   let m = crate::session_manager::Mgr::new(&dir.path().join("sessions"), opts);
   m.init().await;
 
-  let remote_cwd = format!("ssh://gen1{}", work.display());
+  let remote_cwd = format!("ssh://example-host{}", work.display());
   m.handle(json!({ "type": "newSession", "agent": "fake", "cwd": remote_cwd })).await;
   wait(&m, "remote session ready", 30_000, || m.active().is_some_and(|v| v["status"] == "ready")).await;
   let id = m.active_id().unwrap();

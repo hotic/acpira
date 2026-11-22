@@ -60,8 +60,8 @@ impl Remote {
     std::fs::create_dir_all(real.join("work")).unwrap();
     lab.map_root(VIRT, &real);
     let connections = lab.engine("engine");
-    connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-    connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+    connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+    connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
     h.deps.remote = Some(connections.clone());
     let roster = Arc::new(Roster::new(h.dir.path()));
     let hub = RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
@@ -70,7 +70,7 @@ impl Remote {
   }
 
   async fn session(&self) -> Disposing {
-    let s = Disposing(self.h.session(&format!("ssh://gen1{VIRT}/work")));
+    let s = Disposing(self.h.session(&format!("ssh://example-host{VIRT}/work")));
     s.start().await;
     s
   }
@@ -87,7 +87,7 @@ impl Remote {
   }
 
   fn stand_in_under(&self, root: &str) -> PathBuf {
-    self.h.dir.path().join(root).join("gen1").join(VIRT.trim_start_matches('/')).join("work")
+    self.h.dir.path().join(root).join("example-host").join(VIRT.trim_start_matches('/')).join("work")
   }
 }
 

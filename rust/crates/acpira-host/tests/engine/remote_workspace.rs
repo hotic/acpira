@@ -30,10 +30,10 @@ async fn the_tool_panel_reads_a_folder_on_the_host() {
   std::fs::write(work.join("notes.txt"), "x\n").unwrap();
   lab.map_root(VIRT, &real);
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
 
-  let ws = Workspace::open(&format!("ssh://gen1{VIRT}/work"), Some(&connections)).await.expect("connected");
+  let ws = Workspace::open(&format!("ssh://example-host{VIRT}/work"), Some(&connections)).await.expect("connected");
   assert_eq!(ws.path(), std::path::Path::new(&format!("{VIRT}/work")));
   let names: Vec<(String, bool)> = ws.list_dir("").await.unwrap().into_iter().map(|e| (e.name, e.dir)).collect();
   assert_eq!(names, [("src".to_owned(), true), ("notes.txt".into(), false), ("README.md".into(), false)]);
@@ -50,7 +50,7 @@ async fn the_tool_panel_reads_a_folder_on_the_host() {
   assert_eq!(hits.first().map(|h| h.path.as_str()), Some("src/a.rs"));
   assert!(hits[0].uri.contains(VIRT) && !hits[0].uri.contains(&*real.to_string_lossy()), "{}", hits[0].uri);
   // The handoff pack of the host's work tree (`ask_agent` with `changes`), built there
-  let client = connections.client("gen1").unwrap();
+  let client = connections.client("example-host").unwrap();
   let pack = client.call("handoff", serde_json::json!({ "cwd": format!("{VIRT}/work") })).await.unwrap().value;
   let text = pack["pack"]["text"].as_str().unwrap_or("");
   assert!(text.contains("README.md") && text.contains("+new"), "{pack}");
@@ -69,8 +69,8 @@ async fn a_terminal_in_a_folder_on_the_host_runs_there() {
   std::fs::create_dir_all(real.join("work")).unwrap();
   lab.map_root(VIRT, &real);
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  let client = connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
   let missing =
     client.call("pty", serde_json::json!({ "cwd": format!("{VIRT}/missing") })).await.expect_err("no fallback to the host's home");
   assert!(missing.to_string().contains("terminal folder"), "{missing}");
@@ -79,7 +79,7 @@ async fn a_terminal_in_a_folder_on_the_host_runs_there() {
   let log: Arc<Mutex<Vec<HostMsg>>> = Arc::default();
   let l = log.clone();
   let sink: acpira_host::terminal::Sink = Arc::new(move |m| l.lock().unwrap().push(m));
-  hub.open(1, sink, "t1", Some(&format!("ssh://gen1{VIRT}/work")), Some((100, 30)));
+  hub.open(1, sink, "t1", Some(&format!("ssh://example-host{VIRT}/work")), Some((100, 30)));
   let output = || {
     log.lock().unwrap().iter().map(|m| match m {
       HostMsg::TerminalOutput { data, .. } => data.clone(),
@@ -90,7 +90,7 @@ async fn a_terminal_in_a_folder_on_the_host_runs_there() {
   hub.input("t1", "echo hi-$((40+2)); pwd; sleep 35.3\r".into(), false);
   crate::support::until(|| output().contains("hi-42") && output().contains("hostfs/work"), 20_000).await;
   // The ticker names the foreground program, with the host
-  let titled = || log.lock().unwrap().iter().any(|m| matches!(m, HostMsg::TerminalState { title: Some(t), .. } if t.ends_with("(gen1)")));
+  let titled = || log.lock().unwrap().iter().any(|m| matches!(m, HostMsg::TerminalState { title: Some(t), .. } if t.ends_with("(example-host)")));
   for _ in 0..100 {
     if titled() {
       break;
@@ -116,8 +116,8 @@ async fn a_preview_of_a_dev_server_on_the_host_goes_through_it() {
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
   let lab = Lab::new();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
   // The fake host is this machine, so its loopback is this one's
   let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
   let up = listener.local_addr().unwrap().port();
@@ -142,7 +142,7 @@ async fn a_preview_of_a_dev_server_on_the_host_goes_through_it() {
   std::fs::write(&picker, "/* picker */").unwrap();
   let previews = acpira_host::preview::Previews::new(std::sync::Arc::new(|_: &str| {}));
   let url = format!("http://localhost:{up}/");
-  let there = previews.open(1, "remote", &url, &picker, Some(("gen1".into(), connections.clone()))).await.unwrap();
+  let there = previews.open(1, "remote", &url, &picker, Some(("example-host".into(), connections.clone()))).await.unwrap();
   let here = previews.open(1, "local", &url, &picker, None).await.unwrap();
   assert_ne!(there.url, here.url, "one proxy per host and origin");
   let port: u16 = there.url.trim_start_matches("http://127.0.0.1:").split('/').next().unwrap().parse().unwrap();
@@ -153,7 +153,7 @@ async fn a_preview_of_a_dev_server_on_the_host_goes_through_it() {
   let res = String::from_utf8_lossy(&out);
   assert!(res.starts_with("HTTP/1.1 200") && res.contains("on the host") && res.contains(&there.token), "{res}");
 
-  let client = connections.client("gen1").unwrap();
+  let client = connections.client("example-host").unwrap();
   let refused = client.call("tcp", serde_json::json!({ "host": "10.255.0.1", "port": 80 })).await.expect_err("refused");
   assert!(refused.to_string().contains("loopback"), "{refused}");
   previews.close(1, "remote");
@@ -171,14 +171,14 @@ async fn a_device_tunnel_reaches_the_hosts_loopback_while_it_is_connected() {
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
   let lab = Lab::new();
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   let hosts = {
     let c = connections.clone();
     acpira_host::devices::tunnel::SshHosts::new(move || Some(c.clone()))
   };
   assert_eq!(hosts.dial("nowhere", "localhost".into(), 1).await.err().unwrap().code, TcpCode::Offline);
-  connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
-  assert!(hosts.up("gen1") && !hosts.up("nowhere"));
+  connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
+  assert!(hosts.up("example-host") && !hosts.up("nowhere"));
 
   // The fake host is this machine, so its loopback is this one's: an echo server that counts what it holds
   let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -196,7 +196,7 @@ async fn a_device_tunnel_reaches_the_hosts_loopback_while_it_is_connected() {
       });
     }
   });
-  let mut pipe = hosts.dial("gen1", "localhost".into(), port).await.ok().unwrap();
+  let mut pipe = hosts.dial("example-host", "localhost".into(), port).await.ok().unwrap();
   let data: Vec<u8> = (0..200_000).map(|i| (i % 249) as u8).collect();
   pipe.write_all(&data).await.unwrap();
   let mut got = vec![0u8; data.len()];
@@ -207,9 +207,9 @@ async fn a_device_tunnel_reaches_the_hosts_loopback_while_it_is_connected() {
   drop(pipe);
   crate::support::until(|| open.load(Ordering::SeqCst) == 0, 10_000).await;
 
-  let denied = hosts.dial("gen1", "10.255.0.1".into(), 80).await.err().unwrap();
+  let denied = hosts.dial("example-host", "10.255.0.1".into(), 80).await.err().unwrap();
   assert_eq!(denied.code, TcpCode::Denied, "{denied}");
   let closed = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap().local_addr().unwrap().port();
-  assert_eq!(hosts.dial("gen1", "localhost".into(), closed).await.err().unwrap().code, TcpCode::Refused);
+  assert_eq!(hosts.dial("example-host", "localhost".into(), closed).await.err().unwrap().code, TcpCode::Refused);
   connections.dispose();
 }

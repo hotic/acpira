@@ -803,7 +803,7 @@ async fn an_edited_first_message_carries_the_workspace_context_again_after_the_r
   assert!(sent.contains("house rule") && sent.contains("first message, edited") && !sent.contains("\"one\""), "{sent}");
 }
 
-/// Local run on an SSH host (docs/dev/remote.md, "Built-in agent"): the session's folder is `ssh://gen1/<virtual
+/// Local run on an SSH host (docs/dev/remote.md, "Built-in agent"): the session's folder is `ssh://example-host/<virtual
 /// root>/work`, a path that does not exist here; the fake host's helper maps it to a temp folder. So every project
 /// call has to go through the helper, and one that read this disk instead would fail
 #[cfg(unix)]
@@ -829,8 +829,8 @@ mod remote {
       std::fs::create_dir_all(real.join("work")).unwrap();
       lab.map_root(VIRT, &real);
       let connections = lab.engine("engine");
-      connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-      connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+      connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+      connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
       env.deps.remote = Some(connections.clone());
       Remote { env, lab, real, connections }
     }
@@ -844,7 +844,7 @@ mod remote {
     }
 
     async fn session(&self) -> Disposing {
-      let s = Disposing(AcpSession::fresh("acpira", &format!("ssh://gen1{VIRT}/work"), self.env.deps.clone(), None));
+      let s = Disposing(AcpSession::fresh("acpira", &format!("ssh://example-host{VIRT}/work"), self.env.deps.clone(), None));
       s.start().await;
       s
     }
@@ -992,7 +992,7 @@ mod remote {
     run(&s, "open the app").await;
     let sent = r.env.server.requests().last().unwrap().body["messages"].to_string();
     assert!(sent.contains(&format!("Nothing is listening on localhost:{closed}")), "{sent}");
-    assert_eq!(*shell.opened.lock(), [format!("http://localhost:{up}/ in ssh://gen1{VIRT}/work")]);
+    assert_eq!(*shell.opened.lock(), [format!("http://localhost:{up}/ in ssh://example-host{VIRT}/work")]);
     drop(server);
   }
 
@@ -1085,7 +1085,7 @@ rl.on('line', l => {
     until(|| agent_blocks(&view(&s)).iter().any(|b| b["kind"] == "execute" && b["status"] == "in_progress"), 10_000).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     // The helper dies mid-command: its process group goes with it
-    let pid = r.connections.client("gen1").unwrap().hello().pid as i32;
+    let pid = r.connections.client("example-host").unwrap().hello().pid as i32;
     // SAFETY: kill has no memory preconditions; the pid is the helper this test started
     unsafe { libc::kill(pid, libc::SIGKILL) };
     task.await.unwrap();
@@ -1110,7 +1110,7 @@ rl.on('line', l => {
     until(running, 5000).await;
     s.dispose();
     until(|| !running(), 15_000).await;
-    assert!(r.connections.client("gen1").is_some(), "the connection stays up");
+    assert!(r.connections.client("example-host").is_some(), "the connection stays up");
   }
 
   #[tokio::test(flavor = "multi_thread")]

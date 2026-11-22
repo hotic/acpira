@@ -260,9 +260,9 @@ mod tests {
     assert_eq!(serde_json::from_str::<TcpHeader>(&text).unwrap(), refused);
     let newer: TcpHeader = serde_json::from_str(r#"{"error":"x","code":"somethingNew"}"#).unwrap();
     assert_eq!(newer.code, Some(TcpCode::Failed));
-    let req = TcpRequest { folder: "ssh://gen1/home/a".into(), host: "localhost".into(), port: 5173 };
+    let req = TcpRequest { folder: "ssh://example-host/home/a".into(), host: "localhost".into(), port: 5173 };
     let text = serde_json::to_string(&req).unwrap();
-    assert_eq!(text, r#"{"folder":"ssh://gen1/home/a","host":"localhost","port":5173}"#);
+    assert_eq!(text, r#"{"folder":"ssh://example-host/home/a","host":"localhost","port":5173}"#);
     assert_eq!(serde_json::from_str::<TcpRequest>(&text).unwrap(), req);
   }
 }

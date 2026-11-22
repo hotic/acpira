@@ -4,7 +4,7 @@
 //! host's own shells land their engines in, `machine_engine/stage.rs`), so two machines deploying at once only race to
 //! rename identical bytes, a host serving an older engine elsewhere keeps its copy, and the helper's build can serve as
 //! the host's engine without another copy.
-//! The host never downloads anything: gen1 sits in a server room with no promise of reaching GitHub
+//! The host never downloads anything: it may sit in a server room with no promise of reaching GitHub
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

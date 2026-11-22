@@ -660,7 +660,7 @@ mod tests {
   fn remote_copy_stays_in_the_cache() {
     let root = Path::new("/d");
     let cache = Path::new("/d/run/remote/files");
-    assert_eq!(remote_copy_path(root, "gen1", "/home/u/a.md"), cache.join("gen1/home/u/a.md"));
+    assert_eq!(remote_copy_path(root, "example-host", "/home/u/a.md"), cache.join("example-host/home/u/a.md"));
     // An alias may be `..` or carry characters Windows refuses in a name
     assert_eq!(remote_copy_path(root, "..", "/x"), cache.join("__/x"));
     assert_eq!(remote_copy_path(root, "u@h:22", "/x"), cache.join("u@h_22/x"));

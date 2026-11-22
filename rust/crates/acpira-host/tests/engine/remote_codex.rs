@@ -72,8 +72,8 @@ fn package(lab: &Lab) -> PathBuf {
 
 async fn host(lab: &Lab) -> Arc<Connections> {
   let connections = lab.engine("engine");
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
-  connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
   connections
 }
 
@@ -100,7 +100,7 @@ async fn the_build_is_put_on_the_host_and_its_server_reached_through_the_tunnel(
   let lab = Lab::new();
   let connections = host(&lab).await;
   let codex = LocalCodex { version: VERSION.into(), package: Some(package(&lab)) };
-  let tunnel = connections.codex.open(&connections, "gen1", &codex).await.unwrap();
+  let tunnel = connections.codex.open(&connections, "example-host", &codex).await.unwrap();
 
   let on_host = lab.host_home().join(".acpira/codex").join(VERSION);
   assert!(on_host.join(".ok").is_file() && on_host.join("bin/codex").is_file() && on_host.join("codex-path/rg").is_file());
@@ -115,7 +115,7 @@ async fn the_build_is_put_on_the_host_and_its_server_reached_through_the_tunnel(
 
   // Another session: a server of its own, nothing uploaded again
   let uploads = lab.calls().len();
-  let other = connections.codex.open(&connections, "gen1", &codex).await.unwrap();
+  let other = connections.codex.open(&connections, "example-host", &codex).await.unwrap();
   assert_eq!(lab.calls().len(), uploads);
   let (other_port, other_secret) = port_and_secret(&other.url());
   let theirs: Value = serde_json::from_str(&upgrade(other_port, &format!("/{other_secret}")).await).unwrap();
@@ -155,7 +155,7 @@ async fn a_codex_session_opens_on_the_host_path_with_the_tunnel() {
   std::fs::create_dir_all(old.join("bin")).unwrap();
   std::fs::write(old.join("bin/codex"), "old").unwrap();
   let codex = LocalCodex { version: VERSION.into(), package: Some(package(&lab)) };
-  drop(connections.codex.open(&connections, "gen1", &codex).await.unwrap());
+  drop(connections.codex.open(&connections, "example-host", &codex).await.unwrap());
   assert!(!old.exists(), "the older build is gone");
 
   // `CODEX_PATH` names the binary the adapter runs, as a user's override does; its build is on the host already
@@ -165,7 +165,7 @@ async fn a_codex_session_opens_on_the_host_path_with_the_tunnel() {
   h.deps.remote = Some(connections.clone());
   std::fs::create_dir_all(lab.host_home().join("work")).unwrap();
   let folder = lab.host_home().join("work");
-  let s = Disposing(h.session(&format!("ssh://gen1{}", folder.display())));
+  let s = Disposing(h.session(&format!("ssh://example-host{}", folder.display())));
   s.start().await;
   assert!(view(&s)["error"].is_null(), "{} {:?}", view(&s)["error"], h.logs());
   let text = std::fs::read_to_string(logs.path().join("meta.log")).unwrap_or_default();
@@ -175,7 +175,7 @@ async fn a_codex_session_opens_on_the_host_path_with_the_tunnel() {
   let (port, secret) = port_and_secret(url);
   let seen: Value = serde_json::from_str(&upgrade(port, &format!("/{secret}")).await).unwrap();
   assert_eq!(seen["auth"], true);
-  assert!(h.logs().iter().any(|l| l.contains("runs its tools on gen1") && !l.contains(&secret)), "logged without the secret: {:?}", h.logs());
+  assert!(h.logs().iter().any(|l| l.contains("runs its tools on example-host") && !l.contains(&secret)), "logged without the secret: {:?}", h.logs());
   connections.dispose();
 }
 
@@ -228,7 +228,7 @@ async fn codex_ssh_local_run_bridges_stdio_mcp_servers_over_http() {
   let lab = Lab::new();
   let connections = host(&lab).await;
   let codex = LocalCodex { version: VERSION.into(), package: Some(package(&lab)) };
-  drop(connections.codex.open(&connections, "gen1", &codex).await.unwrap());
+  drop(connections.codex.open(&connections, "example-host", &codex).await.unwrap());
 
   let folder = lab.host_home().join("work-mcp");
   std::fs::create_dir_all(&folder).unwrap();
@@ -276,7 +276,7 @@ done
   let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
   h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
 
-  let s = Disposing(h.session(&format!("ssh://gen1{}", folder.display())));
+  let s = Disposing(h.session(&format!("ssh://example-host{}", folder.display())));
   s.start().await;
   assert!(view(&s)["error"].is_null(), "{} {:?}", view(&s)["error"], h.logs());
 

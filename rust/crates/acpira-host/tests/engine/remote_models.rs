@@ -52,12 +52,12 @@ async fn this_machines_sources_reach_the_host_and_follow_its_edits() {
   let providers = Arc::new(ProviderStore::new(&root, Arc::new(FileVault::new(root.join("secrets.json"), Arc::new(|_: &str| {})))));
   let mirror = ModelMirror::new(connections.clone(), providers.clone(), Arc::new(|_: &str| {}));
   mirror.start();
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
   // Nothing goes before the host's engine has answered; this one is older and keeps no client's settings
   tokio::time::sleep(Duration::from_millis(600)).await;
   assert!(host_models(&lab, "gw").is_none());
-  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
-  connections.set_engine_features("gen1", &client, vec![]);
+  let client = connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
+  connections.set_engine_features("example-host", &client, vec![]);
 
   until("the source on the host", || host_models(&lab, "gw").is_some()).await;
   assert_eq!(host_models(&lab, "gw").unwrap(), ["one"]);
@@ -71,13 +71,13 @@ async fn this_machines_sources_reach_the_host_and_follow_its_edits() {
   until("the new model on the host", || host_models(&lab, "gw").is_some_and(|m| m == ["one", "two"])).await;
 
   // The host's setting off: what this machine brought goes; on again: it is back, as the file holds it now
-  connections.op(ConnectionOp::SetModels { alias: "gen1".into(), on: false }).await.unwrap();
+  connections.op(ConnectionOp::SetModels { alias: "example-host".into(), on: false }).await.unwrap();
   until("the source taken back", || host_models(&lab, "gw").is_none()).await;
   gw.models.truncate(1);
   providers.apply(ProviderAction::Save { provider: gw, key: None }).await.unwrap();
   tokio::time::sleep(Duration::from_millis(600)).await;
   assert!(host_models(&lab, "gw").is_none(), "nothing goes while the setting is off");
-  connections.op(ConnectionOp::SetModels { alias: "gen1".into(), on: true }).await.unwrap();
+  connections.op(ConnectionOp::SetModels { alias: "example-host".into(), on: true }).await.unwrap();
   until("the source back", || host_models(&lab, "gw").is_some_and(|m| m == ["one"])).await;
 
   mirror.stop();
@@ -103,18 +103,18 @@ async fn a_host_that_keeps_them_apart_gets_this_machines_whole_settings() {
   let providers = Arc::new(ProviderStore::new(&root, Arc::new(FileVault::new(root.join("secrets.json"), Arc::new(|_: &str| {})))));
   let mirror = ModelMirror::new(connections.clone(), providers.clone(), Arc::new(|_: &str| {}));
   mirror.start();
-  connections.op(ConnectionOp::Add { alias: "gen1".into() }).await.unwrap();
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
 
   // First an older engine there: `extra` is merged into the host's own file
-  let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
-  connections.set_engine_features("gen1", &client, vec![]);
+  let client = connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
+  connections.set_engine_features("example-host", &client, vec![]);
   until("the merged source", || host_models(&lab, "extra").is_some()).await;
 
   // The engine updated: the settings go apart and the merged source comes back out
-  connections.set_engine_features("gen1", &client, vec![SET_FEATURE.into()]);
+  connections.set_engine_features("example-host", &client, vec![SET_FEATURE.into()]);
   let kept = client_settings_dir(&host_root, &this_machine().0).unwrap();
   until("the settings kept apart", || read(&kept.join("providers.json")).is_some()).await;
-  until("the host found keeping them apart", || connections.settings_apart("gen1") == Some(true)).await;
+  until("the host found keeping them apart", || connections.settings_apart("example-host") == Some(true)).await;
   until("the merged source taken back", || host_models(&lab, "extra").is_none()).await;
   let file = read(&kept.join("providers.json")).unwrap();
   let ids: Vec<&str> = file["providers"].as_array().unwrap().iter().filter_map(|p| p["id"].as_str()).collect();
@@ -129,7 +129,7 @@ async fn a_host_that_keeps_them_apart_gets_this_machines_whole_settings() {
   until("the new model kept apart", || read(&kept.join("providers.json")).is_some_and(|f| f["providers"][0]["models"].as_array().is_some_and(|m| m.len() == 2))).await;
 
   // The host's setting off: the folder goes, the host's own file is untouched
-  connections.op(ConnectionOp::SetModels { alias: "gen1".into(), on: false }).await.unwrap();
+  connections.op(ConnectionOp::SetModels { alias: "example-host".into(), on: false }).await.unwrap();
   until("the settings taken away", || !kept.exists()).await;
   assert_eq!(host_models(&lab, "gw").unwrap(), ["host"]);
 

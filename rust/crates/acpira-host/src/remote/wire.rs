@@ -5,7 +5,7 @@
 //! Bulk in either direction (`chunk` out, bulk `stdin` in) travels under a credit window: the sender keeps at most
 //! `BULK_WINDOW` bytes unacknowledged and the receiver acks each frame as it lands, so a tool call, a cancel or a
 //! heartbeat never queues behind megabytes already handed to ssh (measured: a ping behind an 8 MiB write took 6 s on
-//! gen1). Control frames and ordinary requests jump the sender's own queue
+//! a real host). Control frames and ordinary requests jump the sender's own queue
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ pub const PROTOCOL: u32 = 1;
 pub const MAX_LINE: usize = 4 * 1024 * 1024;
 /// Raw bytes per bulk chunk (base64 makes the line about 87 KiB)
 pub const CHUNK: usize = 64 * 1024;
-/// Unacknowledged bulk bytes the helper may have in flight: about 0.2 s at gen1's slowest measured rate
+/// Unacknowledged bulk bytes the helper may have in flight: about 0.2 s at the slowest host link measured
 pub const BULK_WINDOW: usize = 256 * 1024;
 /// How often each side pings, and how long either waits for any frame before it gives the other up
 pub const PING_EVERY_MS: u64 = 10_000;

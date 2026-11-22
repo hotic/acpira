@@ -161,11 +161,11 @@ describe('SSH folder agent selection', () => {
 
   it('includes antigravity in SSH_LOCAL_AGENTS so opting in keeps local credentials on SSH folders', () => {
     expect(SSH_LOCAL_AGENTS).toContain('antigravity');
-    const merged = agentsForFolder(localAgents, 'ssh://gen1/work', hostAgents, SSH_LOCAL_AGENTS);
+    const merged = agentsForFolder(localAgents, 'ssh://example-host/work', hostAgents, SSH_LOCAL_AGENTS);
     expect(merged.find(a => a.id === 'antigravity')?.available).toBe(true);
     // An agent that cannot run here in a host folder is the host's own
     expect(merged.find(a => a.id === 'kimi')?.available).toBe(true);
-    expect(pickFolderAgent(localAgents, 'antigravity', 'ssh://gen1/work', '/local/repo', undefined, SSH_LOCAL_AGENTS)).toBe('antigravity');
+    expect(pickFolderAgent(localAgents, 'antigravity', 'ssh://example-host/work', '/local/repo', undefined, SSH_LOCAL_AGENTS)).toBe('antigravity');
   });
 
   it('defaults installed external ACPs to local run while keeping uninstalled CLIs and built-in acpira on the host', () => {
@@ -200,13 +200,13 @@ describe('SSH folder agent selection', () => {
   it('falls back when an agent is set to remote-run and missing on the SSH host, or defers to an unprobed host', () => {
     const remoteRunForAgy = ['acpira', 'claude'];
     expect(
-      pickFolderAgent(localAgents, 'antigravity', 'ssh://gen1/work', '/local/repo', undefined, remoteRunForAgy),
+      pickFolderAgent(localAgents, 'antigravity', 'ssh://example-host/work', '/local/repo', undefined, remoteRunForAgy),
     ).toBeUndefined();
     expect(
-      pickFolderAgent(localAgents, 'antigravity', 'ssh://gen1/work', 'ssh://gen1/other', hostAgents, remoteRunForAgy),
+      pickFolderAgent(localAgents, 'antigravity', 'ssh://example-host/work', 'ssh://example-host/other', hostAgents, remoteRunForAgy),
     ).toBe('acpira');
     expect(
-      pickFolderAgent(localAgents, 'kimi', 'ssh://gen1/work', 'ssh://gen1/other', hostAgents, remoteRunForAgy),
+      pickFolderAgent(localAgents, 'kimi', 'ssh://example-host/work', 'ssh://example-host/other', hostAgents, remoteRunForAgy),
     ).toBe('kimi');
   });
 });
