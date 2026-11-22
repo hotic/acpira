@@ -103,8 +103,8 @@ pub(super) fn pick_target(u: &Value, kind: ToolKind) -> Option<Target> {
 
 pub(super) fn shell_target(raw: Option<&Map<String, Value>>, ctx: Option<&ToolCtx>) -> Option<Target> {
   let raw = raw?;
-  // The built-in agent's model may write a job id as a number
-  let shell_id = ["shell_id", "shellId", "id"].iter().find_map(|k| match raw.get(*k)? {
+  // Remote `BashOutput` passes `bash_id`, `KillShell` / Devin pass `shell_id`, and the built-in agent's `job` may write `id` as a number
+  let shell_id = ["shell_id", "shellId", "bash_id", "bashId", "id"].iter().find_map(|k| match raw.get(*k)? {
     Value::String(v) if !v.is_empty() => Some(v.clone()),
     Value::Number(n) => Some(n.to_string()),
     _ => None,
@@ -150,7 +150,10 @@ pub(super) fn json_strings<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
 
 #[cfg(test)]
 mod tests {
-  use super::display_file_name;
+  use serde_json::json;
+
+  use super::super::{NormalizeState, apply_update};
+  use super::*;
 
   #[test]
   fn step_artifacts_keep_their_step_number() {
@@ -163,5 +166,66 @@ mod tests {
       "steps/59/output.txt"
     );
     assert_eq!(display_file_name("/repo/assets/media_0.png"), "media_0.png");
+  }
+
+  #[test]
+  fn bash_output_resolves_background_command_by_bash_id() {
+    let mut s = NormalizeState::new(vec![]);
+    apply_update(
+      &mut s,
+      &json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "cargo test",
+        "kind": "execute",
+        "status": "in_progress",
+        "rawInput": { "command": "cargo test", "run_in_background": true },
+      }),
+    );
+    apply_update(
+      &mut s,
+      &json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-1",
+        "status": "completed",
+        "rawOutput": { "job": "1" },
+      }),
+    );
+    apply_update(
+      &mut s,
+      &json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-2",
+        "title": "Check job 1",
+        "kind": "execute",
+        "status": "in_progress",
+        "rawInput": { "bash_id": "1", "wait": 120 },
+      }),
+    );
+    apply_update(
+      &mut s,
+      &json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-3",
+        "title": "Check job 9",
+        "kind": "execute",
+        "status": "in_progress",
+        "rawInput": { "bash_id": "9" },
+      }),
+    );
+    let blocks = match s.turns.first() {
+      Some(Turn::Agent(t)) => &t.blocks,
+      _ => &[][..],
+    };
+    let check_known = match blocks.get(1) {
+      Some(AgentBlock::ToolCall(b)) => Some((b.verb_key.as_deref(), b.target.as_deref(), b.target_mono)),
+      _ => None,
+    };
+    let check_unknown = match blocks.get(2) {
+      Some(AgentBlock::ToolCall(b)) => Some((b.verb_key.as_deref(), b.target.as_deref(), b.target_mono)),
+      _ => None,
+    };
+    assert_eq!(check_known, Some((Some("verb.wait"), Some("cargo test"), Some(true))));
+    assert_eq!(check_unknown, Some((Some("verb.wait"), Some("9"), Some(true))));
   }
 }
