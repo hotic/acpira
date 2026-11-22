@@ -56,9 +56,11 @@ impl AcpSession {
       card.after = offering_call(turn);
       turn.plugin_cards.push(card);
       // The host the call came through, for a click in a session whose own hub has none
-      self.plugin_offers.lock().insert(card_id, host);
+      self.plugin_offers.lock().insert(card_id, host.clone());
       self.touch(&mut c);
     }
+    // The card's state reads the pages' plugin views, which may predate this plugin's folder
+    host.offered();
     HubReply::Done(format!(
       "A card offering {id} is in your reply. The user applies it with one click whenever they like, also after this \
        turn; that click is the hand-off, so the plugin is delivered: do not wait for it and do not ask the user to \

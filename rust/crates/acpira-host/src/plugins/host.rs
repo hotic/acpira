@@ -200,6 +200,12 @@ impl PluginHost {
     }
   }
 
+  /// A card was offered: send the pages' views again. Offering commits nothing and source folders are never watched,
+  /// so a page holding a view from before the plugin's folder existed would read the new card as removed
+  pub fn offered(&self) {
+    self.notify();
+  }
+
   /// At start: the log line a crash left out, then the first load
   pub async fn start(&self) {
     if let Err(e) = self.store.reconcile().await {
