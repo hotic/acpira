@@ -135,9 +135,9 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
     && (transcript !== undefined ? transcript.turns[0]?.role === 'user' : node.harness === undefined || node.harness.round > 1);
   return (
     <QuietEntranceContext.Provider value={opening}>
-      {/* The main thread's column: share its dock margins and scrollbar gutter, with turns carrying their own --pad */}
-      <div ref={scroll} className="pane-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter">
-        <div ref={body} className={cn('follow-pad mx-auto flex min-w-0 flex-col gap-msg pb-msg', wide && 'max-w-chat-column')}>
+      {/* The main thread's column: share its dock margins, scrollbar gutter, row keylines and prompt spacing */}
+      <div ref={scroll} data-subagent-thread className="pane-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter [overflow-anchor:none]">
+        <div ref={body} className={cn('follow-pad flex min-w-0 flex-col gap-msg pb-msg', wide ? 'thread-column' : 'mx-auto')}>
           {node.task !== undefined && !taskInTurns && <TaskCard task={node.task} />}
           {/* A delegation without a process of its own keeps only what the parent received */}
           {receiptOnly(node) ? (
@@ -154,7 +154,6 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
             <TurnActionsContext.Provider value={undefined}>
               <HistoryContext.Provider value={undefined}>
                 <FollowContext.Provider value={follow}>
-                <div className="flex min-w-0 flex-col gap-msg">
                   {transcript.turns.map((turn, ti) => turn.role === 'agent'
                     ? (
                       <AgentMessage
@@ -170,9 +169,12 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
                         lead="static"
                       />
                     )
-                    : <UserMessage key={ti} turn={turn} index={ti} blobUrl={blobUrl} />)}
+                    : turn.auto ? null : (
+                      <div key={ti} data-part="user-message" data-turn={ti} className="flex min-w-0 flex-col">
+                        <UserMessage turn={turn} index={ti} blobUrl={blobUrl} />
+                      </div>
+                    ))}
                   {transcript.turns.length === 0 && <Row className="px-pad text-fg-3"><Shimmer active>{t('subagents.loading')}</Shimmer></Row>}
-                </div>
                 </FollowContext.Provider>
               </HistoryContext.Provider>
             </TurnActionsContext.Provider>
@@ -210,7 +212,7 @@ function textOf(markdown: string): TextBlock {
 function TaskCard({ task }: { task: string }) {
   const turn = useMemo<UserTurn>(() => ({ role: 'user', text: task }), [task]);
   return (
-    <section className="flex min-w-0 flex-col" aria-label={t('subagents.task')}>
+    <section data-part="user-message" className="flex min-w-0 flex-col" aria-label={t('subagents.task')}>
       <UserMessage turn={turn} index={0} />
     </section>
   );

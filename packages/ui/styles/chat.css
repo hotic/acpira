@@ -189,8 +189,8 @@
      so it takes the icon's width, and the label follows the row gap plus 4 px later: the full slot's air on top of the gap
      left the glyph further from its label than anywhere else in the shell. Bodies under a row (pl-indent) and lists (prose.css) start on
      that label line; a mark filling the slot (Orb, subagent bars) overhangs it by the air on each side */
-  :is([data-thread], .plan-card) { --row-gap: calc(var(--gap) + 4px); --indent: calc(var(--icon) + var(--row-gap)); }
-  :is([data-thread], .plan-card) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2); }
+  :is([data-thread], [data-subagent-thread], .plan-card) { --row-gap: calc(var(--gap) + 4px); --indent: calc(var(--icon) + var(--row-gap)); }
+  :is([data-thread], [data-subagent-thread], .plan-card) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2); }
   /* The to-do dock's card (chat/Plan.tsx): its head row's hover fill stands 8px in from the card's outer edge (the 1px
      border included), on the vertical lines of the composer's chips and send button below, while the row's text stays on
      pad. Set here rather than in tokens.css so --pad is the shell's density, not the root's */
@@ -322,10 +322,15 @@
   }
   /* A process head right under the prompt card stands as far below the card as the reply stands below the head (the
      prose gap, measured to the head row's box, whose slack over a process row matches the reply's leading). The margin
-     follows a head that retires (a reply with no steps) back to the message gap, in step with its fold closing */
-  [data-sticky-prompt] + [data-part="agent-message"] { transition: margin-block-start var(--dur-open) ease-out var(--dur-open); }
-  [data-sticky-prompt] + [data-part="agent-message"]:has(> :first-child > [data-process-fold]:first-child > [data-fold-head]:not([inert])) {
+     follows a head that retires (a reply with no steps) back to the message gap, in step with its fold closing.
+     Matches both the main thread's sticky wrapper and the subagent inspector's plain prompt card. */
+  :is([data-sticky-prompt], [data-part="user-message"]) + [data-part="agent-message"] { transition: margin-block-start var(--dur-open) ease-out var(--dur-open); }
+  :is([data-sticky-prompt], [data-part="user-message"]) + [data-part="agent-message"]:has(> :first-child > [data-process-fold]:first-child > [data-fold-head]:not([inert])) {
     margin-block-start: calc(var(--process-prose-gap) - var(--msg-gap));
+  }
+  /* Match Thread's exchange spacing (Shell.tsx) under a reply's action row when another item follows in the inspector */
+  [data-subagent-thread] [data-part="agent-message"]:has(> [data-turn-actions]:last-child):not(:last-child) {
+    margin-block-end: calc(var(--spacing-turn-actions-below) - var(--msg-gap));
   }
   /* The reply keeps the full prose gap under a steered prompt, result card, or a retired compaction row. */
   [data-process-fold]:is([data-card-tail], [data-retired]) + * {
