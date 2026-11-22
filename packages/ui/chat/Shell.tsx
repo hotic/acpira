@@ -709,9 +709,10 @@ export function Shell(p: ShellProps) {
   const folderAgent = useCallback((dir?: string): AgentId | undefined => (
     pickFolderAgent(p.agents, p.agent.id, dir ?? p.cwd, p.cwd, p.hostAgents, localFor(dir ?? p.cwd))
   ), [p.agents, p.agent.id, p.cwd, p.hostAgents, localFor]);
-  // A session in a folder on an SSH host, of an agent that runs in the host's engine but could run here (the host lacks
-  // its CLI or its login, or cannot reach the vendor): its notice offers to run it on this machine instead
-  const runHere = on.runHere && p.cwd && parseRemoteFolder(p.cwd) && p.agents.some(a => a.id === p.agent.id && canRunHere(a)) && !localOnSsh.includes(p.agent.id)
+  const remoteHost = p.remoteAuth && p.cwd ? parseRemoteFolder(p.cwd)?.alias : undefined;
+  // A session running in an SSH host's engine whose agent can run on this machine (`canRunHere`): offer to run it here
+  // instead, even when `sshLocalAgents` is already on for new sessions
+  const runHere = on.runHere && p.remoteAuth && p.cwd && parseRemoteFolder(p.cwd) && p.agents.some(a => a.id === p.agent.id && canRunHere(a))
     ? () => on.runHere!(p.agent.id, p.cwd!) : undefined;
   const installHere = useMemo(() => on.installAgent ? (installNode?: boolean) => on.installAgent!(p.agent.id, installNode) : undefined, [on.installAgent, p.agent.id]);
   const cancelInstallHere = useMemo(() => on.cancelInstall ? () => on.cancelInstall!(p.agent.id) : undefined, [on.cancelInstall, p.agent.id]);
@@ -1576,7 +1577,7 @@ export function Shell(p: ShellProps) {
                   <Notice
                     status={p.status} error={p.error} agent={p.agent} authMethods={p.authMethods}
                     accounts={p.accounts?.filter(x => x.agent === p.agent.id)} accountId={p.accountId}
-                    accountAction={p.accountAction} remoteAuth={p.remoteAuth} install={p.agentInstall}
+                    accountAction={p.accountAction} remoteAuth={p.remoteAuth} remoteHost={remoteHost} install={p.agentInstall}
                     onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(folderAgent(p.cwd))}
                     onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
                     onAddAccountKey={on.addAccountKey ? key => on.addAccountKey!(p.agent.id, key) : undefined}

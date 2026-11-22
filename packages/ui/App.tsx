@@ -571,11 +571,16 @@ export function App() {
     refreshQuota: agent => post({ type: 'refreshQuota', sessionId: activeId.current, agent }),
     unlockCredentials: agent => post({ type: 'unlockCredentials', sessionId: activeId.current, agent }),
     runHere: (agent, cwd) => {
-      runHerePending.current = { agent, cwd };
       const info = agentsRef.current.find(a => a.id === agent) ?? { id: agent };
+      const host = hostSay(cwd);
+      // Already routed locally for new sessions: open a fresh local-run session in this folder right away
+      if (runsHereOnSsh(info, sshLocal.current, host?.say)) {
+        post({ type: 'newSession', agent, cwd });
+        return;
+      }
+      runHerePending.current = { agent, cwd };
       // A host that keeps this agent on itself outranks the agent's own setting: its say is the one to change, and
       // the agent's setting stays as it is for every other host
-      const host = hostSay(cwd);
       if (host?.say && Object.hasOwn(host.say, agent)) connectionOp({ op: 'setLocalAgent', alias: host.alias, agent, on: true });
       else post({ type: 'setSetting', key: 'sshLocalAgents', value: setSshLocal(sshLocal.current, info, true) });
     },

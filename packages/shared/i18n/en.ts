@@ -548,6 +548,7 @@ export const en = {
 
   'notice.connecting': 'Starting {agent}…',
   'notice.login.title': 'Sign in to {agent}',
+  'notice.login.titleOnHost': 'Sign in to {agent} on {host}',
   'notice.login.accounts': 'Credentials are kept in ~/.acpira',
   'notice.login.terminal': 'Finish signing in in the terminal',
   'notice.readonly.title': 'Read-only history',
@@ -1367,6 +1368,7 @@ export const en = {
   'settings.agent.binaryReset': 'Reset to default',
   'settings.agent.binaryNote': 'Saved in ~/.acpira/agents.json. Leave empty or reset to use automatic detection.',
   'settings.install.title': 'Install {agent}',
+  'settings.install.titleOnHost': 'Install {agent} on {host}',
   'settings.install.desc': 'Installs where this workspace runs, or copy the command',
   'settings.install.run': 'Install',
   'settings.install.command': 'Install command',
@@ -1374,6 +1376,7 @@ export const en = {
   'settings.install.cancel': 'Cancel',
   'settings.install.terminal': 'Run in terminal',
   'settings.install.running': 'Installing…',
+  'settings.install.runningOnHost': 'Installing on {host}…',
   'settings.install.success': 'Installed',
   'settings.install.failed': 'Install failed',
   'settings.install.cancelled': 'Install cancelled',

@@ -542,6 +542,7 @@ export const es = {
 
   'notice.connecting': 'Iniciando {agent}…',
   'notice.login.title': 'Iniciar sesión en {agent}',
+  'notice.login.titleOnHost': 'Iniciar sesión en {agent} en {host}',
   'notice.login.accounts': 'Las credenciales se guardan en ~/.acpira',
   'notice.login.terminal': 'Termina de iniciar sesión en la terminal',
   'notice.readonly.title': 'Historial de solo lectura',
@@ -1335,6 +1336,7 @@ export const es = {
   'settings.agent.binaryReset': 'Restablecer valor predeterminado',
   'settings.agent.binaryNote': 'Se guarda en ~/.acpira/agents.json. Déjalo vacío o restablece para volver a la detección automática.',
   'settings.install.title': 'Instalar {agent}',
+  'settings.install.titleOnHost': 'Instalar {agent} en {host}',
   'settings.install.desc': 'Instala donde corre el espacio de trabajo, o copia el comando',
   'settings.install.run': 'Instalar',
   'settings.install.command': 'Comando de instalación',
@@ -1342,6 +1344,7 @@ export const es = {
   'settings.install.cancel': 'Cancelar',
   'settings.install.terminal': 'Ejecutar en la terminal',
   'settings.install.running': 'Instalando…',
+  'settings.install.runningOnHost': 'Instalando en {host}…',
   'settings.install.success': 'Instalado',
   'settings.install.failed': 'La instalación falló',
   'settings.install.cancelled': 'Instalación cancelada',

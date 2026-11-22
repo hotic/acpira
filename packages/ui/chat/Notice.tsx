@@ -44,6 +44,8 @@ export interface NoticeProps {
   onRunHere?: () => void;
   // Session runs on an SSH host's engine: terminal auth methods lead browser OAuth, which cannot open on a headless host
   remoteAuth?: boolean;
+  // SSH host alias when running on a host engine, so install / login notices name which machine is affected
+  remoteHost?: string;
   // Missing-CLI install on whichever engine owns the session (local or SSH host)
   install?: AgentInstallProgress;
   onInstall?: (installNode?: boolean) => void;
@@ -119,7 +121,7 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
 // Once an import found no local login, signing in in the terminal becomes the primary and import stays greyed out in the menu.
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
-export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onAddAccountKey, onUnlock, onTakeOver, onRunHere, remoteAuth, install, onInstall, onCancelInstall, onInstallInTerminal, onOpenExternal }: NoticeProps) {
+export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onAddAccountKey, onUnlock, onTakeOver, onRunHere, remoteAuth, remoteHost, install, onInstall, onCancelInstall, onInstallInTerminal, onOpenExternal }: NoticeProps) {
   // The pasted-key way open: the box takes the actions' place until the key is sent or the way is cancelled
   const [keying, setKeying] = useState(false);
   // Confirmation dialog when an npm-based install failed because Node.js is missing
@@ -246,19 +248,19 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     ? { title: t('notice.locked.title', { agent: agent.name }), text: t(onUnlock ? 'notice.locked.text' : 'mobile.notice.unlockOnComputer') }
     : status === 'auth_required'
     ? {
-        title: t('notice.login.title', { agent: agent.name }),
+        title: remoteHost ? t('notice.login.titleOnHost', { agent: agent.name, host: remoteHost }) : t('notice.login.title', { agent: agent.name }),
         text: withAccounts ? t('notice.login.accounts') : authMethods?.length ? undefined : t('notice.login.terminal'),
       }
     : status === 'error' && takeOver
       ? { title: t('notice.takeOver.title'), text: t('notice.takeOver.text') }
     : installCommand
       ? installing
-        ? { title: t('settings.install.running'), text: newestLine(install.log) ?? installCommand }
+        ? { title: remoteHost ? t('settings.install.runningOnHost', { host: remoteHost }) : t('settings.install.running'), text: newestLine(install.log) ?? installCommand }
         : install?.status === 'failed'
           ? { title: t('settings.install.failed'), text: install.error ?? newestLine(install.log) ?? error ?? installCommand }
           : install?.status === 'cancelled'
             ? { title: t('settings.install.cancelled'), text: error ?? installCommand }
-            : { title: t('settings.install.title', { agent: agent.name }), text: error ?? installCommand }
+            : { title: remoteHost ? t('settings.install.titleOnHost', { agent: agent.name, host: remoteHost }) : t('settings.install.title', { agent: agent.name }), text: error ?? installCommand }
     : status === 'readonly'
       ? { title: t('notice.readonly.title'), text: error ?? t('notice.readonly.text') }
       : status === 'closed'

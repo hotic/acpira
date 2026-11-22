@@ -548,6 +548,7 @@ export const ja = {
 
   'notice.connecting': '{agent} を起動中…',
   'notice.login.title': '{agent} にサインイン',
+  'notice.login.titleOnHost': '{host} 上の {agent} にサインイン',
   'notice.login.accounts': '認証情報は ~/.acpira に保存されます',
   'notice.login.terminal': 'ターミナルでサインインを完了してください',
   'notice.readonly.title': '読み取り専用の履歴',
@@ -1334,6 +1335,7 @@ export const ja = {
   'settings.agent.binaryReset': 'デフォルトに戻す',
   'settings.agent.binaryNote': '~/.acpira/agents.json に保存されます。空にするか戻すと自動検出を使います',
   'settings.install.title': '{agent} をインストール',
+  'settings.install.titleOnHost': '{host} に {agent} をインストール',
   'settings.install.desc': 'ワークスペースのマシンにインストール、コマンドを手動実行しても可',
   'settings.install.run': 'インストール',
   'settings.install.command': 'インストールコマンド',
@@ -1341,6 +1343,7 @@ export const ja = {
   'settings.install.cancel': 'キャンセル',
   'settings.install.terminal': 'ターミナルで実行',
   'settings.install.running': 'インストール中…',
+  'settings.install.runningOnHost': '{host} にインストール中…',
   'settings.install.success': 'インストール済み',
   'settings.install.failed': 'インストールに失敗しました',
   'settings.install.cancelled': 'インストールをキャンセルしました',

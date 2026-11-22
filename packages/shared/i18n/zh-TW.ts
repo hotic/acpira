@@ -552,6 +552,7 @@ export const zhTW = {
   // Notice bar above the composer
   'notice.connecting': '正在啟動 {agent}…',
   'notice.login.title': '需要登入 {agent}',
+  'notice.login.titleOnHost': '需要在 {host} 上登入 {agent}',
   'notice.login.accounts': '憑據儲存在 ~/.acpira',
   'notice.login.terminal': '在終端完成登入',
   'notice.readonly.title': '唯讀歷史',
@@ -1357,6 +1358,7 @@ export const zhTW = {
   'settings.agent.binaryReset': '恢復預設',
   'settings.agent.binaryNote': '儲存在 ~/.acpira/agents.json，留空或恢復預設將回到自動偵測',
   'settings.install.title': '安裝 {agent}',
+  'settings.install.titleOnHost': '在 {host} 上安裝 {agent}',
   'settings.install.desc': '裝到工作區所在的機器，也可複製指令手動安裝',
   'settings.install.run': '安裝',
   'settings.install.command': '安裝指令',
@@ -1364,6 +1366,7 @@ export const zhTW = {
   'settings.install.cancel': '取消',
   'settings.install.terminal': '在終端機中執行',
   'settings.install.running': '正在安裝…',
+  'settings.install.runningOnHost': '正在 {host} 上安裝…',
   'settings.install.success': '已安裝',
   'settings.install.failed': '安裝失敗',
   'settings.install.cancelled': '已取消安裝',

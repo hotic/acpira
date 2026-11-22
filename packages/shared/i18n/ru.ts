@@ -552,6 +552,7 @@ export const ru = {
 
   'notice.connecting': 'Запуск {agent}…',
   'notice.login.title': 'Вход в {agent}',
+  'notice.login.titleOnHost': 'Вход в {agent} на {host}',
   'notice.login.accounts': 'Учётные данные хранятся в ~/.acpira',
   'notice.login.terminal': 'Завершите вход в терминале',
   'notice.readonly.title': 'История только для чтения',
@@ -1365,6 +1366,7 @@ export const ru = {
   'settings.agent.binaryReset': 'Сбросить по умолчанию',
   'settings.agent.binaryNote': 'Сохраняется в ~/.acpira/agents.json. Оставьте пустым или сбросьте, чтобы вернуться к автообнаружению.',
   'settings.install.title': 'Установка {agent}',
+  'settings.install.titleOnHost': 'Установка {agent} на {host}',
   'settings.install.desc': 'Ставит туда, где работает проект, или скопируйте команду',
   'settings.install.run': 'Установить',
   'settings.install.command': 'Команда установки',
@@ -1372,6 +1374,7 @@ export const ru = {
   'settings.install.cancel': 'Отмена',
   'settings.install.terminal': 'Запустить в терминале',
   'settings.install.running': 'Установка…',
+  'settings.install.runningOnHost': 'Установка на {host}…',
   'settings.install.success': 'Установлено',
   'settings.install.failed': 'Установка не удалась',
   'settings.install.cancelled': 'Установка отменена',

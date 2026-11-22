@@ -114,6 +114,35 @@ describe('Notice missing-CLI and SSH auth UX', () => {
     expect(remoteMarkup).toContain('Sign in with browser');
     expect(remoteMarkup).toContain('Run Antigravity on this computer');
   });
+
+  it('names the SSH host in install and login titles when remoteHost is set', () => {
+    const install = renderNotice({
+      error: 'agy not found — install the Antigravity CLI first',
+      remoteAuth: true,
+      remoteHost: 'build-box',
+      onInstall: vi.fn(),
+      onRunHere: vi.fn(),
+    });
+    expect(install).toContain('Install Antigravity on build-box');
+    expect(install).toContain('Run Antigravity on this computer');
+
+    const installing = renderNotice({
+      remoteAuth: true,
+      remoteHost: 'build-box',
+      onInstall: vi.fn(),
+      onCancelInstall: vi.fn(),
+      install: { agent: 'antigravity', status: 'running', log: ['Downloading…'] },
+    });
+    expect(installing).toContain('Installing on build-box…');
+
+    const login = renderNotice({
+      status: 'auth_required',
+      agent: { id: 'antigravity', name: 'Antigravity', available: true },
+      remoteAuth: true,
+      remoteHost: 'build-box',
+    });
+    expect(login).toContain('Sign in to Antigravity on build-box');
+  });
 });
 
 describe('SSH folder agent selection', () => {

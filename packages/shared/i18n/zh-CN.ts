@@ -556,6 +556,7 @@ export const zhCN = {
   // Notice bar above the composer
   'notice.connecting': '正在启动 {agent}…',
   'notice.login.title': '需要登录 {agent}',
+  'notice.login.titleOnHost': '需要在 {host} 上登录 {agent}',
   'notice.login.accounts': '凭据保存在 ~/.acpira',
   'notice.login.terminal': '在终端完成登录',
   'notice.readonly.title': '只读历史',
@@ -1376,6 +1377,7 @@ export const zhCN = {
   'settings.agent.binaryReset': '恢复默认',
   'settings.agent.binaryNote': '保存在 ~/.acpira/agents.json，留空或恢复默认将回到自动检测',
   'settings.install.title': '安装 {agent}',
+  'settings.install.titleOnHost': '在 {host} 上安装 {agent}',
   'settings.install.desc': '装到工作区所在的机器，也可复制命令手动装',
   'settings.install.run': '安装',
   'settings.install.command': '安装命令',
@@ -1383,6 +1385,7 @@ export const zhCN = {
   'settings.install.cancel': '取消',
   'settings.install.terminal': '在终端中运行',
   'settings.install.running': '正在安装…',
+  'settings.install.runningOnHost': '正在 {host} 上安装…',
   'settings.install.success': '已安装',
   'settings.install.failed': '安装失败',
   'settings.install.cancelled': '已取消安装',
