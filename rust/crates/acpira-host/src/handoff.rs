@@ -13,10 +13,13 @@
 //! The same `build` serves the relay (`ask_agent` `changes`), groups, the sidekick and the evaluation scripts
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+
+use crate::acp::transport::cancel::Cancel;
 
 /// git's empty tree: the base of a repository without any commit yet
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -24,6 +27,10 @@ const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const PARALLEL: usize = 8;
 /// A file this large (bytes) is never read in whole, whatever its line count
 const FULL_TEXT_BYTES: usize = 64 * 1024;
+/// Untracked text files larger than this are not scanned in full for line counts
+const NUMSTAT_MAX_BYTES: u64 = 16 * 1024 * 1024;
+/// Maximum files probed for plain diffs when the pack already drops straight to `Level::Stat`
+const STAT_DIFF_PROBES: usize = 64;
 /// Definitions whose references are looked up, at most
 const REF_NAMES: usize = 16;
 /// References listed per definition, at most
@@ -290,65 +297,146 @@ fn is_stat_only(path: &str) -> bool {
   STAT_ONLY.contains(&name) || name.ends_with(".min.js") || name.ends_with(".min.css") || name.ends_with(".map")
 }
 
-/// One file's diff: tracked files against the base, untracked ones against nothing
-async fn file_diff(top: PathBuf, attrs: PathBuf, base: String, c: Changed, whole: bool) -> String {
+fn is_binary_count(counts: &BTreeMap<String, (Option<u64>, Option<u64>)>, path: &str) -> bool {
+  counts.get(path).is_some_and(|(a, r)| a.is_none() && r.is_none())
+}
+
+fn binary_diff(c: &Changed) -> String {
+  let old = if c.untracked {
+    "/dev/null".to_owned()
+  } else {
+    format!("a/{}", c.old_path.as_deref().unwrap_or(&c.path))
+  };
+  format!("diff --git {old} b/{p}\nBinary files {old} and b/{p} differ\n", p = c.path)
+}
+
+/// Format an untracked text file as a unified diff in Rust, avoiding spawning `git diff --no-index` per file.
+/// When `max_bytes` is given, files whose raw size already exceeds it are skipped since their diff cannot fit.
+fn untracked_diff(top: &Path, path: &str, max_bytes: Option<usize>) -> String {
+  let full = top.join(path);
+  if let Some(cap) = max_bytes
+    && std::fs::metadata(&full).is_ok_and(|m| m.len() as usize > cap)
+  {
+    return String::new();
+  }
+  let Ok(bytes) = std::fs::read(&full) else { return String::new() };
+  if looks_binary(&bytes) {
+    return format!("diff --git /dev/null b/{path}\nBinary files /dev/null and b/{path} differ\n");
+  }
+  let body = String::from_utf8_lossy(&bytes);
+  let lines: Vec<&str> = body.lines().collect();
+  if lines.is_empty() {
+    return String::new();
+  }
+  let mut out = String::with_capacity(body.len() + lines.len() + 128);
+  out.push_str(&format!("diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{} @@\n", lines.len()));
+  for line in lines {
+    out.push('+');
+    out.push_str(line);
+    out.push('\n');
+  }
+  if !body.ends_with('\n') {
+    out.push_str("\\ No newline at end of file\n");
+  }
+  out
+}
+
+/// One file's diff: binaries and untracked files never spawn `git`; tracked text files diff against `base`
+async fn file_diff(top: PathBuf, attrs: PathBuf, base: String, c: Changed, whole: bool, binary: bool, untracked_cap: Option<usize>) -> String {
+  if binary {
+    return binary_diff(&c);
+  }
+  if c.untracked {
+    return tokio::task::spawn_blocking(move || untracked_diff(&top, &c.path, untracked_cap)).await.unwrap_or_default();
+  }
   let attrs_cfg = format!("core.attributesFile={}", attrs.display());
   let ctx = if whole { "-W" } else { "-U3" };
-  let mut args = vec!["-c", attrs_cfg.as_str(), "-c", "core.quotepath=false", "-c", "diff.noprefix=false", "diff", "--no-color", "--no-ext-diff", "--no-textconv", ctx];
-  let r = if c.untracked {
-    args.extend(["--no-index", "--", null_device(), c.path.as_str()]);
-    git_raw(&top, &args).await
-  } else {
-    args.extend(["-M", base.as_str(), "--"]);
-    if let Some(old) = &c.old_path {
-      args.push(old.as_str());
-    }
-    args.push(c.path.as_str());
-    git_raw(&top, &args).await
-  };
-  // `--no-index` answers 1 when the files differ, which they always do here
-  match r {
+  let mut args = vec!["-c", attrs_cfg.as_str(), "-c", "core.quotepath=false", "-c", "diff.noprefix=false", "diff", "--no-color", "--no-ext-diff", "--no-textconv", ctx, "-M", base.as_str(), "--"];
+  if let Some(old) = &c.old_path {
+    args.push(old.as_str());
+  }
+  args.push(c.path.as_str());
+  match git_raw(&top, &args).await {
     Ok((0 | 1, out)) => text(out),
     _ => String::new(),
   }
 }
 
-fn null_device() -> &'static str {
-  if cfg!(windows) { "NUL" } else { "/dev/null" }
-}
-
-/// Run `f` over every file, `PARALLEL` git processes at a time, answering in the files' order
-async fn per_file<F, Fut>(files: &[Changed], f: F) -> Vec<String>
+/// Run `f` over every file, `PARALLEL` git processes at a time, answering in the files' order and aborting on `cancel`
+async fn per_file<F, Fut>(files: &[Changed], cancel: &Cancel, f: F) -> Vec<String>
 where
   F: Fn(Changed) -> Fut,
   Fut: std::future::Future<Output = String> + Send + 'static,
 {
   let mut out = vec![String::new(); files.len()];
   for (chunk_no, chunk) in files.chunks(PARALLEL).enumerate() {
+    if cancel.is_cancelled() {
+      break;
+    }
     let mut set = tokio::task::JoinSet::new();
     for (i, c) in chunk.iter().enumerate() {
       let fut = f(c.clone());
       set.spawn(async move { (i, fut.await) });
     }
-    while let Some(Ok((i, d))) = set.join_next().await {
-      out[chunk_no * PARALLEL + i] = d;
+    loop {
+      tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+          set.abort_all();
+          return out;
+        }
+        next = set.join_next() => match next {
+          Some(Ok((i, d))) => out[chunk_no * PARALLEL + i] = d,
+          Some(Err(_)) => {}
+          None => break,
+        },
+      }
     }
   }
   out
 }
 
-/// Added / removed lines per path; a binary file has none
-async fn numstat(top: &Path, base: &str, files: &[Changed]) -> BTreeMap<String, (Option<u64>, Option<u64>)> {
-  let mut out = BTreeMap::new();
-  let tracked: Vec<&Changed> = files.iter().filter(|c| !c.untracked).collect();
-  if !tracked.is_empty() {
-    let mut args: Vec<&str> = vec!["-c", "core.quotepath=false", "diff", "--numstat", "-z", "-M", "--no-ext-diff", base, "--"];
-    for c in &tracked {
-      if let Some(old) = &c.old_path {
-        args.push(old.as_str());
-      }
-      args.push(c.path.as_str());
+/// Streaming binary check and line count for an untracked file: reads only the first 8 KB for binary files (so large
+/// archives never enter memory), and counts lines in fixed chunks up to `NUMSTAT_MAX_BYTES`
+fn untracked_line_count(path: &Path) -> Option<u64> {
+  let mut f = std::fs::File::open(path).ok()?;
+  let meta_len = f.metadata().ok().map(|m| m.len()).unwrap_or(0);
+  let mut buf = [0u8; 8192];
+  let n = f.read(&mut buf).ok()?;
+  if n == 0 {
+    return Some(0);
+  }
+  if looks_binary(&buf[..n]) || meta_len > NUMSTAT_MAX_BYTES {
+    return None;
+  }
+  let mut lines = buf[..n].iter().filter(|&&b| b == b'\n').count() as u64;
+  let mut last = buf[n - 1];
+  let mut total = n as u64;
+  loop {
+    let k = f.read(&mut buf).ok()?;
+    if k == 0 {
+      break;
     }
+    total += k as u64;
+    if total > NUMSTAT_MAX_BYTES {
+      return None;
+    }
+    lines += buf[..k].iter().filter(|&&b| b == b'\n').count() as u64;
+    last = buf[k - 1];
+  }
+  if last != b'\n' {
+    lines += 1;
+  }
+  Some(lines)
+}
+
+/// Added / removed lines per path; a binary file has none
+async fn numstat(top: &Path, base: &str, files: &[Changed], cancel: &Cancel) -> BTreeMap<String, (Option<u64>, Option<u64>)> {
+  let mut out = BTreeMap::new();
+  let tracked: BTreeSet<&str> = files.iter().filter(|c| !c.untracked).map(|c| c.path.as_str()).collect();
+  if !tracked.is_empty() && !cancel.is_cancelled() {
+    // Query the whole work tree in one invocation so large change sets never overflow the Windows command-line limit
+    let args = ["-c", "core.quotepath=false", "diff", "--numstat", "-z", "-M", "--no-ext-diff", base, "--"];
     if let Ok(raw) = git(top, &args).await {
       let mut parts = raw.split(|b| *b == 0).map(|p| String::from_utf8_lossy(p).into_owned());
       while let Some(entry) = parts.next() {
@@ -364,13 +452,32 @@ async fn numstat(top: &Path, base: &str, files: &[Changed]) -> BTreeMap<String, 
         } else {
           path.to_owned()
         };
-        out.insert(path, (a.parse().ok(), r.parse().ok()));
+        if tracked.contains(path.as_str()) {
+          out.insert(path, (a.parse().ok(), r.parse().ok()));
+        }
       }
     }
   }
-  for c in files.iter().filter(|c| c.untracked) {
-    let n = std::fs::read(top.join(&c.path)).ok().filter(|b| !looks_binary(b)).map(|b| String::from_utf8_lossy(&b).lines().count() as u64);
-    out.insert(c.path.clone(), (n, n.map(|_| 0)));
+  let untracked: Vec<String> = files.iter().filter(|c| c.untracked).map(|c| c.path.clone()).collect();
+  if !untracked.is_empty() && !cancel.is_cancelled() {
+    let top = top.to_path_buf();
+    let cancel = cancel.clone();
+    let stats = tokio::task::spawn_blocking(move || {
+      let mut res = Vec::with_capacity(untracked.len());
+      for p in untracked {
+        if cancel.is_cancelled() {
+          break;
+        }
+        let n = untracked_line_count(&top.join(&p));
+        res.push((p, n));
+      }
+      res
+    })
+    .await
+    .unwrap_or_default();
+    for (p, n) in stats {
+      out.insert(p, (n, n.map(|_| 0)));
+    }
   }
   out
 }
@@ -379,12 +486,33 @@ fn looks_binary(bytes: &[u8]) -> bool {
   bytes.iter().take(8000).any(|b| *b == 0)
 }
 
+/// Strict lower bound on a file's plain diff size (bytes) from its numstat alone, used to short-circuit straight to
+/// `Level::Stat` when the full diff cannot possibly fit inside `max_bytes`
+fn min_diff_bytes(c: &Changed, counts: &BTreeMap<String, (Option<u64>, Option<u64>)>) -> usize {
+  match counts.get(&c.path).copied() {
+    Some((None, None)) => 40 + c.path.len().saturating_mul(2),
+    Some((Some(a), Some(r))) => {
+      let lines = a.saturating_add(r) as usize;
+      if lines == 0 {
+        16 + c.path.len().saturating_mul(2)
+      } else {
+        60 + c.path.len().saturating_mul(2) + lines.saturating_mul(2)
+      }
+    }
+    _ => 0,
+  }
+}
+
 /// The full text of a changed file when it is small enough: (path, text, line count)
-fn full_text(top: &Path, c: &Changed, max_lines: usize) -> Option<(String, String, usize)> {
-  if max_lines == 0 || c.status == 'D' || is_stat_only(&c.path) {
+fn full_text(top: &Path, c: &Changed, max_lines: usize, binary: bool) -> Option<(String, String, usize)> {
+  if max_lines == 0 || binary || c.status == 'D' || is_stat_only(&c.path) {
     return None;
   }
-  let bytes = std::fs::read(top.join(&c.path)).ok()?;
+  let full = top.join(&c.path);
+  if std::fs::metadata(&full).ok()?.len() as usize > FULL_TEXT_BYTES {
+    return None;
+  }
+  let bytes = std::fs::read(&full).ok()?;
   if bytes.len() > FULL_TEXT_BYTES || looks_binary(&bytes) {
     return None;
   }
@@ -567,9 +695,26 @@ async fn in_scope(cwd: &Path, top: &Path, base: &str, scope: Option<&Scope>) -> 
 /// later round compares like with like): what a summoned thread is told changed since its last round. None when `cwd`
 /// is not in a git work tree
 pub async fn file_stats(cwd: &Path, base: Option<&str>, scope: Option<&Scope>) -> Result<Option<Vec<PackFile>>> {
+  file_stats_cancellable(cwd, base, scope, &Cancel::new()).await
+}
+
+/// Cancellable variant of [`file_stats`]; returns `Ok(None)` when cancelled mid-way
+pub async fn file_stats_cancellable(cwd: &Path, base: Option<&str>, scope: Option<&Scope>, cancel: &Cancel) -> Result<Option<Vec<PackFile>>> {
+  if cancel.is_cancelled() {
+    return Ok(None);
+  }
   let Some((top, base)) = locate(cwd, base).await? else { return Ok(None) };
+  if cancel.is_cancelled() {
+    return Ok(None);
+  }
   let files = in_scope(cwd, &top, &base, scope).await?;
-  let counts = numstat(&top, &base, &files).await;
+  if cancel.is_cancelled() {
+    return Ok(None);
+  }
+  let counts = numstat(&top, &base, &files, cancel).await;
+  if cancel.is_cancelled() {
+    return Ok(None);
+  }
   Ok(Some(
     files
       .iter()
@@ -649,17 +794,27 @@ fn assemble(p: &Parts, diffs: &[&str], diff_title: &str, texts: &[&(String, Stri
 /// Build the pack for the work tree that holds `cwd`. None when `cwd` is not in a git work tree or nothing in scope
 /// changed
 pub async fn build(cwd: &Path, base: Option<&str>, scope: Option<&Scope>, recipe: &Recipe) -> Result<Option<Pack>> {
-  let recipe = recipe.clone().clamped();
-  let Some((top, base)) = locate(cwd, base).await? else { return Ok(None) };
-  let files = in_scope(cwd, &top, &base, scope).await?;
-  if files.is_empty() {
+  build_cancellable(cwd, base, scope, recipe, &Cancel::new()).await
+}
+
+/// Cancellable variant of [`build`]; returns `Ok(None)` when `cancel` fires
+pub async fn build_cancellable(cwd: &Path, base: Option<&str>, scope: Option<&Scope>, recipe: &Recipe, cancel: &Cancel) -> Result<Option<Pack>> {
+  if cancel.is_cancelled() {
     return Ok(None);
   }
-  let attrs = attributes_file()?;
-  let counts = numstat(&top, &base, &files).await;
-  let diffable: Vec<Changed> = files.iter().filter(|c| !is_stat_only(&c.path)).cloned().collect();
-  let (t, a, b) = (top.clone(), attrs.clone(), base.clone());
-  let whole = per_file(&diffable, move |c| file_diff(t.clone(), a.clone(), b.clone(), c, recipe.function_context)).await;
+  let recipe = recipe.clone().clamped();
+  let Some((top, base)) = locate(cwd, base).await? else { return Ok(None) };
+  if cancel.is_cancelled() {
+    return Ok(None);
+  }
+  let files = in_scope(cwd, &top, &base, scope).await?;
+  if files.is_empty() || cancel.is_cancelled() {
+    return Ok(None);
+  }
+  let counts = numstat(&top, &base, &files, cancel).await;
+  if cancel.is_cancelled() {
+    return Ok(None);
+  }
 
   let pack_files: Vec<PackFile> = files
     .iter()
@@ -689,7 +844,83 @@ pub async fn build(cwd: &Path, base: Option<&str>, scope: Option<&Scope>, recipe
     "# Handoff: uncommitted changes\n\nThe changes in {root_name} against {short}, as git sees them now (paths relative to {}). Generated by Acpira from git alone; read the files themselves for anything this leaves out.\n\n",
     top.display()
   );
-  let texts: Vec<(String, String, usize)> = diffable.iter().filter_map(|c| full_text(&top, c, recipe.full_text_lines)).collect();
+  let diffable: Vec<Changed> = files.iter().filter(|c| !is_stat_only(&c.path)).cloned().collect();
+  let footer = |level: &str, dropped: usize, extra: &str| {
+    let texts = if dropped > 0 { format!(" {dropped} full texts were left out to stay under the size cap.") } else { String::new() };
+    format!("\n(Pack: {level}.{texts}{extra})\n")
+  };
+  let stat_footer = footer("paths and line counts", 0, " Only the smallest diffs fit; read the other files themselves.");
+
+  // Fast path: when even the file list or the strict lower bound of all diffs already exceeds `max_bytes`, full /
+  // trimmed / plain levels can never fit. Skip whole-function diffs and full texts altogether, and only compute plain
+  // diffs for the smallest files that can still fit in the remaining budget
+  let stat_shell = Parts { header: header.clone(), stat: stat.clone(), whole: vec![], plain: None, texts: vec![], refs: String::new(), read: String::new() };
+  let stat_base_out = assemble(&stat_shell, &[], "Diff", &[], false, &stat_footer);
+  if !recipe.refs {
+    if stat_base_out.len() + 64 >= recipe.max_bytes {
+      let mut out = stat_base_out;
+      if out.len() > recipe.max_bytes {
+        let mut cut: String = out.chars().take(recipe.max_bytes.saturating_sub(80)).collect();
+        cut.push_str("\n… (cut at the size cap)\n");
+        out = cut;
+      }
+      return Ok(Some(finish(out, pack_files, Level::Stat, base, &top)));
+    }
+    let min_total_diff: usize = diffable.iter().map(|c| min_diff_bytes(c, &counts)).fold(0usize, usize::saturating_add);
+    if stat_base_out.len().saturating_add(min_total_diff) > recipe.max_bytes {
+      let attrs = attributes_file()?;
+      let mut budget = recipe.max_bytes.saturating_sub(stat_base_out.len() + 64);
+      let mut order: Vec<(usize, usize)> = diffable.iter().enumerate().map(|(i, c)| (min_diff_bytes(c, &counts), i)).collect();
+      order.sort_by_key(|&(est, i)| (est, i));
+      let mut picked: BTreeMap<usize, String> = BTreeMap::new();
+      for (est, i) in order.into_iter().take(STAT_DIFF_PROBES) {
+        if cancel.is_cancelled() {
+          return Ok(None);
+        }
+        if est > budget {
+          break;
+        }
+        let c = &diffable[i];
+        let binary = is_binary_count(&counts, &c.path);
+        let d = file_diff(top.clone(), attrs.clone(), base.clone(), c.clone(), false, binary, Some(budget)).await;
+        let n = d.len();
+        if n > 0 && n <= budget {
+          budget -= n;
+          picked.insert(i, d);
+        }
+      }
+      if cancel.is_cancelled() {
+        return Ok(None);
+      }
+      let shown: Vec<&str> = picked.values().map(String::as_str).collect();
+      let mut out = assemble(&stat_shell, &shown, "Diff of the smallest changes", &[], false, &stat_footer);
+      if out.len() > recipe.max_bytes {
+        let mut cut: String = out.chars().take(recipe.max_bytes.saturating_sub(80)).collect();
+        cut.push_str("\n… (cut at the size cap)\n");
+        out = cut;
+      }
+      return Ok(Some(finish(out, pack_files, Level::Stat, base, &top)));
+    }
+  }
+
+  let attrs = attributes_file()?;
+  let untracked_cap = (!recipe.refs).then_some(recipe.max_bytes);
+  let whole = {
+    let (t, a, b, cnt) = (top.clone(), attrs.clone(), base.clone(), &counts);
+    per_file(&diffable, cancel, move |c| {
+      let binary = is_binary_count(cnt, &c.path);
+      file_diff(t.clone(), a.clone(), b.clone(), c, recipe.function_context, binary, untracked_cap)
+    })
+    .await
+  };
+  if cancel.is_cancelled() {
+    return Ok(None);
+  }
+
+  let texts: Vec<(String, String, usize)> = diffable
+    .iter()
+    .filter_map(|c| full_text(&top, c, recipe.full_text_lines, is_binary_count(&counts, &c.path)))
+    .collect();
   let refs = if recipe.refs {
     let new_files: BTreeSet<String> = diffable.iter().filter(|c| c.status == 'A').map(|c| c.path.clone()).collect();
     let mut ranked: Vec<(u8, String)> = vec![];
@@ -738,10 +969,6 @@ pub async fn build(cwd: &Path, base: Option<&str>, scope: Option<&Scope>, recipe
   };
   let mut parts = Parts { header, stat, whole, plain: None, texts, refs, read };
   let first_title = if recipe.function_context { "Diff (each hunk widened to its whole function)" } else { "Diff" };
-  let footer = |level: &str, dropped: usize, extra: &str| {
-    let texts = if dropped > 0 { format!(" {dropped} full texts were left out to stay under the size cap.") } else { String::new() };
-    format!("\n(Pack: {level}.{texts}{extra})\n")
-  };
 
   // 1. Everything; 2. without full texts, largest first
   let mut kept: Vec<&(String, String, usize)> = parts.texts.iter().collect();
@@ -762,10 +989,28 @@ pub async fn build(cwd: &Path, base: Option<&str>, scope: Option<&Scope>, recipe
     }
     kept.remove(0);
   }
-  // 3. Plain hunks
+  // 3. Plain hunks: untracked, deleted and binary files produce the same output under -W and -U3, so only re-diff
+  // tracked non-deleted text files
   if recipe.function_context {
-    let (t, a, b) = (top.clone(), attrs.clone(), base.clone());
-    parts.plain = Some(per_file(&diffable, move |c| file_diff(t.clone(), a.clone(), b.clone(), c, false)).await);
+    let mut plain_diffs = parts.whole.clone();
+    let rerun_idx: Vec<usize> = diffable
+      .iter()
+      .enumerate()
+      .filter(|(_, c)| !c.untracked && c.status != 'D' && !is_binary_count(&counts, &c.path))
+      .map(|(i, _)| i)
+      .collect();
+    if !rerun_idx.is_empty() {
+      let rerun_files: Vec<Changed> = rerun_idx.iter().map(|&i| diffable[i].clone()).collect();
+      let (t, a, b) = (top.clone(), attrs.clone(), base.clone());
+      let redone = per_file(&rerun_files, cancel, move |c| file_diff(t.clone(), a.clone(), b.clone(), c, false, false, None)).await;
+      if cancel.is_cancelled() {
+        return Ok(None);
+      }
+      for (i, d) in rerun_idx.into_iter().zip(redone) {
+        plain_diffs[i] = d;
+      }
+    }
+    parts.plain = Some(plain_diffs);
   }
   let plain: Vec<&str> = parts.plain.as_ref().unwrap_or(&parts.whole).iter().map(String::as_str).collect();
   let out = assemble(&parts, &plain, "Diff", &[], true, &footer("plain hunks, no full texts", parts.texts.len(), ""));

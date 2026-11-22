@@ -230,3 +230,33 @@ async fn a_later_listing_against_the_packs_base_names_only_what_moved() {
   let only = file_stats(root, Some(&pack.base), Some(&scope)).await.unwrap().unwrap();
   assert_eq!(only.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.txt"]);
 }
+
+#[tokio::test]
+async fn many_untracked_and_binary_files_short_circuit_to_stat_and_honour_cancel() {
+  let Some(dir) = repo() else { return };
+  let root = dir.path();
+  write(root, "keep.rs", "pub fn keep() -> u8 { 1 }\n");
+  commit(root);
+  write(root, "keep.rs", "pub fn keep() -> u8 { 2 }\n");
+  // Enough untracked binary + text files that the file list alone overflows a tight cap
+  let assets = root.join("assets");
+  std::fs::create_dir_all(&assets).unwrap();
+  for i in 0..160 {
+    std::fs::write(assets.join(format!("blob_{i:04}.bin")), [0u8, 1, 2, (i & 0xff) as u8]).unwrap();
+  }
+  write(root, "assets/readme.txt", "hello\nworld\n");
+
+  let pack = build(root, None, None, &Recipe { max_bytes: 2_500, ..Recipe::default() }).await.unwrap().unwrap();
+  assert_eq!(pack.level, Level::Stat);
+  assert_eq!(pack.files.len(), 162);
+  let by: BTreeMap<&str, &PackFile> = pack.files.iter().map(|f| (f.path.as_str(), f)).collect();
+  assert_eq!(by["assets/blob_0000.bin"].added, None);
+  assert_eq!(by["assets/readme.txt"].added, Some(2));
+  assert!(pack.text.contains("… (cut at the size cap)"));
+
+  // A fired cancel token aborts before touching the repository
+  let cancel = Cancel::new();
+  cancel.cancel();
+  assert!(build_cancellable(root, None, None, &Recipe::default(), &cancel).await.unwrap().is_none());
+  assert!(file_stats_cancellable(root, None, None, &cancel).await.unwrap().is_none());
+}
