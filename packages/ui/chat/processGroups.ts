@@ -1,5 +1,5 @@
 import type { AgentBlock, SteerBlock, ToolCallBlock } from '@acpira/shared/transcript';
-import { toolFiles, visibleToolContents } from './toolDetails';
+import { displayFileName, toolFiles, visibleToolContents } from './toolDetails';
 import { parseFileLink, type FileLink } from './fileLinks';
 import { sessionRead, splitSessionTarget, type SessionRead } from '@acpira/shared/sessionLinks';
 import { isImageGenTool, isImageResultBlock, isShowVideoTool, isShowWidgetTool, toolImages, toolVideos, toolWidget } from '@acpira/shared/imageTools';
@@ -168,7 +168,7 @@ export function foldStates({ items, now, live, autoExpand, following, doneAt, fi
 
 export const filePath = (block: ToolCallBlock) => block.locations?.[0]?.path
   ?? visibleToolContents(block).find(c => c.type === 'diff')?.source?.path ?? block.target ?? '';
-export const fileName = (block: ToolCallBlock) => filePath(block).split(/[\\/]/).pop() || block.target || '';
+export const fileName = (block: ToolCallBlock) => displayFileName(filePath(block)) || block.target || '';
 
 // Open only an unambiguous file; a multi-file patch title is not a destination.
 export function editReference(blocks: ToolCallBlock[]): FileLink | undefined {

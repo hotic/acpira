@@ -53,6 +53,20 @@ pub fn command_from_raw(raw: Option<&Map<String, Value>>) -> Option<String> {
   raw.get("command").and_then(Value::as_str).or_else(|| raw.get("cmd").and_then(Value::as_str)).map(str::to_owned)
 }
 
+/// Display label for a file path on a tool row: normally its basename, except `agy`'s per-step spilled files
+/// (`.../.system_generated/steps/<N>/media_0.png` or `output.txt`), which keep `steps/<N>/<file>` so rows from
+/// different steps do not all read as the same file
+pub(super) fn display_file_name(path: &str) -> String {
+  let parts: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+  if let [.., ".system_generated", "steps", step, file] = parts.as_slice()
+    && !step.is_empty()
+    && step.bytes().all(|b| b.is_ascii_digit())
+  {
+    return format!("steps/{step}/{file}");
+  }
+  basename(path).to_owned()
+}
+
 pub(super) fn pick_target(u: &Value, kind: ToolKind) -> Option<Target> {
   let raw = u.get("rawInput").and_then(Value::as_object);
   let mono = |text: String| Some(Target { text, mono: true, from_title: false });
@@ -77,12 +91,12 @@ pub(super) fn pick_target(u: &Value, kind: ToolKind) -> Option<Target> {
     return mono(url.to_owned());
   }
   if let Some(loc) = u.get("locations").and_then(Value::as_array).and_then(|l| l.first()).and_then(|l| text_of(l, "path")) {
-    return Some(Target { text: basename(loc), mono: false, from_title: false });
+    return Some(Target { text: display_file_name(loc), mono: false, from_title: false });
   }
   if matches!(kind, ToolKind::Read | ToolKind::Edit | ToolKind::Delete | ToolKind::Move)
     && let Some(path) = path_from_raw(raw)
   {
-    return Some(Target { text: basename(&path), mono: false, from_title: false });
+    return Some(Target { text: display_file_name(&path), mono: false, from_title: false });
   }
   text_of(u, "title").map(|title| Target { text: strip_verb(title), mono: false, from_title: true })
 }
@@ -131,5 +145,23 @@ pub(super) fn json_strings<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
     Value::Array(a) => a.iter().for_each(|x| json_strings(x, out)),
     Value::Object(o) => o.values().for_each(|x| json_strings(x, out)),
     _ => {}
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::display_file_name;
+
+  #[test]
+  fn step_artifacts_keep_their_step_number() {
+    assert_eq!(
+      display_file_name("/C:/Users/me/.gemini/antigravity-cli/brain/b1/.system_generated/steps/114/media_0.png"),
+      "steps/114/media_0.png"
+    );
+    assert_eq!(
+      display_file_name(r"C:\Users\me\.gemini\antigravity-cli\brain\b1\.system_generated\steps\59\output.txt"),
+      "steps/59/output.txt"
+    );
+    assert_eq!(display_file_name("/repo/assets/media_0.png"), "media_0.png");
   }
 }

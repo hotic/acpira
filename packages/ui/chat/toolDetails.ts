@@ -70,10 +70,20 @@ export function isLineCount(block: ToolCallBlock): boolean {
   return block.kind === 'read' && block.content?.type === 'text' && /^\s*\d+\s+lines?\s*$/i.test(block.content.text);
 }
 
+// `agy` spills per-step MCP media and oversized output into `.system_generated/steps/<N>/<file>`, so every step shares
+// the same basename (`media_0.png`, `output.txt`). Keep `steps/<N>/<file>` so consecutive reads stay distinguishable.
+const STEP_ARTIFACT = /(?:^|[\\/])\.system_generated[\\/]steps[\\/](\d+)[\\/]([^\\/]+)$/i;
+
+export function displayFileName(path: string): string {
+  const step = STEP_ARTIFACT.exec(path);
+  if (step) return `steps/${step[1]}/${step[2]}`;
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
 export function splitHit(hit: string): { main: string; aside?: string } {
   const line = /^(.+?):(\d+(?:[–-]\d+)?)(?::\d+)?$/.exec(hit);
-  if (line) return { main: line[1]!.split(/[\\/]/).pop()!, aside: `L${line[2]}` };
-  if (/^(?:\.{0,2}\/|[A-Za-z]:[\\/])/.test(hit)) return { main: hit.split(/[\\/]/).pop()! };
+  if (line) return { main: displayFileName(line[1]!), aside: `L${line[2]}` };
+  if (/^(?:\.{0,2}\/|[A-Za-z]:[\\/])/.test(hit)) return { main: displayFileName(hit) };
   try {
     const u = new URL(hit);
     return { main: u.pathname === '/' ? u.host : `${u.host}${u.pathname}`, aside: u.host };
@@ -89,7 +99,7 @@ export function rowImage(item: string, index: number, items: string[], images?: 
   const named = images.find(img => {
     if (!img.uri) return false;
     const path = parseFileLink(img.uri)?.path ?? img.uri;
-    return img.uri === item || path === item || (Boolean(main) && (path.endsWith(`/${main}`) || path.endsWith(`\\${main}`)));
+    return img.uri === item || path === item || (Boolean(main) && path.replace(/\\/g, '/').endsWith(`/${main}`));
   });
   if (named) return named;
   if (images.length === items.length) return images[index];

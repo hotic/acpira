@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentBlock, DiffLine, ToolCallBlock } from '@acpira/shared/transcript';
 import { DWELL_MS, chunkItems, continuingToolItem, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemRows, itemSettled, processParts, type FoldInput } from '../chat/processGroups';
+import { displayFileName, rowImage, splitHit } from '../chat/toolDetails';
 
 const read = (id: string, path: string, status: ToolCallBlock['status'] = 'completed'): ToolCallBlock => ({
   type: 'tool_call', id, kind: 'read', verb: 'Read', status, target: path.split('/').pop(), locations: [{ path }],
@@ -84,6 +85,19 @@ describe('process groups', () => {
     const blocks = [edit('e1', '/src/Turns.tsx'), edit('e2', '/src/prompt.rs'), edit('e3', '/src/Turns.tsx')];
     expect(editEntries(blocks).map(e => [e.key, e.blocks.map(b => b.id)])).toEqual([['/src/Turns.tsx', ['e1', 'e3']], ['/src/prompt.rs', ['e2']]]);
     expect(groupNames(blocks)).toEqual(['Turns.tsx', 'prompt.rs']);
+  });
+
+  it('keeps the step number on agy per-step artifacts so reads from different steps stay distinct', () => {
+    const a = '/C:/Users/Administrator/.acpira/plugins/.data/asgard-gateway/agy-sessions/s1/.gemini/antigravity-cli/brain/b1/.system_generated/steps/59/media_0.png';
+    const b = 'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\brain\\b1\\.system_generated\\steps\\114\\media_0.png';
+    expect(displayFileName(a)).toBe('steps/59/media_0.png');
+    expect(displayFileName(b)).toBe('steps/114/media_0.png');
+    expect(splitHit(a)).toEqual({ main: 'steps/59/media_0.png' });
+    expect(splitHit(`${b}:10–20`)).toEqual({ main: 'steps/114/media_0.png', aside: 'L10–20' });
+    expect(groupNames([read('r1', a), read('r2', b)])).toEqual(['steps/59/media_0.png', 'steps/114/media_0.png']);
+    const imgA = { blob: 'a.png', mimeType: 'image/png', uri: a };
+    const imgB = { blob: 'b.png', mimeType: 'image/png', uri: b };
+    expect(rowImage(b, 1, [a, b], [imgA, imgB])).toBe(imgB);
   });
 
   it('spans the first to the last changed line, falling back to removed lines for a deletion', () => {
