@@ -27,6 +27,8 @@ export interface ProvidersState {
 
 // Probe ids are unique for the page's lifetime; an answer is looked up by the id its request got
 let probeSeq = 0;
+let formErrorSeq = 0;
+type FormError = { id: number; text: string };
 const ProbeContext = createContext<{ probes?: Record<string, ProbeOutcome>; on: SettingsHandlers } | null>(null);
 
 // One probe slot: run() replaces the previous question, outcome is its answer once it lands
@@ -57,7 +59,7 @@ export function ProvidersSection({ state, on, detect }: { state?: ProvidersState
   // The source whose add-model list is open, with the models its endpoint listed when the entry was checked
   const [adding, setAdding] = useState<{ id: string; listed: ProviderModel[] }>();
   // The error of the last save from the form, shown inside the dialog (the page behind it is covered)
-  const [formError, setFormError] = useState<string>();
+  const [formError, setFormError] = useState<FormError>();
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   // Only the source form waits visibly. Row changes are echoed by the page's persistent write queue instead.
@@ -73,7 +75,7 @@ export function ProvidersSection({ state, on, detect }: { state?: ProvidersState
       setEditing(undefined);
       const added = before.current && state.view.providers.find(p => !before.current!.has(p.id));
       if (added) setAdding({ id: added.id, listed: listedOnSave.current ?? [] });
-    } else setFormError(state.error);
+    } else setFormError({ id: ++formErrorSeq, text: state.error });
     before.current = undefined;
     listedOnSave.current = undefined;
   }, [state]);
@@ -117,17 +119,17 @@ export function ProvidersSection({ state, on, detect }: { state?: ProvidersState
     }
     setChecks(next);
   }, [detect, on]);
-  const openAdd = (p: ProviderView) => {
-    // A refresh already holds the endpoint's answer
-    const listed = checked(p.id);
+  const openAdd = (p: Provider, key?: string, fresh = false) => {
+    // A refresh already holds the endpoint's answer; skip it when the edit form has unsaved connection edits
+    const listed = fresh ? undefined : checked(p.id);
     if (listed) { setAdding({ id: p.id, listed }); return; }
     const probe = `probe-${++probeSeq}`;
     setOpening({ id: p.id, probe });
-    on.providerProbe?.(probe, { kind: 'models', provider: strip(p) });
+    on.providerProbe?.(probe, { kind: 'models', provider: strip(p), key });
   };
   const view = state?.view;
   // The form's own failures show in the dialog; the page shows the view's error and failures of row actions
-  const error = (state?.error !== formError ? state?.error : undefined) ?? view?.error;
+  const error = (state?.error !== formError?.text ? state?.error : undefined) ?? view?.error;
   const providers = (view?.providers ?? []).map(p => state?.drafts?.[p.id] ? { ...p, ...state.drafts[p.id] } : p);
 
   useEffect(() => {
@@ -138,7 +140,7 @@ export function ProvidersSection({ state, on, detect }: { state?: ProvidersState
       const models = target && syncListedModels(target.models, opened.models);
       if (target && models) saveRow({ ...strip(target), models });
       setAdding({ id: opening.id, listed: opened.models });
-    } else if (opened.kind === 'failed') { setFormError(opened.error); setEditing(opening.id); }
+    } else if (opened.kind === 'failed') { setFormError({ id: ++formErrorSeq, text: opened.error }); setEditing(opening.id); }
   }, [opening, opened]);
   // A refresh probe updates that source's listed metadata once, never touching other sources
   // or a ProviderForm verify probe
@@ -175,7 +177,7 @@ export function ProvidersSection({ state, on, detect }: { state?: ProvidersState
       {total > 0 && query.trim() && !providers.some(p => matching(p, query).length) && <Group><Note>{t('settings.models.noResults')}</Note></Group>}
       {(editing === 'new' || edited) && <ProviderForm key={editing} provider={edited} busy={busy} error={formError}
         onClose={() => edit(undefined)} onSave={(p, key, listed) => save(p, key, true, listed)} onDelete={edited ? () => act({ kind: 'delete', id: edited.id }, true) : undefined}
-        onModels={edited ? () => openAdd(edited) : undefined} opening={!!edited && opening?.id === edited.id} />}
+        onModels={edited ? (p, k, fresh) => openAdd(p, k, fresh) : undefined} opening={!!edited && opening?.id === edited.id} />}
       {adding && addingTo && <AddModelDialog provider={addingTo} listed={adding.listed} busy={busy} onAdd={m => update(addingTo, [...addingTo.models, m])}
         onRemove={id => update(addingTo, addingTo.models.filter(x => x.id !== id))} onClose={() => setAdding(undefined)} />}
     </ProbeContext.Provider>
@@ -712,9 +714,9 @@ const looksFull = (url: string) => /\/(chat\/completions|responses|messages)\/?$
 // row and keep their kind when edited
 function ProviderForm({ provider, busy, error, onSave, onClose, onDelete, onModels, opening }: {
   // listed: what the endpoint answered when the save checked it, absent when nothing that reaches it changed
-  provider?: ProviderView; busy: boolean; error?: string; onSave: (p: Provider, key?: string, listed?: ProviderModel[]) => void; onClose: () => void; onDelete?: () => void;
+  provider?: ProviderView; busy: boolean; error?: FormError; onSave: (p: Provider, key?: string, listed?: ProviderModel[]) => void; onClose: () => void; onDelete?: () => void;
   // A saved source: its add-model list, and whether that entry is asking the endpoint
-  onModels?: () => void; opening?: boolean;
+  onModels?: (provider: Provider, key?: string, fresh?: boolean) => void; opening?: boolean;
 }) {
   const [name, setName] = useState(provider?.name ?? '');
   const [format, setFormat] = useState<string>(provider?.format ?? 'openai-chat');
@@ -729,8 +731,8 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete, onMode
   // list its models (a refused key, a wrong address) never gets in
   const verify = useProbe();
   // The page's error (a failed save, a refused Add model) until a field changes
-  const [seen, setSeen] = useState<string>();
-  const touch = () => { verify.reset(); setSeen(error); };
+  const [seen, setSeen] = useState<number>();
+  const touch = () => { verify.reset(); setSeen(error?.id); };
   const draft = (): Provider => {
     const base = provider ? strip(provider) : { id: '', preset: 'custom', enabled: true, models: [] };
     return { ...base, name: name.trim(), format, baseUrl: baseUrl.trim(), fullUrl } as Provider;
@@ -747,7 +749,7 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete, onMode
     if (verify.outcome?.kind === 'models') onSave(draft(), key.trim() || undefined, verify.outcome.models);
   // Only a new answer saves; the draft is read as it stands then
   }, [verify.outcome]);
-  const failure = verify.outcome?.kind === 'failed' ? verify.outcome.error : error !== seen ? error : undefined;
+  const failure = verify.outcome?.kind === 'failed' ? verify.outcome.error : error && error.id !== seen ? error.text : undefined;
   const failureLine = failure && <span className="text-3 text-danger [overflow-wrap:anywhere]">{failure}</span>;
   // Escape is the dialog's own close
   const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && e.target instanceof HTMLInputElement) submit(); };
@@ -808,7 +810,7 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete, onMode
         </FormGrid>
         {provider && onModels && <FormRows>
           <Field label={t('settings.providers.models')} desc={t('settings.providers.addModel.count', { count: provider.models.length })}>
-            <Button disabled={opening} onClick={onModels} className="relative">
+            <Button disabled={opening || !valid} onClick={() => onModels(draft(), key.trim() || undefined, reaches)} className="relative">
               <Waiting on={!!opening}>{t('settings.providers.manage')}</Waiting>
             </Button>
           </Field>

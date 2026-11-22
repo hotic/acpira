@@ -9,6 +9,8 @@
   ::highlight(acpira-find-active) { background: color-mix(in srgb, var(--warn) 62%, transparent); color: var(--fg-strong); }
   .acp-shell summary::-webkit-details-marker { display: none; }
   .acp-shell textarea { field-sizing: content; }
+  /* WebView2 / Edge add their own reveal and clear buttons to inputs; password fields carry an own toggle (ui/KeyBox, ProvidersSection) */
+  .acp-shell input::-ms-reveal, .acp-shell input::-ms-clear { display: none; }
   /* Native scrollbars and form controls follow the shell theme, not the host's. */
   [data-theme="light"] { color-scheme: light; }
   [data-theme="dark"] { color-scheme: dark; }
