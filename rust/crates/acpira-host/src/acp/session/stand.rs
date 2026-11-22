@@ -296,12 +296,28 @@ impl AcpSession {
         self.0.cancel();
       }
     }
-    let sid = self.core.lock().acp_session_id.clone();
-    let req = json!({
+    let (sid, auto_approve) = {
+      let c = self.core.lock();
+      // A non-split agent whose `_permission_mode` select is on a `full_access` option (outside read-only modes such as
+      // plan): `decide_permission` intentionally ignores that select on the CLI's own requests (so protected-file asks
+      // stay up), whereas `ask_remote` is the engine's own card for a stand-in CLI that did not ask at all
+      let in_read_only = c.state.controls.mode_id.as_deref().is_some_and(|m| crate::acp::session::relay::READ_ONLY_MODES.contains(&m));
+      let select_full = c.access.offered.is_empty()
+        && !in_read_only
+        && c.state.controls.options.iter().any(|o| {
+          o.category.as_deref() == Some("_permission_mode")
+            && o.value.as_deref().is_some_and(|v| o.options.iter().any(|opt| opt.id == v && opt.kind.as_deref() == Some("full_access")))
+        });
+      (c.acp_session_id.clone(), select_full)
+    };
+    let mut req = json!({
       "sessionId": sid,
       "toolCall": { "toolCallId": call, "title": format!("{}{name}", crate::acp::local_run::DEFAULT_PREFIX), "rawInput": args },
       "options": [{ "optionId": "allow", "name": "Allow", "kind": "allow_once" }, { "optionId": "reject", "name": "Reject", "kind": "reject_once" }],
     });
+    if auto_approve {
+      req["_meta"] = json!({ "acpira/autoApprove": true });
+    }
     let gone = Fire(stop.child());
     let (me, cancel) = (self.clone(), gone.0.clone());
     let answer = tokio::spawn(async move { me.on_permission(req, cancel).await }).await;
@@ -453,6 +469,7 @@ impl AcpSession {
     }
     if let Some(m) = u.get_mut("_meta").and_then(Value::as_object_mut) {
       m.remove("is_mcp_tool_call");
+      m.remove("acpira/mcp");
       if let Some(cc) = m.get_mut("claudeCode").and_then(Value::as_object_mut) {
         cc.remove("mcpServer");
       }

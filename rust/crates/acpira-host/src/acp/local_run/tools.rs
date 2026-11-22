@@ -340,8 +340,16 @@ fn tool_named(profile: &StandProfile, s: &str) -> Option<&'static str> {
 /// Droid), the model's own argument when the CLI calls MCP tools through one of its own (Grok's `use_tool`), the title
 const NAME_AT: [&str; 5] = ["/_meta/claudeCode/toolName", "/_meta/cognition.ai~1toolName", "/name", "/rawInput/tool_name", "/title"];
 
-/// The native name of a remote tool the update (or a permission request's toolCall) names (`tool_named`)
+/// The native name of a remote tool the update (or a permission request's toolCall) names (`tool_named`, or structured
+/// `_meta["acpira/mcp"]`)
 pub fn remote_name(profile: &StandProfile, u: &Value) -> Option<&'static str> {
+  if let Some(m) = u.pointer("/_meta/acpira~1mcp")
+    && m.get("server").and_then(Value::as_str).is_some_and(|s| s.eq_ignore_ascii_case(crate::host_mcp::SERVER_NAME))
+    && let Some(tool) = m.get("tool").and_then(Value::as_str)
+    && let Some(n) = acpira_shared::host_tools::REMOTE.iter().find(|t| **t == tool).copied()
+  {
+    return Some(n);
+  }
   // An argument called `tool_name` names the call only where the model's arguments sit beside it (`call_input`)
   let wrapped = u.pointer("/rawInput/tool_input").is_some_and(Value::is_object);
   NAME_AT.iter().filter(|at| wrapped || **at != "/rawInput/tool_name").find_map(|at| tool_named(profile, u.pointer(at)?.as_str()?))
@@ -505,6 +513,9 @@ mod tests {
     assert_eq!(remote_name(&mine, &json!({ "title": "acpira_Write" })), Some("Write"));
     assert_eq!(remote_name(&mine, &json!({ "title": "Calling Edit from acpira" })), Some("Edit"));
     assert_eq!(remote_name(&mine, &json!({ "title": "Called Edit from acpira" })), Some("Edit"));
+    assert_eq!(remote_name(&mine, &json!({ "title": "MultiEdit", "_meta": { "acpira/mcp": { "server": "acpira", "tool": "MultiEdit" } } })), Some("MultiEdit"));
+    assert_eq!(remote_name(&mine, &json!({ "title": "show_image", "_meta": { "acpira/mcp": { "server": "acpira", "tool": "show_image" } } })), None);
+    assert_eq!(remote_name(&mine, &json!({ "title": "Edit", "_meta": { "acpira/mcp": { "server": "other", "tool": "Edit" } } })), None);
     let wrapped = json!({ "title": "use_tool", "rawInput": { "tool_name": "acpira__MultiEdit", "tool_input": { "file_path": "a" } } });
     assert_eq!(remote_name(&mine, &wrapped), Some("MultiEdit"));
     assert_eq!(call_input(&wrapped["rawInput"]), &json!({ "file_path": "a" }));

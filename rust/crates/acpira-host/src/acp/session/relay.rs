@@ -57,7 +57,7 @@ const NOTE_FILES: usize = 20;
 const PACK_NAME: &str = "handoff-pack.md";
 /// Mode ids that mean "read only" across the built-in CLIs: codex-acp `read-only`, Claude / OpenCode / Grok `plan`, Droid
 /// `spec`
-const READ_ONLY_MODES: [&str; 4] = ["read-only", "plan", "ask", "spec"];
+pub(crate) const READ_ONLY_MODES: [&str; 4] = ["read-only", "plan", "ask", "spec"];
 /// Modes that skip the CLI's own approvals: Claude `bypassPermissions`, Codex `agent-full-access`, Devin `bypass`,
 /// Antigravity / Kimi `yolo`, Droid `auto-high`; a mode the agent marks `_meta.kind` `full_access` counts too
 pub(crate) const BYPASS_MODES: [&str; 5] = ["bypassPermissions", "agent-full-access", "bypass", "yolo", "auto-high"];

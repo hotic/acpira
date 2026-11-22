@@ -242,7 +242,13 @@ impl AcpSession {
       }
       // Remote tools on an SSH host (`session/stand.rs`) ask where native ones would not: read-only tools on CLIs without
       // `allowedTools` (`agy acp`), the CLI's own plan / artifact files here, and host writes in accept-edits mode
-      let accept_edits = c.state.controls.mode_id.as_deref() == Some("acceptEdits") || c.access.wire.as_deref() == Some("acceptEdits");
+      let in_read_only = c.state.controls.mode_id.as_deref().is_some_and(|m| crate::acp::session::relay::READ_ONLY_MODES.contains(&m));
+      let select_auto_edit = c.access.offered.is_empty()
+        && !in_read_only
+        && c.state.controls.options.iter().any(|o| o.category.as_deref() == Some("_permission_mode") && o.value.as_deref() == Some("auto-edit"));
+      let accept_edits = matches!(c.state.controls.mode_id.as_deref(), Some("acceptEdits" | "accept-edits"))
+        || matches!(c.access.wire.as_deref(), Some("acceptEdits" | "accept-edits"))
+        || select_auto_edit;
       if root
         && !insist
         && (matches!(
