@@ -166,7 +166,7 @@
   "session.project.foldersDesc": "セッションはメインのフォルダで動き、ほかのフォルダもエージェントに渡します",
   "session.project.addFolder": "フォルダを追加",
   "session.project.makePrimary": "メインにする",
-  "session.project.remoteOneFolder": "SSH ホスト上のプロジェクトはフォルダが 1 つです",
+  "session.project.localFolder": "ローカルフォルダ",
   "session.view": "表示とフィルター",
   "session.view.group": "グループ",
   "session.view.group.project": "プロジェクト",

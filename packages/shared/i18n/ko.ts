@@ -169,7 +169,7 @@ export const ko = {
   'session.project.foldersDesc': '세션은 기본 폴더에서 실행되고 나머지 폴더도 에이전트에 전달됩니다',
   'session.project.addFolder': '폴더 추가',
   'session.project.makePrimary': '기본으로 설정',
-  'session.project.remoteOneFolder': 'SSH 호스트의 프로젝트는 폴더가 하나입니다',
+  'session.project.localFolder': '로컬 폴더',
   'session.view': '보기 및 필터',
   'session.view.group': '그룹',
   'session.view.group.project': '프로젝트',

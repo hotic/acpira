@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ComponentProps, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { ArrowUpRight, Check, ChevronRight, ChevronsUpDown, Search, Trash2, X } from 'lucide-react';
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
@@ -204,10 +204,12 @@ export function SearchRow({ value, onChange, label, children }: { value: string;
 
 // A card head's one action: a quiet icon + word. Its own padding hangs past the head's right edge, so its words end on
 // that edge
-export function SectionAction({ icon, onClick, children, title, disabled }: { icon?: ReactNode; onClick: () => void; children: ReactNode; title?: string; disabled?: boolean }) {
+// The -mr-2 outdent lines the label up with a section's content edge; over a boxed control (a dialog's list) pass
+// `mr-0` so the hover fill stays inside the box's edge. Further button props pass through, so it can be a menu's trigger
+export function SectionAction({ icon, children, className, ...rest }: { icon?: ReactNode; children: ReactNode } & ComponentProps<'button'>) {
   return (
-    <button type="button" onClick={onClick} title={title} disabled={disabled}
-      className="-mr-2 flex h-ctl-sm shrink-0 items-center gap-1 rounded-md px-2 text-2 whitespace-nowrap text-fg-2 transition-colors enabled:hover:bg-hover enabled:hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 disabled:opacity-50 [&_svg]:size-icon [&_svg]:stroke-[1.75]">
+    <button type="button" {...rest}
+      className={cn('-mr-2 flex h-ctl-sm shrink-0 items-center gap-1 rounded-md px-2 text-2 whitespace-nowrap text-fg-2 transition-colors enabled:hover:bg-hover enabled:hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 disabled:opacity-50 [&_svg]:size-icon [&_svg]:stroke-[1.75]', className)}>
       {icon}{children}
     </button>
   );

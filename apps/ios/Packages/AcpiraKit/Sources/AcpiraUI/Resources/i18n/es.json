@@ -162,7 +162,7 @@
   "session.project.foldersDesc": "Las sesiones se ejecutan en la carpeta principal; los agentes reciben también las demás",
   "session.project.addFolder": "Añadir carpeta",
   "session.project.makePrimary": "Hacer principal",
-  "session.project.remoteOneFolder": "Un proyecto en un host SSH tiene una sola carpeta",
+  "session.project.localFolder": "Carpeta local",
   "session.view": "Vista y filtros",
   "session.view.group": "Agrupar",
   "session.view.group.project": "Proyecto",

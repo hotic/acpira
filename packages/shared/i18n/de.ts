@@ -168,7 +168,7 @@ export const de = {
   'session.project.foldersDesc': 'Sitzungen laufen im Hauptordner; Agenten erhalten auch die übrigen',
   'session.project.addFolder': 'Ordner hinzufügen',
   'session.project.makePrimary': 'Zum Hauptordner machen',
-  'session.project.remoteOneFolder': 'Ein Projekt auf einem SSH-Host hat einen Ordner',
+  'session.project.localFolder': 'Lokaler Ordner',
   'session.view': 'Ansicht und Filter',
   'session.view.group': 'Gruppierung',
   'session.view.group.project': 'Projekt',

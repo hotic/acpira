@@ -164,7 +164,7 @@
   "session.project.foldersDesc": "工作階段在主要資料夾執行，其餘資料夾一併交給 agent",
   "session.project.addFolder": "新增資料夾",
   "session.project.makePrimary": "設為主要",
-  "session.project.remoteOneFolder": "SSH 主機上的專案只有一個資料夾",
+  "session.project.localFolder": "本機資料夾",
   "session.view": "檢視與篩選",
   "session.view.group": "分組",
   "session.view.group.project": "專案",

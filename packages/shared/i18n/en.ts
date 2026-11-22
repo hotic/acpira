@@ -170,7 +170,7 @@ export const en = {
   'session.project.foldersDesc': 'Sessions run in the primary folder, and agents get the others too',
   'session.project.addFolder': 'Add folder',
   'session.project.makePrimary': 'Make primary',
-  'session.project.remoteOneFolder': 'A project on an SSH host has one folder',
+  'session.project.localFolder': 'Local folder',
   'session.view': 'View and filters',
   'session.view.group': 'Grouping',
   'session.view.group.project': 'Project',

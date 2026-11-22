@@ -13,10 +13,11 @@ import { ConnectStatus } from './ConnectStatus';
 // A folder on an SSH host to add as a project: breadcrumbs over a list of fixed height (it never resizes the dialog while
 // a folder loads, fails or fills), starting in the host's home. A click on a folder goes into it; the footer adds the
 // folder the list shows, and its path box takes a typed path (Enter goes there). Opened from a host's settings page
-// (only while connected) and from the session column's add menu.
+// (only while connected), from the session column's add menu and from the project dialog, which adds the folder to a
+// project instead (`addLabel` names that on the footer's button).
 // Nothing is listed until the host is connected: a host that is off is connected on opening, and until it is up the list's
 // place shows the attempt's steps or its failure (remote/ConnectStatus), with Retry
-export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; onAdd: (folder: string) => void; onClose: () => void }) {
+export function RemoteFolderDialog({ alias, addLabel, onAdd, onClose }: { alias: string; addLabel?: string; onAdd: (folder: string) => void; onClose: () => void }) {
   const [home, setHome] = useState<string>();
   // The folder shown; undefined until the first listing named the home
   const [path, setPath] = useState<string>();
@@ -53,7 +54,7 @@ export function RemoteFolderDialog({ alias, onAdd, onClose }: { alias: string; o
     <SettingsDialog title={t('connections.folderTitle', { host: alias })} onClose={onClose}
       footer={<>
         <PathBox path={path} home={home} label={t('connections.folderOn', { host: alias })} onGo={go} />
-        <Button variant="primary" disabled={!ready || loading || !!error || !folder} onClick={() => { if (folder) onAdd(folder); }}>{t('connections.addAsProject')}</Button>
+        <Button variant="primary" disabled={!ready || loading || !!error || !folder} onClick={() => { if (folder) onAdd(folder); }}>{addLabel ?? t('connections.addAsProject')}</Button>
       </>}>
       <div className="flex min-h-0 flex-col p-1">
         <Crumbs path={path} home={home} onGo={go} />

@@ -34,8 +34,9 @@ export function watchConnections() {
   if (remoteOffered()) post({ type: 'connections' });
 }
 
-/** The latest host list; undefined until the engine answered */
-export const useConnections = () => useSyncExternalStore(subscribe, () => connections);
+/** The latest host list; undefined until the engine answered (a server render, the suites' static markup, reads it too) */
+const snapshot = () => connections;
+export const useConnections = () => useSyncExternalStore(subscribe, snapshot, snapshot);
 
 /** One host by alias; undefined while the list is not in or does not hold it */
 export function useConnection(alias: string | undefined): ConnectionView | undefined {

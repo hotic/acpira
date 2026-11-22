@@ -174,7 +174,7 @@ export const zhCN = {
   'session.project.foldersDesc': '会话在主要文件夹里运行，其余文件夹一并交给 agent',
   'session.project.addFolder': '添加文件夹',
   'session.project.makePrimary': '设为主要',
-  'session.project.remoteOneFolder': 'SSH 主机上的项目只有一个文件夹',
+  'session.project.localFolder': '本地文件夹',
   'session.view': '视图与筛选',
   'session.view.group': '分组',
   'session.view.group.project': '项目',

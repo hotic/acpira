@@ -161,7 +161,7 @@
   "session.project.foldersDesc": "Les sessions s’exécutent dans le dossier principal ; les agents reçoivent aussi les autres",
   "session.project.addFolder": "Ajouter un dossier",
   "session.project.makePrimary": "Définir comme principal",
-  "session.project.remoteOneFolder": "Un projet sur un hôte SSH n’a qu’un dossier",
+  "session.project.localFolder": "Dossier local",
   "session.view": "Affichage et filtres",
   "session.view.group": "Regroupement",
   "session.view.group.project": "Projet",
