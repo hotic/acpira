@@ -88,8 +88,8 @@ describe('process groups', () => {
   });
 
   it('keeps the step number on agy per-step artifacts so reads from different steps stay distinct', () => {
-    const a = '/C:/Users/Administrator/.acpira/plugins/.data/asgard-gateway/agy-sessions/s1/.gemini/antigravity-cli/brain/b1/.system_generated/steps/59/media_0.png';
-    const b = 'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\brain\\b1\\.system_generated\\steps\\114\\media_0.png';
+    const a = '/C:/Users/dev/.acpira/plugins/.data/asgard-gateway/agy-sessions/s1/.gemini/antigravity-cli/brain/b1/.system_generated/steps/59/media_0.png';
+    const b = 'C:\\Users\\dev\\.gemini\\antigravity-cli\\brain\\b1\\.system_generated\\steps\\114\\media_0.png';
     expect(displayFileName(a)).toBe('steps/59/media_0.png');
     expect(displayFileName(b)).toBe('steps/114/media_0.png');
     expect(splitHit(a)).toEqual({ main: 'steps/59/media_0.png' });

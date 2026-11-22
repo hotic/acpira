@@ -711,7 +711,7 @@ mod tests {
 
   #[test]
   fn local_own_path_resolves_cli_files_and_rejects_host_or_stand_paths() {
-    let me = if cfg!(windows) { "C:/Users/Administrator" } else { "/Users/me" };
+    let me = if cfg!(windows) { "C:/Users/dev" } else { "/Users/me" };
     let home = Path::new(me);
     let data = home.join(".acpira");
     let agy = Stand::new(profile("antigravity"), "asgard-gen1", "/home/u/proj", &data);
