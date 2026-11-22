@@ -50,3 +50,9 @@ export function NavSearch({ value, onChange, placeholder, label, autoFocus, quie
 export function NavEmpty({ children }: { children: ReactNode }) {
   return <div className="flex min-h-row items-center gap-gap px-2 text-2 text-fg-3"><span className="-mr-gap-half w-lead shrink-0" />{children}</div>;
 }
+
+// A faded hairline separating the top action rows (New session / Back + Search) from the list below, shared by the
+// session column and the settings rail so the rule stays on the same line across a page switch
+export function NavDivider({ className }: { className?: string }) {
+  return <div role="presentation" className={cn('my-gap-half h-px shrink-0 bg-linear-to-r from-transparent via-line to-transparent', className)} />;
+}

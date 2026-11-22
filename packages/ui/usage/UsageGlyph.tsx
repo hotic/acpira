@@ -1,8 +1,6 @@
-// The usage page's mark in the desktop column foot (chat/DesktopFrame.tsx AppMenu): three columns, low, tallest and
-// middling, joined in one rounded outline with the seams drawn in, drawn as the foot's other glyphs are (the gear, the
-// devices row's phone in remote/DevicesCard.tsx): a 24-unit box, a 1.5 stroke, round caps and joins. Column tops nearly
-// round like the page's own bars, inner corners eased. It stands as tall as the phone (2.5 to 21.5, so the two share a
-// top and a bottom) and a unit left of centre: the taller right column made it read as leaning on the phone after it
+// The usage page's mark in the settings rail (settings/Nav.tsx, settings/search.tsx): three columns, low, tallest and
+// middling, joined in one rounded outline with the seams drawn in. A 24-unit box, a 1.5 stroke, round caps and joins.
+// Column tops nearly round like the page's own bars, inner corners eased.
 export function UsageGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>

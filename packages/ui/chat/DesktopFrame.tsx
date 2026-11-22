@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, Columns3, Copy
 import { DESKTOP_LAYOUTS, PANEL_SCOPES, THEMES, type DesktopLayout, type PanelScope, type ThemeSetting } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n/core';
 import { t, useLocale } from '../i18n';
-import { cn } from '../ui/cn';
 import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
@@ -14,7 +13,6 @@ import { dropShellToast, pageCaption, postMenuCommand, postUpdate, postWindowCon
 import { vscodeApi } from '../vscodeApi';
 import type { SettingsPage } from '../settings/Nav';
 import { DevicesButton, devicesShown } from '../remote/DevicesCard';
-import { UsageGlyph } from '../usage/UsageGlyph';
 import { useRemoteAccess } from '../remote/access';
 
 // The desktop app's own frame around the shared Shell (desktop.css): the column's title row, its gear menu, and the
@@ -226,16 +224,14 @@ export function TitleSpace() {
 // The gear at the column's foot: settings, the theme and language as quick switches, and help in one menu, instead of a
 // full-width settings row. Built like a row's
 // lead (its padding, then the lead slot), so the gear stands on the same line as the rows' icons at every density. Its glyph
-// is a size up from a row's (--foot-icon) and its hover fill square, the weight Codex and VS Code give their foot gear: at
-// the rows' size it read as a stray mark under the list (reported 2026-10-23)
+// takes the control icon size (--icon-ctl) and its hover fill square, matching the title bar buttons while keeping more
+// weight than a row's glyph
 const GEAR = 'flex aspect-square items-center rounded-md px-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
 // Before the devices row the gear is a control-sized square whose glyph stands on the session rows' icon column: a row's
 // glyph sits px-2 plus half the lead slot's slack in, the square's glyph half its own slack. Spelled out rather than with
-// bar-bleed, which resolves --ctl at the root and misses the density set below it. Its glyph is the foot's size up too, as
-// is the devices row's phone (remote/DevicesCard.tsx PhoneGlyph): at the rows' size the pair read as cramped in the corner
-const GEAR_START = 'ml-[calc((var(--lead)-var(--ctl))/2+var(--spacing)*2)] flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[popup-open]:bg-hover data-[popup-open]:text-fg-1 [&_svg]:size-(--foot-icon)';
-// The usage button beside the gear (Settings → Usage): the gear's square without its lead margin (GEAR_START), a hair after it
-const USAGE_SQUARE = 'ml-0.5 flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover [&_svg]:size-(--foot-icon)';
+// bar-bleed, which resolves --ctl at the root and misses the density set below it. Its glyph takes the control icon size
+// (--icon-ctl), matching the devices row's phone (remote/DevicesCard.tsx PhoneGlyph) and the title bar buttons
+const GEAR_START = 'ml-[calc((var(--lead)-var(--ctl))/2+var(--spacing)*2)] flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[popup-open]:bg-hover data-[popup-open]:text-fg-1 [&_svg]:size-icon-ctl';
 // The settings worth a quick switch without opening the page: the theme, the interface language and the window's layout
 export interface QuickSettings {
   theme: ThemeSetting;
@@ -277,7 +273,7 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: 
   useLocale();
   // With the devices row (remote/DevicesCard.tsx) the foot is one line across the column: the gear first, on the rows'
   // icon column, then the devices row filling the rest (its card rising from it). Without it the gear stands alone at the
-  // left; either way its glyph is a size up (--foot-icon) so it does not read as a stray mark. The foot sits by the chat
+  // left; either way its glyph takes the control icon size (--icon-ctl), matching the title bar buttons. The foot sits by the chat
   // sheet's bottom edge (--foot-bottom), on macOS in the window's corner, its fill as far off the bottom as off the left
   const row = devicesShown(useRemoteAccess());
   // Something new to install, an agent's adapter or Acpira itself: a breathing dot in the gear's top right corner, which the
@@ -296,7 +292,7 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: 
         <DropdownMenu.Trigger render={<button type="button" data-land="settings" title={t('desktop.appMenu')} aria-label={t('desktop.appMenu')} className={row ? GEAR_START : GEAR}>
           {row
             ? <span className="relative flex"><Settings strokeWidth={1.5} />{mark}</span>
-            : <span className="flex size-lead items-center justify-center"><span className="relative flex"><Settings className="size-(--foot-icon)" strokeWidth={1.5} />{mark}</span></span>}
+            : <span className="flex size-lead items-center justify-center"><span className="relative flex"><Settings className="size-icon-ctl" strokeWidth={1.5} />{mark}</span></span>}
         </button>} />
         {/* No collision padding: the gear sits closer to the window's edge than the shell's pad, which shifted the menu off it */}
         <DropdownMenu.Portal><DropdownMenu.Positioner side="top" align="start" width="md" collisionPadding={0}><DropdownMenu.Popup>
@@ -332,13 +328,6 @@ export function AppMenu({ onOpenSettings, onOpenExternal, quick, agentUpdate }: 
           </>}
         </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
       </DropdownMenu.Root>
-      {/* A shortcut to Settings → Usage, as the gear menu's entries open their pages */}
-      <button type="button" data-usage-button title={t('settings.nav.usage')} aria-label={t('settings.nav.usage')} onClick={() => onOpenSettings({ kind: 'usage' })}
-        className={row ? USAGE_SQUARE : cn(GEAR, 'ml-0.5')}>
-        {row
-          ? <UsageGlyph />
-          : <span className="flex size-lead items-center justify-center"><UsageGlyph className="size-(--foot-icon)" /></span>}
-      </button>
       {row && <DevicesButton onOpenSettings={onOpenSettings} />}
     </div>
   );

@@ -28,7 +28,7 @@ import { RowContextMenu, SessionContextMenu, Submenu, type MoveProject, type Ses
 import { setWebviewState, webviewState } from '../vscodeApi';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
 import { needsAttention } from './sessionNav';
-import { NAV_LEAD, NAV_ROW, NavEmpty, NavHint, NavSearch } from './NavRows';
+import { NAV_LEAD, NAV_ROW, NavDivider, NavEmpty, NavHint, NavSearch } from './NavRows';
 import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, projectOf as projectOfMeta, projectSessions, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
 import { ViewMenu } from './ViewMenu';
@@ -1066,12 +1066,13 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
             label={onSearch ? t('session.searchContent') : t('session.search')} />
           {!desktop && importer}
         </div>
+        <NavDivider />
         {/* The scroller bleeds through the panel's padding like the other layout's, so the thumb rides the panel edge. Its gutter
             stays reserved: folding a section must not take the scrollbar away and shift every right-aligned time and action.
             The right padding gives way to that gutter, so the rows keep equal margins on both sides. Desktop: the column runs
-            to the window's foot, so the list fades out at its bottom edge, and under the rows on top once it scrolled (rows
-            cut off by a hard edge there read as sliced). No top margin of its own: the first section label's mt-gap is the
-            step, the same one as between later sections */}
+            to the window's foot, so the list fades out at its bottom edge, and under the divider on top once it scrolled (rows
+            cut off by a hard edge there read as sliced). The first section label drops its mt-gap so the divider sits centred
+            between the action rows above and the list below */}
         <div ref={listRoot} className={cn('scroll-thin scroll-stable -mx-column-pad flex min-h-0 flex-col overflow-y-auto pl-column-pad pr-list-gutter', desktop ? 'flex-1 pb-gap list-fade' : 'pb-1')}
           role="listbox" aria-label={t('session.listAria')}
           style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
@@ -1081,7 +1082,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
             <FlipRows on={!q} layout={layout}>
               {tree.pinned.length > 0 && (
                 <div className="flex flex-col" role="group" aria-label={t('session.group.pinned')}>
-                  <SectionLabel open={!folded.includes('pinned')} onToggle={() => flip('pinned')}>{t('session.group.pinned')}</SectionLabel>
+                  <SectionLabel first={!summary} open={!folded.includes('pinned')} onToggle={() => flip('pinned')}>{t('session.group.pinned')}</SectionLabel>
                   <Fold open={!folded.includes('pinned')}>{tree.pinned.map(s => renderItem(s))}</Fold>
                 </div>
               )}
@@ -1098,6 +1099,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
                 return (
                   <div key={x.id} className={cn('relative flex flex-col', LINE, held?.kind === 'section' && held.id === x.id && 'opacity-40')} role="group" aria-label={x.name} data-section={x.id}>
                     <SectionLabel
+                      first={!summary && !tree.pinned.length && i === 0}
                       section={x.id}
                       open={!!q || !x.collapsed}
                       onToggle={() => onCategoryOp?.({ op: 'collapseSection', id: x.id, collapsed: !x.collapsed })}
@@ -1121,7 +1123,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
                 );
               })}
               <div className="contents" data-section={desktop ? REST : undefined}>
-              <SectionLabel open={!folded.includes('rest')} onToggle={() => flip('rest')} quiet={desktop} keep={filters > 0 || (desktop && !tree.projects.length)} actions={<>
+              <SectionLabel first={!summary && !tree.pinned.length && !sectionNodes.length} open={!folded.includes('rest')} onToggle={() => flip('rest')} quiet={desktop} keep={filters > 0 || (desktop && !tree.projects.length)} actions={<>
                 {filing && workspace && !tree.grouped && (
                   <button type="button" title={t('session.category.new')} aria-label={t('session.category.new')} onClick={() => createCategory(workspace)} className={SECTION_ACT}>
                     <CategoryAddIcon />
@@ -1260,12 +1262,13 @@ function storedFolds(): Section[] {
 // filter is on) or one of them has its popup open
 // `rename`: a section being renamed shows this input in place of its label.
 // Draggable sections use a div[role="button"] trigger because WebKit swallows drags started on a native <button>
-function SectionLabel({ children, actions, open, quiet, keep, rename, onToggle, section, onDragStart, onDragEnd, menu }: {
+function SectionLabel({ children, actions, open, quiet, keep, first, rename, onToggle, section, onDragStart, onDragEnd, menu }: {
   children: ReactNode;
   actions?: ReactNode;
   open: boolean;
   quiet?: boolean;
   keep?: boolean;
+  first?: boolean;
   rename?: ReactNode;
   onToggle: () => void;
   section?: string;
@@ -1290,7 +1293,7 @@ function SectionLabel({ children, actions, open, quiet, keep, rename, onToggle, 
         onDragStart(e);
       } : undefined}
       onDragEnd={onDragEnd}
-      className={cn('group mt-gap flex min-h-row items-center gap-gap px-2 text-3 text-fg-3', !rename && 'select-none')}
+      className={cn('group flex min-h-row items-center gap-gap px-2 text-3 text-fg-3', !first && 'mt-gap', !rename && 'select-none')}
     >
       {rename ?? (onDragStart ? (
         <div

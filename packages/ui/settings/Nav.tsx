@@ -4,7 +4,7 @@ import type { AgentInfo } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
 import { UpdateDot } from '../ui/UpdateDot';
 import { TitleSpace } from '../chat/DesktopFrame';
-import { NavEmpty, NavSearch } from '../chat/NavRows';
+import { NavDivider, NavEmpty, NavSearch } from '../chat/NavRows';
 import { shortcutLabel } from '../desktop';
 import { scrollToAnchor, searchHits, type SearchEntry } from './search';
 import { UsageGlyph } from '../usage/UsageGlyph';
@@ -114,52 +114,60 @@ export function PageRail({ page, onPage, onBack, desktop, drawer, railRef, inert
       )}>
       {/* Desktop: the window's pinned title row sits here; Back to chat leads the list below */}
       {desktop ? <TitleSpace /> : back}
-      <nav aria-label={t('settings.title')} className={cn('scroll-none flex min-h-0 flex-col gap-1 overflow-y-auto', desktop && inset)}>
+      <nav aria-label={t('settings.title')} className={cn('flex min-h-0 flex-1 flex-col', desktop && inset)}>
         {/* Desktop: Back to chat and search sit together as the top action group, matching the chat column's New session + Search
-            so a page switch keeps Search on the same line; the title row's back walks the pages visited, this one leaves at once */}
+            so a page switch keeps Search and the divider below it on the same lines; the title row's back walks the pages visited, this one leaves at once */}
         {desktop ? (
-          <div className="mb-gap-half flex shrink-0 flex-col">
-            <button type="button" onClick={onBack} title={t('settings.back')} aria-label={t('settings.back')}
-              className={cn(deskItem, tone(false), 'hover:bg-hover focus-visible:bg-hover')}>
-              <RailIcon desktop><ArrowLeft /></RailIcon>
-              <span className="min-w-0 truncate">{t('settings.back')}</span>
-            </button>
-            {index && (
-              <div className="flex shrink-0 flex-col" onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}>
-                <NavSearch value={query} onChange={setQuery} quiet hint={shortcutLabel('K')} inputRef={searchRef}
-                  placeholder={t('common.search')} label={t('settings.search')} />
-              </div>
-            )}
-          </div>
+          <>
+            <div className="flex shrink-0 flex-col">
+              <button type="button" onClick={onBack} title={t('settings.back')} aria-label={t('settings.back')}
+                className={cn(deskItem, tone(false), 'hover:bg-hover focus-visible:bg-hover')}>
+                <RailIcon desktop><ArrowLeft /></RailIcon>
+                <span className="min-w-0 truncate">{t('settings.back')}</span>
+              </button>
+              {index && (
+                <div className="flex shrink-0 flex-col" onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}>
+                  <NavSearch value={query} onChange={setQuery} quiet hint={shortcutLabel('K')} inputRef={searchRef}
+                    placeholder={t('common.search')} label={t('settings.search')} />
+                </div>
+              )}
+            </div>
+            <NavDivider />
+          </>
         ) : index && (
-          <div className={cn('mb-gap-half flex shrink-0 flex-col', hideNarrow)} onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}>
-            <NavSearch value={query} onChange={setQuery} inputRef={searchRef}
-              placeholder={t('settings.search')} label={t('settings.search')} />
-          </div>
+          <>
+            <div className={cn('flex shrink-0 flex-col', hideNarrow)} onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}>
+              <NavSearch value={query} onChange={setQuery} inputRef={searchRef}
+                placeholder={t('settings.search')} label={t('settings.search')} />
+            </div>
+            <NavDivider className={hideNarrow || undefined} />
+          </>
         )}
-        {hits ? (
-          hits.length ? hits.map((h, i) => (
-            <button key={i} type="button" onClick={e => { onPage(h.page); if (h.anchor) scrollToAnchor(e.currentTarget, h.anchor); }}
-              className={cn(desktop ? deskItem : navItem, 'h-auto items-start py-1', tone(false), 'hover:bg-hover focus-visible:bg-hover')}>
-              <span className="flex h-lh shrink-0 items-center"><RailIcon desktop={desktop}>{h.icon}</RailIcon></span>
-              <span className="flex min-w-0 flex-col gap-y-(--stack-gap) text-left">
-                <span className="truncate text-fg-1">{h.label}</span>
-                {h.where && <span className="truncate text-3 text-fg-3">{h.where}</span>}
-              </span>
-            </button>
-          )) : <NavEmpty>{t('settings.search.none')}</NavEmpty>
-        ) : <>
-          {item('general', t('settings.nav.general'), <SlidersHorizontal />)}
-          {item('appearance', t('settings.nav.appearance'), <Palette />)}
-          {item('shortcuts', t('settings.nav.shortcuts'), <Keyboard />)}
-          {item('models', t('settings.nav.models'), <BrainCircuit />)}
-          {item('subagents', t('settings.nav.subagents'), <Workflow />)}
-          {item('plugins', t('settings.nav.plugins'), <Blocks />)}
-          {item('shared', t('settings.nav.shared'), <Layers />)}
-          {connections && item('connections', t('settings.nav.connections'), <Network />)}
-          {item('usage', t('settings.nav.usage'), <UsageGlyph />)}
-          {item('storage', t('settings.nav.storage'), <HardDrive />)}
-        </>}
+        <div className="scroll-none flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+          {hits ? (
+            hits.length ? hits.map((h, i) => (
+              <button key={i} type="button" onClick={e => { onPage(h.page); if (h.anchor) scrollToAnchor(e.currentTarget, h.anchor); }}
+                className={cn(desktop ? deskItem : navItem, 'h-auto items-start py-1', tone(false), 'hover:bg-hover focus-visible:bg-hover')}>
+                <span className="flex h-lh shrink-0 items-center"><RailIcon desktop={desktop}>{h.icon}</RailIcon></span>
+                <span className="flex min-w-0 flex-col gap-y-(--stack-gap) text-left">
+                  <span className="truncate text-fg-1">{h.label}</span>
+                  {h.where && <span className="truncate text-3 text-fg-3">{h.where}</span>}
+                </span>
+              </button>
+            )) : <NavEmpty>{t('settings.search.none')}</NavEmpty>
+          ) : <>
+            {item('general', t('settings.nav.general'), <SlidersHorizontal />)}
+            {item('appearance', t('settings.nav.appearance'), <Palette />)}
+            {item('shortcuts', t('settings.nav.shortcuts'), <Keyboard />)}
+            {item('models', t('settings.nav.models'), <BrainCircuit />)}
+            {item('subagents', t('settings.nav.subagents'), <Workflow />)}
+            {item('plugins', t('settings.nav.plugins'), <Blocks />)}
+            {item('shared', t('settings.nav.shared'), <Layers />)}
+            {connections && item('connections', t('settings.nav.connections'), <Network />)}
+            {item('usage', t('settings.nav.usage'), <UsageGlyph />)}
+            {item('storage', t('settings.nav.storage'), <HardDrive />)}
+          </>}
+        </div>
       </nav>
       {/* Desktop: About (the version and its updates) at the rail's foot, where apps keep it, by the page sheet's bottom edge like
           the chat column's gear (chat/DesktopFrame.tsx AppMenu, --foot-bottom), so the two foot glyphs share a line (on macOS in the

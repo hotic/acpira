@@ -36,7 +36,7 @@ type CardView = 'pair' | 'list' | 'note';
 // pairing window is open
 function PhoneGlyph({ online, pairing }: { online: boolean; pairing: boolean }) {
   const id = useId().replace(/:/g, '');
-  return <svg viewBox="0 0 24 24" className="dv-phone size-(--foot-icon)" data-pairing={pairing || undefined}
+  return <svg viewBox="0 0 24 24" className="dv-phone size-icon-ctl" data-pairing={pairing || undefined}
     fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <defs><mask id={id}><rect width="24" height="24" fill="#fff" />{online && <circle cx="18" cy="5" r="5" fill="#000" />}</mask></defs>
     <g mask={`url(#${id})`}>

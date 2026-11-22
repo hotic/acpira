@@ -38,8 +38,6 @@
   --title-lead: max(var(--gap), var(--lights-w));
   /* The pinned title row's width (chat/DesktopFrame.tsx TitleRow): the lights' room, back, forward and the column's
      toggle 2 px apart, then a breath */
-  /* The gear at the column's foot (chat/DesktopFrame.tsx AppMenu): a size up from the rows' icons */
-  --foot-icon: 18px;
   /* The column foot's and the settings rail's bottom inset (AppMenu, settings/Nav.tsx): a pixel under the sheet's, since
      the sheet's 1 px ring is drawn outside its box; a row's fill (hover, the current page) then ends on the ring's outer
      edge. macOS puts the foot in the window's corner instead (below, with --column-pad) */
