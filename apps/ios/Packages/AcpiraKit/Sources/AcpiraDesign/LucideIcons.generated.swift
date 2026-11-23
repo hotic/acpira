@@ -195,6 +195,8 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case wrench
   case x
   case zap
+  case zoomIn
+  case zoomOut
 }
 
 extension LucideIcon {
@@ -394,6 +396,8 @@ extension LucideIcon {
     case .wrench: [.path("M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z")]
     case .x: [.path("M18 6 6 18"), .path("m6 6 12 12")]
     case .zap: [.path("M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z")]
+    case .zoomIn: [.circle(cx: 11, cy: 11, r: 8), .line(x1: 21, y1: 21, x2: 16.65, y2: 16.65), .line(x1: 11, y1: 8, x2: 11, y2: 14), .line(x1: 8, y1: 11, x2: 14, y2: 11)]
+    case .zoomOut: [.circle(cx: 11, cy: 11, r: 8), .line(x1: 21, y1: 21, x2: 16.65, y2: 16.65), .line(x1: 8, y1: 11, x2: 14, y2: 11)]
     }
   }
 }
