@@ -38,7 +38,7 @@ Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claud
     </td>
     <td width="50%" valign="top">
       <a href="media/readme/agents.gif">
-        <img src="media/readme/agents.gif" width="100%" alt="在 Claude Code 会话中打开设置，在「模型」页的 OpenCode 卡片里安装它，再在新会话的起始页选中 OpenCode 并运行测试。">
+        <img src="media/readme/agents.gif" width="100%" alt="在 Claude Code 会话中打开设置，在「智能体」页的 OpenCode 卡片里安装它，再在新会话的起始页选中 OpenCode 并运行测试。">
       </a>
     </td>
   </tr>
@@ -68,7 +68,7 @@ Acpira 用 Rust 写成，通过 [ACP](https://agentclientprotocol.com) 让 Claud
   </tr>
 </table>
 
-*使用示例对话录制，画面来自 Acpira 实际界面。引导需在「设置 → 常规 → 排队消息改为引导」中开启。点击图片查看大图。*
+*使用示例对话录制，画面来自 Acpira 实际界面。引导需在「设置 → 常规 → 运行中发的消息直接引导」中开启。点击图片查看大图。*
 
 ## 在哪里用
 
@@ -168,7 +168,7 @@ Acpira 通过 [ACP](https://agentclientprotocol.com) 连接 Agent CLI，把模�
 
 未安装 CLI 的 Agent 在菜单中显示为灰色；它的设置页可在后台直接安装并实时显示日志，也给出官方安装命令，可复制或在终端中运行。新装好的 CLI 会被自动识别。网络需要代理时，在常规设置中设置「网络代理」，Agent 及其模型请求、登录和安装都会走这个代理。
 
-Agent 启动配置保存在 Agent 所在机器上，可从设置 → 常规 → Agent 启动配置打开。文件按 Agent ID 保存定义，例如：
+Agent 启动配置保存在 Agent 所在机器的 `~/.acpira/agents.json` 中，按 Agent ID 保存定义，例如：
 
 ```json
 {

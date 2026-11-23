@@ -38,7 +38,7 @@ Acpira is built on [ACP](https://agentclientprotocol.com) with a Rust core. It r
     </td>
     <td width="50%" valign="top">
       <a href="media/readme/agents.gif">
-        <img src="media/readme/agents.gif" width="100%" alt="From a Claude Code session, OpenCode is installed from its card on the Models page. A new session then picks OpenCode on its start page and runs the tests.">
+        <img src="media/readme/agents.gif" width="100%" alt="From a Claude Code session, OpenCode is installed from its card on the Agents page. A new session then picks OpenCode on its start page and runs the tests.">
       </a>
     </td>
   </tr>
@@ -68,7 +68,7 @@ Acpira is built on [ACP](https://agentclientprotocol.com) with a Rust core. It r
   </tr>
 </table>
 
-*Captured from Acpira's interface with scripted example sessions. Steering is turned on in Settings → General → Steer queued messages. Click an image for a larger view.*
+*Captured from Acpira's interface with scripted example sessions. Steering is turned on in Settings → General → Steer messages sent while running. Click an image for a larger view.*
 
 ## Where it runs
 
@@ -168,7 +168,7 @@ The **Acpira** agent is built in and needs only a model endpoint and its key; se
 
 An agent without a CLI is greyed out in the menus. Its settings page installs it in the background with a streamed log, or shows the vendor's install command to copy or run in a terminal. Acpira notices a newly installed CLI on its own. If your network needs a proxy, set **Network proxy** in General settings. It applies to agents, their model requests, sign-ins, and installs.
 
-Agent launch definitions belong to the machine running the agents; open the file from Settings → General → Agent launch configuration. It maps agent ids to definitions, for example:
+Agent launch definitions belong to the machine running the agents and live in its `~/.acpira/agents.json`. The file maps agent ids to definitions, for example:
 
 ```json
 {
