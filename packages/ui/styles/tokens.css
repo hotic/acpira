@@ -180,6 +180,10 @@
   /* Image lightbox: default cap inside the shell (wheel-zoomed from there) */
   --lightbox-max-h: min(74%, 560px);
   --lightbox-max-w: min(88%, var(--content-w));
+  /* Mermaid diagram card: breathing room for corner controls, inline height cap, and expanded stage while zoomed in place */
+  --mermaid-min-h: 120px;
+  --mermaid-max-h: 440px;
+  --mermaid-zoom-h: 360px;
   /* An HTML widget (show_widget): the space held before its first height report, and its cap. The cap also ends the loop
      of a page sized to its own viewport (h-screen plus padding), which would otherwise grow with every report */
   --widget-placeholder: 120px;

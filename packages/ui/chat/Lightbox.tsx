@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Dialog } from '../ui/Dialog';
@@ -7,9 +7,17 @@ import { ImageMenu } from './ImageMenu';
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 4;
 const MAX_FIT_SCALE = 24;
+const ZOOM_STEP = 1.35;
 const ZOOM_SPEED = 0.002;
 // Chromium / WebView2 encodes trackpad pinch as ctrlKey wheel deltas ~5x finer than scroll deltas.
 const CTRL_WHEEL_ZOOM_SPEED = ZOOM_SPEED * 5;
+
+export interface ZoomOptions {
+  // Intrinsic content dimensions for non-<img> targets (e.g. inline SVG viewBox) so zoom can reach 1:1 readable text and beyond.
+  naturalSize?: { width: number; height: number };
+  // 'zoom' intercepts every wheel event (modal lightboxes); 'ctrl-only' leaves plain scrolling to the document and zooms only on pinch / Ctrl+wheel.
+  wheelMode?: 'zoom' | 'ctrl-only';
+}
 
 // WebKit's non-standard pinch gesture event (macOS trackpads and touch displays).
 interface WebKitGestureEvent extends UIEvent {
@@ -30,19 +38,21 @@ const gesturePoint = (e: WebKitGestureEvent): { x: number; y: number } | null =>
     ? { x: e.clientX, y: e.clientY }
     : null;
 
-// Shared wheel / pinch-zoom / drag-pan / double-click-reset state for the Lightbox family (`Lightbox` and
-// `SharePreviewDialog`). Handles three pinch paths on the popup surface (`surfaceRef`): WebKit `gesture*` events
-// (macOS touch displays and trackpads, prevented so the desktop shell does not step window zoom), multi-touch
-// PointerEvents (Windows WebView2 / Chromium touchscreens, paired with `touch-none`), and non-passive `wheel` events
-// (mouse wheel, trackpad scroll, and Chromium `ctrlKey` pinch). Zooming in anchors under the pointer or fingers;
-// zooming out glides the pan back toward center so returning to 1x never jumps, and tall images can zoom at least to
-// 1:1 natural pixel width instead of stopping while fitted text is still tiny.
-export function useImageZoom(resetKey?: string) {
+// Shared wheel / pinch-zoom / drag-pan / double-click-reset state for the Lightbox family (`Lightbox`,
+// `SharePreviewDialog` and `MermaidBlock`). Handles three pinch paths on the popup surface (`surfaceRef`): WebKit
+// `gesture*` events (macOS touch displays and trackpads, prevented so the desktop shell does not step window zoom),
+// multi-touch PointerEvents (Windows WebView2 / Chromium touchscreens, paired with `touch-none`), and non-passive
+// `wheel` events (mouse wheel, trackpad scroll, and Chromium `ctrlKey` pinch). Zooming in anchors under the pointer or
+// fingers; zooming out glides the pan back toward center so returning to 1x never jumps, and large images or diagrams
+// can zoom past 1:1 natural size instead of stopping while fitted text is still tiny.
+export function useImageZoom(resetKey?: string, options?: ZoomOptions) {
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [surface, setSurface] = useState<HTMLElement | null>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
+  const targetRef = useRef<HTMLElement | null>(null);
   const committedRef = useRef(view);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const cleanupDrag = useRef<(() => void) | null>(null);
   const gestureRef = useRef<{ scale: number; point: { x: number; y: number } | null } | null>(null);
   const suppressBackdropClick = useRef(false);
@@ -61,14 +71,29 @@ export function useImageZoom(resetKey?: string) {
     }, 0);
   };
 
+  const getActualScale = () => {
+    const el = targetRef.current;
+    if (!el) return 1;
+    const nat = optionsRef.current?.naturalSize;
+    const natW = nat?.width ?? (el instanceof HTMLImageElement ? el.naturalWidth : 0);
+    const natH = nat?.height ?? (el instanceof HTMLImageElement ? el.naturalHeight : 0);
+    const sw = el.clientWidth > 0 && natW > 0 ? natW / el.clientWidth : 1;
+    const sh = el.clientHeight > 0 && natH > 0 ? natH / el.clientHeight : 1;
+    return Math.min(MAX_FIT_SCALE, Math.max(1, sw, sh));
+  };
+
   const zoomBy = (factor: number, clientX?: number, clientY?: number, panX = 0, panY = 0) => {
-    const img = imgRef.current;
-    if (!img || !Number.isFinite(factor) || factor <= 0) return;
-    const rect = img.getBoundingClientRect();
+    const el = targetRef.current;
+    if (!el || !Number.isFinite(factor) || factor <= 0) return;
+    const rect = el.getBoundingClientRect();
     const committed = committedRef.current;
-    const fitCap = img.clientWidth > 0 && img.naturalWidth > 0
-      ? Math.min(MAX_FIT_SCALE, img.naturalWidth / img.clientWidth)
-      : MAX_SCALE;
+    const nat = optionsRef.current?.naturalSize;
+    const actual = getActualScale();
+    const fitCap = nat
+      ? Math.min(MAX_FIT_SCALE, actual * 2.5)
+      : el.clientWidth > 0 && el instanceof HTMLImageElement && el.naturalWidth > 0
+        ? Math.min(MAX_FIT_SCALE, el.naturalWidth / el.clientWidth)
+        : MAX_SCALE;
     const maxScale = Math.max(MAX_SCALE, fitCap);
 
     setView(cur => {
@@ -128,6 +153,7 @@ export function useImageZoom(resetKey?: string) {
     };
 
     const onWheel = (e: WheelEvent) => {
+      if (optionsRef.current?.wheelMode === 'ctrl-only' && !e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       e.stopPropagation();
       // WebKit emits wheel events alongside a trackpad or touch pinch; the gesture handler already owns it.
@@ -247,7 +273,7 @@ export function useImageZoom(resetKey?: string) {
     };
   }, [surface]);
 
-  const onPointerDown = (e: ReactPointerEvent<HTMLImageElement>) => {
+  const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
     if (e.pointerType === 'touch' || e.button !== 0 || view.scale <= 1) return;
     e.preventDefault();
     const startX = e.clientX;
@@ -280,12 +306,21 @@ export function useImageZoom(resetKey?: string) {
   };
 
   const reset = () => setView({ scale: 1, x: 0, y: 0 });
+  const zoomIn = () => zoomBy(ZOOM_STEP);
+  const zoomOut = () => zoomBy(1 / ZOOM_STEP);
+  const zoomTo = (nextScale: number, clientX?: number, clientY?: number) => {
+    const cur = committedRef.current.scale;
+    if (cur <= 0 || !Number.isFinite(nextScale) || nextScale <= 0) return;
+    zoomBy(nextScale / cur, clientX, clientY);
+  };
+  const consumeDrag = () => {
+    if (!suppressBackdropClick.current) return false;
+    suppressBackdropClick.current = false;
+    return true;
+  };
 
   const onBackdropClick = (onClose: () => void) => () => {
-    if (suppressBackdropClick.current) {
-      suppressBackdropClick.current = false;
-      return;
-    }
+    if (consumeDrag()) return;
     onClose();
   };
 
@@ -293,13 +328,20 @@ export function useImageZoom(resetKey?: string) {
   const transform = transformed ? `translate3d(${view.x}px, ${view.y}px, 0) scale(${Number(view.scale.toFixed(4))})` : undefined;
 
   return {
-    imgRef,
+    imgRef: targetRef as RefObject<HTMLImageElement | null>,
+    targetRef,
     surfaceRef: setSurface,
     scale: view.scale,
+    transformed,
     dragging,
     transform,
     onPointerDown,
     reset,
+    zoomIn,
+    zoomOut,
+    zoomTo,
+    getActualScale,
+    consumeDrag,
     onBackdropClick,
   };
 }

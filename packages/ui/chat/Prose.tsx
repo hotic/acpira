@@ -11,8 +11,9 @@ import { InlineFileCode, Link } from './Link';
 import { decodeLocalImageSrc, parseFileLink, rewriteFileHrefs, sameImageSource } from './fileLinks';
 import { imageMimeOf } from '@acpira/shared/attachments';
 import { AgentImage } from './AgentImage';
+import { Lightbox } from './Lightbox';
+import { MermaidBlock } from './MermaidBlock';
 import { mermaidDiagram } from './mermaidPlugin';
-import { useTheme } from '../look';
 import { t, useLocale } from '../i18n';
 import { Bell } from 'lucide-react';
 import { QuietEntranceContext, Row, RowLabel, RowTarget } from '../ui/Row';
@@ -214,9 +215,10 @@ function TaskNote(props: Record<string, unknown>) {
 const MarkdownImages = createContext<ImageRef[] | undefined>(undefined);
 
 // A local image source resolves to the blob the host read; until then (or when the file could not be read) the card names the source.
-// Web images keep a plain <img> within the agent image height cap
+// Web images open in the shell's Lightbox on click, matching local agent images.
 function MarkdownImage({ src, alt }: ComponentProps<'img'> & ExtraProps) {
   const images = useContext(MarkdownImages);
+  const [preview, setPreview] = useState(false);
   const written = typeof src === 'string' ? decodeLocalImageSrc(src) : undefined;
   if (written !== undefined) {
     const hit = images?.find(i => i.uri !== undefined && sameImageSource(i.uri, written));
@@ -224,7 +226,22 @@ function MarkdownImage({ src, alt }: ComponentProps<'img'> & ExtraProps) {
     const mimeType = imageMimeOf(parseFileLink(written)?.path ?? written) ?? 'image/png';
     return <AgentImage image={hit ?? { mimeType, uri: written }} />;
   }
-  return typeof src === 'string' ? <img src={src} alt={alt ?? ''} className="max-h-agent-image max-w-full rounded-md" /> : null;
+  if (typeof src !== 'string') return null;
+  const name = alt || t('common.image');
+  return (
+    <>
+      <button
+        type="button"
+        title={name}
+        aria-label={t('common.previewImage', { name })}
+        onClick={() => setPreview(true)}
+        className="block max-w-full cursor-zoom-in overflow-hidden rounded-md outline-none focus-visible:ring-1 focus-visible:ring-focus"
+      >
+        <img src={src} alt={alt ?? ''} className="block max-h-agent-image max-w-full rounded-md" />
+      </button>
+      {preview && <Lightbox src={src} name={name} onClose={() => setPreview(false)} />}
+    </>
+  );
 }
 
 // Block elements that may appear inside a Markdown list item (standard HTML blocks plus Acpira's task note).
@@ -290,34 +307,4 @@ function textOf(node: ReactNode): string {
   if (Array.isArray(node)) return node.map(textOf).join('');
   if (isValidElement(node)) return textOf((node.props as { children?: ReactNode }).children);
   return '';
-}
-
-let mmdSeq = 0;
-
-// Mermaid diagram: rendered off-DOM via the plugin's shared instance; while streaming (or on bad syntax) the source shows as a code block
-function MermaidBlock({ chart }: { chart: string }) {
-  const theme = useTheme();
-  const [svg, setSvg] = useState<string>();
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let dead = false;
-    setFailed(false);
-    // Debounced: the chart text changes with every streamed chunk, and partial syntax usually fails to parse
-    const timer = setTimeout(() => {
-      const id = `acp-mmd-${++mmdSeq}`;
-      mermaidDiagram
-        .getMermaid({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default' })
-        .render(id, chart)
-        .then(({ svg }) => { if (!dead) setSvg(svg); })
-        .catch(() => {
-          // mermaid drops its error graphic into the document under the render id
-          document.getElementById(id)?.remove();
-          document.getElementById(`d${id}`)?.remove();
-          if (!dead) { setSvg(undefined); setFailed(true); }
-        });
-    }, 200);
-    return () => { dead = true; clearTimeout(timer); };
-  }, [chart, theme]);
-  if (failed || !svg) return failed ? <CodeBlock code={chart} /> : <div className="min-h-10 animate-[acp-pulse_1.5s_ease_infinite] rounded-md bg-code" />;
-  return <div className="flex justify-center [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: svg }} />;
 }

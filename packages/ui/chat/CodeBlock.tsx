@@ -69,7 +69,7 @@ function whenInSight(el: Element, then: () => void): () => void {
 
 interface Colored { code: string; language: Language; theme: Theme; lines: CodeToken[][]; rows: ColoredRows }
 
-export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+export function CodeBlock({ code, lang, copy = true }: { code: string; lang?: string; copy?: boolean }) {
   const language = fenceLanguage(lang);
   const theme = useTheme();
   const [colored, setColored] = useState<Colored>();
@@ -157,7 +157,7 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   // The wrapper carries the hover group and anchors the copy button outside the scrolling <pre>,
   // so the button stays pinned to the top-right corner while long lines scroll sideways
   return <div ref={root} className="code-fence group/code-output relative min-w-0">
-    <OutputCopy text={code} label={t('code.copyCode')} />
+    {copy && <OutputCopy text={code} label={t('code.copyCode')} />}
     <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable) : plainLines(code)}</code></CodeSurface>
   </div>;
 }

@@ -11,6 +11,7 @@ import { popupClass } from '../ui/Overlay';
 import { cn } from '../ui/cn';
 import { DiffBlock } from '../chat/CodeBlock';
 import { DiffStat } from '../chat/ToolCall';
+import { Lightbox } from '../chat/Lightbox';
 import { Prose } from '../chat/Prose';
 import { OpenToolFileContext } from '../chat/fileLinks';
 import { requestCodeHighlight, requestCodesHighlight } from '../chat/diffHighlight';
@@ -269,12 +270,22 @@ function Notice({ text, onOpenDefault }: { text: string; onOpenDefault?: () => v
   );
 }
 
-// An SVG drawn from its source: as an image, so its scripts never run
+// An SVG drawn from its source: as an image, so its scripts never run; click opens the Lightbox for zoom/pan
 function SvgPreview({ text, name }: { text: string; name: string }) {
   const src = useMemo(() => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`, [text]);
+  const [preview, setPreview] = useState(false);
   return (
     <div className="scroll-thin absolute inset-0 flex items-center justify-center overflow-auto p-pad" data-media="image">
-      <img src={src} alt={name} draggable={false} className="max-h-full max-w-full object-contain" />
+      <button
+        type="button"
+        title={name}
+        aria-label={t('common.previewImage', { name })}
+        onClick={() => setPreview(true)}
+        className="flex max-h-full max-w-full cursor-zoom-in items-center justify-center rounded-md outline-none focus-visible:ring-1 focus-visible:ring-focus"
+      >
+        <img src={src} alt={name} draggable={false} className="max-h-full max-w-full object-contain" />
+      </button>
+      {preview && <Lightbox src={src} name={name} mimeType="image/svg+xml" onClose={() => setPreview(false)} />}
     </div>
   );
 }
@@ -284,6 +295,7 @@ function SvgPreview({ text, name }: { text: string; name: string }) {
 function MediaView({ kind, src, name, onOpenDefault }: { kind: MediaKind; src: string; name: string; onOpenDefault?: () => void }) {
   const [failed, setFailed] = useState(false);
   const [size, setSize] = useState<string>();
+  const [preview, setPreview] = useState(false);
   const player = useRef<HTMLMediaElement>(null);
   // A player out of sight (its tab hidden, the panel closed) stops instead of playing on unseen
   useEffect(() => {
@@ -299,8 +311,18 @@ function MediaView({ kind, src, name, onOpenDefault }: { kind: MediaKind; src: s
   return (
     <div className="absolute inset-0 flex flex-col" data-media={kind}>
       <div className="flex min-h-0 flex-1 items-center justify-center p-pad">
-        {kind === 'image' && <img src={src} alt={name} draggable={false} className="max-h-full max-w-full object-contain" onError={fail}
-          onLoad={e => setSize(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight}`)} />}
+        {kind === 'image' && (
+          <button
+            type="button"
+            title={name}
+            aria-label={t('common.previewImage', { name })}
+            onClick={() => setPreview(true)}
+            className="flex max-h-full max-w-full cursor-zoom-in items-center justify-center rounded-md outline-none focus-visible:ring-1 focus-visible:ring-focus"
+          >
+            <img src={src} alt={name} draggable={false} className="max-h-full max-w-full object-contain" onError={fail}
+              onLoad={e => setSize(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight}`)} />
+          </button>
+        )}
         {kind === 'video' && <video ref={player as RefObject<HTMLVideoElement>} src={src} controls preload="metadata" className="max-h-full max-w-full" onError={fail}
           onLoadedMetadata={e => {
             const v = e.currentTarget;
@@ -311,6 +333,7 @@ function MediaView({ kind, src, name, onOpenDefault }: { kind: MediaKind; src: s
         {kind === 'audio' && <audio ref={player as RefObject<HTMLAudioElement>} src={src} controls preload="metadata" className="w-full" onError={fail} />}
       </div>
       {kind !== 'audio' && <div className="flex h-ctl shrink-0 items-center justify-center text-3 text-fg-3 tabular-nums">{size}</div>}
+      {preview && kind === 'image' && <Lightbox src={src} name={name} onClose={() => setPreview(false)} />}
     </div>
   );
 }
