@@ -23,7 +23,8 @@ use crate::i18n::tp;
 pub const CLIENT_NAME: &str = "acpira";
 pub const PROTOCOL_VERSION: i64 = 1;
 pub(crate) const KILL_GRACE: Duration = Duration::from_secs(5);
-pub const INIT_TIMEOUT: Duration = Duration::from_secs(30);
+// 120 s: loaded Windows machines and cold Node CLIs under antivirus scanning can take well past 30 s to answer initialize
+pub const INIT_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub fn client_version() -> &'static str {
   acpira_shared::version::VERSION
