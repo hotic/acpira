@@ -175,16 +175,20 @@ async fn a_missing_vault_file_is_an_empty_table() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_corrupt_vault_is_logged_and_never_overwritten() {
+async fn a_corrupt_vault_is_logged_and_set_aside_on_the_next_store() {
   let dir = tempfile::tempdir().unwrap();
   let file = dir.path().join("secrets.json");
   std::fs::write(&file, "{ nope").unwrap();
   let logs = Arc::new(Mutex::new(Vec::<String>::new()));
   let l = logs.clone();
   let vault = FileVault::new(file.clone(), Arc::new(move |x: &str| l.lock().unwrap().push(x.to_owned())));
-  vault.store("k", "v").await.ok();
-  assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ nope");
-  assert!(vault.get("k").await.ok().flatten().is_none());
+  vault.store("k", "v").await.unwrap();
+  // The corrupt bytes survive beside the file, never overwritten in place, and the vault starts a clean table
+  let aside: Vec<_> = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok())
+    .filter(|e| e.file_name().to_string_lossy().starts_with("secrets.json.corrupt-")).collect();
+  assert_eq!(aside.len(), 1);
+  assert_eq!(std::fs::read_to_string(aside[0].path()).unwrap(), "{ nope");
+  assert_eq!(vault.get("k").await.unwrap().as_deref(), Some("v"));
   assert!(logs.lock().unwrap().iter().any(|l| l.contains("unreadable")), "{:?}", logs.lock().unwrap());
 }
 

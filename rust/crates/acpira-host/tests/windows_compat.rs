@@ -161,16 +161,19 @@ fn an_agent_and_what_it_spawns_run_below_normal_priority() {
 #[test]
 fn normal_priority_setting_and_env_override_leave_agents_at_parent_priority() {
   use acpira_host::platform::windows_process::{CPU_CAP_ENV, PRIORITY_ENV};
+  use windows_sys::Win32::System::Threading::NORMAL_PRIORITY_CLASS;
+  // The agent inherits the test's own class (a CI runner may already run below normal); the helper asked for normal
+  // itself, and with no job limit nothing holds it down
   let parent_prio = priority_class(std::process::id());
 
   let (child, helper, stderr) = run_priority_fixture(&[(PRIORITY_ENV, "normal"), (CPU_CAP_ENV, "100")]).unwrap();
   assert_eq!(child, parent_prio);
-  assert_eq!(helper, parent_prio);
+  assert_eq!(helper, NORMAL_PRIORITY_CLASS);
   assert!(!stderr.contains("no shared CPU limit"), "lifting an unset CPU cap must not fail parent job setup: {stderr}");
 
   let (child, helper, _) = run_priority_fixture(&[("ACPIRA_PRIORITY_FIXTURE_SETTING", "normal")]).unwrap();
   assert_eq!(child, parent_prio);
-  assert_eq!(helper, parent_prio);
+  assert_eq!(helper, NORMAL_PRIORITY_CLASS);
 }
 
 #[tokio::test]
