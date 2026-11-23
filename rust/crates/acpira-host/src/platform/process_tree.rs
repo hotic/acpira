@@ -212,7 +212,9 @@ mod tests {
   #[test]
   fn stops_a_real_command_and_its_group() {
     use std::os::unix::process::{CommandExt, ExitStatusExt};
-    let cmd = "sleep 30 # it's mine";
+    // A duration no other lib test sleeps for: stop_command signals every match below this test process, and a
+    // parallel test's own `sleep 30` (hooks, plugins, installer) would be killed with it
+    let cmd = "sleep 37 # it's mine";
     let wrapped = format!("true && eval '{}' < /dev/null", cmd.replace('\'', "'\"'\"'"));
     let mut child = std::process::Command::new("/bin/sh").args(["-c", &wrapped]).process_group(0).spawn().unwrap();
     // The shell has to be in the process table with its argv before it can be found
