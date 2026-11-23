@@ -414,13 +414,18 @@ private struct HostedRow: View {
       return
     }
     lastInvalidated = height
-    cell.invalidateIntrinsicContentSize()
-    if let indexPath = collection.indexPath(for: cell) {
-      let context = UICollectionViewLayoutInvalidationContext()
-      context.invalidateItems(at: [indexPath])
-      collection.collectionViewLayout.invalidateLayout(with: context)
-      collection.setNeedsLayout()
-    }
+    // The row's new height goes to the layout the way self-sizing hands it over, as this one row's preferred
+    // attributes. `invalidateItems(at:)` made the compositional layout drop measured heights of other rows as well:
+    // the content lost thousands of points in one frame, and a fling through history was thrown far from the reader's
+    // place. The cell's own `invalidateIntrinsicContentSize` alone leaves a grown row at its old height.
+    let layout = collection.collectionViewLayout
+    guard let indexPath = collection.indexPath(for: cell),
+          let original = layout.layoutAttributesForItem(at: indexPath) else { return }
+    let preferred = cell.preferredLayoutAttributesFitting(original.copy() as! UICollectionViewLayoutAttributes)
+    guard layout.shouldInvalidateLayout(forPreferredLayoutAttributes: preferred, withOriginalAttributes: original) else { return }
+    layout.invalidateLayout(with: layout.invalidationContext(forPreferredLayoutAttributes: preferred,
+                                                             withOriginalAttributes: original))
+    collection.setNeedsLayout()
   }
 
   private func enclosingCell() -> UICollectionViewCell? {
