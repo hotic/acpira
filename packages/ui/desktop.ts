@@ -37,7 +37,10 @@ const toastListeners = new Set<() => void>();
 const toastsChanged = () => { for (const l of toastListeners) l(); };
 
 export function pushShellToast({ type: _type, ...toast }: Extract<HostMsg, { type: 'toast' }>) {
-  shellToasts = [...shellToasts, { ...toast, key: `shell:${++toastSeq}` }];
+  // The same message again (a second click on a link that leads nowhere) takes the place of the one showing, with a
+  // fresh key so its timer starts over, instead of stacking a copy
+  const others = shellToasts.filter(t => t.level !== toast.level || t.text !== toast.text);
+  shellToasts = [...others, { ...toast, key: `shell:${++toastSeq}` }];
   toastsChanged();
 }
 
