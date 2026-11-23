@@ -65,6 +65,7 @@ How each external agent CLI behaves on the ACP wire, with the version observed. 
 - `/compact` (1.5.13): nothing on the wire but a `usage_update` with the pre-compaction size and an empty `end_turn`; agy's transcript logs the checkpoint. `antigravity::compacted_silently` makes that a finished compaction with stale usage. Auto-compaction waits out an owed late reply (`after_prompt`).
 - Sandbox (1.5.9, macOS): `auto` never asks and runs commands in agy's own sandbox whatever `enableTerminalSandbox` says, with the `.git` of a folder that is a repository at session start read-only (`git pull` / `commit` fail); its monitors refuse a `BypassSandbox` retry without a permission request. `default` and `accept-edits` ask per command and run it unsandboxed, so full access rides on `accept-edits`.
 - Questions (1.5.12): `ask_question` goes over `elicitation/create` (`q<n>` + `q<n>_other` companion with no `_meta`, option-less questions as `q<n>_other` only, boilerplate `The agent has … question(s).` message). Unverified: MCP load failures, a prompt sent or `session/cancel` while a late reply is being written, the Windows install directory.
+- Background auto-update (1.5.14 binary): both `agy acp` and `agy -p` spawn a detached `--bg-updater` that runs `agy --version`, flashing a console window on Windows. `AGY_CLI_DISABLE_AUTO_UPDATE=true` (exact lowercase `true`) skips it; set on `/usage` everywhere and by default on `agy acp` on Windows (unverified live on Windows).
 
 ## Factory Droid
 

@@ -17,7 +17,7 @@ use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::legacy_models::LegacyModels;
 use crate::acp::transport::rpc::{BoxFuture, Connection, Inbound, RpcError};
 use crate::acp::vendors::grok::{GROK_ASK_QUESTION, GROK_EXIT_PLAN};
-use crate::acp::vendors::{Vendor, claude_auth, claude_workflow, droid_usage};
+use crate::acp::vendors::{Vendor, antigravity, claude_auth, claude_workflow, droid_usage};
 use crate::i18n::tp;
 
 pub const CLIENT_NAME: &str = "acpira";
@@ -224,6 +224,16 @@ impl AgentProcess {
     // CLI has them on. The variable only moves that default, the user's own settings still decide (`claude_workflow`)
     if Vendor::of(&def.id).workflows() && std::env::var_os(claude_workflow::WORKFLOWS_ENV).is_none() {
       cmd.env(claude_workflow::WORKFLOWS_ENV, "1");
+    }
+    // On Windows `agy`'s background auto-updater detaches and runs `agy --version` without `CREATE_NO_WINDOW`, flashing
+    // a console window; leave an explicit host or agent setting alone (`vendors/antigravity.rs`)
+    if Vendor::of(&def.id) == Vendor::Antigravity
+      && antigravity::suppress_acp_auto_update(
+        crate::platform::command::Os::current(),
+        std::env::var_os(antigravity::DISABLE_AUTO_UPDATE_ENV).as_deref(),
+      )
+    {
+      cmd.env(antigravity::DISABLE_AUTO_UPDATE_ENV, "true");
     }
     // A saved Claude account carries its OAuth store through the account env. Do not let a
     // stale host-level API credential or gateway override that account at request time.

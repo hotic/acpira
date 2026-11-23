@@ -61,6 +61,8 @@ const OWN: [&str; 2] = [TOKEN_FILE, "cache"];
 const OWN_DB: [&str; 3] = ["conversation_summaries.db", "conversation_summaries.db-shm", "conversation_summaries.db-wal"];
 /// A signed-out `agy` waits a minute for a sign-in before it answers; the read outlasts that to hear the answer
 const USAGE_TIMEOUT: Duration = Duration::from_secs(75);
+/// Cap on `/usage` stdout so a broken shim cannot grow memory without bound (normal JSON is a few KiB)
+const USAGE_OUTPUT_LIMIT: u64 = 1024 * 1024;
 
 pub struct AntigravityAccountProvider {
   homes: PathBuf,
@@ -300,24 +302,62 @@ impl AccountProvider for AntigravityAccountProvider {
   }
 }
 
-/// `agy -p /usage` as JSON, for the CLI's own login or (`home`) a saved account's
-async fn usage(bin: &str, home: Option<&Path>) -> Result<Value> {
-  let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+fn usage_command(bin: &str, home: Option<&Path>, os: crate::platform::command::Os) -> tokio::process::Command {
+  let windows = os == crate::platform::command::Os::Windows;
+  let null = if windows { "NUL" } else { "/dev/null" };
   // Without the flag every read leaves a log file in the shared log dir
   let args = ["-p", "/usage", "--output-format", "json", "--log-file", null].map(str::to_owned);
   let mut cmd = crate::acp::agents::launch::command(bin, &args);
-  cmd.current_dir(std::env::temp_dir()).stdin(std::process::Stdio::null()).kill_on_drop(true);
+  cmd
+    .current_dir(std::env::temp_dir())
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .kill_on_drop(true);
+  // A background quota read must not spawn `agy`'s detached `--bg-updater` (which on Windows runs `agy --version` and
+  // flashes a console window over the desktop)
+  cmd.env(crate::acp::vendors::antigravity::DISABLE_AUTO_UPDATE_ENV, "true");
   if let Some(home) = home {
     // Where `agy` looks for its home directory: USERPROFILE on Windows (1.5.9 ignores HOME there)
-    cmd.env(if cfg!(windows) { "USERPROFILE" } else { "HOME" }, home);
+    cmd.env(if windows { "USERPROFILE" } else { "HOME" }, home);
     if !in_ssh() {
       cmd.env(SSH_ENV[0], SSH_STAND_IN);
     }
   }
-  let out = tokio::time::timeout(USAGE_TIMEOUT, cmd.output()).await.map_err(|_| anyhow!("agy /usage timed out"))??;
+  cmd
+}
+
+/// `agy -p /usage` as JSON, for the CLI's own login or (`home`) a saved account's
+async fn usage(bin: &str, home: Option<&Path>) -> Result<Value> {
+  use tokio::io::AsyncReadExt;
+
+  let mut cmd = usage_command(bin, home, crate::platform::command::Os::current());
+  #[cfg(unix)]
+  cmd.process_group(0);
+  #[cfg(windows)]
+  let (mut child, _job) = crate::platform::windows_process::spawn(&mut cmd).await?;
+  #[cfg(not(windows))]
+  let mut child = cmd.spawn()?;
+  #[cfg(unix)]
+  let mut group = crate::acp::agents::launch::ProbeGroup(child.id());
+  let mut stdout = child.stdout.take().ok_or_else(|| anyhow!("agy /usage stdout is not piped"))?.take(USAGE_OUTPUT_LIMIT + 1);
+  let mut output = Vec::new();
+  let status = tokio::time::timeout(USAGE_TIMEOUT, async {
+    // Drain stdout before reaping so a wrapper's group leader keeps its PID while a child holds the pipe
+    stdout.read_to_end(&mut output).await?;
+    anyhow::ensure!(output.len() <= USAGE_OUTPUT_LIMIT as usize, "agy /usage output exceeded its limit");
+    let status = child.wait().await?;
+    #[cfg(unix)]
+    {
+      group.0 = None;
+    }
+    Ok::<_, anyhow::Error>(status)
+  })
+  .await
+  .map_err(|_| anyhow!("agy /usage timed out"))??;
   // A sign-in prompt may precede the answer, which is the last line
-  let text = String::from_utf8_lossy(&out.stdout);
-  let answer: Value = text.lines().rev().find_map(|l| serde_json::from_str(l.trim()).ok()).ok_or_else(|| anyhow!("agy /usage: no answer (exit {:?})", out.status.code()))?;
+  let text = String::from_utf8_lossy(&output);
+  let answer: Value = text.lines().rev().find_map(|l| serde_json::from_str(l.trim()).ok()).ok_or_else(|| anyhow!("agy /usage: no answer (exit {:?})", status.code()))?;
   if answer.get("status").and_then(Value::as_str) != Some("SUCCESS") {
     let why = answer.get("error").and_then(Value::as_str).unwrap_or("failed");
     return Err(if why.contains("authentication") { anyhow::Error::new(QuotaTokenExpired) } else { anyhow!("agy /usage: {why}") });
@@ -430,5 +470,52 @@ mod tests {
     assert!(spawn_args("claude", Some(&env)).is_empty());
     assert!(spawn_args("antigravity", Some(&StrMap::new())).is_empty());
     assert!(spawn_args("antigravity", None).is_empty());
+  }
+
+  #[test]
+  fn usage_command_disables_auto_update_and_sets_platform_home() {
+    use crate::acp::vendors::antigravity::DISABLE_AUTO_UPDATE_ENV;
+    use crate::platform::command::Os;
+    let envs_of = |cmd: &tokio::process::Command| -> BTreeMap<String, Option<String>> {
+      cmd
+        .as_std()
+        .get_envs()
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned())))
+        .collect()
+    };
+    let args_of = |cmd: &tokio::process::Command| -> Vec<String> { cmd.as_std().get_args().map(|a| a.to_string_lossy().into_owned()).collect() };
+
+    let local_win = usage_command("agy.exe", None, Os::Windows);
+    assert_eq!(envs_of(&local_win).get(DISABLE_AUTO_UPDATE_ENV).and_then(Option::as_deref), Some("true"));
+    assert_eq!(envs_of(&local_win).get("USERPROFILE"), None);
+    assert!(args_of(&local_win).ends_with(&["--log-file".to_owned(), "NUL".to_owned()]));
+
+    let saved_win = usage_command("agy.exe", Some(Path::new(r"C:\acc")), Os::Windows);
+    let saved_envs = envs_of(&saved_win);
+    assert_eq!(saved_envs.get(DISABLE_AUTO_UPDATE_ENV).and_then(Option::as_deref), Some("true"));
+    assert_eq!(saved_envs.get("USERPROFILE").and_then(Option::as_deref), Some(r"C:\acc"));
+    assert_eq!(saved_envs.get("HOME"), None);
+
+    let saved_posix = usage_command("agy", Some(Path::new("/tmp/acc")), Os::Posix);
+    let posix_envs = envs_of(&saved_posix);
+    assert_eq!(posix_envs.get(DISABLE_AUTO_UPDATE_ENV).and_then(Option::as_deref), Some("true"));
+    assert_eq!(posix_envs.get("HOME").and_then(Option::as_deref), Some("/tmp/acc"));
+    assert!(args_of(&saved_posix).ends_with(&["--log-file".to_owned(), "/dev/null".to_owned()]));
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn usage_reads_trailing_json_with_auto_update_disabled() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let script = t.path().join("fake-agy");
+    std::fs::write(
+      &script,
+      "#!/bin/sh\nif [ \"$AGY_CLI_DISABLE_AUTO_UPDATE\" != \"true\" ]; then exit 2; fi\necho 'sign-in noise'\necho '{\"status\":\"SUCCESS\",\"command\":{\"data\":{\"groups\":[]}}}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = usage(&script.to_string_lossy(), None).await.unwrap();
+    assert_eq!(out["status"], "SUCCESS");
   }
 }

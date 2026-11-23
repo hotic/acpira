@@ -15,11 +15,25 @@
 //! one owns the rest of the turn, a running tool included, until it answers itself. The steer is taken up at the next
 //! model call and never echoed. A cancel answers the owning prompt `cancelled`, yet the steer stays in the conversation
 
+use std::ffi::OsStr;
 use std::sync::LazyLock;
 
 use acpira_shared::transcript::AgentBlock;
 use regex::Regex;
 use serde_json::Value;
+
+use crate::platform::command::Os;
+
+/// Disables `agy`'s detached `--bg-updater` spawn (exact lowercase `"true"`, verified on `agy` 1.5.14): on Windows
+/// `--bg-updater` detaches from the hidden console and then runs `agy --version` without `CREATE_NO_WINDOW`, flashing a
+/// console window over the desktop
+pub const DISABLE_AUTO_UPDATE_ENV: &str = "AGY_CLI_DISABLE_AUTO_UPDATE";
+
+/// Whether a long-lived `agy acp` process should default `DISABLE_AUTO_UPDATE_ENV` to `"true"`: Windows only, and only
+/// when the host environment did not set it, so an explicit setting still wins
+pub fn suppress_acp_auto_update(os: Os, inherited: Option<&OsStr>) -> bool {
+  os == Os::Windows && inherited.is_none()
+}
 
 /// A `session/prompt` sent while a turn runs steers it (`agy acp` 1.5.0 and later): `steering::supported` stays false, as
 /// the CLI has no `_session/steering`. The older `agy_acp_server` package reported versions below that
@@ -201,6 +215,14 @@ mod tests {
     assert!(at("1.5.0") && at("1.5.12") && at("2.0.0"));
     assert!(!at("1.2.1") && !at("1.4.12"));
     assert!(!steers_by_prompt(&serde_json::json!({})));
+  }
+
+  #[test]
+  fn acp_auto_update_is_suppressed_only_on_windows_when_unset() {
+    assert!(suppress_acp_auto_update(Os::Windows, None));
+    assert!(!suppress_acp_auto_update(Os::Windows, Some(OsStr::new("false"))));
+    assert!(!suppress_acp_auto_update(Os::Windows, Some(OsStr::new("true"))));
+    assert!(!suppress_acp_auto_update(Os::Posix, None));
   }
 
   #[test]
