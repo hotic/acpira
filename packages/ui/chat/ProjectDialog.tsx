@@ -99,8 +99,8 @@ export function ProjectDialog({ cwd, meta, home, onPickFolder, onSave, onRemove,
                   <span className="min-w-0 flex-1 truncate text-3 text-fg-3" title={host ? f : path}>{host ? path : shortPath(path, env)}</span>
                   {/* The row's tail, one cell: a host folder rests on its host's name and connection dot (the session
                       column's project header), which gives way to the actions on hover or focus */}
-                  <span className="grid shrink-0 items-center [grid-template-areas:'x'] *:[grid-area:x]">
-                    {host && <span className="flex items-center justify-end gap-1.5 pr-2 text-3 text-fg-3 transition-opacity group-hover/row:opacity-0 group-has-[:focus-visible]/row:opacity-0">
+                  <span className="grid shrink-0 items-center [grid-template-areas:'x'] *:[grid-area:x] [&:has(:focus-visible)>[data-host-tail]]:opacity-0">
+                    {host && <span data-host-tail className="flex items-center justify-end gap-1.5 pr-2 text-3 text-fg-3 transition-opacity group-hover/row:opacity-0">
                       <span className="max-w-host truncate">{host.alias}</span>
                       <span className={cn('size-1.5 shrink-0 rounded-full', HOST_DOT[hosts.find(c => c.alias === host.alias)?.state ?? 'off'] ?? 'bg-fg-3/40')} />
                     </span>}
