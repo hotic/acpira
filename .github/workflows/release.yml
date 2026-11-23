@@ -99,7 +99,8 @@ jobs:
       # engines with the Certum cloud certificate (scripts/release/sign-windows.mjs) when the secrets are set
       - name: Install ssign
         if: runner.os == 'Windows' && env.HAS_CERTUM == 'true'
-        run: cargo install ssign --version 0.1.9 --locked
+        shell: bash
+        run: bash scripts/ci/install-ssign.sh
       - name: Build the sidecar
         env:
           CERTUM_EMAIL: ${{ runner.os == 'Windows' && secrets.CERTUM_EMAIL || '' }}
@@ -427,16 +428,15 @@ jobs:
   # (apps/desktop/scripts/package-windows.mjs), Authenticode-signed with the Certum cloud certificate when CERTUM_OTP is
   # set, as a zip, plus its update packages (the exe as a one-file full package, deltas from the last three releases'
   # exe packages) and this platform's manifest part. The VSIX and plugin releases do not wait on it.
-  desktop-windows:
-    needs: [build]
+  # The exe carries its own engine and takes nothing from the sidecar jobs, so it builds beside them from the start
+  # instead of after `build`: the two Windows builds are the slowest jobs, and in a row they were the whole critical
+  # path. Nothing is published here; desktop-windows attaches the files once `build` has passed.
+  desktop-windows-build:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: windows-latest
     timeout-minutes: 60
-    permissions:
-      contents: write
     env:
-      version: ${{ needs.build.outputs.version }}
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
-      PUBLISH: ${{ github.event_name == 'release' || inputs.publish }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       HAS_CERTUM: ${{ secrets.CERTUM_OTP != '' }}
@@ -465,7 +465,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install ssign
         if: env.HAS_CERTUM == 'true'
-        run: cargo install ssign --version 0.1.9 --locked
+        run: bash scripts/ci/install-ssign.sh
+      # `build` is not there to ask yet; desktop-windows checks the packed files against the version it validated
+      - name: Read the version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
       - name: Build the exe
         env:
           CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
@@ -526,6 +529,32 @@ jobs:
           path: part/
           if-no-files-found: error
           retention-days: 30
+
+  # The Windows app's files go up only after `build` (version, type checks, tests) has passed. The packages only: the
+  # manifest goes up in desktop-update, after every platform's files are on the Releases
+  desktop-windows:
+    needs: [build, desktop-windows-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      version: ${{ needs.build.outputs.version }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
+      PUBLISH: ${{ github.event_name == 'release' || inputs.publish }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@v8
+        with:
+          name: desktop-windows
+      - name: Check the packed version
+        run: test -f "dl/Acpira-$version-windows-x86_64.zip"
       - name: Attach the app to the GitHub Releases
         if: env.PUBLISH == 'true'
         run: |
