@@ -12,9 +12,11 @@
 .shimmer-clip {
   position: absolute;
   inset: 0;
-  /* Absolute insets cover the host's padding box; the padding is handed down so both text copies keep the same content edge. */
+  /* Absolute insets cover the host's padding box; the padding is handed down so both text copies keep the same content edge.
+     contain: strict isolates style/layout/paint inside the clip, avoiding full-subtree invalidation and Skia Graphite GPU bloat */
   padding: inherit;
   overflow: hidden;
+  contain: strict;
   pointer-events: none;
   color: var(--fg-strong);
 }
@@ -27,6 +29,7 @@
   left: 0;
   box-sizing: border-box;
   padding: inherit;
+  contain: layout style;
   transform-origin: 0 0;
   will-change: transform;
 }
@@ -34,9 +37,10 @@
   width: 200%;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 35%, #000 65%, transparent);
   mask-image: linear-gradient(90deg, transparent, #000 35%, #000 65%, transparent);
-  animation: acp-shimmer-band var(--shimmer-cycle) linear infinite;
+  /* 30 fps (60 steps over the 2 s cycle) avoids 159 Hz swap/recalc floods on high-refresh displays */
+  animation: acp-shimmer-band var(--shimmer-cycle) steps(60, end) infinite;
 }
-.shimmer-copy { width: 100%; animation: acp-shimmer-copy var(--shimmer-cycle) linear infinite; }
+.shimmer-copy { width: 100%; animation: acp-shimmer-copy var(--shimmer-cycle) steps(60, end) infinite; }
 /* The text itself, in a box the label's size and padding */
 .shimmer-copy > span { position: absolute; inset-block: 0; left: 0; box-sizing: border-box; width: 50%; padding: inherit; }
 /* The strong copy is one colour throughout, even over children that tint the muted text (the goal head's label + objective) */
@@ -196,20 +200,20 @@
 
 @keyframes acp-enter { from { opacity: 0; transform: translateY(var(--enter-y)); } }
 @keyframes acp-pulse { 50% { opacity: 0.3; } }
-/* Session list unread dot: the dot stays lit while a copy of it ripples outward and fades. The copy rests invisible, so the
-   kill switches below (which drop the animation) leave just the steady dot */
+/* Session list unread dot: the dot stays lit while a copy of it ripples outward and fades. Play three ripples on arrival
+   and then rest on the solid dot: an infinite ripple on idle unread rows or UpdateDot kept 159 Hz GPU commits running forever */
 .unread-halo { position: relative; }
-.unread-halo::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: inherit; opacity: 0; animation: acp-halo 2s ease-out infinite; }
+.unread-halo::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: inherit; opacity: 0; will-change: transform, opacity; animation: acp-halo 2s steps(40, end) 3; }
 @keyframes acp-halo { from { opacity: 0.6; transform: scale(1); } to { opacity: 0; transform: scale(2.6); } }
 /* The other session list marks each move their own way, so a glance tells them apart without relying on colour alone.
    Waiting beats like a heart (it needs the user), error double-flashes every few seconds, and background work is a dot
-   orbiting the still ring: alive, slower than the working spinner, nothing to do. The kill switches below stop all three
-   on their resting frame (full dot, lit dot, dot at the top) */
-.waiting-pulse { animation: acp-mark-beat 1.4s ease-in-out infinite; }
+   orbiting the still ring: alive, slower than the working spinner, nothing to do. Stepped cadences cap GPU commits on
+   high-refresh displays; the kill switches below stop all three on their resting frame */
+.waiting-pulse { will-change: transform; animation: acp-mark-beat 1.4s steps(36, end) infinite; }
 @keyframes acp-mark-beat { 0%, 100% { transform: scale(1); } 20% { transform: scale(1.5); } 40% { transform: scale(1.1); } 55% { transform: scale(1.35); } 75% { transform: scale(1); } }
-.error-blink { animation: acp-mark-flash 3s linear infinite; }
+.error-blink { will-change: opacity; animation: acp-mark-flash 3s linear infinite; }
 @keyframes acp-mark-flash { 0%, 64%, 76%, 88%, 100% { opacity: 1; } 70%, 82% { opacity: 0.2; } }
-.bg-orbit { animation: acp-orbit 3.6s linear infinite; }
+.bg-orbit { will-change: transform; animation: acp-orbit 3.6s steps(72, end) infinite; }
 @keyframes acp-orbit { to { transform: rotate(1turn); } }
 /* A folder on an SSH host (remote/RemoteFolderIcon): the folder glyph is cut away under the globe badge's disc, whose
    centre sits half a disc in from the badge's corner, 4px past the icon's own; a mask rather than a backing fill, so the
@@ -218,7 +222,9 @@
   mask-image: radial-gradient(circle at calc(100% + 4px - var(--remote-badge) / 2) calc(100% + 4px - var(--remote-badge) / 2),
     transparent calc(var(--remote-badge) / 2), #000 calc(var(--remote-badge) / 2 + 0.5px));
 }
-.remote-breathe { animation: acp-pulse 1.6s ease-in-out infinite; }
+.remote-breathe { will-change: opacity; animation: acp-pulse 1.6s steps(32, end) infinite; }
+/* Working spinners step at 24 fps on their wrapper span: visually smooth at 10-14 px while cutting 159 Hz GPU/IPC ~6x */
+.live-spin { animation-timing-function: steps(24, end); will-change: transform; }
 
 /* A session row's agent mark whose session runs another vendor's model (SessionList Item): hovered, it turns over to that
    vendor's mark after a short hold, so a pointer sweeping down the list flips nothing, and turns back at once */
@@ -238,9 +244,19 @@
 [data-motion="none"] * { transition: none !important; animation: none !important; }
 [data-motion="none"] *::before, [data-motion="none"] *::after { transition: none !important; animation: none !important; }
 /* The working ring is the list's only "still running" signal (a list item has no verb to shimmer), so it keeps turning. */
-[data-motion="none"] .live-spin { animation: var(--animate-spin) !important; }
+[data-motion="none"] .live-spin { animation: var(--animate-spin) !important; animation-timing-function: steps(24, end) !important; }
 [data-motion="none"] .shimmer { color: var(--fg-2); }
 [data-motion="none"] .shimmer-clip { display: none; }
+/* Pause continuous ambient animations while the window is unfocused (plugins/motion.ts watchWindowFocus): Windows WebView2
+   keeps document.hidden false on unfocused visible windows, which otherwise burns GPU and compositor cycles nonstop.
+   Pseudo-elements cannot appear inside :is() per CSS Selectors 4, so .unread-halo::after is listed separately */
+html[data-window-blurred] .unread-halo::after,
+html[data-window-blurred] :is(
+  .shimmer-band, .shimmer-copy,
+  .waiting-pulse, .error-blink, .bg-orbit, .remote-breathe,
+  .compacting-icon path, .goal-live path:first-of-type
+) { animation-play-state: paused !important; }
+html[data-window-blurred] .live-spin { animation-timing-function: steps(12, end) !important; }
 @media (prefers-reduced-motion: reduce) {
   .acp-shell *, .acp-shell *::before, .acp-shell *::after { animation: none !important; transition: none !important; }
   .acp-shell .shimmer { color: var(--fg-2); }
