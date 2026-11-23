@@ -130,6 +130,9 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
   var endAtLastRow: Bool
   var root: Bool
   var bodyTop: CGFloat
+  /// Clearance animated after the rail root (code cards: keeps the terminal dot on the card's bottom edge
+  /// while animating the trailing gap through `FoldLayout` instead of plain `.padding(.bottom, open ? ... : 0)`)
+  var bodyAfter: CGFloat
   let label: () -> Label
   let trailing: () -> Trailing
   let content: () -> Content
@@ -137,7 +140,7 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
   /// `rail` defaults to `.body` for an indented body and `.off` otherwise (`rail = indent ? 'body' : false`)
   public init(open: Binding<Bool>? = nil, defaultOpen: Bool = false, tone: RowTone = .action, dense: Bool = false,
               icon: LucideIcon? = nil, indent: Bool = true, rail: RailMode? = nil, endAtLastRow: Bool? = nil, root: Bool = true,
-              bodyTop: CGFloat = Metrics.s1,
+              bodyTop: CGFloat = Metrics.s1, bodyAfter: CGFloat = 0,
               @ViewBuilder label: @escaping () -> Label, @ViewBuilder trailing: @escaping () -> Trailing,
               @ViewBuilder content: @escaping () -> Content) {
     controlled = open
@@ -145,7 +148,7 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
     self.tone = tone; self.dense = dense; self.icon = icon; self.indent = indent
     self.rail = rail ?? (indent ? .body : .off)
     self.endAtLastRow = endAtLastRow ?? (self.rail == .rows)
-    self.root = root; self.bodyTop = bodyTop
+    self.root = root; self.bodyTop = bodyTop; self.bodyAfter = bodyAfter
     self.label = label; self.trailing = trailing; self.content = content
   }
 
@@ -193,7 +196,16 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .reveal(isOpen)
     }
-    if root {
+    if bodyAfter > 0 {
+      VStack(alignment: .leading, spacing: 0) {
+        if root {
+          column.connectedRail(enabled: rail != .off && isOpen && lead != nil, endAtLastRow: endAtLastRow, action: tone == .action)
+        } else {
+          column
+        }
+        Color.clear.frame(width: 0, height: bodyAfter).reveal(isOpen)
+      }
+    } else if root {
       column.connectedRail(enabled: rail != .off && isOpen && lead != nil, endAtLastRow: endAtLastRow, action: tone == .action)
     } else {
       column
@@ -204,10 +216,11 @@ public struct Disclosure<Label: View, Trailing: View, Content: View>: View {
 extension Disclosure where Trailing == EmptyView {
   public init(open: Binding<Bool>? = nil, defaultOpen: Bool = false, tone: RowTone = .action, dense: Bool = false,
               icon: LucideIcon? = nil, indent: Bool = true, rail: RailMode? = nil, endAtLastRow: Bool? = nil, root: Bool = true,
-              bodyTop: CGFloat = Metrics.s1,
+              bodyTop: CGFloat = Metrics.s1, bodyAfter: CGFloat = 0,
               @ViewBuilder label: @escaping () -> Label, @ViewBuilder content: @escaping () -> Content) {
     self.init(open: open, defaultOpen: defaultOpen, tone: tone, dense: dense, icon: icon, indent: indent, rail: rail,
-              endAtLastRow: endAtLastRow, root: root, bodyTop: bodyTop, label: label, trailing: { EmptyView() }, content: content)
+              endAtLastRow: endAtLastRow, root: root, bodyTop: bodyTop, bodyAfter: bodyAfter, label: label,
+              trailing: { EmptyView() }, content: content)
   }
 }
 

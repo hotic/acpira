@@ -581,19 +581,24 @@ struct ProseTable: View {
   private var grid: some View {
     let drawn = rows.prefix(shown)
     return Scroller(.horizontal) {
-      Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+      // Top-align cells across each row (`vertical-align: top`) without making cells vertically flexible:
+      // `maxHeight: .infinity` on grid cells makes the whole Grid vertically flexible inside a horizontal ScrollView,
+      // which stretches rows past the cell height UICollectionView measured and overflows into the next message.
+      Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
         GridRow {
           ForEach(Array(header.enumerated()), id: \.offset) { i, cell in
-            cellView(cell, column: i, head: true, last: rows.isEmpty)
+            cellView(cell, column: i, head: true)
           }
         }
         .background(Palette.hover)
+        if !drawn.isEmpty { rowRule }
         ForEach(Array(drawn.enumerated()), id: \.offset) { r, row in
           GridRow {
             ForEach(Array(row.enumerated()), id: \.offset) { i, cell in
-              cellView(cell, column: i, head: false, last: r == drawn.count - 1)
+              cellView(cell, column: i, head: false)
             }
           }
+          if r < drawn.count - 1 { rowRule }
         }
       }
       // min-width: 100%
@@ -606,18 +611,18 @@ struct ProseTable: View {
     .overlay(RoundedRectangle(cornerRadius: Metrics.rLg).strokeBorder(Palette.conversationLine))
   }
 
-  func cellView(_ cell: [MDInline], column: Int, head: Bool, last: Bool) -> some View {
+  /// border-bottom: 1px spanning every column without widening the grid
+  private var rowRule: some View {
+    Rectangle().fill(Palette.line).frame(height: Metrics.hairline).gridCellUnsizedAxes(.horizontal)
+  }
+
+  func cellView(_ cell: [MDInline], column: Int, head: Bool) -> some View {
     InlineText(inlines: cell, style: WebType.text2, ink: head ? Palette.fg2 : style.ink, strongInk: style.strongInk,
                accent: style.accent, weight: head ? .medium : .regular)
       .fixedSize()
       .padding(.vertical, Metrics.gap)
       .padding(.horizontal, Metrics.pad)
-      // A table row's cells share its height (vertical-align: top), so every cell's rule sits on the row's bottom;
-      // sized to their own text, a shorter cell drew its rule a point higher than its neighbours'
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: Alignment(horizontal: alignment(column).horizontal, vertical: .top))
-      // border-bottom: 1px, inside the cell's box
-      .padding(.bottom, last ? 0 : Metrics.hairline)
-      .overlay(alignment: .bottom) { if !last { Rectangle().fill(Palette.line).frame(height: Metrics.hairline) } }
+      .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment(column).horizontal, vertical: .top))
   }
 
   func alignment(_ column: Int) -> Alignment {

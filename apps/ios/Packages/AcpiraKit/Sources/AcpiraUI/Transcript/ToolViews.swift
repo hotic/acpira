@@ -104,14 +104,13 @@ struct ToolCallView: View {
     } else {
       // A diff is a code card too: in the label column on the row's rail, spaced as the command card is (the webview
       // runs it full width, which gave the transcript two card edges)
-      let open = fold.wrappedValue ?? preOpen.contains(.results)
-      Disclosure(open: foldBinding(fold, preOpen.contains(.results)), icon: icon, bodyTop: Metrics.codeCardGap) { label } trailing: { trailing } content: {
+      Disclosure(open: foldBinding(fold, preOpen.contains(.results)), icon: icon,
+                 bodyTop: Metrics.codeCardGap, bodyAfter: Metrics.codeCardAfter) { label } trailing: { trailing } content: {
         VStack(alignment: .leading, spacing: Metrics.gap) {
           TaskMeta(task: block.asyncTask)
           ToolBody(block: block, items: visible)
         }
       }
-      .padding(.bottom, open ? Metrics.codeCardAfter : 0)
     }
   }
 }
@@ -392,11 +391,11 @@ struct CommandDisclosure<Label: View, Trailing: View>: View {
   }
 
   var body: some View {
-    let open = fold.wrappedValue ?? (defaultOpen || preOpen.contains(.command))
-    // The card sits in the label column on the row's rail; the room after it stays outside so the end dot meets the card.
+    // The card sits in the label column on the row's rail; the room after it stays outside the rail root (animated
+    // through `bodyAfter`'s `FoldLayout`) so the end dot meets the card without snapping the hosted cell height.
     // The phone keeps it there too: a column-wide card without the rail lost the desktop's reading of the row (2026-10-27)
     Disclosure(open: foldBinding(fold, defaultOpen || preOpen.contains(.command)), icon: icon,
-               bodyTop: Metrics.codeCardGap) { label } trailing: { trailing } content: {
+               bodyTop: Metrics.codeCardGap, bodyAfter: Metrics.codeCardAfter) { label } trailing: { trailing } content: {
       VStack(alignment: .leading, spacing: Metrics.gap) {
         TaskMeta(task: block.asyncTask)
         if block.kind == .execute {
@@ -408,7 +407,6 @@ struct CommandDisclosure<Label: View, Trailing: View>: View {
         }
       }
     }
-    .padding(.bottom, open ? Metrics.codeCardAfter : 0)
   }
 }
 
@@ -694,9 +692,8 @@ struct EditEntry: View {
     } else {
       // EntryFold: no rail root of its own, so the group's rail runs on through its icon. The diff is a code card in
       // the label column like every other (entries stack without the process rows' gap, so it takes the whole gap)
-      let open = fold.wrappedValue ?? preOpen.contains(.edit)
       Disclosure(open: foldBinding(fold, preOpen.contains(.edit)), dense: true, icon: .pencil, root: false,
-                 bodyTop: Metrics.codeCardGap) {
+                 bodyTop: Metrics.codeCardGap, bodyAfter: Metrics.codeCardGap) {
         label
       } trailing: { trailing } content: {
         VStack(alignment: .leading, spacing: Metrics.gap) {
@@ -711,7 +708,6 @@ struct EditEntry: View {
           }
         }
       }
-      .padding(.bottom, open ? Metrics.codeCardGap : 0)
     }
   }
 }
@@ -786,26 +782,33 @@ struct TerminalOutput: View {
 struct ToolOutput: View {
   let text: String
   @Environment(\.codeSheet) private var inSheet
-  @State private var natural: CGFloat = 0
 
   var body: some View {
     let body = text.trimmingTrailingWhitespace()
     if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      Scroller(.vertical) {
-        Text(web: body, size: WebType.mono.size)
-          .textStyle(WebType.mono)
-          .foregroundStyle(Palette.fg2)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.horizontal, Metrics.commandX)
-          .padding(.vertical, Metrics.commandY)
-          .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
+      Group {
+        if inSheet {
+          Scroller(.vertical) { content(body) }
+            .scrollBounceBehavior(.basedOnSize)
+        } else {
+          // The transcript preview never scrolls; laying it out directly avoids `UIScrollView`'s late
+          // self-sizing inside `FoldLayout` (which popped the card in several frames late over rows below).
+          CappedPreview(limit: WebMetrics.codeOutputMax) { content(body) }
+        }
       }
-      .scrollBounceBehavior(.basedOnSize)
-      .scrollDisabled(!inSheet)
-      .codeCap(natural: natural, inSheet: inSheet)
       .modifier(CodeOutputFrame())
       .codeViewer(title: t("code.copyToolOutput"), copy: body, copyLabel: t("code.copyToolOutput")) { ToolOutput(text: text) }
     }
+  }
+
+  private func content(_ body: String) -> some View {
+    Text(web: body, size: WebType.mono.size)
+      .textStyle(WebType.mono)
+      .foregroundStyle(Palette.fg2)
+      .fixedSize(horizontal: false, vertical: true)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, Metrics.commandX)
+      .padding(.vertical, Metrics.commandY)
   }
 }
 
@@ -814,24 +817,32 @@ struct OutputPane<Content: View>: View {
   var top: CGFloat
   @ViewBuilder let content: () -> Content
   @Environment(\.codeSheet) private var inSheet
-  @State private var natural: CGFloat = 0
 
   var body: some View {
-    Scroller(inSheet ? [.vertical, .horizontal] : .horizontal) {
-      content()
-        .textStyle(WebType.mono)
-        .foregroundStyle(Palette.fg2)
-        .fixedSize()
-        .padding(.horizontal, Metrics.commandX)
-        .padding(.top, top)
-        .padding(.bottom, Metrics.commandY)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
-        .codeCut(inSheet: inSheet)
+    if inSheet {
+      Scroller([.vertical, .horizontal]) { styledContent }
+        .scrollBounceBehavior(.basedOnSize, axes: [.vertical, .horizontal])
+        .scrollIndicators(.hidden)
+    } else {
+      HorizontalCappedPreview(limit: WebMetrics.codeOutputMax) {
+        styledContent
+      } content: {
+        Scroller(.horizontal) { styledContent.codeCut(inSheet: false) }
+          .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+          .scrollIndicators(.hidden)
+      }
     }
-    .scrollBounceBehavior(.basedOnSize, axes: [.vertical, .horizontal])
-    .scrollIndicators(.hidden)
-    .codeCap(natural: natural, inSheet: inSheet)
+  }
+
+  private var styledContent: some View {
+    content()
+      .textStyle(WebType.mono)
+      .foregroundStyle(Palette.fg2)
+      .fixedSize()
+      .padding(.horizontal, Metrics.commandX)
+      .padding(.top, top)
+      .padding(.bottom, Metrics.commandY)
+      .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 
@@ -842,6 +853,7 @@ struct CommandPrompt: View {
   @State private var expanded = false
   @State private var clipped = false
   @Environment(\.motionEnabled) private var motion
+  @Environment(\.holdScroll) private var holdScroll
 
   var body: some View {
     let mono = WebType.mono
@@ -908,7 +920,9 @@ struct CommandPrompt: View {
   }
 
   private func toggle() {
-    withAnimation(motion ? Motion.open : nil) { expanded.toggle() }
+    let next = !expanded
+    holdScroll()
+    withAnimation(foldAnimation(opening: next, motion: motion)) { expanded = next }
   }
 }
 
@@ -972,8 +986,8 @@ struct DiffBlockView: View {
   @Environment(\.diffSource) private var fetchSource
   @Environment(\.codeSheet) private var inSheet
   @Environment(\.snapshot) private var snapshot
+  @Environment(\.motionEnabled) private var motion
   @Environment(\.colorScheme) private var scheme
-  @State private var natural: CGFloat = 0
   @State private var viewport: CGFloat = 0
   @State private var rowWidth: CGFloat = 0
   @State private var colored: Colored?
@@ -1001,20 +1015,44 @@ struct DiffBlockView: View {
     Group {
       if inSheet {
         // The reader owns the whole bounded viewport, even when the diff has only a few lines.
-        scroller(display, tokens: tokens, ch: ch)
+        sheetScroller(display, tokens: tokens, ch: ch)
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       } else {
-        scroller(display, tokens: tokens, ch: ch)
-          .codeCap(natural: natural, inSheet: false)
-          .modifier(CodeOutputFrame())
+        // Resolve preview height and minimum row width synchronously on the first pass so opening the fold
+        // glides from frame 1 instead of stalling on `UIScrollView` self-sizing and per-row geometry callbacks.
+        HorizontalCappedPreview(limit: WebMetrics.codeOutputMax) {
+          Color.clear.frame(width: 0, height: diffPreviewNaturalHeight(display))
+        } content: {
+          GeometryReader { proxy in
+            Scroller(.horizontal) {
+              VStack(alignment: .leading, spacing: 0) {
+                rows(display, tokens: tokens, ch: ch, measureWidth: false)
+              }
+              .frame(minWidth: proxy.size.width, alignment: .leading)
+              .padding(.vertical, Metrics.gapHalf)
+              .codeCut(inSheet: false)
+            }
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            .scrollIndicators(.hidden)
+          }
+        }
+        .modifier(CodeOutputFrame())
       }
     }
     // Full-source cache lookup and tokenization stay off the main actor; a stale pass must not replace a newer source.
     .task(id: Pass(lines: display, title: title, theme: theme)) {
       guard !snapshot, tokens == nil, codeLanguage(title) != nil else { return }
+      let started = ContinuousClock.now
       let title = title
       let result = await Task.detached(priority: .utility) { SyntaxHighlighter.shared.diff(display, path: title, theme: theme) }.value
       guard !Task.isCancelled, let result else { return }
+      // Avoid rebuilding every diff row in the middle of an opening fold spring; apply the highlight once settled.
+      if !inSheet && motion {
+        let elapsed = started.duration(to: .now)
+        let settle = Duration.seconds(Motion.foldSettle)
+        if elapsed < settle { try? await Task.sleep(for: settle - elapsed) }
+        guard !Task.isCancelled else { return }
+      }
       colored = Colored(lines: display, theme: theme, tokens: result)
     }
     // CodeBlock.tsx: copy takes the new file, asked for when the view left its text out, else the visible new code.
@@ -1025,27 +1063,25 @@ struct DiffBlockView: View {
     }
   }
 
-  private func scroller(_ display: [DiffLine], tokens: [[CodeToken]?]?, ch: CGFloat) -> some View {
-    Scroller(inSheet ? [.vertical, .horizontal] : .horizontal) {
+  private func sheetScroller(_ display: [DiffLine], tokens: [[CodeToken]?]?, ch: CGFloat) -> some View {
+    Scroller([.vertical, .horizontal]) {
       Group {
-        if inSheet && !snapshot {
-          LazyVStack(alignment: .leading, spacing: 0) { rows(display, tokens: tokens, ch: ch) }
+        if !snapshot {
+          LazyVStack(alignment: .leading, spacing: 0) { rows(display, tokens: tokens, ch: ch, measureWidth: true) }
         } else {
-          VStack(alignment: .leading, spacing: 0) { rows(display, tokens: tokens, ch: ch) }
+          VStack(alignment: .leading, spacing: 0) { rows(display, tokens: tokens, ch: ch, measureWidth: false) }
         }
       }
       // Keep the widest mounted row even after it is recycled, so sideways range never shrinks while reading.
       .frame(minWidth: max(viewport, rowWidth), alignment: .leading)
       .padding(.vertical, Metrics.gapHalf)
-      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { natural = $0 }
-      .codeCut(inSheet: inSheet)
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewport = $0 }
     .scrollBounceBehavior(.basedOnSize, axes: [.vertical, .horizontal])
     .scrollIndicators(.hidden)
   }
 
-  private func rows(_ display: [DiffLine], tokens: [[CodeToken]?]?, ch: CGFloat) -> some View {
+  private func rows(_ display: [DiffLine], tokens: [[CodeToken]?]?, ch: CGFloat, measureWidth: Bool) -> some View {
     let mono = WebType.mono
     let rows = display.indices.filter { i in !(display[i].kind == .hunk && (i == 0 || i == display.count - 1)) }
     return ForEach(rows, id: \.self) { i in
@@ -1060,7 +1096,7 @@ struct DiffBlockView: View {
           .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: 1) }
           .padding(.vertical, Metrics.gapHalf)
       } else {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
+        let row = HStack(alignment: .firstTextBaseline, spacing: 0) {
           // diff-gutter: the number right-aligned in --diff-number-width, the sign centred in --diff-sign-width.
           // A context row keeps the sign's room with a space: an empty Text has no baseline, and aligned by its
           // line box's bottom it stretched the row
@@ -1084,7 +1120,13 @@ struct DiffBlockView: View {
         }
         .textStyle(WebType.codeOutput)
         .fixedSize(horizontal: true, vertical: false)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = max(rowWidth, $0) }
+        Group {
+          if measureWidth {
+            row.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = max(rowWidth, $0) }
+          } else {
+            row
+          }
+        }
         .frame(minHeight: WebMetrics.codeOutputLine)
         .frame(maxWidth: .infinity, alignment: .leading)
         // A plain rectangle: the shape-style background took a rounded container shape and cut the tint's ends
@@ -1118,26 +1160,112 @@ extension EnvironmentValues {
   @Entry var codeSheet = false
 }
 
-extension View {
-  /// A code card's scrolling body: cut at --code-output-max in the transcript, whole in the code sheet. The cut does
-  /// not scroll vertically, so no vertical scroller nests in the transcript's (long lines still scroll sideways,
-  /// see `codeCut`); a fade at the cut shows there is more, and a tap opens the whole card. The cut is the webview's,
-  /// so a card under it reads as the desktop's (a shorter phone cap sliced a seven-line diff through its last line)
-  func codeCap(natural: CGFloat, inSheet: Bool) -> some View {
-    let preview = !inSheet
-    return frame(maxHeight: inSheet ? nil : WebMetrics.codeOutputMax)
-      .fixedSize(horizontal: false, vertical: true)
-      .overlay(alignment: .bottom) {
-        if preview && natural > WebMetrics.codeOutputMax {
-          LinearGradient(colors: [Palette.bgCode.opacity(0), Palette.bgCode], startPoint: .top, endPoint: .bottom)
-            .frame(height: Metrics.scrollFade)
-            .allowsHitTesting(false)
-        }
-      }
+/// Non-scrolling transcript preview capped at `limit` on the first layout pass, drawing the bottom fade only when
+/// natural height exceeds `limit` (no `@State` measurement loop or late `UIScrollView` sizing inside `FoldLayout`).
+private struct CappedPreview<Content: View>: View {
+  var limit: CGFloat
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    CappedBox(limit: limit) {
+      content()
+      LinearGradient(colors: [Palette.bgCode.opacity(0), Palette.bgCode], startPoint: .top, endPoint: .bottom)
+        .allowsHitTesting(false)
+    }
+    .clipped()
+  }
+}
+
+private struct CappedBox: Layout {
+  var limit: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let content = subviews.first else { return .zero }
+    let natural = content.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+    return CGSize(width: proposal.width ?? natural.width, height: min(natural.height, limit))
   }
 
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard let content = subviews.first else { return }
+    let natural = content.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+    content.place(at: bounds.origin, anchor: .topLeading,
+                  proposal: ProposedViewSize(width: bounds.width, height: natural.height))
+    guard let fade = subviews.dropFirst().first else { return }
+    if natural.height > limit {
+      let h = min(Metrics.scrollFade, bounds.height)
+      fade.place(at: CGPoint(x: bounds.minX, y: bounds.maxY - h), anchor: .topLeading,
+                 proposal: ProposedViewSize(width: bounds.width, height: h))
+    } else {
+      fade.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: 0, height: 0))
+    }
+  }
+}
+
+/// Horizontally scrolling transcript preview whose vertical height comes synchronously from `ruler` on frame 1,
+/// keeping `FoldLayout` reveals smooth without waiting for UIKit's `UIScrollView` to self-size.
+private struct HorizontalCappedPreview<Ruler: View, Content: View>: View {
+  var limit: CGFloat
+  @ViewBuilder let ruler: () -> Ruler
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    HorizontalCappedLayout(limit: limit) {
+      ruler()
+        .hidden()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+      content()
+      LinearGradient(colors: [Palette.bgCode.opacity(0), Palette.bgCode], startPoint: .top, endPoint: .bottom)
+        .allowsHitTesting(false)
+    }
+    .clipped()
+  }
+}
+
+private struct HorizontalCappedLayout: Layout {
+  var limit: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let ruler = subviews.first else { return .zero }
+    let natural = ruler.sizeThatFits(ProposedViewSize(width: nil, height: nil))
+    return CGSize(width: proposal.width ?? natural.width, height: min(natural.height, limit))
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard subviews.count >= 2 else { return }
+    let natural = subviews[0].sizeThatFits(ProposedViewSize(width: nil, height: nil))
+    let height = min(natural.height, limit)
+    subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: 0, height: 0))
+    subviews[1].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: height))
+    guard subviews.count >= 3 else { return }
+    if natural.height > limit {
+      let h = min(Metrics.scrollFade, height)
+      subviews[2].place(at: CGPoint(x: bounds.minX, y: bounds.maxY - h), anchor: .topLeading,
+                        proposal: ProposedViewSize(width: bounds.width, height: h))
+    } else {
+      subviews[2].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: 0, height: 0))
+    }
+  }
+}
+
+/// Natural height of `display` in the transcript diff preview (`VStack` rows + vertical padding), matching
+/// `DiffBlockView.rows` synchronously so `HorizontalCappedPreview` never waits on `UIScrollView` measurement.
+func diffPreviewNaturalHeight(_ display: [DiffLine]) -> CGFloat {
+  var total = Metrics.gapHalf * 2
+  for (i, line) in display.enumerated() {
+    if line.kind == .hunk {
+      guard i != 0, i != display.count - 1 else { continue }
+      total += Metrics.diffHunk + Metrics.gapHalf * 2
+    } else {
+      total += WebMetrics.codeOutputLine
+    }
+  }
+  return total
+}
+
+extension View {
   /// The transcript's cut inside a sideways-only scroller: the content keeps its top --code-output-max, so the strip
-  /// is no taller than the card and a swipe across it scrolls long lines. Measure `natural` before this
+  /// is no taller than the card and a swipe across it scrolls long lines
   @ViewBuilder func codeCut(inSheet: Bool) -> some View {
     if inSheet {
       self

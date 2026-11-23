@@ -35,6 +35,25 @@ import UIKit
     #expect(full.dataProvider?.data as Data? == cut.dataProvider?.data as Data?)
   }
 
+  @Test func previewHeightMatchesNaturalDiffAndToolOutputWithoutScrollMeasurement() throws {
+    let shortDiff = [
+      DiffLine(kind: .hunk, text: "@@ -1,2 +1,2 @@"),
+      DiffLine(kind: .ctx, text: " let a = 1", oldLine: 1, newLine: 1),
+      DiffLine(kind: .hunk, text: "@@ -10,2 +10,2 @@"),
+      DiffLine(kind: .add, text: "+let b = 2", newLine: 10),
+    ]
+    let diffView = DiffBlockView(lines: shortDiff, title: "a.swift").frame(width: 402)
+    let diffImage = try #require(ImageRenderer(content: diffView).cgImage)
+    let expectedDiff = Int((diffPreviewNaturalHeight(shortDiff) + Metrics.hairline * 2).rounded())
+    #expect(abs(diffImage.height - expectedDiff) <= 1)
+
+    let longText = (1...40).map { "line \($0): some output text" }.joined(separator: "\n")
+    let outView = ToolOutput(text: longText).frame(width: 402)
+    let outImage = try #require(ImageRenderer(content: outView).cgImage)
+    #expect(outImage.height <= Int((WebMetrics.codeOutputMax + Metrics.hairline * 2).rounded()) + 1)
+    #expect(outImage.height >= Int(WebMetrics.codeOutputMax) - 2)
+  }
+
   @Test(arguments: [false, true])
   func editRailReachesTheExpandedCard(grouped: Bool) throws {
     let block = try JSONDecoder().decode(ToolCallBlock.self, from: Data(#"""

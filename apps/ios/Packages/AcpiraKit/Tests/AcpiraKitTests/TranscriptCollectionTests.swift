@@ -509,6 +509,107 @@ import UIKit
     return view.subviews.flatMap { selectionViews(in: $0) }
   }
 
+  private func scrollViews(in view: UIView) -> [UIScrollView] {
+    var out: [UIScrollView] = []
+    if let s = view as? UIScrollView, !(s is SelectionTextView) { out.append(s) }
+    for sub in view.subviews { out += scrollViews(in: sub) }
+    return out
+  }
+
+  /// A table cell with `maxHeight: .infinity` made `Grid` vertically flexible inside a horizontal `ScrollView`,
+  /// stretching rows past the cell height `UICollectionView` measured and overflowing into the next message.
+  /// Streaming tables and code blocks growing inside a horizontal `ScrollView` must also resize their hosted cell.
+  @Test func horizontalScrollBlocksStayWithinTheirHostedCell() async throws {
+    let tableMarkdown = """
+    | 分组 | 文件 | 说明 |
+    | --- | --- | --- |
+    | 金属环与光球渲染 | [MetalRing.tsx](file:///a/MetalRing.tsx)<br>[metalPaint.ts](file:///a/metalPaint.ts)<br>[orbEngine.ts](file:///a/orbEngine.ts) | 改为 alpha 遮罩并减少 `convertToLuminanceMaskUint8` 开销<br>补充离屏缓存与降频判断<br>避免重复创建离屏画布 |
+    | 失焦降频与 CSS 动效 | [motion.ts](file:///a/motion.ts)<br>[main.tsx](file:///a/main.tsx)<br>[motion.css](file:///a/motion.css)<br>[beam.css](file:///a/beam.css) | 窗口失焦时降低 `requestAnimationFrame` 频率<br>暂停不可见的 CSS `@property` 动画<br>恢复聚焦后平滑续播<br>减少空转 GPU 占用 |
+    | 样式时钟按需启动 | [styleClock.ts](file:///a/styleClock.ts)<br>[pluginTheme.ts](file:///a/pluginTheme.ts) | 没有订阅者时停止 `styleClock` 定时器<br>主题切换时按需唤醒 |
+    | Spinner 容器包装 | [SessionList.tsx](file:///a/SessionList.tsx)<br>[CommandButtons.tsx](file:///a/CommandButtons.tsx)<br>[ConnectStatus.tsx](file:///a/ConnectStatus.tsx)<br>[AboutPage.tsx](file:///a/AboutPage.tsx)<br>[AgentPage.tsx](file:///a/AgentPage.tsx)<br>[ProviderModel.tsx](file:///a/ProviderModel.tsx)<br>[ProvidersSection.tsx](file:///a/ProvidersSection.tsx) | 统一用 `Spinner` 容器包装<br>减少重复动画层 |
+    | 开发文档 | [webview.md](file:///a/webview.md) | 补充动效降频与 `styleClock` 约定 |
+    """
+    let user1 = UserTurn(text: "/git-commit-message 那就拆吧，那就拆。英文提交。")
+    let runningTurn = AgentTurn(blocks: [], stop: nil)
+
+    func makeCollection() -> (TranscriptCollectionView, TranscriptCollection.Coordinator, UIWindow) {
+      let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(120))
+      let group = NSCollectionLayoutGroup.vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
+      let view = TranscriptCollectionView(frame: CGRect(x: 0, y: 0, width: 402, height: 874),
+                                          collectionViewLayout: UICollectionViewCompositionalLayout(section: NSCollectionLayoutSection(group: group)))
+      view.contentInsetAdjustmentBehavior = .never
+      view.contentInset = UIEdgeInsets(top: 116, left: 0, bottom: 120, right: 0)
+      let controller = UIViewController()
+      controller.view.addSubview(view)
+      let window = UIWindow(frame: view.frame)
+      window.rootViewController = controller
+      window.makeKeyAndVisible()
+      let coordinator = TranscriptCollection.Coordinator(control: TranscriptControl())
+      coordinator.connect(view)
+      return (view, coordinator, window)
+    }
+
+    func verifyNoOverflow(in view: TranscriptCollectionView, label: String) throws {
+      let a0 = try #require(view.cellForItem(at: IndexPath(item: 0, section: 0)))
+      let u1 = try #require(view.cellForItem(at: IndexPath(item: 1, section: 0)))
+      let fit = a0.systemLayoutSizeFitting(CGSize(width: 402, height: 120),
+                                           withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+      let strip = try #require(scrollViews(in: a0).first)
+      let stripFrame = strip.convert(strip.bounds, to: view)
+      #expect(abs(a0.frame.height - fit.height) <= 1, "\(label): cell \(a0.frame.height) != fit \(fit.height)")
+      #expect(stripFrame.minY >= a0.frame.minY - 0.5, "\(label): strip top \(stripFrame.minY) above cell \(a0.frame.minY)")
+      #expect(stripFrame.maxY <= a0.frame.maxY + 0.5, "\(label): strip bottom \(stripFrame.maxY) past cell \(a0.frame.maxY)")
+      #expect(strip.contentSize.height <= a0.frame.height + 0.5, "\(label): content \(strip.contentSize.height) > cell \(a0.frame.height)")
+      #expect(u1.frame.minY >= stripFrame.maxY - 0.5, "\(label): user row \(u1.frame.minY) overlaps strip \(stripFrame.maxY)")
+    }
+
+    // 1. Settled wide multi-line table with inline code chips: must not expand vertically or overflow its cell
+    var env = EnvironmentValues()
+    env.hostedTranscript = true
+    env.motionEnabled = false
+    let (settledView, settledCoord, settledWin) = makeCollection()
+    defer { settledWin.isHidden = true; settledWin.rootViewController = nil }
+    let settledTurn = AgentTurn(blocks: [.text(TextBlock(markdown: tableMarkdown))], stop: .end_turn)
+    let settledItems: [ThreadItem] = [
+      ThreadItem(id: "a0", kind: .agent(settledTurn, index: 0, scope: "s:0", running: false, last: false, settings: nil, retry: false, subagents: []), exchange: 0, bottom: Metrics.gap),
+      ThreadItem(id: "u1", kind: .user(user1, index: 1, editable: false, goal: false), exchange: 1),
+      ThreadItem(id: "a2", kind: .agent(runningTurn, index: 2, scope: "s:2", running: true, last: true, settings: nil, retry: false, subagents: []), exchange: 1, top: WebMetrics.msgGap),
+    ]
+    settledCoord.update(items: settledItems, environment: env, in: settledView)
+    try await Task.sleep(for: .milliseconds(300))
+    settledView.layoutIfNeeded()
+    try verifyNoOverflow(in: settledView, label: "settled-table")
+
+    // Expanded vertical proposal must stay bounded to the table's natural height (not UIView.layoutFittingExpandedSize)
+    let host = UIHostingController(rootView: ThreadItemView(item: settledItems[0]).environment(\.hostedTranscript, true).environment(\.motionEnabled, false))
+    let expanded = host.sizeThatFits(in: CGSize(width: 402, height: UIView.layoutFittingExpandedSize.height))
+    #expect(expanded.height < 1000)
+
+    // 2. Streaming table and streaming code block growing in place via StreamProse pacing
+    env.motionEnabled = true
+    let partialTable = tableMarkdown.components(separatedBy: "\n").prefix(4).joined(separator: "\n")
+    let partialCode = "```swift\nlet a = 1\nlet b = 2\n```"
+    let fullCode = "```swift\n" + (1...25).map { "let line\($0) = \"long swift line number \($0) that scrolls sideways\"" }.joined(separator: "\n") + "\n```"
+    for (label, part1, part2) in [("streamed-table", partialTable, tableMarkdown), ("streamed-code", partialCode, fullCode)] {
+      let (view, coord, window) = makeCollection()
+      defer { window.isHidden = true; window.rootViewController = nil }
+      view.motion = true
+      coord.update(items: [
+        ThreadItem(id: "a0", kind: .agent(AgentTurn(blocks: [.text(TextBlock(markdown: part1, streaming: true))], stop: nil), index: 0, scope: "\(label):0", running: true, last: true, settings: nil, retry: false, subagents: []), exchange: 0),
+      ], environment: env, in: view)
+      try await Task.sleep(for: .milliseconds(200))
+      view.layoutIfNeeded()
+      coord.update(items: [
+        ThreadItem(id: "a0", kind: .agent(AgentTurn(blocks: [.text(TextBlock(markdown: part2, streaming: false))], stop: .end_turn), index: 0, scope: "\(label):0", running: false, last: false, settings: nil, retry: false, subagents: []), exchange: 0, bottom: Metrics.gap),
+        ThreadItem(id: "u1", kind: .user(user1, index: 1, editable: false, goal: false), exchange: 1),
+        ThreadItem(id: "a2", kind: .agent(runningTurn, index: 2, scope: "\(label):2", running: true, last: true, settings: nil, retry: false, subagents: []), exchange: 1, top: WebMetrics.msgGap),
+      ], environment: env, in: view)
+      try await Task.sleep(for: .milliseconds(1200))
+      view.layoutIfNeeded()
+      try verifyNoOverflow(in: view, label: label)
+    }
+  }
+
   private final class SingleRow: NSObject, UICollectionViewDataSource {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { 1 }
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {

@@ -372,9 +372,91 @@ private struct HostedRow: View {
   let item: ThreadItem
   let environment: EnvironmentValues
   @Environment(\.colorScheme) private var scheme
+  @State private var probe = CellSizeProbe()
 
   var body: some View {
-    ThreadItemView(item: item).environment(\.colorScheme, scheme).environment(\.self, environment)
+    ThreadItemView(item: item)
+      .environment(\.colorScheme, scheme)
+      .environment(\.self, environment)
+      // Content growing in place inside a horizontal ScrollView (a streaming table or code block finishing its pacing
+      // flush, or async inline-code chip growth) updates its SwiftUI frame without invalidating UIHostingConfiguration's
+      // self-sized cell height. Keep the probe outside SwiftUI state so normal frames never re-evaluate this body.
+      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { probe.heightChanged($0) }
+      .background(CellSizeAnchor(probe: probe))
+  }
+}
+
+/// Invalidates the enclosing collection cell when SwiftUI's laid-out height diverges from the cell's bounds.
+@MainActor private final class CellSizeProbe {
+  weak var anchor: UIView?
+  private var latest: CGFloat = 0
+  private var lastInvalidated: CGFloat = 0
+  private var pending = false
+
+  func heightChanged(_ height: CGFloat) {
+    guard height > 0 else { return }
+    latest = height
+    guard let cell = enclosingCell(), abs(cell.bounds.height - height) > 0.5 else {
+      lastInvalidated = height
+      return
+    }
+    guard !pending, abs(lastInvalidated - height) > 0.5 else { return }
+    pending = true
+    DispatchQueue.main.async { [weak self] in self?.flush() }
+  }
+
+  private func flush() {
+    pending = false
+    let height = latest
+    guard height > 0, let (cell, collection) = enclosingCellAndCollection(),
+          abs(cell.bounds.height - height) > 0.5 else {
+      lastInvalidated = height
+      return
+    }
+    lastInvalidated = height
+    cell.invalidateIntrinsicContentSize()
+    if let indexPath = collection.indexPath(for: cell) {
+      let context = UICollectionViewLayoutInvalidationContext()
+      context.invalidateItems(at: [indexPath])
+      collection.collectionViewLayout.invalidateLayout(with: context)
+      collection.setNeedsLayout()
+    }
+  }
+
+  private func enclosingCell() -> UICollectionViewCell? {
+    var parent = anchor?.superview
+    while let view = parent {
+      if let cell = view as? UICollectionViewCell { return cell }
+      parent = view.superview
+    }
+    return nil
+  }
+
+  private func enclosingCellAndCollection() -> (UICollectionViewCell, UICollectionView)? {
+    var parent = anchor?.superview
+    var cell: UICollectionViewCell?
+    while let view = parent {
+      if cell == nil, let c = view as? UICollectionViewCell { cell = c }
+      if let collection = view as? UICollectionView, let cell { return (cell, collection) }
+      parent = view.superview
+    }
+    return nil
+  }
+}
+
+private struct CellSizeAnchor: UIViewRepresentable {
+  let probe: CellSizeProbe
+
+  func makeUIView(context: Context) -> UIView {
+    let view = UIView()
+    view.isUserInteractionEnabled = false
+    view.isHidden = true
+    probe.anchor = view
+    return view
+  }
+
+  func updateUIView(_ view: UIView, context: Context) {
+    probe.anchor = view
   }
 }
 
