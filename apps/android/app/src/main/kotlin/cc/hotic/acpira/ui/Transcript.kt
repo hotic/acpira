@@ -293,6 +293,8 @@ fun AgentMessage(
   last: Boolean = false,
   /** The turn's first blocks a windowed view still leaves out (`SessionView.earlier`), on the view's first turn */
   cut: Int = 0,
+  // Off when summoned agents' wake follows: the reply it wakes keeps the exchange's action row (ChatScreen.kt)
+  actionRow: Boolean = true,
 ) {
   // A Revise end reads as settled, and error notices the closing row absorbs leave the blocks (TurnOutcome.swift)
   val absorbed = remember(turn) { absorbedNotices(turn) }
@@ -311,7 +313,7 @@ fun AgentMessage(
   // An older settled reply opens and closes its action row on a tap (the newest one always shows it). Rows, links and
   // buttons inside keep their own taps; the prose blocks hand theirs on through [LocalReplyTap] (BlockSelection)
   val reveal = LocalTurnReveal.current
-  val revealable = reveal != null && !last && !readOnly && showsTurnActions(turn, running)
+  val revealable = reveal != null && !last && !readOnly && actionRow && showsTurnActions(turn, running)
   val tap: (() -> Unit)? = remember(reveal, index, revealable) { if (revealable) ({ reveal?.toggle(index) }) else null }
   CompositionLocalProvider(
     LocalReplyTap provides tap,
@@ -357,7 +359,7 @@ fun AgentMessage(
         }
       }
       // A child's transcript offers no action row: fork there would act on the parent session
-      if (showsTurnActions(turn, running) && !readOnly) {
+      if (actionRow && showsTurnActions(turn, running) && !readOnly) {
         TurnActions(turn, index, retry, settings, controls, actions, last)
       }
     }

@@ -362,9 +362,7 @@ private struct Handback: View {
 
   var body: some View {
     let ok = node.state == .completed
-    let line = node.result.flatMap { result in
-      resultText(result).split(whereSeparator: \.isNewline).lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
-    }
+    let line = node.result.flatMap { firstPlainLine(resultText($0)) }
     Row {
       mark.relayEnter(play, .pop, duration: Motion.sidekickPop, curve: Motion.sidekickSpring)
     } content: {

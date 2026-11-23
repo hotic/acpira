@@ -12,7 +12,7 @@ import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
 import { Row } from '../ui/Row';
 import { AgentMark } from './AgentMark';
-import { SIDEKICK_NAME } from '@acpira/shared/subagents';
+import { firstPlainLine, SIDEKICK_NAME } from '@acpira/shared/subagents';
 import { t, useLocale } from '../i18n';
 
 // Every prompt card reads this, so it must stay stable across stream pushes: editability is a flag,
@@ -171,7 +171,7 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
 export function shownReports(text: string): { name: string; agent: string; asks: boolean; line?: string }[] {
   return [...text.matchAll(/^## (.+) \(([^()]*)\)( asks)?$/gm)].map((m, i, all) => {
     const body = text.slice(m.index! + m[0].length, all[i + 1]?.index ?? text.length);
-    const line = body.split('\n').map(s => s.trim()).find(s => s.length > 0);
+    const line = firstPlainLine(body);
     return { name: m[1]!, agent: m[2]!, asks: !!m[3], line };
   }).filter(r => r.name !== SIDEKICK_NAME);
 }

@@ -784,3 +784,37 @@ struct DetentTests {
     #expect(plays == [false, false, true])
   }
 }
+
+// packages/shared/test/subagent-plain-line.test.ts
+@MainActor @Suite struct FirstPlainLineTests {
+  @Test func dropsInlineMarksFromAPreviewLine() {
+    #expect(firstPlainLine("结论：**建议暂缓合入**。正常的旧版 DPA") == "结论：建议暂缓合入。正常的旧版 DPA")
+    #expect(firstPlainLine("\n\n## Summary\nmore") == "Summary")
+    #expect(firstPlainLine("- [x] done `cargo test` and *ok* see [docs](http://x)") == "done cargo test and ok see docs")
+    #expect(firstPlainLine("```rust\nfn main") == "fn main")
+    #expect(firstPlainLine("a_b_c snake_case 2*3*4") == "a_b_c snake_case 2*3*4")
+    #expect(firstPlainLine("~~old~~ new __bold__") == "old new bold")
+    #expect(firstPlainLine("---\n\n") == nil)
+    #expect(shownReports("(Acpira) done\n\n## GPT (codex)\n\n**OK** then").first?.line == "OK then")
+  }
+}
+
+// Shell.tsx switchedAway / Turns.tsx joined 'rows': summoned agents' wake continues the reply above as one answer
+@MainActor @Suite struct WakeSpacingTests {
+  @Test func theWakeHugsTheReplyAboveAndTheReplyItWakes() {
+    var wake = UserTurn(text: "(Acpira) done\n\n## GPT (codex)\n\n**OK**")
+    wake.auto = true
+    wake.autoReason = "subagents"
+    var view = SessionView(id: "s", agent: "claude", title: "", cwd: "", status: .ready)
+    view.turns = [.user(UserTurn(text: "ask")), .agent(AgentTurn(blocks: [.text(TextBlock(markdown: "sent off"))], stop: .end_turn)),
+                  .user(wake), .agent(AgentTurn(blocks: [], stop: nil))]
+    view.running = true
+    let items = threadItems(view, wholeTurns: [])
+    #expect(items.map(\.id) == ["u0", "a1", "r2", "a3"])
+    guard case let .agent(_, _, _, _, _, _, _, _, _, actions) = items[1].kind else { Issue.record("no reply"); return }
+    #expect(!actions)
+    #expect(items[1].bottom == 0)
+    #expect(items[2].top == Metrics.gap)
+    #expect(items[3].top == 0)
+  }
+}

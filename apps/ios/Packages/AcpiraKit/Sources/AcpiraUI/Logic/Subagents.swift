@@ -133,16 +133,48 @@ private enum SubagentPatterns {
 func shownReports(_ text: String) -> [SubagentReport] {
   let lines = text.components(separatedBy: "\n")
   var out: [SubagentReport] = []
+  var bodies: [[String]] = []
   for line in lines {
     if let m = line.wholeMatch(of: SubagentPatterns.reportHead) {
       out.append(SubagentReport(name: String(m.1), agent: String(m.2), asks: m.3 != nil, line: nil))
-    } else if !out.isEmpty, out[out.count - 1].line == nil {
-      let shown = line.trimmingCharacters(in: .whitespaces)
-      if !shown.isEmpty { out[out.count - 1].line = shown }
+      bodies.append([])
+    } else if !bodies.isEmpty {
+      bodies[bodies.count - 1].append(line)
     }
   }
+  for i in out.indices { out[i].line = firstPlainLine(bodies[i].joined(separator: "\n")) }
   // Known by its name alone: it runs in whichever CLI its pick names
   return out.filter { $0.name != sidekickName }
+}
+
+/// firstPlainLine (subagents.ts): a returned reply's first line in plain words for a one-line preview. Emphasis, code and
+/// strike marks go, a link or image keeps its text, a heading, quote or list marker leaves the start; fence and rule
+/// lines are skipped
+func firstPlainLine(_ markdown: String) -> String? {
+  let skip = PlainLinePatterns.skip
+  guard let line = markdown.split(whereSeparator: \.isNewline).lazy
+    .map({ $0.trimmingCharacters(in: .whitespaces) })
+    .first(where: { !$0.isEmpty && skip.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) == nil }) else { return nil }
+  var s = line
+  for (pattern, template) in PlainLinePatterns.steps {
+    s = pattern.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
+  }
+  s = s.trimmingCharacters(in: .whitespaces)
+  return s.isEmpty ? nil : s
+}
+
+/// NSRegularExpression: the marks need lookbehind, which Swift's Regex lacks. Compiled once
+private enum PlainLinePatterns {
+  static func re(_ p: String) -> NSRegularExpression { try! NSRegularExpression(pattern: p) }
+  static let skip = re(#"^(```|~~~|([-*_])\s*\2\s*\2[\s\-*_]*$)"#)
+  static let steps: [(NSRegularExpression, String)] = [
+    (re(#"^(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?)"#), ""),
+    (re(#"!?\[([^\]]*)\]\([^)]*\)"#), "$1"),
+    (re(#"(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1"#), "$2"),
+    (re(#"(^|[^\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])"#), "$1$2"),
+    (re(#"(^|[^\w_])_(?=[^\s_])([^_]*?[^\s_])_(?![\w_])"#), "$1$2"),
+    (re(#"`([^`]+)`"#), "$1"),
+  ]
 }
 
 /// isWaiting: the child is blocked on a card of its own
@@ -199,10 +231,7 @@ func secondLine(_ node: SubagentSummary) -> String {
   if !(node.permissions ?? []).isEmpty { return t("host.awaitingApproval") }
   if node.question != nil { return t("host.awaitingAnswers") }
   if node.state == .running { return node.activity ?? t("host.working") }
-  let line = node.result.flatMap { result in
-    resultText(result).split(whereSeparator: \.isNewline).lazy
-      .map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
-  }
+  let line = node.result.flatMap { firstPlainLine(resultText($0)) }
   if let line { return line.count > 120 ? String(line.prefix(119)) + "…" : line }
   return stateLabel(node)
 }

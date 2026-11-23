@@ -211,8 +211,9 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   lead?: 'orb' | 'static';
   // AIR sessionFailure notice actions (retry / sign in / new session), available on the last settled turn
   onFailureAction?: (action: FailureAction) => void;
-  // Continues the turn above (a hidden continue, or the subagent report row): one row gap instead of a message gap
-  joined?: boolean;
+  // Continues the turn above (a hidden continue, or the subagent report row): one row gap instead of a message gap.
+  // 'rows': right under the report rows, so a reply that opens with a row (its fold head, a thought) keeps their pitch
+  joined?: boolean | 'rows';
 }) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
@@ -240,6 +241,9 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   const workflows = useMemo(() => workflowProgress(subagents), [subagents]);
   // A /compact reply that so far holds only its compaction row: that row shimmers in place, so no generic Working row above it
   const compactionOnly = !!compacting && shown.blocks.length > 0 && shown.blocks.every(b => b.type === 'compaction');
+  // What the reply opens with: a row (the working / fold head, a thought or tool line) or its prose
+  const { fold } = useAppearance();
+  const rowFirst = running || (fold === 'codex' ? shown.blocks.some(b => b.type !== 'text') : shown.blocks[0]?.type !== 'text');
   const entranceScope = useId();
   const entrance = useMemo(() => ({ live: running, scope: memoryKey ?? entranceScope }), [running, memoryKey, entranceScope]);
   const noticeActions = useMemo<NoticeActions>(() => ({
@@ -250,7 +254,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   }), [onFailureAction, last, running, turn.error?.failureId, absorbed]);
   // A settled turn mounts fold bodies on first open; a live one keeps them mounted (its finished items narrow this again,
   // `ProcessBlocks`) so streamed content stays in step while closed
-  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div data-part="agent-message" data-turn={turnIndex} className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
+  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div data-part="agent-message" data-turn={turnIndex} className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined === 'rows' && rowFirst ? '-mt-msg' : joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
       const firstSection = i === 0;
       const lastSection = i === sections.length - 1;

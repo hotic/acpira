@@ -1,7 +1,7 @@
 // Pure subagent-view helpers: grouping, trees and labels for the group row and the inspector.
 // No DOM — unit-tested in packages/ui/test/subagentState.test.ts; `t` arrives as a parameter so fixtures decide the locale.
 import type { MsgKey, Params } from '@acpira/shared/i18n/core';
-import type { SubagentSummary } from '@acpira/shared/subagents';
+import { firstPlainLine, type SubagentSummary } from '@acpira/shared/subagents';
 import type { AgentBlock } from '@acpira/shared/transcript';
 
 export type T = (key: MsgKey, params?: Params) => string;
@@ -178,7 +178,7 @@ export function secondLine(node: SubagentSummary, t: T): string {
   if (node.permissions?.length) return t('host.awaitingApproval');
   if (node.question) return t('host.awaitingAnswers');
   if (node.state === 'running') return node.activity ?? t('host.working');
-  const line = node.result && resultText(node.result).split('\n').map(s => s.trim()).find(s => s.length > 0);
+  const line = node.result && firstPlainLine(resultText(node.result));
   if (line) return line.length > 120 ? `${line.slice(0, 119)}…` : line;
   return stateLabel(node, t);
 }

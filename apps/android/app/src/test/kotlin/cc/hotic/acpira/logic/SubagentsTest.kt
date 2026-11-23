@@ -115,4 +115,16 @@ class SubagentsTest {
     assertEquals(WebviewMsg.ObserveSubagent("t", "x"), feed.renewal("t"))
     assertNull(feed.renewal("s"))
   }
+
+  // packages/shared/test/subagent-plain-line.test.ts
+  @Test fun firstPlainLineDropsInlineMarksFromAPreviewLine() {
+    assertEquals("结论：建议暂缓合入。正常的旧版 DPA", firstPlainLine("结论：**建议暂缓合入**。正常的旧版 DPA"))
+    assertEquals("Summary", firstPlainLine("\n\n## Summary\nmore"))
+    assertEquals("done cargo test and ok see docs", firstPlainLine("- [x] done `cargo test` and *ok* see [docs](http://x)"))
+    assertEquals("fn main", firstPlainLine("```rust\nfn main"))
+    assertEquals("a_b_c snake_case 2*3*4", firstPlainLine("a_b_c snake_case 2*3*4"))
+    assertEquals("old new bold", firstPlainLine("~~old~~ new __bold__"))
+    assertNull(firstPlainLine("---\n\n"))
+    assertEquals("OK then", shownReports("(Acpira) done\n\n## GPT (codex)\n\n**OK** then").first().line)
+  }
 }

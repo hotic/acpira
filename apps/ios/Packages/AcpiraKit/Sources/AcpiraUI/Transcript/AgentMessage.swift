@@ -46,6 +46,8 @@ struct AgentMessage: View {
   var subagents: [SubagentSummary] = []
   /// The part of a long settled reply this thread row draws (ReplyPieces.swift)
   var cut: ReplyCut = .whole
+  /// Off when summoned agents' wake follows: the reply it wakes keeps the exchange's action row (ThreadItems.swift)
+  var actions = true
   @Environment(\.sessionActions) private var sessionActions
   @Environment(\.subagentTranscript) private var readOnly
   @Environment(\.quietEntrance) private var quiet
@@ -54,7 +56,7 @@ struct AgentMessage: View {
   var body: some View {
     // An older settled reply opens and closes its action row on a tap (the newest one always shows it). Rows,
     // links and buttons inside keep their own taps; the text's own taps reach it through its selection surface
-    let tap = !last && !readOnly && showsTurnActions(turn, running: running) ? reveal.map { ReplyTap(index: index, reveal: $0) } : nil
+    let tap = !last && !readOnly && actions && showsTurnActions(turn, running: running) ? reveal.map { ReplyTap(index: index, reveal: $0) } : nil
     let absorbed = absorbedNotices(turn)
     let shown = displayTurn(turn, absorbed: absorbed)
     // Subagent rows sit where they were delegated: a placed delegation row stays in the turn's process, and its node
@@ -87,7 +89,7 @@ struct AgentMessage: View {
         }
       }
       // A child's transcript offers no action row: fork there would act on the parent session
-      if cut.closes && showsTurnActions(turn, running: running) && !readOnly {
+      if cut.closes && actions && showsTurnActions(turn, running: running) && !readOnly {
         TurnActions(turn: turn, index: index, settings: settings, retry: retry, last: last)
       }
     }

@@ -152,16 +152,41 @@ private object SubagentPatterns {
  */
 fun shownReports(text: String): List<SubagentReport> {
   val out = ArrayList<SubagentReport>()
+  val bodies = ArrayList<StringBuilder>()
   for (line in text.split("\n")) {
     val m = SubagentPatterns.reportHead.matchEntire(line)
     if (m != null) {
       out += SubagentReport(m.groupValues[1], m.groupValues[2], m.groupValues[3].isNotEmpty())
-    } else if (out.isNotEmpty() && out.last().line == null) {
-      val shown = line.trim()
-      if (shown.isNotEmpty()) out[out.size - 1] = out.last().copy(line = shown)
+      bodies += StringBuilder()
+    } else if (bodies.isNotEmpty()) {
+      bodies.last().append(line).append('\n')
     }
   }
-  return out.filter { it.name != SIDEKICK_NAME }
+  return out.mapIndexed { i, r -> r.copy(line = firstPlainLine(bodies[i].toString())) }.filter { it.name != SIDEKICK_NAME }
+}
+
+/**
+ * firstPlainLine (subagents.ts): a returned reply's first line in plain words for a one-line preview. Emphasis, code and
+ * strike marks go, a link or image keeps its text, a heading, quote or list marker leaves the start; fence and rule
+ * lines are skipped
+ */
+fun firstPlainLine(markdown: String): String? {
+  val line = markdown.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !PlainLine.skip.containsMatchIn(it) } ?: return null
+  val plain = PlainLine.steps.fold(line) { s, (re, with) -> re.replace(s, with) }.trim()
+  return plain.ifEmpty { null }
+}
+
+/** Compiled once */
+private object PlainLine {
+  val skip = Regex("""^(```|~~~|([-*_])\s*\2\s*\2[\s\-*_]*$)""")
+  val steps = listOf(
+    Regex("""^(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?)""") to "",
+    Regex("""!?\[([^\]]*)\]\([^)]*\)""") to "$1",
+    Regex("""(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1""") to "$2",
+    Regex("""(^|[^\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])""") to "$1$2",
+    Regex("""(^|[^\w_])_(?=[^\s_])([^_]*?[^\s_])_(?![\w_])""") to "$1$2",
+    Regex("""`([^`]+)`""") to "$1",
+  )
 }
 
 /** isWaiting: the child is blocked on a card of its own */
@@ -199,7 +224,7 @@ fun statusLabel(node: SubagentSummary): String = when {
 
 /** The first non-empty line of a result, as its prose reads (`resultText`) */
 fun resultLine(result: String?): String? =
-  result?.let { resultText(it).lineSequence().map { l -> l.trim() }.firstOrNull { l -> l.isNotEmpty() } }
+  result?.let { firstPlainLine(resultText(it)) }
 
 /** secondLine: the row's detail: a pending decision beats the live activity, a finished child quotes its result */
 fun secondLine(node: SubagentSummary): String {

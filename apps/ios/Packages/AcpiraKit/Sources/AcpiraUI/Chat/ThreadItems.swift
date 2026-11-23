@@ -15,8 +15,9 @@ struct ThreadItem: Equatable {
     case user(UserTurn, index: Int, editable: Bool, goal: Bool)
     case returns([SubagentReport])
     /// One agent turn, or one row of a long settled reply cut into several (`cut`, ReplyPieces.swift)
+    /// `actions` off: summoned agents' wake follows, and the reply it wakes keeps the exchange's one action row
     case agent(AgentTurn, index: Int, scope: String, running: Bool, last: Bool, settings: TurnSettings?, retry: Bool,
-               subagents: [SubagentSummary], cut: ReplyCut = .whole)
+               subagents: [SubagentSummary], cut: ReplyCut = .whole, actions: Bool = true)
     case queue([QueuedPrompt], steer: Bool)
   }
 
@@ -61,7 +62,10 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarl
   for (n, exchange) in groups.enumerated() {
     let lastExchange = n == groups.count - 1
     let opened: Set<PreOpen> = lastExchange ? preOpen : []
-    let next = !lastExchange
+    // Summoned agents' wake next (Shell.tsx switchedAway): this reply, the report rows and the reply they wake read as
+    // one answer, so the reply drops its action row and the wake follows a row gap under it
+    let wokenNext = !lastExchange && isWake(groups[n + 1].user)
+    let next = !lastExchange && !wokenNext
       ? (endsWithActions(exchange, running: session.running, active: activeAgent) ? Metrics.gap : WebMetrics.msgGap) : 0
     let start = out.count
     if let user = exchange.user, user.auto != true {
@@ -71,11 +75,16 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarl
     }
     // The replies sit a message gap under a prompt (shown or automatic) and a message gap apart
     var gap: CGFloat = exchange.user != nil && !exchange.agents.isEmpty ? WebMetrics.msgGap : 0
-    if let user = exchange.user, user.auto == true, user.autoReason == "subagents" {
+    if let user = exchange.user, isWake(user) {
+      // The wake continues the reply above a row gap below it (`-mt-msg-join`); the woken reply hugs the report rows,
+      // at their pitch when it opens with a row (Turns.tsx `joined: 'rows'`)
+      gap = Metrics.gap
       let reports = shownReports(user.text)
       if !reports.isEmpty {
         out.append(ThreadItem(id: "r\(exchange.id + base)", kind: .returns(reports), exchange: exchange.id, top: gap, preOpen: opened))
-        gap = WebMetrics.msgGap
+        let first = exchange.agents.first
+        let live = first.map { session.running && $0.index == activeAgent && $0.turn.stop == nil } ?? false
+        gap = live || (first?.turn.blocks.contains { if case .text = $0 { false } else { true } } ?? false) ? 0 : Metrics.gap
       }
     }
     for item in exchange.agents {
@@ -86,11 +95,12 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarl
       let cuts = wholeTurns.flatMap { whole in
         running || whole.contains(index) ? nil : ReplyPieces.rows(item.turn, subagents: subagents)
       }
+      let actions = !(wokenNext && item.index == exchange.agents.last?.index)
       func row(_ id: String, _ cut: ReplyCut, top: CGFloat) -> ThreadItem {
         ThreadItem(id: id,
                    kind: .agent(item.turn, index: index, scope: "\(session.id):\(index)", running: running,
                                 last: item.index == session.turns.count - 1, settings: exchange.user?.settings,
-                                retry: item.index == retry, subagents: subagents, cut: cut),
+                                retry: item.index == retry, subagents: subagents, cut: cut, actions: actions),
                    exchange: exchange.id, top: top, preOpen: opened)
       }
       if let cuts {
@@ -114,6 +124,9 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarl
   }
   return out
 }
+
+/// Summoned agents' wake: the automatic prompt that hands their replies back (HistoryMessage.tsx SubagentsReported)
+private func isWake(_ user: UserTurn?) -> Bool { user?.auto == true && user?.autoReason == "subagents" }
 
 private func endsWithActions(_ exchange: Exchange, running: Bool, active: Int?) -> Bool {
   guard let last = exchange.agents.last else { return false }
@@ -154,9 +167,9 @@ struct ThreadItemView: View {
       UserMessageCard(turn: turn, index: index, editable: editable, goal: goal)
     case let .returns(reports):
       SubagentReturns(reports: reports)
-    case let .agent(turn, index, scope, running, last, settings, retry, subagents, cut):
+    case let .agent(turn, index, scope, running, last, settings, retry, subagents, cut, actions):
       AgentMessage(turn: turn, running: running, scope: scope, index: index, last: last, settings: settings, retry: retry,
-                   subagents: subagents, cut: cut)
+                   subagents: subagents, cut: cut, actions: actions)
     case let .queue(queued, steer):
       // Prompts queued behind the running turn, as faint bubbles after it: where each lands once sent, so nothing
       // moves when it goes. Over the composer they stacked under the floating to-do card and pushed it up

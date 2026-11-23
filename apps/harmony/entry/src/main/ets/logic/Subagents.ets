@@ -104,6 +104,29 @@ export function statusLabel(n: SubagentSummary): string {
 
 const resultLineMax = 120;
 
+const plainSkip = /^(```|~~~|([-*_])\s*\2\s*\2[\s\-*_]*$)/;
+
+/**
+ * firstPlainLine (subagents.ts): a returned reply's first line in plain words for a one-line preview. Emphasis, code and
+ * strike marks go, a link or image keeps its text, a heading, quote or list marker leaves the start; fence and rule
+ * lines are skipped
+ */
+export function firstPlainLine(markdown: string): string | undefined {
+  const line = markdown.split('\n').map((l: string) => l.trim()).find((l: string) => l.length > 0 && !plainSkip.test(l));
+  if (line === undefined) {
+    return undefined;
+  }
+  const plain = line
+    .replace(/^(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?)/, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+    .replace(/(^|[^\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])/g, '$1$2')
+    .replace(/(^|[^\w_])_(?=[^\s_])([^_]*?[^\s_])_(?![\w_])/g, '$1$2')
+    .replace(/`([^`]+)`/g, '$1')
+    .trim();
+  return plain.length > 0 ? plain : undefined;
+}
+
 /** secondLine: the row's detail: a pending decision beats the live activity, a finished child quotes its result */
 export function secondLine(n: SubagentSummary): string {
   if ((n.permissions ?? []).length > 0) {
@@ -115,7 +138,7 @@ export function secondLine(n: SubagentSummary): string {
   if (n.state === 'running') {
     return n.activity ?? t('host.working');
   }
-  const line = (n.result ?? '').split('\n').map((l: string) => l.trim()).find((l: string) => l.length > 0);
+  const line = firstPlainLine(n.result ?? '');
   if (line !== undefined) {
     return line.length > resultLineMax ? line.slice(0, resultLineMax - 1) + '…' : line;
   }

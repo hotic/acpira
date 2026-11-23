@@ -124,6 +124,10 @@ import cc.hotic.acpira.ui.subagents.SidekickModels
 import cc.hotic.acpira.ui.subagents.SubagentReturns
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import cc.hotic.acpira.model.TextBlock
 
 /**
  * A session's chat (apps/ios Chat/ChatScreen.swift): the top bar with back, new session and the session menu (a pill
@@ -192,7 +196,9 @@ fun ChatScreen(model: AppModel, id: String) {
   val start = remember(held?.earlier) { held?.let(ThreadStart::of) }
   val before = start?.turns ?: 0
   val lead = start?.lead ?: 0
-  val total = lead + turns.size + if (queued.isEmpty()) 0 else 1
+  // A wake whose only return is the sidekick's shows nothing and has no item (its relay already shows the return)
+  val bareWakes = remember(turns) { turns.count { it is UserTurn && isWake(it) && shownReports(it.text).isEmpty() } }
+  val total = lead + turns.size - bareWakes + if (queued.isEmpty()) 0 else 1
   // What a prompt's long-press menu offers: edit while the session is idle, Set as goal on the newest typed prompt
   val editable = held?.let(::canEditPrompts) == true
   val goalPrompt = remember(held) { held?.takeIf(::canSetGoal)?.let { lastTypedPrompt(it.turns) } }
@@ -491,25 +497,39 @@ fun ChatScreen(model: AppModel, id: String) {
         when (turn) {
           is UserTurn -> {
             prompt = turn
+            val wake = isWake(turn)
+            val reports = if (wake) shownReports(turn.text) else emptyList()
+            if (wake && reports.isEmpty()) return@forEachIndexed
             item(key = at, contentType = "user") {
-              Column(verticalArrangement = Arrangement.spacedBy(Metrics.msgGap)) {
+              // Summoned agents' wake continues the reply above a row gap under it (Shell.tsx switchedAway)
+              Column(Modifier.pullUp(if (wake) Metrics.msgGap - Metrics.gap else 0.dp), verticalArrangement = Arrangement.spacedBy(Metrics.msgGap)) {
                 UserBubble(
                   turn, onToast = turnActions.toast,
                   onEdit = if (editable) ({ handlers.editPrompt(at) }) else null,
                   onGoal = if (index == goalPrompt) ({ handlers.goal(GoalAction.set, turn.text.trim()) }) else null,
                 )
                 // The subagent returns that woke this reply, in the relay handback's shape (ThreadItems.swift)
-                if (turn.auto == true && turn.autoReason == "subagents") {
-                  val reports = remember(turn.text) { shownReports(turn.text) }
-                  if (reports.isNotEmpty()) SubagentReturns(reports)
-                }
+                if (reports.isNotEmpty()) SubagentReturns(reports)
               }
             }
           }
           is AgentTurn -> {
             val settings = prompt?.settings
+            // Summoned agents' wake next: this reply, the report rows and the reply they wake read as one answer, so
+            // only the woken reply keeps an action row. The woken reply hugs the reports, at their pitch when it opens
+            // with a row (Turns.tsx `joined: 'rows'`), or the reply above when no report shows
+            val next = turns.getOrNull(index + 1)
+            val wokenNext = next is UserTurn && isWake(next)
+            val woke = (turns.getOrNull(index - 1) as? UserTurn)?.takeIf(::isWake)
             item(key = at, contentType = "agent") {
               val last = index == turns.size - 1
+              val rowFirst = (running && last) || turn.blocks.any { it !is TextBlock }
+              val pull = when {
+                woke == null -> 0.dp
+                rowFirst && shownReports(woke.text).isNotEmpty() -> Metrics.msgGap
+                else -> Metrics.msgGap - Metrics.gap
+              }
+              Box(Modifier.pullUp(pull)) {
               AgentMessage(
                 turn = turn,
                 running = running && last,
@@ -524,7 +544,9 @@ fun ChatScreen(model: AppModel, id: String) {
                 subagents = nodes[at].orEmpty(),
                 last = last,
                 cut = if (index == 0) start?.blocks ?: 0 else 0,
+                actionRow = !wokenNext,
               )
+              }
             }
           }
         }
@@ -612,4 +634,14 @@ private class GrownHold(private val list: LazyListState) : RemeasurementModifier
     list.dispatchRawDelta(moved.toFloat())
     remeasurement?.forceRemeasure()
   }
+}
+
+/** Summoned agents' wake: the automatic prompt that hands their replies back (HistoryMessage.tsx SubagentsReported) */
+private fun isWake(turn: UserTurn): Boolean = turn.auto == true && turn.autoReason == "subagents"
+
+/** Takes [by] off the list's spacing above the item: it stands that much higher and its slot that much shorter */
+private fun Modifier.pullUp(by: Dp): Modifier = if (by <= 0.dp) this else layout { measurable, constraints ->
+  val placeable = measurable.measure(constraints)
+  val px = by.roundToPx()
+  layout(placeable.width, maxOf(0, placeable.height - px)) { placeable.place(0, -px) }
 }

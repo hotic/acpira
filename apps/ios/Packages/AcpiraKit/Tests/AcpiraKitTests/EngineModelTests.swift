@@ -769,7 +769,7 @@ struct EngineModelTests {
 
     func rows() throws -> [ThreadItem] { threadItems(try #require(model.views["s2"])) }
     func children(_ item: ThreadItem) -> [String] {
-      if case let .agent(_, _, _, _, _, _, _, subagents, _) = item.kind { subagents.map(\.id) } else { [] }
+      if case let .agent(_, _, _, _, _, _, _, subagents, _, _) = item.kind { subagents.map(\.id) } else { [] }
     }
     // The spinner, then the turn the view was cut in (no prompt before it). A child announced ahead of the view has no
     // row yet; one announced in a held turn sits on that turn
@@ -778,7 +778,7 @@ struct EngineModelTests {
     #expect(try rows()[0].kind == .earlier(loading: false) && model.loadingEarlier["s2"] != nil)
     #expect(threadItems(try #require(model.views["s2"]), loadingEarlier: true)[0].kind == .earlier(loading: true))
     #expect(try rows().map(children) == [[], [], [], ["held"]])
-    if case let .agent(_, index, scope, _, last, _, _, _, _) = try rows()[3].kind {
+    if case let .agent(_, index, scope, _, last, _, _, _, _, _) = try rows()[3].kind {
       #expect(index == 5 && scope == "s2:5" && last)
     } else { Issue.record("no agent row") }
 

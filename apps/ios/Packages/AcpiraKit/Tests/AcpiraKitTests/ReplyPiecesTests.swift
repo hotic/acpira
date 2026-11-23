@@ -49,7 +49,7 @@ import UIKit
   }
 
   static func cuts(_ rows: [ThreadItem]) -> [ReplyCut] {
-    rows.compactMap { row in if case let .agent(_, _, _, _, _, _, _, _, cut) = row.kind { cut } else { nil } }
+    rows.compactMap { row in if case let .agent(_, _, _, _, _, _, _, _, cut, _) = row.kind { cut } else { nil } }
   }
 
   @Test func aLongSettledReplyIsCutIntoRowsThatDrawEachBlockOnce() {

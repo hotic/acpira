@@ -1,5 +1,5 @@
 import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { SIDEKICK_ID, type SubagentSummary } from '@acpira/shared/subagents';
+import { firstPlainLine, SIDEKICK_ID, type SubagentSummary } from '@acpira/shared/subagents';
 import type { ConfigControl, ToolCallBlock } from '@acpira/shared/transcript';
 import { composerControls, effortLabel } from '@acpira/shared/composerControls';
 import { agentBrand, brandColor, brandLayers, modelBrand, optionBrand, parseFusionName } from '@acpira/shared/models';
@@ -237,7 +237,7 @@ function Handback({ node, mark, steps, elapsed, enter, onEntered, onInspect }: {
   const ok = node.state === 'completed';
   const row = useRef<HTMLButtonElement>(null);
   useEntranceEnd(enter, row, BACK_PARTS, onEntered);
-  const line = node.result && resultText(node.result).split('\n').map(s => s.trim()).find(s => s.length > 0);
+  const line = node.result && firstPlainLine(resultText(node.result));
   return (
     <Row ref={row} as="button" interactive className="sidekick-back" data-enter={enter ? '' : undefined}
       title={line || undefined}

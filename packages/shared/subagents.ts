@@ -190,3 +190,21 @@ export interface SubagentRecord extends Omit<SubagentSummary, 'permissions' | 'q
   turns: Turn[];
   rev?: number;   // the node's dirty counter at write time; absent on records written before it was persisted
 }
+
+// A returned reply's first line in plain words, for the one-line previews of a return (a summoned agent's report row,
+// the handback rows, a finished child's detail line). Those lines are text, not rendered markdown, so the marks would
+// show as typed: emphasis, code and strike marks go, a link or image keeps its text, and a heading, quote or list marker
+// leaves the line's start. Fence and rule lines are skipped
+export function firstPlainLine(markdown: string): string | undefined {
+  const line = markdown.split('\n').map(s => s.trim()).find(s => s.length > 0 && !/^(```|~~~|([-*_])\s*\2\s*\2[\s\-*_]*$)/.test(s));
+  if (!line) return undefined;
+  const plain = line
+    .replace(/^(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?)/, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+    .replace(/(^|[^\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])/g, '$1$2')
+    .replace(/(^|[^\w_])_(?=[^\s_])([^_]*?[^\s_])_(?![\w_])/g, '$1$2')
+    .replace(/`([^`]+)`/g, '$1')
+    .trim();
+  return plain || undefined;
+}

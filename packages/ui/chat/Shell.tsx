@@ -1921,9 +1921,13 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
             // An automatic account switch or a Retry continues the cut-off turn: the pair reads as one reply, with the switch
             // notice or the error row as the only seam, so the cut-off half drops its action row and the continuation joins it
             const next = turns[ti + 1];
-            const switchedAway = next?.role === 'user' && isContinue(next);
+            // Summoned agents' reports continue the exchange the same way: the reply above, the report rows and the reply they
+            // wake read as one answer, so only the woken reply keeps an action row (one in the middle stood as a blank on
+            // desktop, where it shows on hover, and as a stray bar on phones)
+            const switchedAway = next?.role === 'user' && (isContinue(next) || next.autoReason === 'subagents');
             // The reply woken by summoned agents' reports hugs the one-line report row above it, like a continuation
             const switchedIn = previous?.role === 'user' && (isContinue(previous) || previous.autoReason === 'subagents');
+            const afterRows = switchedIn && previous.autoReason === 'subagents' && !isContinue(previous);
             if (turn.role === 'user' && !turn.auto) {
               // Plugin buttons under a typed prompt (the prompt.actions slot); nothing renders without one
               messages.push(
@@ -1936,7 +1940,7 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
             messages.push(turn.role === 'user'
               ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />
               : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
-                  turnIndex={ti} last={last} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={switchedIn}
+                  turnIndex={ti} last={last} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={afterRows ? 'rows' : switchedIn}
                   subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={last ? onFailureAction : undefined} />);
           }
           return <Fragment key={slot.key}>{
