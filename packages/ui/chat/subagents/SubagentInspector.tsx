@@ -137,7 +137,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
     <QuietEntranceContext.Provider value={opening}>
       {/* The main thread's column: share its dock margins, scrollbar gutter, row keylines and prompt spacing */}
       <div ref={scroll} data-subagent-thread className="pane-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter [overflow-anchor:none]">
-        <div ref={body} className={cn('follow-pad flex min-w-0 flex-col gap-msg pb-msg', wide ? 'thread-column' : 'mx-auto')}>
+        <div ref={body} className={cn('pt-(--pad-y) flex min-w-0 flex-col gap-msg pb-msg', wide ? 'thread-column' : 'mx-auto')}>
           {node.task !== undefined && !taskInTurns && <TaskCard task={node.task} />}
           {/* A delegation without a process of its own keeps only what the parent received */}
           {receiptOnly(node) ? (

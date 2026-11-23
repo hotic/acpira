@@ -40,6 +40,30 @@ export function restoreSliceScroll({ scroller, content, contentHeight, contentBo
   content.style.marginTop = next ? `${next}px` : '';
 }
 
+// The same margin absorbs native scroll rounding while following the tail. It is outside the observed border box:
+// writing padding here resized that box again, so a settled WebKit transcript kept alternating between two layouts.
+export function pinTranscriptBottom(scroller: HTMLElement, content: HTMLElement): boolean {
+  const rect = content.getBoundingClientRect();
+  const port = scroller.getBoundingClientRect();
+  const height = scroller.clientHeight;
+  // Use the fractional scrollport edge. clientHeight alone rounds it away at non-default zoom.
+  const edge = port.bottom - (scroller.offsetHeight - scroller.clientTop - height);
+  if (rect.height <= edge - port.top - scroller.clientTop && scroller.scrollHeight <= height + 1) {
+    if (!content.style.marginTop) return false;
+    content.style.marginTop = '';
+    return true;
+  }
+  if (Math.abs(rect.bottom - edge) < 0.001 && scroller.scrollHeight - scroller.scrollTop - height <= 1) return false;
+  // Start from the natural height, so the adjustment never accumulates across history slices or streamed growth.
+  if (content.style.marginTop) content.style.marginTop = '';
+  scroller.scrollTop = scroller.scrollHeight;
+  const shift = edge - content.getBoundingClientRect().bottom;
+  // Overflowing descendants can extend the scroll range beyond the transcript box. Only compensate for rounding
+  // (one native scroll step can span four CSS pixels at the desktop's smallest page zoom).
+  if (shift && Math.abs(shift) <= 4) content.style.marginTop = `${shift}px`;
+  return true;
+}
+
 // A slice moves the scroll offset by what it mounted above the reader, and a scroll the reader has in flight does not
 // survive that write: WKWebView drops most of the wheel's distance, and Chromium stalls the wheel's animation for as
 // long as slices keep landing (docs/dev/ui-motion-layout.md). So a slice waits for the reader: from a wheel, touch,

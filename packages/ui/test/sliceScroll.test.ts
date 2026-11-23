@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { captureSliceScroll, overriddenBy, readerScrolling, restoreSliceScroll } from '../chat/sliceScroll';
+import { captureSliceScroll, overriddenBy, pinTranscriptBottom, readerScrolling, restoreSliceScroll } from '../chat/sliceScroll';
 
 // Model the browser's rounded scrollHeight separately from its fractional layout and scroll offset.
 function transcript(step: number, bottom: boolean, initialHeight = 1000.25) {
@@ -13,6 +13,8 @@ function transcript(step: number, bottom: boolean, initialHeight = 1000.25) {
   const scroller = {
     firstElementChild: content,
     clientHeight,
+    clientTop: 0,
+    offsetHeight: clientHeight,
     get scrollHeight() { return Math.max(clientHeight, Math.round(height + margin())); },
     // A zoomed WebKit getter rounds its CSS offset even when the physical scroll step is not one CSS pixel.
     get scrollTop() { return step ? Math.round(top) : top; },
@@ -21,7 +23,7 @@ function transcript(step: number, bottom: boolean, initialHeight = 1000.25) {
       const max = height + margin() - clientHeight;
       top = Math.max(0, Math.min(snap(max), Math.max(0, snap(value))));
     },
-    getBoundingClientRect: () => ({ top: 0 }),
+    getBoundingClientRect: () => ({ top: 0, bottom: clientHeight }),
   } as unknown as HTMLElement;
   scroller.scrollTop = bottom ? scroller.scrollHeight : 300;
   return {
@@ -31,6 +33,31 @@ function transcript(step: number, bottom: boolean, initialHeight = 1000.25) {
     prepend: (added: number) => { height += added; row += added; },
   };
 }
+
+describe('transcript bottom alignment', () => {
+  for (const step of [0, 1, 1 / 1.1, 1 / 0.9, 4]) {
+    it(`settles after one pin without resizing the observed content (scroll step ${step})`, () => {
+      const view = transcript(step, true);
+      for (const growth of [0, 135.5, 50.625, 95.125]) {
+        view.prepend(growth);
+        const height = view.content.getBoundingClientRect().height;
+        pinTranscriptBottom(view.scroller, view.content);
+        expect(view.rowTop()).toBeCloseTo(view.scroller.clientHeight - 100, 8);
+        expect(view.content.getBoundingClientRect().height).toBe(height);
+        expect(pinTranscriptBottom(view.scroller, view.content)).toBe(false);
+      }
+    });
+  }
+
+  it('removes the rounding adjustment when the transcript fits', () => {
+    const view = transcript(1, true);
+    pinTranscriptBottom(view.scroller, view.content);
+    expect(view.content.style.marginTop).not.toBe('');
+    view.prepend(-800);
+    pinTranscriptBottom(view.scroller, view.content);
+    expect(view.content.style.marginTop).toBe('');
+  });
+});
 
 describe('history slice scroll anchoring', () => {
   for (const step of [1, 0, 1 / 1.1, 1 / 0.9]) {

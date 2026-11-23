@@ -21,8 +21,7 @@ export const CSS_PROPERTIES: readonly CssPropertyDef[] = [
   // File tree row hover / selection tint (styles/panel.css): transitioned as a colour
   { name: '--tint', syntax: '<color>', inherits: false, initialValue: 'transparent' },
 
-  // Transcript bottom-follow pad and edge fades (styles/chat.css): non-inherited so changes restyle one element
-  { name: '--follow-lead', syntax: '<length>', inherits: false, initialValue: '0px' },
+  // Transcript edge fades and tail clearance (styles/chat.css): non-inherited so changes restyle one element
   { name: '--fade-top', syntax: '<length>', inherits: false, initialValue: '0px' },
   { name: '--fade-bottom', syntax: '<length>', inherits: false, initialValue: '0px' },
   { name: '--thread-fade-clear', syntax: '<length>', inherits: false, initialValue: '0px' },

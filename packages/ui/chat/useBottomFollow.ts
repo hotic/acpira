@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DependencyList, type RefObject } from 'react';
+import { createContext, useContext, useLayoutEffect, useRef, useState, useSyncExternalStore, type DependencyList, type RefObject } from 'react';
+import { pinTranscriptBottom } from './sliceScroll';
 import { anchorOffset, followsBottom, pressAnchorNode, readingAnchor, readingOffset, SCROLL_INTENT_MS, scrollerUsable, type ReadingAnchor } from './promptStuck';
 
 // Whether the transcript is following its bottom, for rows that must not move under a reader who scrolled up
@@ -53,7 +54,7 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
   const holding = useRef(-Infinity);
   const holdingDown = useRef(false);
   const [follow] = useState(() => new FollowState());
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
     pinned.current = true;
@@ -61,38 +62,6 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     untouched.current = true;
     holding.current = -Infinity;
     holdingDown.current = false;
-    // WebKit scrolls in whole CSS pixels while content heights are fractional. Held at the bottom, every fractional
-    // change above the tail (a history slice prepending on a session switch, an image landing) moved the tail by that
-    // fraction, which a 2x screen showed as a one-pixel jolt up and back. A sub-pixel pad above the content puts the
-    // content's end on a whole pixel, so the pinned tail lands on the same pixel whatever the history adds up to.
-    // Only a held tail is aligned: a new pad moves every row by the fraction, so a reader parked above the tail (a fold
-    // opened by hand, a scroll up) saw the whole thread twitch a device pixel with every growth below them
-    let lead = 0;
-    // The content element carrying the pad (the thread remounts its own with the transcript)
-    let padded: HTMLElement | null = null;
-    const align = () => {
-      const body = content.current;
-      if (!body || !scrollerUsable(el)) return false;
-      const end = body.getBoundingClientRect().bottom - el.getBoundingClientRect().top - el.clientTop + el.scrollTop - lead;
-      const frac = end - Math.floor(end);
-      // A thread that fits its viewport has no tail to hold: its top is what stays put, and a pad following the height
-      // of a fold animating open or shut moved every row a device pixel back and forth per frame. Judged on the content
-      // without the pad (`end`), so the pad never decides whether it is needed: read off scrollHeight, a thread a
-      // fraction over its viewport fitted once padded and overflowed once not, and the pad came and went every frame
-      const fits = end <= el.clientHeight + 0.01;
-      const next = fits || frac < 0.01 || frac > 0.99 ? 0 : Math.round((1 - frac) * 100) / 100;
-      if (next === lead && padded === body) return false;
-      lead = next;
-      // The content adds it to its own top padding (`follow-pad`, chat.css). Not a padding on the scroller: sticky prompts
-      // stick at the scroller's padding edge, and handing them the pad took a property every element of the transcript
-      // inherited, each change restyling them all; a width change at the tail (a pane dragged or easing beside the
-      // chat) makes one in every frame
-      if (padded !== body) padded?.style.removeProperty('--follow-lead');
-      padded = body;
-      if (next) body.style.setProperty('--follow-lead', `${next}px`);
-      else body.style.removeProperty('--follow-lead');
-      return true;
-    };
     // What a press landed on and where it shows in the scroller: content growing above it (a skin's borders, an image or
     // closing editor higher up) would move it from under the pointer, so the view moves with it while the press and its
     // fold transition settle (FOLD_SETTLE_MS). Growth below it (a fold it opened) moves nothing. Every scroll or pin
@@ -126,12 +95,8 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       heldTop = el.scrollTop;
     };
     const pin = () => {
-      if (!scrollerUsable(el) || !pinned.current) return;
-      const maxTop = el.scrollHeight - el.clientHeight;
-      if (maxTop > 0 && Math.abs(el.scrollTop - maxTop) > 0.5) {
-        el.scrollTop = el.scrollHeight;
-        syncAnchor();
-      }
+      const body = content.current;
+      if (body && pinned.current && scrollerUsable(el) && pinTranscriptBottom(el, body)) syncAnchor();
     };
     let lastH = -1;
     // Only re-pin when the scroller's height changes; a width-only resize (or WebKit's scrollbar gutter settling)
@@ -144,7 +109,6 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       if (had) pin();
     };
     syncBox();
-    align();
     pin();
     // A hidden sidebar collapses the scroller to no box and fires a scroll that looks like "left the bottom".
     let lastTop = el.scrollTop;
@@ -153,13 +117,20 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     let pointerDown = false;
     let intentAt = -Infinity;
     const intent = () => pointerDown || performance.now() - intentAt < SCROLL_INTENT_MS;
+    // A slice's own scroll event can arrive between the reader's wheel-up and its first native scroll. That event
+    // still reports the old bottom. Let the wheel move away before another scroll or resize can re-arm the follow.
+    let pendingWheelUp = false;
+    const awaitingWheel = () => pendingWheelUp && !pinned.current && intent();
     const onScroll = () => {
       if (!scrollerUsable(el)) return;
       const was = pinned.current;
       const user = intent();
-      pinned.current = followsBottom(el, was, lastTop, user, untouched.current);
+      const next = followsBottom(el, was, lastTop, user, untouched.current);
+      if (next && awaitingWheel()) return;
+      pendingWheelUp = false;
+      pinned.current = next;
       follow.set(pinned.current);
-      if (was && pinned.current && !user && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
+      if (was && pinned.current && !user && el.scrollHeight - el.scrollTop - el.clientHeight > 1) pin();
       lastTop = el.scrollTop;
       syncAnchor();
       if (lastTop !== heldTop) {
@@ -168,11 +139,12 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       }
     };
     // Whether the browser has clamped the offset since the reader's last input: content above a held tail shrank (a
-    // fold closing over it), so the tail is what stays put and the pad follows every frame. A fold closing back to
-    // where it opened from never clamps: there the top stays put, and re-padding in its last frames twitched it
+    // fold closing over it), so the tail stays aligned every frame. A fold closing back to
+    // where it opened from never clamps: there the top stays put, and re-aligning in its last frames twitched it
     let clamping = false;
     let seenTop = el.scrollTop;
     const touched = () => {
+      pendingWheelUp = false;
       untouched.current = false;
       intentAt = holding.current = performance.now();
       clamping = false;
@@ -218,7 +190,9 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     const moved = (event: WheelEvent | TouchEvent) => {
       intentAt = performance.now();
       anchor = undefined;
+      pendingWheelUp = false;
       if ('deltaY' in event && event.deltaY < 0 && !event.ctrlKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX) && takesWheel(event)) {
+        pendingWheelUp = true;
         pinned.current = false;
         follow.set(false);
       }
@@ -239,14 +213,10 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
       // thread), else the top of the view. A press still settling keeps its own row under the pointer below
       if (rewrap && !anchor && scrollerUsable(el)) {
         if (!pinned.current) hold();
-        else if (!untouched.current) {
-          align();
-          pin();
-        }
+        else if (!untouched.current) pin();
         seenTop = el.scrollTop;
       }
       if (untouched.current) {
-        if (pinned.current) align();
         pin();
         if (!rewrap) read();
         return;
@@ -262,15 +232,14 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
           syncAnchor();
         }
       }
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 1 && !awaitingWheel();
       if (pinned.current !== atBottom) {
         pinned.current = atBottom;
         follow.set(atBottom);
       }
-      // Measured after the growth, so the frame a hand-opened fold first pushes the tail out already leaves the pad.
-      // A new pad moves the end by under a pixel; re-pin so a held tail stays flush instead of waiting for the next chunk
+      // A fold opening below the pointer keeps the reading position. Only a clamped tail needs alignment.
       if (el.scrollTop < seenTop - 0.5) clamping = true;
-      if (atBottom && clamping && align()) pin();
+      if (atBottom && clamping) pin();
       seenTop = el.scrollTop;
       if (!rewrap || pinned.current) read();
     };
@@ -288,7 +257,6 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     const body = new ResizeObserver(grew);
     if (content.current) body.observe(content.current, { box: 'border-box' });
     return () => {
-      padded?.style.removeProperty('--follow-lead');
       box.disconnect();
       body.disconnect();
       el.removeEventListener('scroll', onScroll);
@@ -317,13 +285,13 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     holding.current = -Infinity;
     holdingDown.current = false;
     follow.set(true);
-    el.scrollTop = el.scrollHeight;
+    if (content.current) pinTranscriptBottom(el, content.current);
   }, [prompt]);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el || !scrollerUsable(el) || !pinned.current) return;
     if (holdingDown.current || performance.now() - holding.current < FOLD_SETTLE_MS) return;
-    el.scrollTop = el.scrollHeight;
+    if (content.current) pinTranscriptBottom(el, content.current);
     untouched.current = true;
   }, changes);
   return follow;

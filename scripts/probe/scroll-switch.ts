@@ -78,6 +78,29 @@ try {
     check(`switch back #${round} ends at the bottom`, late.gap <= 1 && late.image > 0 && late.mermaid, { early, late });
   }
 
+  // WebKit can deliver the last programmatic scroll between a wheel-up and its native displacement. A resize in
+  // that interval must not take back the follow and cancel the wheel. Drive that ordering independently of timing.
+  const wheel = await evaluate(`(async () => {
+    const el = document.querySelector('[data-thread]');
+    const frame = () => new Promise(requestAnimationFrame);
+    const before = el.scrollTop;
+    el.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true }));
+    el.dispatchEvent(new Event('scroll'));
+    const spacer = document.createElement('div');
+    spacer.style.height = '40px';
+    el.firstElementChild.append(spacer);
+    await frame(); await frame();
+    const after = el.scrollTop;
+    el.scrollTop -= 40;
+    await frame(); await frame();
+    spacer.remove();
+    el.dispatchEvent(new WheelEvent('wheel', { deltaY: 80, bubbles: true }));
+    el.scrollTop = el.scrollHeight;
+    await frame(); await frame();
+    return { before, after, following: !el.hasAttribute('data-more-below') };
+  })()`);
+  check('a delayed pin event leaves the upward wheel in control', wheel.before === wheel.after && wheel.following, wheel);
+
   // A fold opened by the user must not move the view: the toggle stays under the pointer while content grows below it.
   // A taller viewport keeps the last turn's fold on screen while the thread still follows the bottom, so a pin on
   // content growth would show up as a moved scrollTop.
