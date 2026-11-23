@@ -233,7 +233,7 @@ mod tests {
     assert!(compacted_silently(&[]));
     assert!(compacted_silently(&[text(""), text("\n")]));
     // Stray work from an overlapping detached run does not hide the silent compaction
-    assert!(compacted_silently(&[edit.clone()]));
+    assert!(compacted_silently(std::slice::from_ref(&edit)));
     assert!(compacted_silently(&[edit.clone(), text("\n")]));
     // A failure line or a reply is the CLI's own word on it
     assert!(!compacted_silently(&[text("\n⚠ Individual quota reached.\n")]));

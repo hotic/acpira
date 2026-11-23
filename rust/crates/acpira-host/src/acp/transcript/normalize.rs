@@ -764,9 +764,17 @@ mod stretch_timing_tests {
     });
     apply_update(&mut s, &write);
     let pid = capture_plan(&mut s.turns, &write).expect("plan captured");
-    let plan = |s: &NormalizeState| match s.turns[0].as_agent().unwrap().blocks.iter().find(|b| matches!(b, AgentBlock::PlanDocument(_))).unwrap() {
-      AgentBlock::PlanDocument(p) => p.clone(),
-      _ => unreachable!(),
+    let plan = |s: &NormalizeState| {
+      s.turns[0]
+        .as_agent()
+        .unwrap()
+        .blocks
+        .iter()
+        .find_map(|b| match b {
+          AgentBlock::PlanDocument(p) => Some(p.clone()),
+          _ => None,
+        })
+        .unwrap()
     };
     assert!(plan(&s).ended_at.is_some());
     assert_eq!(plan(&s).resumed_at, None);
