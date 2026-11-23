@@ -349,7 +349,7 @@ export function TabButton({ label, title, icon, on, closable, guard, closeAt = m
   const atEnd = closable && closeAt === 'end';
   const close = (shown: string) => (
     <span role="button" tabIndex={-1} data-part="tab-close" aria-label={t('panel.closeTab')} title={t('panel.closeTab')} onClick={e => { e.stopPropagation(); onClose(); }}
-      className={cn('absolute -inset-0.5 flex items-center justify-center rounded-sm text-fg-2 opacity-0 transition-opacity hover:bg-active hover:text-fg-1', guard ? 'pointer-events-none' : shown)}>
+      className={cn('absolute -inset-0.5 flex items-center justify-center rounded-tab-close text-fg-2 opacity-0 transition-opacity hover:bg-active hover:text-fg-1', guard ? 'pointer-events-none' : shown)}>
       <X strokeWidth={1.5} className="size-3.5" />
     </span>
   );

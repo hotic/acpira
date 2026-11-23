@@ -20,6 +20,7 @@ describe('token-aware class merging', () => {
     expect(cn('pt-1 pl-indent', 'pt-gap-half')).toBe('pl-indent pt-gap-half');
     expect(cn('shadow-card', 'shadow-none')).toBe('shadow-none');
     expect(cn('bg-card border-card-line', 'bg-bg-1')).toBe('border-card-line bg-bg-1');
+    expect(cn('rounded-md', 'rounded-code-copy')).toBe('rounded-code-copy');
   });
   it('knows every spacing token declared in tokens.css', () => {
     expect(themeSpacing.length).toBeGreaterThan(40);

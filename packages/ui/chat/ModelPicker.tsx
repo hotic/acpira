@@ -360,7 +360,7 @@ function RowTrail({ checked, label, onOpen }: { checked: boolean; label?: string
   return (
     <span role="button" tabIndex={-1} title={label} aria-label={label}
       onClick={e => { e.preventDefault(); e.stopPropagation(); const row = e.currentTarget.closest<HTMLElement>('[data-family]'); if (row) onOpen(row); }}
-      className="-mx-1 flex h-row-trail shrink-0 items-center rounded-sm px-1 text-fg-3 hover:bg-active hover:text-fg-1">
+      className="-mx-1 flex h-row-trail shrink-0 items-center rounded-row-trail px-1 text-fg-3 hover:bg-active hover:text-fg-1">
       {checked && check}
       <ChevronRight strokeWidth={1.75} className={cn('size-icon shrink-0 group-data-[params]/row:block group-data-[params]/row:opacity-100',
         checked ? 'hidden group-hover/row:block' : 'opacity-0 group-data-[highlighted]/row:opacity-100')} />

@@ -569,6 +569,11 @@
   --radius-lg: var(--r-lg);
   /* The corner of an icon button's hover fill (ui/Button IconButton clips it --icon-fill-inset inside an --r-md box) */
   --radius-ctl-fill: calc(var(--r-md) - var(--icon-fill-inset));
+  /* Concentric corners for tight nested controls: a tab's close box (3px inside ctl-fill), a model row's trailing
+     params arrow (4px inside --r-md), and a code / diff card's copy button (--gap / 2 inside --r-md) */
+  --radius-tab-close: max(2px, calc(var(--r-md) - var(--icon-fill-inset) - 3px));
+  --radius-row-trail: max(2px, calc(var(--r-md) - 4px));
+  --radius-code-copy: max(var(--r-xs), calc(var(--r-md) - var(--gap) / 2));
   --radius-full: 9999px;
 
   --spacing-switch-track-h: 16px;
