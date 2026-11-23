@@ -117,7 +117,7 @@ function CommandButton({ command: c, disabled, run, className }: { command: Slas
   const [presses, setPresses] = useState(0);
   const look = c.look && c.look in LOOK ? c.look : 'brand';
   const Icon = (c.icon && BUTTON_ICONS[c.icon]) || (c.draft ? WandSparkles : Zap);
-  const glyph = busy ? <LoaderCircle className="animate-spin" strokeWidth={1.75} /> : <Icon strokeWidth={1.75} className={look === 'brand' ? 'text-(--brand)' : look === 'icon' ? 'text-fg-1' : undefined} />;
+  const glyph = busy ? <span className="inline-flex animate-spin"><LoaderCircle strokeWidth={1.75} /></span> : <Icon strokeWidth={1.75} className={look === 'brand' ? 'text-(--brand)' : look === 'icon' ? 'text-fg-1' : undefined} />;
   return (
     <span className="relative inline-flex shrink-0 rounded-sm">
       <Chip caret={false} disabled={disabled || busy} title={[c.description || c.button, c.badge].filter(Boolean).join('\n')}

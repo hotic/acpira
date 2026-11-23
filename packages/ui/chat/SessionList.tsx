@@ -71,7 +71,9 @@ function StateMark({ state, unread, wakeAt }: Mark) {
     : t(state === 'background' && unread ? 'session.state.backgroundUnread' : `session.state.${state}`);
   return <span className="flex size-3 shrink-0 items-center justify-center" title={label} aria-label={label} role="img">
     {state === 'working'
-      ? <LoaderCircle className="size-2.5 animate-spin live-spin text-fg-2" strokeWidth={2.5} />
+      // Spin a wrapper span rather than the <svg> root: Blink cannot composite SVG-root transforms and falls back to
+      // main-thread style recalc + Layerize on every display vsync
+      ? <span className="inline-flex size-2.5 animate-spin live-spin text-fg-2"><LoaderCircle className="size-full" strokeWidth={2.5} /></span>
       : state === 'background'
         ? <span className="relative flex size-2.5 items-center justify-center">
           <Circle className={cn('size-2.5', unread ? 'text-fg-strong' : 'text-fg-3')} strokeWidth={2.5} />

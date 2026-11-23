@@ -305,7 +305,7 @@ function ProviderGroup({ provider: p, query, busy, opening, fresh, onEdit, onAdd
     <Section title={name} count={p.models.length} status={<SourceStatus provider={p} />}
       desc={<span className="block truncate" title={p.baseUrl}>{p.baseUrl}</span>}
       action={<div className="flex shrink-0 items-center gap-gap">
-        <SectionAction icon={opening ? <LoaderCircle className="animate-spin live-spin" /> : <Plus />} disabled={busy || opening} onClick={onAdd}>
+        <SectionAction icon={opening ? <span className="inline-flex animate-spin live-spin"><LoaderCircle /></span> : <Plus />} disabled={busy || opening} onClick={onAdd}>
           {fresh > 0 ? <span className="text-fg-1">{t('settings.providers.newModels', { count: fresh })}</span> : t('settings.providers.addModel')}
         </SectionAction>
         <SectionAction icon={<Settings2 />} disabled={busy} title={t('settings.providers.edit', { name })} onClick={onEdit}>{t('settings.providers.editShort')}</SectionAction>
@@ -693,7 +693,7 @@ function AddModelDialog({ provider: p, listed, busy, onAdd, onRemove, onClose }:
 function Waiting({ on, children }: { on: boolean; children: ReactNode }) {
   return <>
     <span className={cn(on && 'invisible')}>{children}</span>
-    {on && <LoaderCircle strokeWidth={1.5} className="absolute inset-0 m-auto size-icon animate-spin live-spin" />}
+    {on && <span className="absolute inset-0 m-auto inline-flex size-icon animate-spin live-spin"><LoaderCircle strokeWidth={1.5} className="size-full" /></span>}
   </>;
 }
 

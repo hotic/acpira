@@ -218,7 +218,7 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
               : outcome?.kind === 'test' ? <span className="text-ok">{t('settings.providers.model.testOk', { ms: outcome.ms, text: outcome.text.trim() || '—' })}</span>
               : t('settings.providers.model.test.hint')}>
             <Button disabled={!ok || test?.pending} onClick={() => onTest(draft())}>
-              {test?.pending && <LoaderCircle strokeWidth={1.5} className="size-icon animate-spin live-spin" />}
+              {test?.pending && <span className="inline-flex size-icon animate-spin live-spin"><LoaderCircle strokeWidth={1.5} className="size-full" /></span>}
               {t('settings.providers.model.test.send')}
             </Button>
           </Field>

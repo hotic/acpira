@@ -51,7 +51,7 @@ function VersionCard({ state, on }: { state: UpdateState; on: UpdateHandlers }) 
   else if (manual && (state.version || !canCheck)) action = <SectionAction onClick={() => on.openExternal(state.releaseUrl)}>{t('settings.update.openRelease')}</SectionAction>;
   else if (state.phase === 'available' || (state.phase === 'failed' && state.version)) action = <SectionAction icon={<Download />} onClick={() => on.check(true)}>{t('settings.update.download')}</SectionAction>;
   // While a download or the install runs the status line is the whole story; a check in flight keeps its action, waiting
-  else if (state.phase === 'checking' || !busy) action = <SectionAction icon={<RefreshCw className={busy ? 'animate-spin live-spin' : undefined} />} disabled={busy} onClick={() => on.check()}>{t('settings.update.check')}</SectionAction>;
+  else if (state.phase === 'checking' || !busy) action = <SectionAction icon={<span className={busy ? 'inline-flex animate-spin live-spin' : 'inline-flex'}><RefreshCw /></span>} disabled={busy} onClick={() => on.check()}>{t('settings.update.check')}</SectionAction>;
   const reason = manual && t(`settings.update.manual.${manual}` as const);
   // A build that never checks has no status of its own: its reason is the status. Any other manual install keeps its
   // status here and gives the reason to the switch it greys out, so every state is one head line and one row

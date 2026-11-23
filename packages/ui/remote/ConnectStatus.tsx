@@ -88,7 +88,7 @@ function Steps({ view }: { view: ConnectionView }) {
         const name = i === at ? STEP_NAME[step] : STEP_NAME[slot];
         const kind = i < at ? 'done' : i === at ? 'live' : 'wait';
         const icon = kind === 'done' ? <Check className="size-icon text-fg-3" strokeWidth={1.75} />
-          : kind === 'live' ? <LoaderCircle className="size-icon animate-spin live-spin text-fg-2" strokeWidth={1.75} />
+          : kind === 'live' ? <span className="inline-flex size-icon animate-spin live-spin text-fg-2"><LoaderCircle className="size-full" strokeWidth={1.75} /></span>
             : <span className="size-(--dot) rounded-full bg-fg-3 opacity-50" />;
         return <li key={slot} className="flex h-(--text-2-lh) min-w-0 items-center gap-2 text-2">
           {/* Keyed by kind: a step moving on remounts the slot, which fades in (on the slot, since the spinner's own

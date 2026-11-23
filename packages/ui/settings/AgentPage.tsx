@@ -122,7 +122,7 @@ export function AgentDialog(p: AgentSettingsProps & {
       footer={<>
         {/* A footer button like Done, not bare text: the dialog's one other action, on the left */}
         <Button disabled={p.busy} onClick={() => { setDetect(n => n + 1); p.on.refreshAgent(agent.id); }} className="shrink-0 disabled:pointer-events-none disabled:opacity-60 [&_svg]:size-icon">
-          <RefreshCw strokeWidth={1.75} className={cn(p.busy && 'animate-spin live-spin')} />{refresh}
+          <span className={cn('inline-flex', p.busy && 'animate-spin live-spin')}><RefreshCw strokeWidth={1.75} /></span>{refresh}
         </Button>
         <span className="flex-1" />
         <Button variant="primary" onClick={p.onClose}>{t('common.done')}</Button>
