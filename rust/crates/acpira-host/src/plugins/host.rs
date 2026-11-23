@@ -150,7 +150,8 @@ impl PluginHost {
     let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
     let runtimes = self.runtimes.clone();
     let active = self.loaded().active.clone();
-    handle.spawn(async move { runtimes.sync(&active).await });
+    runtimes.stage(&active);
+    handle.spawn(async move { runtimes.apply().await });
   }
 
   /// Turn the resident processes on (the composition root) and start those already in effect

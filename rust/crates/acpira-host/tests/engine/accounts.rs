@@ -1497,3 +1497,68 @@ async fn a_plugin_account_is_picked_started_and_handed_back_through_its_plugin()
   mgr.dispose().await;
   rt.stop_all().await;
 }
+
+// Reopening a session whose plugin account was removed (or that had no account bound yet) moves it to a remaining
+// saved account automatically instead of stopping on sign-in
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_off_a_removed_plugin_account_or_unbound_opens_on_a_saved_account() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let store = Arc::new(store_in(dir.path()));
+  store.load().await.unwrap();
+  let own = store.add("fake", draft("own@example.com", None, "good-key", None)).await.unwrap();
+  let provider = FakeProvider::new();
+  let accounts = AccountManager::new(store, vec![provider.clone()], log(), Arc::new(|_, _, _, _| {}), Arc::new(|_: &str, _: &str| {}));
+  let transcripts = TranscriptStore::new(dir.path().join("sessions"), log(), None);
+  let cwd = dir.path().join("work");
+  std::fs::create_dir(&cwd).unwrap();
+  let write_record = |id: &str, account_id: Option<&str>| {
+    acpira_host::store::record::SessionRecord {
+      id: id.to_owned(),
+      agent: "fake".into(),
+      account_id: account_id.map(str::to_owned),
+      acp_session_id: None,
+      cwd: cwd.to_string_lossy().into_owned(),
+      title: id.to_owned(),
+      created_at: "2026-11-20T00:00:00Z".into(),
+      updated_at: "2026-11-20T00:00:00Z".into(),
+      turns: vec![],
+      controls: Default::default(),
+      usage: None,
+      commands: vec![],
+      pinned: None,
+      archived: None,
+      category: None,
+      renamed: false,
+      history_pending: false,
+      history_context: false,
+      forked_from: None,
+      import_pending: false,
+      imported_from: None,
+      subagents: None,
+      goal: None,
+      copy_of: None,
+      client_ids: vec![],
+      plugin_menus: Default::default(),
+      settings_from: None,
+    }
+  };
+  let plugin_sid = "11111111-1111-4111-8111-111111111111";
+  let unbound_sid = "22222222-2222-4222-8222-222222222222";
+  transcripts.flush(Arc::new(write_record(plugin_sid, Some("plugin:gateway:deleted")))).await.unwrap();
+  transcripts.flush(Arc::new(write_record(unbound_sid, None))).await.unwrap();
+  let mut opts = Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": dir.path() } })), "fake").cwd(cwd.to_str().unwrap());
+  opts.accounts = Some(accounts);
+  let mgr = Mgr::new(&dir.path().join("sessions"), opts);
+  mgr.init().await;
+
+  for sid in [plugin_sid, unbound_sid] {
+    mgr.handle(json!({ "type": "selectSession", "id": sid })).await;
+    until(|| mgr.active().is_some_and(|a| a["id"] == sid && a["status"] != "starting"), 5000).await;
+    expect_match(mgr.active().unwrap(), json!({ "id": sid, "accountId": own.id, "status": "ready" }));
+  }
+  mgr.dispose().await;
+  for sid in [plugin_sid, unbound_sid] {
+    assert_eq!(transcripts.load(sid).await.unwrap().account_id, Some(own.id.clone()));
+  }
+}

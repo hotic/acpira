@@ -161,7 +161,10 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   const feedback = action && (action.via === 'unlock' ? unlockFeedback(action)
     : action.status === 'pending' ? t(action.via === 'import' ? 'notice.importing' : action.via === 'key' ? 'settings.agent.accountKey.checking' : 'notice.loginWaiting')
       : action.status === 'error' ? t('notice.accountFailed', { error: action.error ?? t('notice.error.unknown') })
-        : t(`notice.account.${action.status}`));
+        // Success is global per agent and persists across sessions/windows: if a session still shows auth_required,
+        // fall back to the regular sign-in prompt instead of displaying a stale "Account saved" line
+        : action.status === 'success' ? undefined
+          : t(`notice.account.${action.status}`));
   // The protocol names sign-in methods in English; known ones get a localized name, the rest keep what the agent sent
   const methodName = (m: AuthMethodInfo) => tOr(`notice.method.${agent.id}:${m.id}`, m.name);
 

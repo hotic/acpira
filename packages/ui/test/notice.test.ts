@@ -25,4 +25,9 @@ describe('sign-in notice recovery', () => {
   it('still blocks repeated imports while the local credentials are being read', () => {
     expect(actions('import')).toContain('disabled=');
   });
+
+  it('does not show a stale saved-account line on an auth-required notice', () => {
+    const html = renderToStaticMarkup(createElement(Notice, { ...props, accountAction: { agent: 'claude', via: 'import', status: 'success' } }));
+    expect(html).not.toContain('Account saved.');
+  });
 });

@@ -516,7 +516,15 @@ impl SessionManager {
       a.on_rotated(Arc::new(move |changed| {
         let Some(m) = me.upgrade() else { return };
         for s in m.live_sessions().into_iter().filter(|s| s.account_id().is_some_and(|a| changed.iter().any(|(_, id)| *id == a))) {
-          s.adapter_updated();
+          if s.status() == SessionStatus::AuthRequired
+            && m.deps.accounts.as_ref().is_some_and(|a| a.default_for(&s.agent).is_some())
+          {
+            tokio::spawn(async move {
+              let _ = s.reconnect().await;
+            });
+          } else {
+            s.adapter_updated();
+          }
         }
         // Warm processes are dropped whether or not a session runs on the account now
         for agent in changed.iter().map(|(agent, _)| agent).collect::<HashSet<_>>() {

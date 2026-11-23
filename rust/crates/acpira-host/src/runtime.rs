@@ -156,6 +156,18 @@ impl HostRuntime {
     accounts.set_switch_policy(Arc::new(move |_agent: &str| {
       SwitchStrategy::parse(policy.read_setting("accountSwitch").as_ref().and_then(Value::as_str))
     }));
+    // Isolated login terminals inherit the agent's `agents.json` env, with provider isolation winning
+    let login_env_slot = mgr_slot.clone();
+    let login_env_fallback = registry.clone();
+    accounts.set_agent_env(Arc::new(move |agent: &str| {
+      let reg = login_env_slot
+        .lock()
+        .as_ref()
+        .and_then(|w| w.upgrade())
+        .map(|m| m.registry())
+        .unwrap_or_else(|| login_env_fallback.clone());
+      reg.try_get(agent).and_then(|def| def.env.clone()).unwrap_or_default().into_iter().collect()
+    }));
 
     let sessions_dir = root.join("sessions");
     let save_toast = toast.clone();

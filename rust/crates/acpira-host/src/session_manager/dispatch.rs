@@ -510,7 +510,21 @@ impl SessionManager {
       W::AddAccountKey { agent, key } => self.add_account_key(v, &agent, &key).await?,
       W::RemoveAccount { id, .. } => {
         if let Some(a) = &self.deps.accounts {
+          let was_plugin = crate::accounts::plugin_accounts::split_id(&id).is_some();
           a.remove(&id).await?;
+          // Plugin removals already wake their live sessions via `on_rotated`; saved account removals migrate idle
+          // sessions off the deleted credentials the same way
+          if !was_plugin {
+            for s in self.live_sessions().into_iter().filter(|s| s.account_id().as_deref() == Some(id.as_str())) {
+              if s.status() == SessionStatus::AuthRequired && a.default_for(&s.agent).is_some() {
+                tokio::spawn(async move {
+                  let _ = s.reconnect().await;
+                });
+              } else {
+                s.adapter_updated();
+              }
+            }
+          }
         }
         self.pool.invalidate(None);
       }

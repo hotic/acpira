@@ -163,18 +163,40 @@ impl AcpSession {
     self.release_switch();
   }
 
-  /// The account to start on: the bound one, or, when that saved account was removed, the one the switch strategy picks
-  /// (else the agent's default), which becomes the session's binding. An old session opened after its account was
-  /// deleted carries on with a remaining login instead of stopping on sign-in
+  /// The account to start on: the bound one, or, when that account was removed (saved or plugin) or the session has
+  /// none while the agent has saved accounts, the replacement / default account, which becomes the session's binding.
+  /// An old session opened after its account was deleted carries on with a remaining login instead of stopping on sign-in
   pub(crate) async fn replace_removed_account(&self, account: Option<String>) -> Option<String> {
-    let (Some(gone), Some(hooks)) = (account.clone(), self.deps.accounts.clone()) else { return account };
-    let Some((next, label)) = hooks.replacement(self.agent.clone(), gone.clone()).await else { return account };
+    let Some(hooks) = self.deps.accounts.clone() else { return account };
+    let (next, label) = match &account {
+      Some(gone) => match hooks.replacement(self.agent.clone(), gone.clone()).await {
+        Some(pair) => pair,
+        None => return account,
+      },
+      None => match hooks.default_account(self.agent.clone()) {
+        Some(next) => {
+          let label = hooks.label(next.clone()).unwrap_or_else(|| next.chars().take(8).collect());
+          (next, label)
+        }
+        None => return None,
+      },
+    };
     let mut c = self.core.lock();
     // A pick made while the replacement was looked up wins: its own reopen starts on it
-    if c.account_id.as_deref() != Some(gone.as_str()) {
+    if c.account_id != account {
       return c.account_id.clone();
     }
-    self.log(&format!("account {} was removed: moving to {label}", gone.chars().take(8).collect::<String>()));
+    match &account {
+      Some(gone) => {
+        let short: String = if gone.starts_with(crate::accounts::plugin_accounts::ID_PREFIX) {
+          gone.clone()
+        } else {
+          gone.chars().take(8).collect()
+        };
+        self.log(&format!("account {short} was removed: moving to {label}"));
+      }
+      None => self.log(&format!("unbound session: moving to {label}")),
+    }
     c.account_id = Some(next.clone());
     self.touch(&mut c);
     Some(next)

@@ -67,9 +67,13 @@ pub type SwitchPolicy = Arc<dyn Fn(&str) -> SwitchStrategy + Send + Sync>;
 pub type AccountsListener = Arc<dyn Fn(Vec<AccountInfo>) + Send + Sync>;
 /// Asks a plugin to let go of an account it lists: (plugin, its own id, agent) → the plugin's `account.remove`
 pub type PluginRemover = Arc<dyn Fn(String, String, String) -> BoxFuture<Result<()>> + Send + Sync>;
+/// Waits while an enabled plugin's process has not finished starting yet (`Runtimes::wait_plugin_settled`)
+pub type PluginWaiter = Arc<dyn Fn(String) -> BoxFuture<()> + Send + Sync>;
 /// Hears the ids of plugin accounts whose launch variables changed or that went away (`on_rotated`)
 /// (agent, account id) of plugin accounts that now start differently or are gone
 pub type RotationListener = Arc<dyn Fn(Vec<(String, String)>) + Send + Sync>;
+/// Extra environment variables configured for an agent (`agents.json` `env`), merged into its login terminal
+pub type AgentEnv = Arc<dyn Fn(&str) -> BTreeMap<String, String> + Send + Sync>;
 
 
 pub struct AccountManager {
@@ -99,7 +103,9 @@ pub struct AccountManager {
   /// When a plugin account was last picked, this engine only: what makes it an agent's default like a saved one
   plugin_used: parking_lot::Mutex<HashMap<String, String>>,
   plugin_remover: parking_lot::RwLock<Option<PluginRemover>>,
+  plugin_waiter: parking_lot::RwLock<Option<PluginWaiter>>,
   rotation_listeners: parking_lot::Mutex<Vec<RotationListener>>,
+  agent_env: parking_lot::RwLock<Option<AgentEnv>>,
 }
 
 impl AccountManager {
@@ -131,7 +137,9 @@ impl AccountManager {
       plugin_accounts: Default::default(),
       plugin_used: Default::default(),
       plugin_remover: Default::default(),
+      plugin_waiter: Default::default(),
       rotation_listeners: Default::default(),
+      agent_env: Default::default(),
     })
   }
 
@@ -179,6 +187,11 @@ impl AccountManager {
     *self.switch_policy.lock() = policy;
   }
 
+  /// Provide the agent's configured environment (`agents.json` `env`) for its login terminal
+  pub fn set_agent_env(&self, env: AgentEnv) {
+    *self.agent_env.write() = Some(env);
+  }
+
   /// The account a session moves to after `current` ran out of quota: `current` is parked until its empty windows refill,
   /// every quota of the agent is brought up to date, then the agent's strategy picks among the rest. None when the strategy
   /// is off or no other account has allowance left
@@ -212,12 +225,56 @@ impl AccountManager {
     list.into_iter().find(|a| a.id == id)
   }
 
-  /// The saved account a session moves to when its own was removed (here or by another host): the switch strategy's pick,
-  /// else the one a new session would take. None while the account is still saved, for a plugin's account (`unavailable`
-  /// explains that one), or with no saved account of the agent left, so the session stops on sign-in as before
+  /// The account a session moves to when its own was removed (here or by another host, or dropped by its plugin):
+  /// for a plugin's account, first another account that same plugin still lists, else the user's remaining saved
+  /// accounts (strategy pick, then default); for a saved account, the same account now listed by a plugin, else the
+  /// switch strategy's pick or the agent's default. None while the account is still available, or when no remaining
+  /// account exists (so the session stops on sign-in rather than falling back to the CLI's unmanaged login)
   pub async fn replacement(self: &Arc<Self>, agent: &str, account: &str) -> Option<AccountInfo> {
-    if plugin_accounts::split_id(account).is_some() || !self.supports(agent) {
+    if !self.supports(agent) {
       return None;
+    }
+    if let Some((plugin, _)) = plugin_accounts::split_id(account) {
+      if self.plugin_account(account).is_some_and(|a| a.agent == agent) {
+        return None;
+      }
+      // At engine startup a plugin may still be initializing and about to list this account
+      let waiter = self.plugin_waiter.read().clone();
+      if let Some(wait) = waiter {
+        wait(plugin.to_owned()).await;
+      }
+      if self.plugin_account(account).is_some_and(|a| a.agent == agent) {
+        return None;
+      }
+      // Prefer another account from the same plugin before falling back to saved accounts
+      let same_plugin: Vec<AccountInfo> = self
+        .plugin_infos(Some(agent))
+        .into_iter()
+        .filter(|a| plugin_accounts::split_id(&a.id).is_some_and(|(p, _)| p == plugin))
+        .collect();
+      if !same_plugin.is_empty() {
+        let strategy = (self.switch_policy.lock().clone())(agent);
+        if strategy != SwitchStrategy::Off
+          && let Some(id) = pick_fallback(&same_plugin, None, strategy, &self.parked.lock(), now_ms())
+          && let Some(a) = same_plugin.iter().find(|a| a.id == id)
+        {
+          return Some(a.clone());
+        }
+        return same_plugin.into_iter().max_by(|a, b| {
+          a.last_used_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(b.last_used_at.as_deref().unwrap_or(""))
+            .then_with(|| b.added_at.cmp(&a.added_at))
+        });
+      }
+      // The plugin has no accounts left for this agent (removed, disabled or unloaded): fall back to remaining accounts
+      // so old sessions carry on without asking to sign in again
+      self.reload().await;
+      return match self.fallback(agent, None).await {
+        Some(a) => Some(a),
+        None => self.default_for(agent),
+      };
     }
     // Another host may have removed or added accounts since this one last read the file
     self.reload().await;
@@ -232,7 +289,7 @@ impl AccountManager {
     match self.fallback(agent, None).await {
       Some(a) => Some(a),
       // Strategy off or every account out of allowance: the agent's default, as a new session would get
-      None => self.store.default_for(agent).map(|a| self.with_quota(a)),
+      None => self.default_for(agent),
     }
   }
 
@@ -346,6 +403,10 @@ impl AccountManager {
 
   pub fn set_plugin_remover(&self, f: PluginRemover) {
     *self.plugin_remover.write() = Some(f);
+  }
+
+  pub fn set_plugin_waiter(&self, f: PluginWaiter) {
+    *self.plugin_waiter.write() = Some(f);
   }
 
   pub fn on_rotated(&self, f: RotationListener) {
@@ -709,7 +770,23 @@ impl AccountManager {
     let waiting = Cancel::new();
     let timer = cancel_after(LOGIN_TIMEOUT, waiting.clone());
     if !cancel.is_cancelled() {
-      (self.run_in_terminal)(tp("host.loginTerminalTitle", &[("agent", agent)]), flow.command, flow.args, Some(flow.env));
+      let mut env: BTreeMap<String, Option<String>> = self
+        .agent_env
+        .read()
+        .as_ref()
+        .map(|f| f(agent))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, v)| (k, Some(v)))
+        .collect();
+      // Provider-owned variables (such as isolated config / secure store dirs) win over agent defaults
+      env.extend(flow.env);
+      (self.run_in_terminal)(
+        tp("host.loginTerminalTitle", &[("agent", agent)]),
+        flow.command,
+        flow.args,
+        (!env.is_empty()).then_some(env),
+      );
       (self.toast)("info", &t("host.finishLoginInTerminal"));
     }
     // Always let collect finish: providers remove their unfinished private login directory on cancellation.
@@ -1093,9 +1170,11 @@ mod plugin_account_tests {
     let a = m.store.add("codex", draft("a@x.io")).await.unwrap();
     let b = m.store.add("codex", draft("b@x.io")).await.unwrap();
     let c = m.store.add("codex", draft("c@x.io")).await.unwrap();
-    // Still saved, a plugin's own, or an agent off the account layer: the session keeps its binding
+    // Still saved, still listed by its plugin, or an agent off the account layer: the session keeps its binding
     assert!(m.replacement("codex", &a.id).await.is_none());
+    m.set_plugin_accounts("demo", "Demo", &[rented("/a")], false).unwrap();
     assert!(m.replacement("codex", "plugin:demo:r1").await.is_none());
+    m.retain_plugin_accounts(&|_| false);
     assert!(m.replacement("grok", &a.id).await.is_none());
     m.remove(&a.id).await.unwrap();
     m.set_switch_policy(Arc::new(|_: &str| SwitchStrategy::ListOrder));
@@ -1112,6 +1191,37 @@ mod plugin_account_tests {
     // Nothing left to move to
     m.remove(&b.id).await.unwrap();
     assert!(m.replacement("codex", &b.id).await.is_none());
+  }
+
+  #[tokio::test]
+  async fn a_vanished_plugin_account_moves_within_its_plugin_then_to_saved_accounts() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path()).await;
+    let draft = |label: &str| AccountDraft { label: label.into(), detail: None, secret: "s".into(), meta: None };
+    let own = m.store.add("codex", draft("own@x.io")).await.unwrap();
+    let r2 = json!({ "id": "r2", "agent": "codex", "label": "team 2", "badge": "Rented", "env": { "CODEX_HOME": "/b" } });
+    // Another account from the same plugin wins over the user's saved account
+    m.set_plugin_accounts("demo", "Demo", &[r2], false).unwrap();
+    assert_eq!(m.replacement("codex", "plugin:demo:r1").await.map(|a| a.id), Some("plugin:demo:r2".to_owned()));
+    // Once the plugin has none left (deleted or unloaded), move to the user's saved account
+    m.retain_plugin_accounts(&|_| false);
+    assert_eq!(m.replacement("codex", "plugin:demo:r1").await.map(|a| a.id), Some(own.id.clone()));
+    // A plugin still starting at engine boot gets a chance to list the account before replacement moves off it
+    let m_wait = m.clone();
+    m.set_plugin_waiter(Arc::new(move |plugin: String| {
+      let m = m_wait.clone();
+      Box::pin(async move {
+        if plugin == "demo" {
+          m.set_plugin_accounts("demo", "Demo", &[rented("/a")], false).unwrap();
+        }
+      })
+    }));
+    assert!(m.replacement("codex", "plugin:demo:r1").await.is_none());
+    m.retain_plugin_accounts(&|_| false);
+    m.set_plugin_waiter(Arc::new(|_| Box::pin(async {})));
+    // With no saved or plugin accounts left at all, stop rather than falling back to the CLI's unmanaged login
+    m.remove(&own.id).await.unwrap();
+    assert!(m.replacement("codex", "plugin:demo:r1").await.is_none());
   }
 
   #[tokio::test]
@@ -1240,5 +1350,60 @@ mod adopt_tests {
     assert_eq!(again.id, third.id);
     let copy = secret(&third.id).await;
     assert!(copy != first_copy && Path::new(&copy).join("login").exists() && !Path::new(&first_copy).exists());
+  }
+
+  #[tokio::test]
+  async fn login_terminal_merges_agent_env_with_provider_env_taking_precedence() {
+    struct EnvLogin;
+    impl AccountProvider for EnvLogin {
+      fn agent(&self) -> &str {
+        "claude"
+      }
+      fn import_local(&self) -> BoxFuture<Option<AccountDraft>> {
+        Box::pin(async { None })
+      }
+      fn login(&self) -> BoxFuture<Result<LoginFlow>> {
+        Box::pin(async {
+          Ok(LoginFlow {
+            command: "claude-agent-acp".into(),
+            args: vec!["--cli".into(), "auth".into(), "login".into()],
+            env: [("CLAUDE_CONFIG_DIR".into(), Some("/Users/dev/.acpira/accounts/claude/isolated".into()))].into(),
+            collect: Box::new(|_| Box::pin(async { None })),
+          })
+        })
+      }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let log: LogFn = Arc::new(|_| {});
+    let vault = Arc::new(FileVault::new(dir.path().join("secrets.json"), log.clone()));
+    let store = Arc::new(AccountStore::new(dir.path().join("accounts.json"), vault, log.clone()));
+    store.load().await.unwrap();
+    let seen = Arc::new(parking_lot::Mutex::new(None::<BTreeMap<String, Option<String>>>));
+    let capture = seen.clone();
+    let m = AccountManager::new(
+      store,
+      vec![Arc::new(EnvLogin)],
+      log,
+      Arc::new(move |_, _, _, env| {
+        *capture.lock() = env;
+      }),
+      Arc::new(|_, _| {}),
+    );
+    m.set_agent_env(Arc::new(|agent| {
+      assert_eq!(agent, "claude");
+      [
+        ("HTTPS_PROXY".into(), "http://127.0.0.1:8080".into()),
+        ("CUSTOM_FLAG".into(), "1".into()),
+        ("CLAUDE_CONFIG_DIR".into(), "/Users/dev/.claude-custom".into()),
+      ]
+      .into()
+    }));
+
+    assert!(m.login("claude", Cancel::new()).await.unwrap().is_none());
+    let env = seen.lock().clone().expect("login terminal received env");
+    assert_eq!(env.get("HTTPS_PROXY"), Some(&Some("http://127.0.0.1:8080".into())));
+    assert_eq!(env.get("CUSTOM_FLAG"), Some(&Some("1".into())));
+    assert_eq!(env.get("CLAUDE_CONFIG_DIR"), Some(&Some("/Users/dev/.acpira/accounts/claude/isolated".into())));
   }
 }

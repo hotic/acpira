@@ -283,6 +283,8 @@ pub struct Runtimes {
   /// The composition root promised `host_call` (`enable_before_host`): early calls wait for it
   host_coming: AtomicBool,
   sync: tokio::sync::Mutex<()>,
+  /// Wakes callers waiting for an enabled plugin's initial start to finish (`wait_plugin_settled`)
+  plugin_settled: tokio::sync::Notify,
   data_root: PathBuf,
   /// The plugins in effect with their versions, whatever they contribute: what a dependency's `present` says
   present: parking_lot::RwLock<BTreeMap<String, String>>,
@@ -311,6 +313,7 @@ impl Runtimes {
       enabled: AtomicBool::new(false),
       host_coming: AtomicBool::new(false),
       sync: Default::default(),
+      plugin_settled: tokio::sync::Notify::new(),
       data_root,
       present: Default::default(),
       log,
@@ -379,6 +382,15 @@ impl Runtimes {
       Box::pin(async move {
         let rt = me.upgrade().ok_or_else(|| anyhow::anyhow!("the engine is closing"))?;
         rt.rpc(&plugin, ACCOUNT_REMOVE, json!({ "agent": agent, "id": id }), "acpira").await.map(|_| ()).map_err(anyhow::Error::msg)
+      })
+    }));
+    let wait_me = Arc::downgrade(self);
+    accounts.set_plugin_waiter(Arc::new(move |plugin: String| {
+      let me = wait_me.clone();
+      Box::pin(async move {
+        if let Some(rt) = me.upgrade() {
+          rt.wait_plugin_settled(&plugin).await;
+        }
       })
     }));
     *self.accounts.write() = Some(accounts);

@@ -96,7 +96,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 - `accounts/set` (`accounts/plugin_accounts.rs`): memory only, replaced whole; agents with an account layer only. Ids `plugin:<plugin>:<id>` never meet saved uuids. Gone with its process; a superseded one is refused (`set_live_accounts`).
 - `env`: no loader variables (`PATH`, `LD_*`, …); `AccountProvider::plugin_env_error` refuses a relative or shared store (a Droid key needs a home), `complete_plugin_env` links it. A changed `env` reopens its idle sessions and warm processes.
-- An unlisted one never runs on the CLI's login: `AccountManager::unavailable` gates connect, relays, warm spawns, `authenticate_for` (records keep the id; plugins list late). Removal: `account.remove`, else no button. Auto-switch stays within one plugin.
+- An unlisted one never runs on the CLI's unmanaged login: `AccountManager::unavailable` gates connect, relays, warm spawns, `authenticate_for`. Once its plugin is settled (or gone), `replacement` moves a session off a vanished plugin account to another from that plugin or to a remaining saved/default account (stopping on `unavailable` when none exist). Removal: `account.remove`, else no button. Quota auto-switch stays within one plugin.
 
 ## Hooks
 

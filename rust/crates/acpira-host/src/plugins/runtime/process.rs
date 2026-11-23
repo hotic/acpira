@@ -16,17 +16,43 @@ use super::{INIT_TIMEOUT, PROTOCOL_VERSION, Proc, Runtimes, Want, Worker};
 use crate::plugins::host::Active;
 
 impl Runtimes {
-  /// Bring the processes in line with the plugins in effect: start what is new or changed (the old one is stopped
-  /// once the new one answered `initialize`), stop what is gone. Safe mode passes nothing, so everything stops
-  pub async fn sync(self: &Arc<Self>, active: &[Arc<Active>]) {
+  /// Record what should be running before `apply` runs asynchronously, so startup waiters see `wanted` at once
+  pub(crate) fn stage(&self, active: &[Arc<Active>]) {
     let wanted: Vec<Want> = active
       .iter()
-      .filter_map(|a| {
-        Want::of(&a.id, &a.hash, &a.dir, &a.manifest)
-      })
+      .filter_map(|a| Want::of(&a.id, &a.hash, &a.dir, &a.manifest))
       .collect();
     *self.present.write() = active.iter().map(|a| (a.id.clone(), a.manifest.version.clone())).collect();
     *self.wanted.lock() = wanted;
+  }
+
+  /// Wait while an enabled plugin's process has not finished its first start yet, so a session restoring at engine
+  /// startup does not treat a booting plugin's account as removed
+  pub async fn wait_plugin_settled(&self, plugin: &str) {
+    if !self.enabled() {
+      return;
+    }
+    let deadline = tokio::time::Instant::now() + INIT_TIMEOUT;
+    loop {
+      let notified = self.plugin_settled.notified();
+      tokio::pin!(notified);
+      notified.as_mut().enable();
+      let wanted = self.wanted.lock().iter().any(|w| w.id == plugin);
+      let running = self.workers.read().contains_key(plugin);
+      let failed = self.errors.read().contains_key(plugin);
+      if !wanted || running || failed {
+        return;
+      }
+      if tokio::time::timeout_at(deadline, notified).await.is_err() {
+        return;
+      }
+    }
+  }
+
+  /// Bring the processes in line with the plugins in effect: start what is new or changed (the old one is stopped
+  /// once the new one answered `initialize`), stop what is gone. Safe mode passes nothing, so everything stops
+  pub async fn sync(self: &Arc<Self>, active: &[Arc<Active>]) {
+    self.stage(active);
     if !self.enabled() {
       return;
     }
@@ -35,9 +61,10 @@ impl Runtimes {
 
   /// One pass at a time, on what is wanted when it gets the turn: a pass queued behind another never brings back a
   /// plugin switched off meanwhile
-  async fn apply(self: &Arc<Self>) {
+  pub(crate) async fn apply(self: &Arc<Self>) {
     let _one = self.sync.lock().await;
     if !self.enabled() {
+      self.plugin_settled.notify_waiters();
       return;
     }
     let wanted = self.wanted.lock().clone();
@@ -55,11 +82,13 @@ impl Runtimes {
           }
           // The previous version's accounts go unless this one listed its own while starting
           self.drop_live_accounts(&want.id, Some(&want.hash));
+          self.plugin_settled.notify_waiters();
         }
         // A new version that does not start leaves the running one in place; with none running, it is tried again
         Err(e) if current.as_ref().is_some_and(|w| !w.conn.is_closed()) => {
           (self.log)(&format!("plugin {}: version {} did not start, the running one stays: {e}", want.id, want.version));
           self.errors.write().insert(want.id.clone(), format!("the new version did not start, the previous one keeps running: {e}"));
+          self.plugin_settled.notify_waiters();
         }
         Err(e) => {
           (self.log)(&format!("plugin {}: the runtime did not start: {e}", want.id));
@@ -68,6 +97,7 @@ impl Runtimes {
             stopped.push(old);
           }
           self.drop_live_accounts(&want.id, None);
+          self.plugin_settled.notify_waiters();
           self.schedule_restart(&want.id);
         }
       }
@@ -93,6 +123,7 @@ impl Runtimes {
         stopped.push(old);
       }
     }
+    self.plugin_settled.notify_waiters();
     for w in stopped {
       w.stop().await;
     }
@@ -101,6 +132,7 @@ impl Runtimes {
   /// Stop every process (the engine is shutting down)
   pub async fn stop_all(&self) {
     self.enabled.store(false, Ordering::Relaxed);
+    self.plugin_settled.notify_waiters();
     // After a pass under way: it would otherwise put back a worker it was starting
     let _one = self.sync.lock().await;
     let workers: Vec<Arc<Worker>> = std::mem::take(&mut *self.workers.write()).into_values().collect();

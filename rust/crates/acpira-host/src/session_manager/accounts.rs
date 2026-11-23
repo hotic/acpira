@@ -118,13 +118,29 @@ impl SessionManager {
         Ok(())
       }
       Ok(Some(acc)) => {
-        if let Some(cur) = self.current(v)
+        let cur = self.current(v);
+        if let Some(cur) = &cur
           && cur.agent == agent
           && (cur.status() == SessionStatus::AuthRequired || cur.account_id().is_none())
           && let Err(e) = cur.rebind_account(&acc.id).await
         {
           self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())), cancel);
           return Err(e);
+        }
+        // Other live sessions of this agent stopped on sign-in with no valid account (unbound, removed or unlisted)
+        // move to the new account automatically too
+        let cur_id = cur.as_ref().map(|s| s.id.clone());
+        let accounts = self.deps.accounts.clone();
+        for s in self.live_sessions().into_iter().filter(|s| {
+          s.agent == agent
+            && cur_id.as_deref() != Some(s.id.as_str())
+            && s.status() == SessionStatus::AuthRequired
+            && s.account_id().is_none_or(|id| accounts.as_ref().is_some_and(|a| a.get(&id).is_none()))
+        }) {
+          let id = acc.id.clone();
+          tokio::spawn(async move {
+            let _ = s.rebind_account(&id).await;
+          });
         }
         self.pool.invalidate(None);
         self.set_account_action(action(AccountActionStatus::Success, None), cancel);
@@ -202,7 +218,9 @@ impl SessionManager {
       self.log(&format!("authenticate failed: {e}"));
       let Some(login) = &def.login else { return Err(e) };
       let bin = if login.command == def.command { registry.resolve_binary(&s.agent).await } else { None };
-      (self.deps.run_in_terminal)(title, bin.unwrap_or_else(|| login.command.clone()), login.args.clone(), None);
+      let env: std::collections::BTreeMap<String, Option<String>> =
+        def.env.clone().unwrap_or_default().into_iter().map(|(k, v)| (k, Some(v))).collect();
+      (self.deps.run_in_terminal)(title, bin.unwrap_or_else(|| login.command.clone()), login.args.clone(), (!env.is_empty()).then_some(env));
       (self.deps.toast)("info", &tp("host.loginThenRetry", &[("agent", &def.name)]));
     }
     Ok(())
@@ -218,7 +236,9 @@ impl SessionManager {
     let Some(login) = &def.login else { return false };
     let bin = if login.command == def.command { registry.resolve_binary(agent).await } else { None };
     let title = tp("host.loginTerminalTitle", &[("agent", &def.name)]);
-    (self.deps.run_in_terminal)(title, bin.unwrap_or_else(|| login.command.clone()), login.args.clone(), None);
+    let env: std::collections::BTreeMap<String, Option<String>> =
+      def.env.clone().unwrap_or_default().into_iter().map(|(k, v)| (k, Some(v))).collect();
+    (self.deps.run_in_terminal)(title, bin.unwrap_or_else(|| login.command.clone()), login.args.clone(), (!env.is_empty()).then_some(env));
     (self.deps.toast)("info", &tp("host.loginInTerminal", &[("agent", &def.name)]));
     true
   }
