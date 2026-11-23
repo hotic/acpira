@@ -11,6 +11,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.8] - 2026-11-23
+
+### Added
+
+- **Projects that mix local and SSH folders.** With hosts connected, Add folder in the project dialog offers a local folder or a host, whose folder picker opens over the dialog. Host folders show the host's name and connection dot.
+- **Per-host choice of where agents run.** The SSH host dialog lists agents as exceptions with a Local / Remote choice that outranks the agent's own switch for that host only, and the agent page names the hosts that override it.
+- SSH host sessions can be filed into this machine's categories. A new session started on a host is filed once its id lands.
+- Mermaid diagrams zoom and pan, with an expanded view and a source toggle. Web images in replies and SVG or image previews in the file viewer open in the lightbox on click.
+- Settings has an agent priority on Windows: agents run below normal priority by default, or at normal. Lowering applies to running agents at once, raising applies to agents started afterwards. `ACPIRA_AGENT_PRIORITY` overrides it.
+- A turn reopened after its reply or continued after a plan times each stretch on its own, so earlier stretches show their own duration instead of a bare Done. Older records keep Done.
+- Install and sign-in notices name the SSH host when the session runs on one, and Run on this computer stays offered there.
+
+### Changed
+
+- Summoned agents' returns read as one answer: report, handback and finished children's preview lines drop markdown marks, and the woken reply follows the report rows at their pitch. The iOS, Android and HarmonyOS apps follow.
+- In the desktop layout a divider separates New session / Search from the session list, and the column foot keeps only the gear and the devices row. Usage stays under Settings → Usage.
+- Category folders show open and shut folder icons and indent one step further. Settings dialog titles use the heading size, and tight nested controls get concentric corners.
+- Decorative motion pauses while the window is unfocused and steps at a lower cadence, and the orb and metal ring effects draw on a paced 2D canvas instead of SVG filters, keeping idle and high-refresh windows lighter.
+- Handoff packs for large change sets are built without a git process per file, and a long path list no longer overflows the Windows command line.
+
+### Fixed
+
+- A session whose account was removed or vanished moves to another account of that agent instead of stopping on sign-in, and adding an account also unblocks other sessions stuck on sign-in. Login terminals inherit the agent's `agents.json` environment.
+- A corrupt `secrets.json` is set aside as `secrets.json.corrupt-<stamp>` on the next key save instead of blocking every key, and the providers view says why a key is missing. Atomic writes sync the temp file before the rename.
+- Agents get up to 120 s to answer `initialize`, so cold Node CLIs on loaded Windows machines under antivirus scanning no longer fail to start.
+- On Windows, agy's background updater no longer flashes console windows.
+- A session id held by two SSH hosts resolves to its newest copy in the list, search and viewer, and moving a session off a host removes the standby copy left there.
+- Sending to a session whose standby copy is being promoted shows the prompt at once instead of only Starting…, and a failed promotion keeps the prompt queued beside the error.
+- Only finished replies are marked unread, and a crashed turn shows the error dot.
+- Cancelling a relay round stops it at once instead of waiting for its connection, sign-in or handoff pack.
+- In SSH folders, the built-in agent and plugin profile agents stay native, host tools are named from their MCP metadata, select-based permission modes are honoured for host writes, and a locally run CLI's own plans, skills and step media open from this machine.
+- Antigravity: a silent `/compact` after stray work from a detached run is counted, and spilled step files keep their step number in tool rows.
+- `BashOutput` rows resolve to the background command they wait on.
+- A settled transcript no longer alternates between two scroll positions on WebKit while following the tail, and an upward wheel keeps control.
+- Provider form errors show again after a field changes and sit in the footer, and Manage models lists models from the unsaved address and key.
+- A repeated shell toast replaces the earlier one instead of stacking. A newly offered plugin card no longer reads as removed. Closing a shrunk docked tool panel no longer jumps.
+- iOS: tables, code and diff previews stay inside their cells, and streamed text fades by rendered glyphs per paragraph. Android: a tapped fold stays under the finger while following the bottom. Mobile: a compaction after the reply stays outside the process fold.
+- `cookie` in the desktop app is updated to 0.18.3 (RUSTSEC-2026-0594).
+
 ## [2.1.7] - 2026-11-22
 
 ### Added
