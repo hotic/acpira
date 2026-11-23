@@ -207,9 +207,9 @@ class FlipRows extends Component<{ on: boolean; layout: string; children: ReactN
 // workspace scope, `nested` under a project group)
 type RowIndent = 'project' | 'category' | 'nested';
 const ROW_INDENT_CLASS: Record<RowIndent, string> = {
-  category: 'pl-5',
+  category: 'pl-6',
   project: 'pl-6',
-  nested: 'pl-9',
+  nested: 'pl-10',
 };
 
 // What decides where every row sits; FlipRows measures only when it changed
@@ -1462,7 +1462,7 @@ function GroupHeader({ project, sub, indent, name, title, folder, badge, count, 
         'group flex min-h-row items-center gap-gap rounded-md pr-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover data-[menu-open]:bg-hover',
         indent ? 'pl-6' : 'pl-2',
         onToggle && 'cursor-pointer',
-        project ? 'font-semibold text-fg-strong' : 'text-3 text-fg-3 hover:text-fg-1',
+        project ? 'font-semibold text-fg-strong' : 'text-fg-2 hover:text-fg-1',
         // Renaming keeps the hover fill, as on a session row. select-none as on ui/Row (see the session row), off while renaming
         editing ? 'bg-hover' : 'select-none',
         dragging && 'opacity-40',
@@ -1483,13 +1483,15 @@ function GroupHeader({ project, sub, indent, name, title, folder, badge, count, 
         </span>
       )}
       {sub && (
-        <span className="-mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-3/75 transition-colors group-hover:text-fg-1 group-focus-visible:text-fg-1 group-data-[menu-open]:text-fg-1">
-          <ChevronRight strokeWidth={1.6} className={cn('size-3 transition-transform duration-(--dur-open)', open && 'rotate-90')} />
+        // Softer folder at the same icon box as project folders, shutting and opening in place with the fold
+        <span className="relative -mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-3/75 transition-colors group-hover:text-fg-1 group-focus-visible:text-fg-1 group-data-[menu-open]:text-fg-1 *:absolute *:size-icon *:translate-y-px *:transition-opacity *:duration-200">
+          <Folder strokeWidth={1.5} className={open ? 'opacity-0' : 'opacity-100'} />
+          <FolderOpen strokeWidth={1.5} className={open ? 'opacity-100' : 'opacity-0'} />
         </span>
       )}
       {editing && onRename
         ? <RenameInput initial={name} label={t('session.category.rename')} onDone={onRename} />
-        : <span className={cn('min-w-0 truncate', sub && 'font-medium text-fg-2/85 group-hover:text-fg-1 group-focus-visible:text-fg-1 group-data-[menu-open]:text-fg-1')}>{name}</span>}
+        : <span className={cn('min-w-0 truncate', sub && 'font-medium text-fg-2 group-hover:text-fg-1 group-focus-visible:text-fg-1 group-data-[menu-open]:text-fg-1')}>{name}</span>}
       {badge && !editing && <span className="shrink-0 rounded-sm bg-active px-1 text-3 font-normal text-fg-3">{badge}</span>}
       {!editing && (
         <span className={cn(STACK, 'ml-auto shrink-0 items-center text-3 font-normal text-fg-3 tabular-nums')}>
