@@ -12,8 +12,8 @@ public enum ProseTone: Sendable { case reply, thought }
 public struct Prose: View {
   let blocks: [MDBlock]
   var tone: ProseTone
-  /// The streamed tail's fade, handed to the last text only (`ProseBlocks`)
-  var fade: StreamFade?
+  /// Streaming fade signal handed down while `StreamProse` is live
+  var fade: StreamFadeSignal?
   @Environment(\.agentAccent) private var accent
 
   /// `streaming`: the text is still arriving, so its unfinished tail is repaired first (streamdown's streaming mode)
@@ -28,7 +28,7 @@ public struct Prose: View {
   }
 
   /// Blocks parsed already (a streamed text's `StreamParse`)
-  init(blocks: [MDBlock], tone: ProseTone, fade: StreamFade? = nil) {
+  init(blocks: [MDBlock], tone: ProseTone, fade: StreamFadeSignal? = nil) {
     self.blocks = blocks
     self.tone = tone
     self.fade = fade
@@ -48,24 +48,121 @@ extension EnvironmentValues {
 
 // MARK: - Streaming
 
-/// The fading glyphs of a streamed text at one frame: a glyph `d` places before the end of the visible text is
-/// character `count - d`, and it fades in from the time the reveal step that brought that character in ran
-/// (motion.css `sd-acpGlyph`: opacity only, --stream-char-duration, ease)
-struct StreamFade: Equatable {
-  var count: Int
-  var reveals: [StreamReveal]
+/// Streaming fade signal handed down from `StreamProse`. Stays constant across pacing ticks so settled
+/// paragraphs do not re-evaluate when only the tail grows; changes only on unpaced jumps (resume / catch-up /
+/// rewrite) or when streaming finishes.
+struct StreamFadeSignal: Equatable {
+  var seedEpoch: Int
+  var seeded: Bool
+}
 
-  /// Opacity of the glyph `distance` places before the end; 1 once its fade has run
-  func opacity(distance: Int, now: Double) -> Double {
-    let position = count - distance
-    guard let step = reveals.last(where: { $0.from < position && position <= $0.to }) else { return 1 }
-    let t = min(max((now - step.time) / Motion.streamChar, 0), 1)
+/// Per-paragraph fade state indexed from the start of the rendered glyphs (`0..<seen`), matching desktop
+/// `glyphRuns.ts`. Counting rendered glyphs instead of subtracting from raw Markdown character offsets keeps
+/// every earlier glyph's index stable across syntax (`**`, `` ` ``, link URLs, escapes) and inline code pads.
+struct GlyphFade: Equatable {
+  /// Rendered non-pad glyphs already revealed in this paragraph
+  private(set) var seen = 0
+  /// Active reveal steps for newly appended rendered glyphs (motion.css `sd-acpGlyph`)
+  private(set) var reveals: [StreamReveal] = []
+
+  /// Marks all `count` rendered glyphs as settled without fading (resume / catch-up / rewrite)
+  mutating func seed(_ count: Int) {
+    seen = max(0, count)
+    reveals.removeAll()
+  }
+
+  /// Reconciles the rendered glyph count at `now`, recording a reveal for any newly appended suffix
+  mutating func sync(count: Int, now: Double, duration: Double = Motion.streamChar) {
+    let clamped = max(0, count)
+    expire(now: now, duration: duration)
+    if clamped > seen {
+      reveals.append(StreamReveal(time: now, from: seen, to: clamped))
+      seen = clamped
+    } else if clamped < seen {
+      seen = clamped
+      reveals = reveals.compactMap { step in
+        guard step.from < clamped else { return nil }
+        return StreamReveal(time: step.time, from: step.from, to: min(step.to, clamped))
+      }
+    }
+  }
+
+  /// Drops reveal steps whose fade has finished
+  mutating func expire(now: Double, duration: Double = Motion.streamChar) {
+    reveals.removeAll { now - $0.time > duration }
+  }
+
+  /// Whether any glyph in `range` (`0`-based from paragraph start) is still fading
+  func hasFading(in range: Range<Int>) -> Bool {
+    reveals.contains { $0.from < range.upperBound && $0.to > range.lowerBound }
+  }
+
+  /// Opacity of the glyph at rendered index `index` (`0`-based from paragraph start); 1 once settled
+  func opacity(at index: Int, now: Double, duration: Double = Motion.streamChar) -> Double {
+    guard let step = reveals.last(where: { $0.from <= index && index < $0.to }) else { return 1 }
+    let t = min(max((now - step.time) / duration, 0), 1)
     // CSS `ease`: cubic-bezier(.25, .1, .25, 1)
     return UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.25, y: 0.1), endControlPoint: UnitPoint(x: 0.25, y: 1)).value(at: t)
   }
+}
 
-  /// How many glyphs from the end can still be fading
-  var reach: Int { reveals.first.map { count - $0.from } ?? 0 }
+/// Reference wrapper held by `InlineText` so `InlineCodeRenderer.draw` can reconcile rendered glyph counts
+/// without invalidating the view tree during layout or draw passes
+final class GlyphFadeTracker {
+  private(set) var fade = GlyphFade()
+  private var initialized = false
+  private var seedEpoch = 0
+  private(set) var needsSeed = false
+  private var lastContent = ""
+  private var pendingFade = false
+
+  /// Whether this paragraph has a new change waiting for its first draw or an unfinished glyph fade
+  var isActive: Bool { !needsSeed && (pendingFade || !fade.reveals.isEmpty) }
+
+  /// Updates tracking state from `InlineText.body` before `TimelineView` decides whether to run
+  func prepare(content: String, signal: StreamFadeSignal) {
+    if signal.seeded || (initialized && signal.seedEpoch != seedEpoch) {
+      initialized = true
+      seedEpoch = signal.seedEpoch
+      lastContent = content
+      needsSeed = true
+      pendingFade = false
+      fade.seed(fade.seen)
+      return
+    }
+    if !initialized {
+      initialized = true
+      seedEpoch = signal.seedEpoch
+      lastContent = content
+      if !content.isEmpty { pendingFade = true }
+      return
+    }
+    if content != lastContent {
+      lastContent = content
+      if !needsSeed { pendingFade = true }
+    }
+  }
+
+  /// Called by `InlineCodeRenderer.draw` with the actual rendered non-pad glyph count
+  func sync(glyphCount: Int, now: Double) {
+    if needsSeed {
+      fade.seed(glyphCount)
+      needsSeed = false
+      pendingFade = false
+      return
+    }
+    guard now > 0 else { return }
+    fade.sync(count: glyphCount, now: now)
+    pendingFade = false
+  }
+
+  func expire(now: Double) {
+    fade.expire(now: now)
+    if fade.reveals.isEmpty { pendingFade = false }
+  }
+
+  func hasFading(in range: Range<Int>) -> Bool { fade.hasFading(in: range) }
+  func opacity(at index: Int, now: Double) -> Double { fade.opacity(at: index, now: now) }
 }
 
 /// chat/Prose.tsx with streamMotion.ts: a streamed text is paced out at the agent's measured speed and every newly
@@ -106,7 +203,8 @@ public struct StreamProse: View {
         // The turn heading already indicates waiting before the first visible words. Stops at the first visible
         // character instead of trimming a copy of the whole text on every tick
         if !text.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains) {
-          Prose(blocks: parse(text), tone: tone, fade: resume ? nil : StreamFade(count: pacer.count, reveals: pacer.reveals))
+          let signal = StreamFadeSignal(seedEpoch: pacer.skipEpoch, seeded: resume || quiet || pacer.seeded)
+          Prose(blocks: parse(text), tone: tone, fade: signal)
         } else {
           // An empty Group is no view at all and would never start the task below; this holds it for the first tick
           Color.clear.frame(height: 0)
@@ -140,7 +238,9 @@ public struct StreamProse: View {
       // Read after the sleep: text received meanwhile must not be overwritten by a stale copy
       guard !Task.isCancelled, var next = pacer else { return }
       let now = Date.timeIntervalSinceReferenceDate
-      next.tick(now: now, dt: now - last)
+      // Keep the pacer mounted a couple of frames past the glyph fade so the tail paragraph finishes smoothly
+      // before switching to static Prose (matches webview RUN_FADE_MS = STREAM_DURATION_MS + 40)
+      next.tick(now: now, dt: now - last, fade: Motion.streamChar + 0.04)
       last = now
       if !next.streaming && !next.pending && next.reveals.isEmpty {
         pacer = nil
@@ -216,15 +316,16 @@ struct ProseMore: View {
 struct ProseBlocks: View {
   let blocks: [MDBlock]
   let style: ProseStyle
-  /// The streamed tail's fade: the last block's alone, earlier blocks have finished fading by construction
-  var fade: StreamFade?
+  /// Streaming fade signal: passed to every block so an earlier paragraph finishes its own fade after a new
+  /// block starts instead of snapping to full opacity, while settled paragraphs stay dormant
+  var fade: StreamFadeSignal?
   @Environment(\.quoteProse) private var quote
   @State private var shown = ProseCap.page
 
   var body: some View {
     VStack(alignment: .leading, spacing: Metrics.gap) {
       ForEach(Array(blocks.prefix(shown).enumerated()), id: \.offset) { index, block in
-        ProseBlock(block: block, style: style, first: index == 0, fade: index == blocks.count - 1 ? fade : nil)
+        ProseBlock(block: block, style: style, first: index == 0, fade: fade)
           #if !canImport(UIKit)
           .environment(\.quoteProse, nil)
           #endif
@@ -271,8 +372,8 @@ struct ProseBlock: View {
   let block: MDBlock
   let style: ProseStyle
   var first: Bool
-  /// The streamed tail's fade when this is the last block; tables, code and math appear whole and take none
-  var fade: StreamFade?
+  /// Streaming fade signal while `StreamProse` is live; tables, code and math appear whole and take none
+  var fade: StreamFadeSignal?
 
   var body: some View {
     switch block {
@@ -319,8 +420,8 @@ struct ProseList: View {
   let start: Int
   let items: [[MDBlock]]
   let style: ProseStyle
-  /// The streamed tail's fade, for the last block of the last item
-  var fade: StreamFade?
+  /// Streaming fade signal handed to each item's blocks so an item finishes fading after the next item starts
+  var fade: StreamFadeSignal?
   @State private var shown = ProseCap.page
 
   var body: some View {
@@ -332,8 +433,7 @@ struct ProseList: View {
             .frame(width: style.listIndent, alignment: .trailing)
           VStack(alignment: .leading, spacing: Metrics.s0_5) {
             ForEach(Array(item.enumerated()), id: \.offset) { i, block in
-              ProseBlock(block: block, style: style, first: i == 0,
-                         fade: index == items.count - 1 && i == item.count - 1 ? fade : nil)
+              ProseBlock(block: block, style: style, first: i == 0, fade: fade)
             }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -377,7 +477,7 @@ struct ProseList: View {
 struct ProseQuote: View {
   let blocks: [MDBlock]
   let style: ProseStyle
-  var fade: StreamFade?
+  var fade: StreamFadeSignal?
 
   var body: some View {
     var quiet = style

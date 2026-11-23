@@ -9,6 +9,10 @@ import SwiftUI
 /// Marks the glyphs that sit on an inline code chip
 struct InlineCodeChip: TextAttribute {}
 
+/// Marks the figure-space padding runs flanking an inline code chip so glyph-based streaming fades
+/// ignore synthetic padding when indexing rendered glyphs
+struct InlineCodePad: TextAttribute {}
+
 /// Paints the inline code chips behind their glyphs, then the text. A line holding a chip is taller in CSS (the
 /// mono inline box reaches past the strut), so each line moves down by the growth of the chip lines above it and
 /// by its own top growth; the view pads its bottom by the total (`InlineText`)
@@ -24,50 +28,67 @@ struct InlineCodeRenderer: TextRenderer {
   var growth: (top: CGFloat, bottom: CGFloat)
   /// The total growth, known after the first layout
   var extra: CGFloat
-  /// A streamed tail's glyph fade (the last text of a live Prose)
-  var fade: StreamFade?
+  /// Per-paragraph rendered glyph fade tracker while `StreamProse` is live; nil for static text
+  var tracker: GlyphFadeTracker?
   var now: Double = 0
 
   var displayPadding: EdgeInsets { EdgeInsets(top: 0, leading: 0, bottom: extra, trailing: 0) }
 
   func draw(layout: Text.Layout, in ctx: inout GraphicsContext) {
     var shift: CGFloat = 0
-    // Glyphs counted from the end of the text: the fade reaches only the last `reach` of them
-    var remaining = fade.map { _ in layout.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } } } ?? 0
+    if let tracker {
+      let total = layout.reduce(0) { sum, line in
+        sum + line.reduce(0) { $0 + ($1[InlineCodePad.self] == nil ? $1.count : 0) }
+      }
+      tracker.sync(glyphCount: total, now: now)
+    }
+    var cursor = 0
     for line in layout {
       let chipped = hasChip(line)
       var c = ctx
       c.translateBy(x: 0, y: baselineShift(line, depth: depth) + shift + (chipped ? growth.top : 0))
       var chip: CGRect?
+      var chipFirst: Int?
       func flush() {
         if let rect = chip {
-          c.fill(RoundedRectangle(cornerRadius: radius).path(in: rect.insetBy(dx: 0, dy: -outsetY)), with: .color(fill))
+          var bg = c
+          // Fade the inline code backdrop with its leading glyph so an empty grey box never pops ahead of the text
+          if let tracker, now > 0, let first = chipFirst {
+            bg.opacity = tracker.opacity(at: first, now: now)
+          }
+          bg.fill(RoundedRectangle(cornerRadius: radius).path(in: rect.insetBy(dx: 0, dy: -outsetY)), with: .color(fill))
         }
         chip = nil
+        chipFirst = nil
       }
+      var scan = cursor
       for run in line {
+        let isPad = run[InlineCodePad.self] != nil
         if run[InlineCodeChip.self] != nil {
           let r = run.typographicBounds.rect
           chip = chip.map { $0.union(r) } ?? r
+          if !isPad, chipFirst == nil { chipFirst = scan }
         } else { flush() }
+        if !isPad { scan += run.count }
       }
       flush()
-      let glyphs = line.reduce(0) { $0 + $1.count }
-      if let fade, remaining - glyphs < fade.reach {
-        // The line holds fading glyphs: draw it glyph by glyph at each one's opacity
-        var left = remaining
+      let lineEnd = scan
+      if let tracker, now > 0, tracker.hasFading(in: cursor..<lineEnd) {
+        // The line holds fading glyphs: draw non-pad glyphs one by one at their own opacity
+        var index = cursor
         for run in line {
+          if run[InlineCodePad.self] != nil { continue }
           for glyph in run {
-            left -= 1
             var g = c
-            g.opacity = fade.opacity(distance: left, now: now)
+            g.opacity = tracker.opacity(at: index, now: now)
             g.draw(glyph)
+            index += 1
           }
         }
       } else {
         c.draw(line)
       }
-      remaining -= glyphs
+      cursor = lineEnd
       if chipped { shift += growth.top + growth.bottom }
     }
   }
@@ -93,21 +114,50 @@ struct InlineText: View {
   let strongInk: Color
   let accent: Color
   var weight: FontWeight = .regular
-  /// The streamed tail's fade, on the last text of a live Prose only. It changes on every pacing tick, so it is an
-  /// input of this view rather than an environment value: written into the environment, each tick handed every
-  /// selection text view below the write a new environment, which UIKit compares in full as a trait change
-  var fade: StreamFade?
+  /// Streaming fade signal while `StreamProse` is live. Kept as a view input rather than an environment value so
+  /// selection text views never compare the full environment as a trait change on streamed updates
+  var fade: StreamFadeSignal?
+  @Environment(\.snapshot) private var snapshot
   @State private var extra: CGFloat = 0
+  @State private var tracker = GlyphFadeTracker()
+  @State private var fading = false
+
+  private struct FadePass: Equatable {
+    var content: String
+    var seedEpoch: Int
+    var seeded: Bool
+  }
 
   var body: some View {
     // Built once per evaluation of this body: the fade's frames in between only move the renderer's clock
     let paragraph = InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent).paragraph(inlines, weight: weight)
     let growth = hasCode(inlines) ? style.inlineGrowth(WebType.mono) : (top: CGFloat(0), bottom: CGFloat(0))
+    let liveFade = snapshot ? nil : fade
+    let content = liveFade == nil ? "" : Markdown.plain(inlines)
+    let _ = liveFade.map { tracker.prepare(content: content, signal: $0) }
+    let animating = liveFade != nil && (fading || tracker.isActive)
+    let pass = liveFade.map { FadePass(content: content, seedEpoch: $0.seedEpoch, seeded: $0.seeded) }
     // Pause in place instead of swapping a TimelineView for Text: tearing down the text whenever a fade settled
     // discarded its layout while the hosted row was still resizing or the process above it was closing.
-    TimelineView(.animation(paused: fade?.reveals.isEmpty != false)) { timeline in
+    TimelineView(.animation(paused: !animating)) { timeline in
       // A settled paragraph has no fade clock. A new timestamp would invalidate its renderer during cell sizing.
-      text(paragraph, growth: growth, now: fade?.reveals.isEmpty == false ? timeline.date.timeIntervalSinceReferenceDate : 0)
+      text(paragraph, growth: growth, tracker: liveFade != nil ? tracker : nil,
+           now: animating ? timeline.date.timeIntervalSinceReferenceDate : 0)
+    }
+    .task(id: pass) {
+      guard let pass else {
+        if fading { fading = false }
+        return
+      }
+      if pass.seeded || tracker.needsSeed || !tracker.isActive {
+        if fading { fading = false }
+        return
+      }
+      if !fading { fading = true }
+      try? await Task.sleep(for: .seconds(Motion.streamChar + 0.04))
+      guard !Task.isCancelled else { return }
+      tracker.expire(now: Date.timeIntervalSinceReferenceDate)
+      fading = false
     }
     #if canImport(UIKit)
     .accessibilityHidden(true)
@@ -122,13 +172,13 @@ struct InlineText: View {
     #endif
   }
 
-  private func text(_ paragraph: Text, growth: (top: CGFloat, bottom: CGFloat), now: Double) -> some View {
+  private func text(_ paragraph: Text, growth: (top: CGFloat, bottom: CGFloat), tracker: GlyphFadeTracker?, now: Double) -> some View {
     paragraph
       .lineBox(style)
       .foregroundStyle(ink)
       .textRenderer(InlineCodeRenderer(fill: Palette.hover, radius: Metrics.rSm, outsetY: (WebType.mono.size * 0.1).rounded(.up),
                                        lineHeight: style.lineHeight, depth: style.renderDepth, growth: growth, extra: extra,
-                                       fade: fade, now: now))
+                                       tracker: tracker, now: now))
       .fixedSize(horizontal: false, vertical: true)
       .onPreferenceChange(Text.LayoutKey.self) { layouts in
         let total = chipGrowth(layouts, growth)
@@ -246,7 +296,9 @@ struct InlineBuilder {
   func code(_ s: String, after previous: Character?, before next: Character?) -> Text {
     let mono = WebType.mono
     // A mono figure space is .6em; the pad is .4em of the code size
-    let pad = Text(web: Self.codePad).font(Font(MonoFont.ctFont(size: mono.size * 0.4 / 0.6, weight: .regular)))
+    let pad = Text(web: Self.codePad)
+      .font(Font(MonoFont.ctFont(size: mono.size * 0.4 / 0.6, weight: .regular)))
+      .customAttribute(InlineCodePad())
     // A word joiner after each slash: Chrome finds no break opportunity after `/` before a letter, CoreText does
     var text = CJKWidth.attributed(s.replacingOccurrences(of: "/", with: "/\u{2060}"), size: WebType.mono.size, paragraph: false)
     // A path in backticks opens the file page (chat/Link.tsx InlineFileCode), still looking like code

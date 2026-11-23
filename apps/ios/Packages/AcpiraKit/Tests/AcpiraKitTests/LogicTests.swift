@@ -659,21 +659,62 @@ private let fusionOptions: [SessionOption] = [
     #expect(pacer.visible == "already on screen")
     #expect(!pacer.pending)
     #expect(pacer.reveals.isEmpty)
+    #expect(pacer.skipEpoch == 1)
+    #expect(pacer.seeded)
     // Subsequent streamed chunks pace out from the skipped prefix
     pacer.receive("already on screen, and now streaming live", streaming: true, now: 1)
     #expect(pacer.visible == "already on screen")
     #expect(pacer.pending)
     pacer.tick(now: 1.032, dt: 0.032)
     #expect(pacer.count > "already on screen".count)
+    #expect(!pacer.seeded)
   }
 
-  @Test func fadeFollowsRevealSteps() {
-    let fade = StreamFade(count: 10, reveals: [StreamReveal(time: 1, from: 4, to: 10)])
-    // The last glyph (character 10) is new; character 4 came before the step
-    #expect(fade.opacity(distance: 0, now: 1) == 0)
-    #expect(fade.opacity(distance: 6, now: 1) == 1)
-    #expect(fade.opacity(distance: 0, now: 1 + Motion.streamChar) == 1)
-    #expect(fade.reach == 6)
+  @Test func fadeFollowsRenderedGlyphStepsWithoutRegressing() {
+    var fade = GlyphFade()
+    // First batch: "正在分析" (4 glyphs) at t = 1.00
+    fade.sync(count: 4, now: 1.00)
+    #expect(fade.opacity(at: 0, now: 1.00) == 0)
+    #expect(fade.opacity(at: 3, now: 1.00) == 0)
+    #expect(fade.hasFading(in: 0..<4))
+
+    // Second batch at t = 1.05: crossing Markdown syntax like `**a` adds only 1 rendered glyph (`a`),
+    // never shifting earlier glyphs back into a newer reveal step
+    let before = fade.opacity(at: 3, now: 1.05)
+    fade.sync(count: 5, now: 1.05)
+    #expect(before > 0)
+    #expect(fade.opacity(at: 3, now: 1.05) == before)
+    #expect(fade.opacity(at: 4, now: 1.05) == 0)
+
+    // Link URL streaming adds 0 rendered glyphs: earlier glyphs keep advancing monotonically
+    let mid = fade.opacity(at: 4, now: 1.10)
+    fade.sync(count: 5, now: 1.10)
+    #expect(mid > 0)
+    #expect(fade.opacity(at: 4, now: 1.10) == mid)
+
+    // Once Motion.streamChar elapses, everything settles at opacity 1 and expires
+    #expect(fade.opacity(at: 3, now: 1.00 + Motion.streamChar) == 1)
+    fade.expire(now: 1.05 + Motion.streamChar + 0.01)
+    #expect(!fade.hasFading(in: 0..<5))
+  }
+
+  @Test func fadeSeedLeavesExistingGlyphsSettled() {
+    let tracker = GlyphFadeTracker()
+    // Reopened mid-turn: existing text seeds without fading
+    tracker.prepare(content: "already here", signal: StreamFadeSignal(seedEpoch: 1, seeded: true))
+    #expect(tracker.needsSeed)
+    #expect(!tracker.isActive)
+    tracker.sync(glyphCount: 12, now: 0)
+    #expect(!tracker.needsSeed)
+    #expect(tracker.opacity(at: 11, now: 2.0) == 1)
+
+    // Next live chunk appends 3 glyphs: only indices 12..<15 fade in
+    tracker.prepare(content: "already here...", signal: StreamFadeSignal(seedEpoch: 1, seeded: false))
+    #expect(tracker.isActive)
+    tracker.sync(glyphCount: 15, now: 2.0)
+    #expect(tracker.opacity(at: 11, now: 2.0) == 1)
+    #expect(tracker.opacity(at: 12, now: 2.0) == 0)
+    #expect(tracker.opacity(at: 14, now: 2.0) == 0)
   }
 }
 

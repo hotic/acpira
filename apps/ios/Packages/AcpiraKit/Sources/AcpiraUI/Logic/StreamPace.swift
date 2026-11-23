@@ -35,6 +35,10 @@ struct StreamPacer: Equatable {
   private(set) var streaming = false
   /// Recent reveal steps, newest last, kept for one glyph fade (STREAM_DURATION_MS)
   private(set) var reveals: [StreamReveal] = []
+  /// Incremented whenever the visible prefix jumps without pacing (resume, catch-up, rewrite)
+  private(set) var skipEpoch = 0
+  /// True after an unpaced jump until the next paced reveal advances the visible prefix
+  private(set) var seeded = false
   private var pos: Double = 0
   private var at: Double = 0
   /// Characters per second of the incoming stream, and actually revealed
@@ -64,6 +68,8 @@ struct StreamPacer: Equatable {
     self.streaming = streaming
     guard appended, !skip else {
       count = next.count; pos = Double(count); speed = 0; reveals = []
+      skipEpoch += 1
+      seeded = true
       if skip { at = 0 }
       return
     }
@@ -95,6 +101,7 @@ struct StreamPacer: Equatable {
     if next > count {
       reveals.append(StreamReveal(time: now, from: count, to: next))
       count = next
+      seeded = false
     }
   }
 
