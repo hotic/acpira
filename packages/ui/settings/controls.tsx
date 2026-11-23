@@ -321,7 +321,7 @@ export function SettingsDialog({ title, sub, icon, control, wide, tall, pinTop, 
             {icon && <span className="flex size-lead shrink-0 items-center justify-center text-fg-2 [&>svg]:size-lead [&>svg]:stroke-[1.5]">{icon}</span>}
             <span className="flex min-w-0 flex-1 items-baseline gap-2">
               {/* The title keeps its words; the subtitle gives way first */}
-              <Dialog.Title className="m-0 min-w-0 max-w-full shrink-0 truncate text-2 font-medium text-fg-1">{title}</Dialog.Title>
+              <Dialog.Title className="m-0 min-w-0 max-w-full shrink-0 truncate text-(length:--text-h) leading-(--text-h-lh) font-medium text-fg-1">{title}</Dialog.Title>
               {sub && <span className="min-w-0 truncate text-2 text-fg-3">{sub}</span>}
             </span>
             {control}
