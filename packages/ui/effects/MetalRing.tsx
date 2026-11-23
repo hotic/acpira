@@ -16,8 +16,8 @@ export interface MetalRingProps {
 
 // A silver ring around a single child (the send / stop button), plus a soft halo and catch-light that drift along the
 // edge toward the ring's brightest spot. The child stays on screen at all times: both the ring and the glow paint onto
-// 2D canvases (no WebGL and no SVG <feGaussianBlur>/<mask> filters, which bloated Skia Graphite/Dawn GPU memory by
-// ~240 MB and forced high-frequency compositor commits on Windows WebView2).
+// 2D canvases (no WebGL and no SVG <feGaussianBlur>/<mask> filters, which bloated Skia Graphite/Dawn GPU memory
+// and forced high-frequency compositor commits on Windows WebView2).
 export function MetalRing({ theme = 'dark', paused = false, scale = 1, className, part, children }: MetalRingProps) {
   const root = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);

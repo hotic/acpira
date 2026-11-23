@@ -279,8 +279,8 @@ function draw(i: Inst, now: number) {
 
 const running = (i: Inst) => i.visible && !i.paused && !reduced;
 
-// Pace redraws with setTimeout -> single rAF instead of waking rAF on every display vsync: on a 159 Hz display, an
-// empty rAF callback still schedules BeginMainFrame 159 times/s. 30 fps reads smoothly on a 20 px icon; unfocused
+// Pace redraws with setTimeout -> single rAF instead of waking rAF on every display vsync: on high-refresh displays, an
+// empty rAF callback still schedules BeginMainFrame every vsync. 30 fps reads smoothly on a 20 px icon; unfocused
 // windows drop to 10 fps so the orb still reads as alive without burning GPU/IPC behind other apps, and hidden pages stop
 const FOCUSED_FRAME_MS = 33;
 const BLURRED_FRAME_MS = 100;

@@ -37,7 +37,7 @@
   width: 200%;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 35%, #000 65%, transparent);
   mask-image: linear-gradient(90deg, transparent, #000 35%, #000 65%, transparent);
-  /* 30 fps (60 steps over the 2 s cycle) avoids 159 Hz swap/recalc floods on high-refresh displays */
+  /* 30 fps (60 steps over the 2 s cycle) avoids high-refresh swap/recalc floods */
   animation: acp-shimmer-band var(--shimmer-cycle) steps(60, end) infinite;
 }
 .shimmer-copy { width: 100%; animation: acp-shimmer-copy var(--shimmer-cycle) steps(60, end) infinite; }
@@ -201,7 +201,7 @@
 @keyframes acp-enter { from { opacity: 0; transform: translateY(var(--enter-y)); } }
 @keyframes acp-pulse { 50% { opacity: 0.3; } }
 /* Session list unread dot: the dot stays lit while a copy of it ripples outward and fades. Play three ripples on arrival
-   and then rest on the solid dot: an infinite ripple on idle unread rows or UpdateDot kept 159 Hz GPU commits running forever */
+   and then rest on the solid dot: an infinite ripple on idle unread rows or UpdateDot kept full-refresh GPU commits running forever */
 .unread-halo { position: relative; }
 .unread-halo::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: inherit; opacity: 0; will-change: transform, opacity; animation: acp-halo 2s steps(40, end) 3; }
 @keyframes acp-halo { from { opacity: 0.6; transform: scale(1); } to { opacity: 0; transform: scale(2.6); } }
@@ -223,7 +223,7 @@
     transparent calc(var(--remote-badge) / 2), #000 calc(var(--remote-badge) / 2 + 0.5px));
 }
 .remote-breathe { will-change: opacity; animation: acp-pulse 1.6s steps(32, end) infinite; }
-/* Working spinners step at 24 fps on their wrapper span: visually smooth at 10-14 px while cutting 159 Hz GPU/IPC ~6x */
+/* Working spinners step at 24 fps on their wrapper span: visually smooth at 10-14 px while capping high-refresh GPU/IPC */
 .live-spin { animation-timing-function: steps(24, end); will-change: transform; }
 
 /* A session row's agent mark whose session runs another vendor's model (SessionList Item): hovered, it turns over to that

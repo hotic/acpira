@@ -243,8 +243,8 @@ function canRun(): boolean {
   return !document.hidden && isWindowFocused() && hasLive();
 }
 
-// Pace the 15 fps cadence with setTimeout -> single rAF instead of waking rAF on every display vsync: on a 159 Hz
-// display an empty rAF callback still schedules BeginMainFrame 159 times a second even when 144 of those frames skip
+// Pace the 15 fps cadence with setTimeout -> single rAF instead of waking rAF on every display vsync: on high-refresh
+// displays an empty rAF callback still schedules BeginMainFrame every vsync even when most frames skip
 function scheduleNext() {
   if (raf || timer !== undefined || !canRun()) return;
   const wait = Math.max(0, FRAME_MS - (performance.now() - last));
