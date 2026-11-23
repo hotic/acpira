@@ -18,10 +18,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import cc.hotic.acpira.design.Lucide
@@ -50,7 +52,9 @@ import cc.hotic.acpira.ui.AgentMessage
 import cc.hotic.acpira.ui.AppMenu
 import cc.hotic.acpira.ui.AppMenuItem
 import cc.hotic.acpira.ui.ChatHandlers
+import cc.hotic.acpira.ui.FOLD_SETTLE_MS
 import cc.hotic.acpira.ui.LocalChatHandlers
+import cc.hotic.acpira.ui.LocalHoldScroll
 import cc.hotic.acpira.ui.LocalRowHeight
 import cc.hotic.acpira.ui.MenuGlyph
 import cc.hotic.acpira.ui.Orb
@@ -179,6 +183,13 @@ private fun InspectorThread(model: AppModel, session: String, view: SessionView,
   val total = items.size + if (extra) 1 else 0
   val list = rememberLazyListState()
   var following by remember { mutableStateOf(true) }
+  var foldToggles by remember { mutableIntStateOf(0) }
+  val holdScroll = remember { { following = false; foldToggles += 1 } }
+  LaunchedEffect(foldToggles) {
+    if (foldToggles == 0) return@LaunchedEffect
+    delay(FOLD_SETTLE_MS)
+    if (!list.isScrollInProgress && !list.canScrollForward) following = true
+  }
   LaunchedEffect(list) {
     snapshotFlow { list.layoutInfo.let { info -> (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 1 } }
       .collect { atEnd -> if (list.isScrollInProgress) following = atEnd }
@@ -187,6 +198,7 @@ private fun InspectorThread(model: AppModel, session: String, view: SessionView,
   LaunchedEffect(view.turns, total) {
     if (following && total > 0) list.scrollToItem(total - 1, Int.MAX_VALUE / 2)
   }
+  CompositionLocalProvider(LocalHoldScroll provides holdScroll) {
   BoxWithConstraints(Modifier.fillMaxSize()) {
     LazyColumn(
       state = list,
@@ -229,6 +241,7 @@ private fun InspectorThread(model: AppModel, session: String, view: SessionView,
         }
       }
     }
+  }
   }
 }
 

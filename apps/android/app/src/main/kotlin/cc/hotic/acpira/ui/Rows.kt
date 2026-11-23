@@ -525,6 +525,12 @@ fun rememberFold(key: String, fallback: Boolean): FoldState {
   return FoldState(manual, fallback)
 }
 
+/** Keeps a tapped fold's row in place by releasing stick-to-bottom until the settled fold leaves the end in view */
+val LocalHoldScroll = compositionLocalOf<() -> Unit> { {} }
+
+/** Matches iOS `Motion.foldSettle` (400 ms): how long a fold spring takes to settle before bottom-follow checks again */
+internal const val FOLD_SETTLE_MS = 400L
+
 /**
  * An expandable row (ui/Disclosure). The body is indented to the label column when the row has a lead ([indent]), and
  * a rail runs from the lead icon: down the body ([RailMode.body], the default for an indented body) or icon to icon
@@ -551,8 +557,9 @@ fun Disclosure(
   content: @Composable () -> Unit,
 ) {
   val mode = rail ?: if (indent) RailMode.body else RailMode.off
+  val holdScroll = LocalHoldScroll.current
   val column: @Composable () -> Unit = {
-    AcpRow(rowModifier.rowButton(open, onToggle), tone = tone, dense = dense, icon = icon, iconTint = iconTint, trailing = trailing, content = label)
+    AcpRow(rowModifier.rowButton(open) { holdScroll(); onToggle() }, tone = tone, dense = dense, icon = icon, iconTint = iconTint, trailing = trailing, content = label)
     Reveal(open) {
       val body: @Composable () -> Unit = {
         Box(

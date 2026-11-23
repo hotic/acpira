@@ -773,8 +773,9 @@ private fun CodexFold(turn: AgentTurn, blocks: List<AgentBlock>, running: Boolea
   val parts = remember(items, head) { processParts(items, head) }
   // Only items fold; a process of nothing but steered prompts or delegations has no chevron
   val foldable = parts.any { it is FoldPart.Items }
+  val holdScroll = LocalHoldScroll.current
   Column(Modifier.fillMaxWidth()) {
-    if (!retired) EntranceOnce("fold-head") { FoldHead(turn, running, open, foldable, now) { manual = !open } }
+    if (!retired) EntranceOnce("fold-head") { FoldHead(turn, running, open, foldable, now) { holdScroll(); manual = !open } }
     CompositionLocalProvider(LocalImageInFold provides false, LocalProcessHead provides head) {
     parts.forEachIndexed { i, part ->
       androidx.compose.runtime.key(part.id) {

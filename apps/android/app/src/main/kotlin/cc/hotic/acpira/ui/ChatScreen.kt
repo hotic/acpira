@@ -240,6 +240,15 @@ fun ChatScreen(model: AppModel, id: String) {
 
   // Follow the end while the reader is there: a new exchange or a growing last turn keeps it in view
   var following by remember { mutableStateOf(true) }
+  var foldToggles by remember { mutableIntStateOf(0) }
+  // Opening or closing a fold releases bottom-follow so the tapped row stays under the finger, then resumes once the
+  // settled fold leaves the end in view (matches iOS `TranscriptControl.hold` / `followIfAtEndAfterFold`)
+  val holdScroll = remember { { following = false; foldToggles += 1 } }
+  LaunchedEffect(foldToggles) {
+    if (foldToggles == 0) return@LaunchedEffect
+    delay(FOLD_SETTLE_MS)
+    if (!thread.isScrollInProgress && !thread.canScrollForward) following = true
+  }
   LaunchedEffect(thread) {
     snapshotFlow { thread.layoutInfo.let { info -> (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 1 } }
       .collect { atEnd -> if (!thread.isScrollInProgress) return@collect; following = atEnd }
@@ -466,6 +475,7 @@ fun ChatScreen(model: AppModel, id: String) {
       LocalPromptMarks provides marks,
       LocalThreadTaps provides threadTaps,
       LocalTurnReveal provides turnReveal,
+      LocalHoldScroll provides holdScroll,
     ) {
     // Messages leave under the bar through a fade, once the thread has moved off its top
     val scrolled by remember(thread) { derivedStateOf { thread.canScrollBackward } }

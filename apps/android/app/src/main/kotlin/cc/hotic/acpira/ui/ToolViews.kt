@@ -981,11 +981,12 @@ private fun CommandPrompt(command: String, last: Boolean) {
   var expanded by remember { mutableStateOf(false) }
   var clipped by remember { mutableStateOf(false) }
   val motion = LocalMotion.current
+  val holdScroll = LocalHoldScroll.current
   val progress by animateFloatAsState(if (expanded) 1f else 0f, if (motion) RowMotion.fold(PROMPT_STEP) else snap(), label = "prompt")
   val style = WebType.mono
   Row(
     Modifier.fillMaxWidth()
-      .then(if (clipped) Modifier.clickable(remember { MutableInteractionSource() }, indication = null) { expanded = !expanded } else Modifier)
+      .then(if (clipped) Modifier.clickable(remember { MutableInteractionSource() }, indication = null) { holdScroll(); expanded = !expanded } else Modifier)
       .padding(start = WebMetrics.commandX, end = WebMetrics.commandX, top = WebMetrics.commandY, bottom = if (last) WebMetrics.commandY else Metrics.s0),
   ) {
     Text("$ ", color = Palette.fg3, style = style)
