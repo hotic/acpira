@@ -1,4 +1,5 @@
 import { ORB_SIZE, type OrbKind } from './presets';
+import { isWindowFocused, subscribeWindowFocused } from '../plugins/motion';
 
 // Own canvas 2D port of the two thinking-orbs states the UI uses, at the 20px preset only:
 // 'think' = a face-on ring of dot lanes whose radius undulates, 'fetch' = a slowly turning constellation
@@ -212,18 +213,29 @@ export function paintOrb(ctx: CanvasRenderingContext2D, kind: OrbKind, t: number
     ctx.lineTo(l.x2, l.y2);
     ctx.stroke();
   }
-  // Back to front; stable sort keeps insertion order on ties like the library
+  // Back to front; stable sort keeps insertion order on ties like the library.
+  // Batch consecutive dots sharing the same quantized grey + alpha into one path fill so each 20 px orb frame issues
+  // ~10-16 GPU fill calls instead of 120 individual ones
   const list = dots.slice(0, nDots).sort(byDepth);
+  let curStyle = '';
+  let openPath = false;
   for (const d of list) {
     const g = grey(d.ink, dark);
-    ctx.fillStyle = `rgba(${g},${g},${g},${d.a})`;
-    ctx.beginPath();
+    const a = Math.round(d.a * 50) / 50;
+    const style = `rgba(${g},${g},${g},${a})`;
+    if (style !== curStyle) {
+      if (openPath) ctx.fill();
+      ctx.fillStyle = curStyle = style;
+      ctx.beginPath();
+      openPath = true;
+    }
+    ctx.moveTo(d.x + d.r, d.y);
     ctx.arc(d.x, d.y, d.r, 0, TAU);
-    ctx.fill();
   }
+  if (openPath) ctx.fill();
 }
 
-// Mounted canvases share one rAF loop, one IntersectionObserver, one theme observer and one media listener
+// Mounted canvases share one paced timer + rAF loop, one IntersectionObserver, one theme observer and one media listener
 
 interface Inst {
   canvas: HTMLCanvasElement;
@@ -238,6 +250,8 @@ interface Inst {
 const insts = new Set<Inst>();
 const byCanvas = new WeakMap<Element, Inst>();
 let raf = 0;
+let timer: ReturnType<typeof setTimeout> | undefined;
+let unsubFocus: (() => void) | undefined;
 let reduced = false;
 let io: IntersectionObserver | null = null;
 let mo: MutationObserver | null = null;
@@ -265,34 +279,64 @@ function draw(i: Inst, now: number) {
 
 const running = (i: Inst) => i.visible && !i.paused && !reduced;
 
-// A draw is some 360 canvas calls replayed in WebKit's GPU process, so a fast display paid for every frame it has: the
-// orb redraws about sixty times a second instead (every frame at 60-72 Hz, every second one at 120 Hz). Measured on the
-// frame's own timestamp, which steps by whole frame intervals; motion reads the clock, so its speed is unchanged
-const FRAME_MS = 13;
+// Pace redraws with setTimeout -> single rAF instead of waking rAF on every display vsync: on a 159 Hz display, an
+// empty rAF callback still schedules BeginMainFrame 159 times/s. 30 fps reads smoothly on a 20 px icon; unfocused
+// windows drop to 10 fps so the orb still reads as alive without burning GPU/IPC behind other apps, and hidden pages stop
+const FOCUSED_FRAME_MS = 33;
+const BLURRED_FRAME_MS = 100;
 let drawnAt = -Infinity;
 
-function tick(frame: number) {
-  raf = 0;
-  const due = frame - drawnAt >= FRAME_MS;
-  const now = performance.now();
-  let any = false;
-  for (const i of insts) {
-    if (!running(i)) continue;
-    if (due) draw(i, now);
-    any = true;
+function hasRunning(): boolean {
+  for (const i of insts) if (running(i)) return true;
+  return false;
+}
+
+function stopLoop() {
+  if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+}
+
+function canRun(): boolean {
+  return (typeof document === 'undefined' || !document.hidden) && hasRunning();
+}
+
+function scheduleNext() {
+  if (raf || timer !== undefined || !canRun()) return;
+  const interval = isWindowFocused() ? FOCUSED_FRAME_MS : BLURRED_FRAME_MS;
+  const wait = Math.max(0, interval - (performance.now() - drawnAt));
+  if (wait <= 4) {
+    raf = requestAnimationFrame(tick);
+  } else {
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (canRun() && !raf) raf = requestAnimationFrame(tick);
+    }, wait);
   }
-  if (due) drawnAt = frame;
-  if (any) raf = requestAnimationFrame(tick);
+}
+
+function tick() {
+  raf = 0;
+  if (!canRun()) return;
+  const now = performance.now();
+  drawnAt = now;
+  for (const i of insts) {
+    if (running(i)) draw(i, now);
+  }
+  scheduleNext();
 }
 
 function wake() {
-  if (raf) return;
-  for (const i of insts) {
-    if (running(i)) {
-      raf = requestAnimationFrame(tick);
-      return;
-    }
+  if (!canRun()) { stopLoop(); return; }
+  // When focus returns while a longer blurred timeout is pending, reschedule sooner
+  if (timer !== undefined && isWindowFocused()) {
+    clearTimeout(timer);
+    timer = undefined;
   }
+  scheduleNext();
+}
+
+function onVisible() {
+  wake();
 }
 
 // Re-resolve the theme of every orb (or only those under a mutated element) and repaint the ones that flipped
@@ -337,15 +381,19 @@ function setup() {
     mo = new MutationObserver(records => retheme(records.map(r => r.target)));
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'], subtree: true });
   }
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
+  unsubFocus = subscribeWindowFocused(wake);
 }
 
 function teardown() {
-  cancelAnimationFrame(raf);
-  raf = 0;
+  stopLoop();
   io?.disconnect();
   mo?.disconnect();
   mqDark?.removeEventListener('change', onTheme);
   mqReduced?.removeEventListener('change', onReduced);
+  if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
+  unsubFocus?.();
+  unsubFocus = undefined;
   io = mo = mqDark = mqReduced = null;
 }
 
