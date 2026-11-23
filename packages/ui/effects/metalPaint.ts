@@ -9,6 +9,8 @@
 // button variant's crop of a 140 x 40 baseline at shader scale 1.6, its 15 fps cadence, and the GL blend that leaves
 // the ring at colour x opacity with alpha opacity squared. The simplex noise is the public-domain Ashima / McEwan one.
 
+import { isWindowFocused, subscribeWindowFocused } from '../plugins/motion';
+
 export type MetalTheme = 'dark' | 'light';
 
 interface Mode {
@@ -143,7 +145,8 @@ export interface Ring {
 }
 
 const rings = new Set<Ring>();
-let start = 0, raf = 0, last = -Infinity;
+let start = 0, raf = 0, timer: ReturnType<typeof setTimeout> | undefined, last = -Infinity;
+let unsubFocus: (() => void) | undefined;
 
 export const clock = (now = performance.now()) => ((now - start) / 1000) * SPEED;
 const glRes = () => GL_SIDE * Math.min(2, window.devicePixelRatio || 1);
@@ -226,13 +229,38 @@ function paint(ring: Ring, t: number) {
   ring.painted = true;
 }
 
-function loop(now: number) {
+function hasLive(): boolean {
+  for (const ring of rings) if (ring.visible && !ring.paused) return true;
+  return false;
+}
+
+function stopLoop() {
+  if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+}
+
+function canRun(): boolean {
+  return !document.hidden && isWindowFocused() && hasLive();
+}
+
+// Pace the 15 fps cadence with setTimeout -> single rAF instead of waking rAF on every display vsync: on a 159 Hz
+// display an empty rAF callback still schedules BeginMainFrame 159 times a second even when 144 of those frames skip
+function scheduleNext() {
+  if (raf || timer !== undefined || !canRun()) return;
+  const wait = Math.max(0, FRAME_MS - (performance.now() - last));
+  if (wait <= 4) {
+    raf = requestAnimationFrame(step);
+  } else {
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (canRun() && !raf) raf = requestAnimationFrame(step);
+    }, wait);
+  }
+}
+
+function step(now: number) {
   raf = 0;
-  let live = false;
-  for (const ring of rings) if (ring.visible && !ring.paused) { live = true; break; }
-  if (!live || document.hidden) return;
-  raf = requestAnimationFrame(loop);
-  if (now - last < FRAME_MS) return;
+  if (!canRun()) return;
   last = now;
   const t = clock(now);
   for (const ring of rings) {
@@ -240,16 +268,21 @@ function loop(now: number) {
     paint(ring, t);
     ring.onFrame?.(now);
   }
+  scheduleNext();
 }
 
 function wake() {
-  if (!raf && rings.size && !document.hidden) raf = requestAnimationFrame(loop);
+  if (!canRun()) { stopLoop(); return; }
+  scheduleNext();
 }
 
 if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake);
 
 export function createRing(canvas: HTMLCanvasElement, geo: RingGeometry, theme: MetalTheme, scale: number, paused: boolean): Ring {
-  if (!rings.size) start = performance.now();
+  if (!rings.size) {
+    start = performance.now();
+    unsubFocus = subscribeWindowFocused(wake);
+  }
   const ring: Ring = {
     canvas, geo, theme, scale, paused, visible: true, painted: false,
     dpr: 1, field: document.createElement('canvas'), fieldCtx: null, img: null, cells: new Int32Array(0), uv: new Float64Array(0),
@@ -275,5 +308,9 @@ export function updateRing(ring: Ring, patch: Partial<Pick<Ring, 'geo' | 'theme'
 export function destroyRing(ring: Ring) {
   rings.delete(ring);
   ring.field.width = ring.field.height = 0;
-  if (!rings.size && raf) { cancelAnimationFrame(raf); raf = 0; }
+  if (!rings.size) {
+    stopLoop();
+    unsubFocus?.();
+    unsubFocus = undefined;
+  }
 }
