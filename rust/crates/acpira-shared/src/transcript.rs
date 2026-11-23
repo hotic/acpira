@@ -1622,6 +1622,10 @@ pub struct SessionCategories {
   /// own and further folders, sent to agents as ACP `additionalDirectories`. A project without either has no entry
   #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
   pub project_meta: BTreeMap<String, ProjectMeta>,
+  /// Local category assignments for sessions whose records live on an SSH host (`session_id -> category_id`).
+  /// Stamped onto `SessionSummary.category` when listing host sessions so categories stay per-machine.
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub host_filed: BTreeMap<String, String>,
 }
 
 /// A project's own name and its folders besides the primary one (absolute, in the order the user listed them)

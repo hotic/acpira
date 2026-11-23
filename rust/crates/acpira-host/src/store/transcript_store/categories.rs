@@ -25,7 +25,10 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
         c.name = name;
       }
     }
-    CategoryOp::Delete { id } => cats.retain(|c| &c.id != id),
+    CategoryOp::Delete { id } => {
+      cats.retain(|c| &c.id != id);
+      list.host_filed.retain(|_, cid| cid != id);
+    }
     CategoryOp::Collapse { id, collapsed } => {
       if let Some(c) = cats.iter_mut().find(|c| &c.id == id) {
         c.collapsed = collapsed.then_some(true);
@@ -214,6 +217,21 @@ fn rename_categories(list: &mut SessionCategories, from: &str, to: &str) {
   }
 }
 
+/// File or unfile a host-owned session in `list.host_filed`; returns whether `list` changed.
+/// A category that does not exist or belongs to another project is ignored.
+pub fn apply_host_session_category(list: &mut SessionCategories, id: &str, cwd: &str, category: Option<String>) -> bool {
+  match category {
+    None => list.host_filed.remove(id).is_some(),
+    Some(cid) => {
+      let project = list.project_of(cwd);
+      if !list.categories.iter().any(|c| c.id == cid && c.cwd == project) {
+        return false;
+      }
+      list.host_filed.insert(id.to_owned(), cid.clone()).as_deref() != Some(cid.as_str())
+    }
+  }
+}
+
 impl TranscriptStore {
   pub async fn load_categories(&self) -> SessionCategories {
     match fs::read(self.dir.join("categories.json")).await {
@@ -231,6 +249,20 @@ impl TranscriptStore {
       let mut disk = self.load_categories().await;
       apply_category_op(&mut disk, op);
       write_atomic(&file, serde_json::to_string_pretty(&disk)?.as_bytes(), None).await?;
+      Ok(disk)
+    })
+    .await
+  }
+
+  /// Record or clear a host-owned session's local category under the `categories.json` file lock
+  pub async fn set_host_session_category(&self, id: &str, cwd: &str, category: Option<String>) -> Result<SessionCategories> {
+    self.ensure().await?;
+    let file = self.dir.join("categories.json");
+    with_file_lock(&file, || async {
+      let mut disk = self.load_categories().await;
+      if apply_host_session_category(&mut disk, id, cwd, category) {
+        write_atomic(&file, serde_json::to_string_pretty(&disk)?.as_bytes(), None).await?;
+      }
       Ok(disk)
     })
     .await
@@ -288,5 +320,32 @@ mod tests {
     // Adding it back as a member brings it back on the list
     edit(&mut list, "/a", "/a", &["/x"]);
     assert_eq!(list.removed_projects, vec!["/b".to_string()]);
+  }
+
+  #[test]
+  fn host_filed_maps_sessions_within_project_and_cleans_up_on_delete() {
+    let mut list = SessionCategories { projects: Some(vec!["ssh://h/a".into(), "ssh://h/b".into()]), ..Default::default() };
+    apply_category_op(&mut list, &CategoryOp::Create { id: "c-1".into(), name: "One".into(), cwd: "ssh://h/a".into() });
+    apply_category_op(&mut list, &CategoryOp::Create { id: "c-2".into(), name: "Two".into(), cwd: "ssh://h/b".into() });
+    // Extra folder belongs to the same project
+    edit(&mut list, "ssh://h/a", "ssh://h/a", &["ssh://h/a-extra"]);
+
+    assert!(apply_host_session_category(&mut list, "s-1", "ssh://h/a", Some("c-1".into())));
+    assert!(!apply_host_session_category(&mut list, "s-1", "ssh://h/a", Some("c-1".into())));
+    assert!(apply_host_session_category(&mut list, "s-2", "ssh://h/a-extra", Some("c-1".into())));
+    // Category of another project or unknown id is ignored
+    assert!(!apply_host_session_category(&mut list, "s-1", "ssh://h/a", Some("c-2".into())));
+    assert!(!apply_host_session_category(&mut list, "s-1", "ssh://h/a", Some("c-gone".into())));
+    assert_eq!(list.host_filed.get("s-1").map(String::as_str), Some("c-1"));
+    assert_eq!(list.host_filed.get("s-2").map(String::as_str), Some("c-1"));
+
+    // Unfiling removes the entry
+    assert!(apply_host_session_category(&mut list, "s-1", "ssh://h/a", None));
+    assert!(!apply_host_session_category(&mut list, "s-1", "ssh://h/a", None));
+    assert!(!list.host_filed.contains_key("s-1"));
+
+    // Deleting a category removes remaining host_filed references to it
+    apply_category_op(&mut list, &CategoryOp::Delete { id: "c-1".into() });
+    assert!(list.host_filed.is_empty());
   }
 }

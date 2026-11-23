@@ -1116,3 +1116,71 @@ async fn remote_agent_open_browser_forwards_to_local_shell_with_remote_folder() 
   m.dispose().await;
   connections.dispose();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn host_sessions_file_into_local_categories_and_keep_pin_exclusivity() {
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let home = lab.host_home().join(".acpira");
+  let host = home.join("sessions");
+  std::fs::create_dir_all(&host).unwrap();
+  std::fs::write(home.join("agents.json"), serde_json::to_vec(&fake.setting(json!({}))).unwrap()).unwrap();
+  let work = lab.path().join("hostfs/work");
+  std::fs::create_dir_all(&work).unwrap();
+  std::fs::write(host.join("s-loose.json"), serde_json::to_vec(&list_record("s-loose", &work.to_string_lossy(), "Loose", false)).unwrap()).unwrap();
+  std::fs::write(host.join("s-pinned.json"), serde_json::to_vec(&list_record("s-pinned", &work.to_string_lossy(), "Pinned", true)).unwrap()).unwrap();
+
+  let folder = format!("ssh://example-host{}", work.display());
+  let dir = tempfile::tempdir().unwrap();
+  std::fs::write(
+    dir.path().join("categories.json"),
+    serde_json::to_vec(&json!({ "categories": [], "collapsedProjects": [], "projects": [folder] })).unwrap(),
+  )
+  .unwrap();
+
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "example-host".into() }).await.unwrap();
+  let mut opts = crate::session_manager::Opts::fake(&fake).projects();
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(dir.path(), opts.clone());
+  m.init().await;
+  wait(&m, "host sessions listed", 30_000, || m.sessions().len() == 2).await;
+
+  let summary = |mgr: &crate::session_manager::Mgr, id: &str| mgr.sessions().into_iter().find(|s| s["id"] == id).unwrap_or(Value::Null);
+
+  m.handle(json!({ "type": "categoryOp", "op": "create", "id": "c-1", "name": "Group", "cwd": folder })).await;
+  m.handle(json!({ "type": "setSessionCategory", "id": "s-loose", "category": "c-1" })).await;
+  wait(&m, "loose host session filed locally", 5_000, || summary(&m, "s-loose")["category"] == "c-1").await;
+  // Categories stay local to this machine and never write into the host's record
+  assert!(serde_json::from_slice::<Value>(&std::fs::read(host.join("s-loose.json")).unwrap()).unwrap().get("category").is_none());
+
+  // Filing a pinned host session unpins it on the host and files it locally
+  m.handle(json!({ "type": "setSessionCategory", "id": "s-pinned", "category": "c-1" })).await;
+  wait(&m, "pinned host session unpinned and filed", 15_000, || {
+    let s = summary(&m, "s-pinned");
+    s["category"] == "c-1" && s.get("pinned").is_none()
+  })
+  .await;
+
+  // Pinning a filed host session clears its local category
+  m.handle(json!({ "type": "pinSession", "id": "s-loose", "pinned": true })).await;
+  wait(&m, "re-pinned host session leaves category", 15_000, || {
+    let s = summary(&m, "s-loose");
+    s["pinned"] == true && s.get("category").is_none()
+  })
+  .await;
+
+  // Filing survives a restart
+  m.dispose().await;
+  let m2 = crate::session_manager::Mgr::new(dir.path(), opts);
+  m2.init().await;
+  wait(&m2, "filed host session restored after restart", 30_000, || summary(&m2, "s-pinned")["category"] == "c-1").await;
+
+  // Deleting the category unfiles its host sessions
+  m2.handle(json!({ "type": "categoryOp", "op": "delete", "id": "c-1" })).await;
+  wait(&m2, "category deletion unfiles host session", 5_000, || summary(&m2, "s-pinned").get("category").is_none()).await;
+
+  m2.dispose().await;
+  connections.dispose();
+}

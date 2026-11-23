@@ -208,17 +208,23 @@ impl SessionManager {
     self.set_categories(disk);
   }
 
-  /// Keep `list` and push it to every page when it differs from what they have
-  fn set_categories(&self, list: SessionCategories) {
-    {
+  /// Keep `list` and push it to every page when it differs from what they have; returns whether anything changed
+  fn set_categories(&self, list: SessionCategories) -> bool {
+    let filed_changed = {
       let mut st = self.state.lock();
       if st.categories == list {
-        return;
+        return false;
       }
+      let changed = st.categories.host_filed != list.host_filed;
       st.categories = list.clone();
-    }
+      changed
+    };
     self.emit(HostMsg::Categories { categories: list });
+    if filed_changed {
+      self.emit_sessions();
+    }
     self.sync_host_scopes();
+    true
   }
 
   pub fn categories(&self) -> SessionCategories {
@@ -237,8 +243,18 @@ impl SessionManager {
       other => other,
     };
     let list = self.deps.store.update_categories(op).await?;
-    self.set_categories(list);
-    self.bus.touch("categories");
+    if self.set_categories(list) {
+      self.bus.touch("categories");
+    }
+    Ok(())
+  }
+
+  /// File or unfile a host-owned session in this machine's `categories.json` and push the updated list
+  pub(super) async fn file_host_session(&self, id: &str, cwd: &str, category: Option<String>) -> Result<()> {
+    let list = self.deps.store.set_host_session_category(id, cwd, category).await?;
+    if self.set_categories(list) {
+      self.bus.touch("categories");
+    }
     Ok(())
   }
 

@@ -1,6 +1,6 @@
 //! What a host's engine pushes: its list, auth state, subagents and session views, rebuilt into this engine's own views
 
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
@@ -283,7 +283,7 @@ impl SessionManager {
         previous
       };
       if let Some(old) = previous {
-        let asker = run.asked.lock().get(view_id).and_then(Weak::upgrade);
+        let asker = run.asked.lock().get(view_id).and_then(|a| a.viewer.upgrade());
         for v in self.viewers_on(&old, None) {
           match &asker {
             // Another page on the old session keeps it, through a view of its own on the host
@@ -296,11 +296,19 @@ impl SessionManager {
     // A view that asked for a new session: the first one it shows is that session, and its viewer goes there
     if let Some(id) = whole.and_then(|w| w.get("id")).and_then(Value::as_str)
       && !again
-      && let Some(viewer) = run.asked.lock().remove(view_id)
+      && let Some(asked) = run.asked.lock().remove(view_id)
     {
       run.shown.lock().insert(id.to_owned(), Shown::new(view_id.to_owned()));
-      if let Some(v) = viewer.upgrade() {
+      if let Some(v) = asked.viewer.upgrade() {
         self.set_active(&v, Some(id.to_owned()));
+      }
+      if let Some(category) = asked.category {
+        let me = self.clone();
+        let sid = id.to_owned();
+        let cwd = asked.cwd;
+        tokio::spawn(async move {
+          let _ = me.file_host_session(&sid, &cwd, Some(category)).await;
+        });
       }
     }
     let Some(id) = run.shown.lock().iter().find(|(_, s)| s.view_id == view_id).map(|(id, _)| id.clone()) else { return };

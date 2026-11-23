@@ -10,7 +10,7 @@ use acpira_shared::protocol::{EditTurnRequest, HostMsg, SessionHit, WebviewMsg};
 use acpira_shared::remote::parse_remote_folder;
 use acpira_shared::transcript::SessionSummary;
 
-use super::{HostControls, HostRun, LIST_VIEW, NEW_WAIT, OPEN_WAIT, SessionManager, Shown, local_folder};
+use super::{Asked, HostControls, HostRun, LIST_VIEW, NEW_WAIT, OPEN_WAIT, SessionManager, Shown, local_folder};
 use crate::session_manager::{Viewer, is_forwarded, session_id_of};
 use crate::store::record::SessionRecord;
 
@@ -172,7 +172,37 @@ impl SessionManager {
         }
       }
     }
-    best.into_values().map(|(_, s)| s).collect()
+    let cats = self.categories();
+    best
+      .into_values()
+      .map(|(_, mut s)| {
+        if s.pinned != Some(true)
+          && let Some(cid) = cats.host_filed.get(&s.id)
+          && cats.categories.iter().any(|c| &c.id == cid && c.cwd == cats.project_of(&s.cwd))
+        {
+          s.category = Some(cid.clone());
+        }
+        s
+      })
+      .collect()
+  }
+
+  /// File or unfile a host-owned session in this machine's `categories.json`; returns `None` when the session is local.
+  /// Filing a pinned host session unpins it on the host so pin and category stay exclusive.
+  pub(crate) async fn set_host_session_category(&self, id: &str, category: Option<String>) -> Option<Result<()>> {
+    let run = self.host_of(id)?;
+    let listed = run.items.lock().iter().find(|s| s.id == id).map(|s| (s.cwd.clone(), s.pinned == Some(true)));
+    let (cwd, pinned) = match listed {
+      Some(found) => found,
+      None => (self.host_cwd(id)?, false),
+    };
+    if category.is_some() && self.category_for(category.clone(), &cwd).is_none() {
+      return Some(Ok(()));
+    }
+    if category.is_some() && pinned && !run.send_to_view(LIST_VIEW, json!({ "type": "pinSession", "id": id, "pinned": false })) {
+      return Some(Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &run.alias)]))));
+    }
+    Some(self.file_host_session(id, &cwd, category).await)
   }
 
   /// A message to every connected host's list view (a list action that is not about one session, such as "mark all as read")
@@ -294,8 +324,10 @@ impl SessionManager {
       }
       _ => None,
     };
-    if let (W::NewSession { agent, .. }, Some((f, run))) = (m, asked_on) {
-      self.register_project(Some(v), &local_folder(&f.alias, &f.path)).await;
+    if let (W::NewSession { agent, category, .. }, Some((f, run))) = (m, asked_on) {
+      let folder = local_folder(&f.alias, &f.path);
+      self.register_project(Some(v), &folder).await;
+      let category = category.clone().filter(|c| self.category_for(Some(c.clone()), &folder).is_some());
       // A host still being reached (the first connection deploys the helper) is waited for
       let mut up = run.up.subscribe();
       let _ = tokio::time::timeout(NEW_WAIT, up.wait_for(|u| *u)).await;
@@ -305,14 +337,14 @@ impl SessionManager {
       let reuse = current.and_then(|id| run.shown.lock().get(&id).map(|s| s.view_id.clone()));
       if let Some(view_id) = reuse {
         // Only this page follows the view to its new session; a page that opens the old one meanwhile stays there
-        run.asked.lock().insert(view_id.clone(), Arc::downgrade(v));
+        run.asked.lock().insert(view_id.clone(), Asked { viewer: Arc::downgrade(v), category, cwd: folder });
         let sent = run.send_to_view(&view_id, json!({ "type": "newSession", "agent": agent, "cwd": f.path }));
         return Some(if sent { Ok(()) } else { Err(anyhow!(crate::i18n::tp("host.remoteUnreachable", &[("host", &f.alias)]))) });
       }
       let view_id = run.next_view_id();
-      run.asked.lock().insert(view_id.clone(), Arc::downgrade(v));
+      run.asked.lock().insert(view_id.clone(), Asked { viewer: Arc::downgrade(v), category, cwd: folder });
       run.open_view(&view_id, json!({ "sessionList": { "folders": [] } }));
-      // The host's categories are its own: a new session there starts unfiled
+      // The host's categories are its own: the new session starts unfiled there and is filed locally once its id lands
       let sent = run.send_to_view(&view_id, json!({ "type": "newSession", "agent": agent, "cwd": f.path }));
       // An empty session this page left here (an agent run here, then one run on the host) goes, as `new_session_for`
       // drops it when the next one starts here
@@ -343,6 +375,9 @@ impl SessionManager {
       run.shown.lock().get(&target).map(|s| s.view_id.clone()).unwrap_or_else(|| LIST_VIEW.to_owned())
     };
     Some(if run.send_to_view(&view_id, msg) {
+      if matches!(m, W::PinSession { pinned: true, .. }) && self.categories().host_filed.contains_key(&target) {
+        let _ = self.file_host_session(&target, "", None).await;
+      }
       Ok(())
     } else {
       if let Some(request_id) = delete_request {

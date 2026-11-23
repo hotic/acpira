@@ -92,6 +92,9 @@ impl SessionManager {
     if !is_session_id(id) {
       return Ok(());
     }
+    if let Some(res) = self.set_host_session_category(id, category.clone()).await {
+      return res;
+    }
     let hold = self.hold_record(id).await?;
     if let Some(live) = self.live(id) {
       let Some(category) = self.category_for(category, &live.cwd) else { return Ok(()) };

@@ -82,8 +82,9 @@ struct HostRun {
   requests: parking_lot::Mutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>,
   /// Host sessions shown here, each through a view of its own on the host, by session id
   shown: parking_lot::Mutex<HashMap<String, Shown>>,
-  /// Views that asked the host for a new session, by view id: the viewer to put on it once it shows
-  asked: parking_lot::Mutex<HashMap<String, Weak<Viewer>>>,
+  /// Views that asked the host for a new session, by view id: the viewer to put on it once it shows,
+  /// and any local category to file it under
+  asked: parking_lot::Mutex<HashMap<String, Asked>>,
   /// Delete completions return to the requesting page, even after its shown session was detached.
   deletions: parking_lot::Mutex<HashMap<String, (String, Weak<Viewer>)>>,
   /// Keep the route to an undo after the session has left the host's list.
@@ -110,6 +111,13 @@ pub struct HostControls {
   pub controls: Vec<ConfigControl>,
   pub shapes: Option<ModelShapes>,
   pub commands: Vec<SlashCommand>,
+}
+
+/// Pending viewer and optional local category for a new session requested on a host
+struct Asked {
+  viewer: Weak<Viewer>,
+  category: Option<String>,
+  cwd: String,
 }
 
 /// One host session's view here
