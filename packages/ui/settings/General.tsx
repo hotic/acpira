@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useDesktop } from '../desktop';
 import type { AgentInfo } from '@acpira/shared/transcript';
-import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, COMPACT_AT_MODEL, DEFAULT_SETTINGS, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type FileOpener, type SessionScope, type SettingsView } from '@acpira/shared/settings';
+import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AGENT_PRIORITIES, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, COMPACT_AT_MODEL, DEFAULT_SETTINGS, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type AgentPriority, type FileOpener, type SessionScope, type SettingsView } from '@acpira/shared/settings';
 import { LANGUAGES, type Language } from '@acpira/shared/i18n/core';
 import { launchable, pickDefaultAgent } from '@acpira/shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
@@ -38,6 +38,7 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
   const agentOptions = launchable(agents).map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: a.available === false }));
   const scopes = SESSION_SCOPES.map(s => ({ value: s, label: t(`settings.sessionScope.${s}` as const) }));
   const switchStrategies = ACCOUNT_SWITCH_STRATEGIES.map(s => ({ value: s, label: t(`settings.accountSwitch.${s}` as const) }));
+  const agentPriorities = AGENT_PRIORITIES.map(p => ({ value: p, label: t(`settings.agentPriority.${p}` as const) }));
   const fileOpeners = FILE_OPENERS.map(o => ({ value: o, label: o === 'system' ? t('settings.openFilesWith.system') : FILE_OPENER_NAMES[o], icon: openerIcon(o) }));
   return (
     <>
@@ -92,6 +93,9 @@ export function General({ settings, agents, on, onTour }: { settings: SettingsVi
             label={t('settings.agentCpuCap')}
             onCommit={v => on.setSetting('agentCpuCap', v)}
           />
+        </Field>
+        <Field label={t('settings.agentPriority')} desc={t('settings.agentPriority.desc')}>
+          <Select<AgentPriority> options={agentPriorities} value={settings.agentPriority} onChange={v => on.setSetting('agentPriority', v)} label={t('settings.agentPriority')} />
         </Field>
         <Field label={t('settings.proxy')} desc={t('settings.proxy.desc')}>
           <ProxyField value={settings.proxy} onCommit={v => on.setSetting('proxy', v)} />

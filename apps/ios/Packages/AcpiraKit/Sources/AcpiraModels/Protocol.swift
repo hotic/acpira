@@ -468,7 +468,7 @@ public struct SubagentGroup: Codable, Hashable, Sendable, Identifiable {
 
 /// The settings the engine pushes (settings.ts SettingsView), as the subset the phone reads; a key missing from the
 /// push reads as DEFAULT_SETTINGS has it. Not mirrored: the desktop / IDE-only keys (sessionScope, sessionListPosition,
-/// font sizes and smoothing, diffMarkers, shareEditorSelection, agentCpuCap, proxy, openFilesWith, desktopLayout,
+/// font sizes and smoothing, diffMarkers, shareEditorSelection, agentCpuCap, agentPriority, proxy, openFilesWith, desktopLayout,
 /// panel*)
 public struct SettingsView: Codable, Hashable, Sendable {
   /// `auto` or a Locale

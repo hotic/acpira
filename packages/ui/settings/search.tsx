@@ -45,7 +45,7 @@ function holds(page: SearchPage, desktop: boolean): MsgKey[] {
   switch (page) {
     case 'general': return ['settings.group.basic', 'settings.language', 'settings.defaultAgent', desktop ? 'settings.openFilesWith' : 'settings.sessionScope',
       'settings.group.input', 'settings.shareEditorSelection', 'settings.steerQueued', 'settings.compaction.title', 'settings.autoCompact',
-      'settings.compactAt', 'settings.group.run', 'settings.accountSwitch', 'settings.agentCpuCap', 'settings.proxy',
+      'settings.compactAt', 'settings.group.run', 'settings.accountSwitch', 'settings.agentCpuCap', 'settings.agentPriority', 'settings.proxy',
       'settings.notifications.title', 'settings.notifySound', 'settings.notifySystem'];
     case 'appearance': return ['settings.group.ui', desktop ? 'settings.desktopLayout' : 'settings.sessionListPosition', 'settings.theme', 'settings.motion',
       'settings.projectMarks', 'settings.group.process', 'settings.steps', 'settings.stepIcons', 'settings.autoExpand', 'settings.keepProcess', 'settings.group.chat', 'settings.chatWidth', 'settings.codeWrap',

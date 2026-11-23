@@ -99,27 +99,78 @@ fn priority_class(pid: u32) -> u32 {
 }
 
 #[tokio::test]
-async fn an_agent_and_what_it_spawns_run_below_normal_priority() {
-  use windows_sys::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
-  // The helper asks for normal priority itself: the job's priority limit must still hold it below normal
+async fn priority_fixture_host() {
+  use acpira_host::platform::windows_process::{AgentPriority, set_agent_priority, spawn};
+  use tokio::io::AsyncBufReadExt;
+
+  let Ok(receipt) = std::env::var("ACPIRA_PRIORITY_FIXTURE_RECEIPT") else { return };
+  if std::env::var("ACPIRA_PRIORITY_FIXTURE_SETTING").ok().as_deref() == Some("normal") {
+    set_agent_priority(AgentPriority::Normal);
+  }
+  // The helper asks for normal priority itself: a below-normal job must still hold it down
   let mut cmd = tokio::process::Command::new("node");
   cmd
     .args([
       "-e",
-      "const h = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio:'ignore'});        try { require('node:os').setPriority(h.pid, 0) } catch {} console.log(h.pid); setInterval(()=>{},1000)",
+      "const h = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio:'ignore'}); try { require('node:os').setPriority(h.pid, 0) } catch {} console.log(h.pid); setInterval(()=>{},1000)",
     ])
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::null());
-  let (mut child, job) = acpira_host::platform::windows_process::spawn(&mut cmd).await.unwrap();
+  let (mut child, job) = spawn(&mut cmd).await.unwrap();
   let mut line = String::new();
-  use tokio::io::AsyncBufReadExt;
   tokio::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).await.unwrap();
   let helper = Cleanup(line.trim().parse().unwrap());
-  assert_eq!(priority_class(child.id().unwrap()), BELOW_NORMAL_PRIORITY_CLASS);
-  assert_eq!(priority_class(helper.0), BELOW_NORMAL_PRIORITY_CLASS);
+  let child_prio = priority_class(child.id().unwrap());
+  let helper_prio = priority_class(helper.0);
+  std::fs::write(receipt, format!("{child_prio},{helper_prio}")).unwrap();
   job.terminate();
   child.wait().await.unwrap();
+}
+
+fn run_priority_fixture(env_overrides: &[(&str, &str)]) -> anyhow::Result<(u32, u32, String)> {
+  use acpira_host::platform::windows_process::{CPU_CAP_ENV, PRIORITY_ENV};
+  let dir = tempfile::tempdir()?;
+  let receipt = dir.path().join("priority.txt");
+  let mut cmd = std::process::Command::new(std::env::current_exe()?);
+  cmd
+    .args(["--exact", "priority_fixture_host"])
+    .env_remove(PRIORITY_ENV)
+    .env_remove(CPU_CAP_ENV)
+    .env_remove("ACPIRA_PRIORITY_FIXTURE_SETTING")
+    .env("ACPIRA_PRIORITY_FIXTURE_RECEIPT", &receipt);
+  for (k, v) in env_overrides {
+    cmd.env(k, v);
+  }
+  let output = cmd.output()?;
+  let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+  anyhow::ensure!(output.status.success(), "fixture failed: {stderr}");
+  let raw = std::fs::read_to_string(&receipt)?;
+  let (child, helper) = raw.trim().split_once(',').ok_or_else(|| anyhow::anyhow!("malformed receipt: {raw:?}"))?;
+  Ok((child.parse()?, helper.parse()?, stderr))
+}
+
+#[test]
+fn an_agent_and_what_it_spawns_run_below_normal_priority() {
+  use windows_sys::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
+  let (child, helper, _) = run_priority_fixture(&[]).unwrap();
+  assert_eq!(child, BELOW_NORMAL_PRIORITY_CLASS);
+  assert_eq!(helper, BELOW_NORMAL_PRIORITY_CLASS);
+}
+
+#[test]
+fn normal_priority_setting_and_env_override_leave_agents_at_parent_priority() {
+  use acpira_host::platform::windows_process::{CPU_CAP_ENV, PRIORITY_ENV};
+  let parent_prio = priority_class(std::process::id());
+
+  let (child, helper, stderr) = run_priority_fixture(&[(PRIORITY_ENV, "normal"), (CPU_CAP_ENV, "100")]).unwrap();
+  assert_eq!(child, parent_prio);
+  assert_eq!(helper, parent_prio);
+  assert!(!stderr.contains("no shared CPU limit"), "lifting an unset CPU cap must not fail parent job setup: {stderr}");
+
+  let (child, helper, _) = run_priority_fixture(&[("ACPIRA_PRIORITY_FIXTURE_SETTING", "normal")]).unwrap();
+  assert_eq!(child, parent_prio);
+  assert_eq!(helper, parent_prio);
 }
 
 #[tokio::test]

@@ -49,8 +49,13 @@ export const UI_FONT_SIZE = { min: 10, max: 20, default: 13 } as const;
 export const CODE_FONT_SIZE = { min: 9, max: 20, default: 12 } as const;
 
 // Share of all logical cores every agent process and its descendants may use together (%); 100 lifts the cap. Windows only:
-// the engine applies it to the job object all agents run in, below normal priority either way
+// the engine applies it to the job object all agents run in
 export const AGENT_CPU_CAP = { min: 10, max: 100, default: 80 } as const;
+
+// Priority class of agent job objects on Windows: `belowNormal` keeps the desktop responsive, `normal` inherits the host's
+// priority so agents are not starved on heavily loaded machines
+export type AgentPriority = 'belowNormal' | 'normal';
+export const AGENT_PRIORITIES: AgentPriority[] = ['belowNormal', 'normal'];
 
 // Network route of agents (their model requests), installers and the engine's downloads: `auto` uses a local proxy on
 // 127.0.0.1:7890 while one listens there and the inherited environment otherwise, `off` adds nothing, anything else is a proxy URL
@@ -123,6 +128,8 @@ export interface SettingsView {
   subagentGroups: SubagentGroup[];
   // CPU hard cap over every agent process tree, percent of all cores (AGENT_CPU_CAP)
   agentCpuCap: number;
+  // Priority class applied to agent jobs on Windows (AGENT_PRIORITIES)
+  agentPriority: AgentPriority;
   // `auto`, `off` or a proxy URL (DEFAULT_PROXY)
   proxy: string;
   // Desktop app: the system's default application or an editor for file links and plans (FILE_OPENERS)
@@ -140,8 +147,8 @@ export interface SettingsView {
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'sshLocalAgents' | 'subagents' | 'agentCpuCap' | 'proxy' | 'openFilesWith' | 'desktopLayout' | 'panelScope' | 'panelFiles' | 'panelTerminal' | 'panelBrowser' | 'keybindings';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'sshLocalAgents', 'subagents', 'agentCpuCap', 'proxy', 'openFilesWith', 'desktopLayout', 'panelScope', 'panelFiles', 'panelTerminal', 'panelBrowser', 'keybindings'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'sshLocalAgents' | 'subagents' | 'agentCpuCap' | 'agentPriority' | 'proxy' | 'openFilesWith' | 'desktopLayout' | 'panelScope' | 'panelFiles' | 'panelTerminal' | 'panelBrowser' | 'keybindings';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'sshLocalAgents', 'subagents', 'agentCpuCap', 'agentPriority', 'proxy', 'openFilesWith', 'desktopLayout', 'panelScope', 'panelFiles', 'panelTerminal', 'panelBrowser', 'keybindings'];
 
 // The settings each shell keeps in its own store, since they follow the window's shape: the session list's side and scope
 // (the desktop app always lists every project on the left) and sharing the editor selection (IDE shells only). Every
@@ -191,6 +198,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   subagents: [],
   subagentGroups: [],
   agentCpuCap: AGENT_CPU_CAP.default,
+  agentPriority: 'belowNormal',
   proxy: DEFAULT_PROXY,
   openFilesWith: 'system',
   desktopLayout: 'chat',
@@ -229,6 +237,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return clampSize(value, CODE_FONT_SIZE) as SettingsView[K];
     case 'agentCpuCap':
       return clampSize(value, AGENT_CPU_CAP) as SettingsView[K];
+    case 'agentPriority':
+      return (oneOf(value, AGENT_PRIORITIES) ?? fallback) as SettingsView[K];
     case 'theme':
       return (oneOf(value, THEMES) ?? fallback) as SettingsView[K];
     case 'diffMarkers':

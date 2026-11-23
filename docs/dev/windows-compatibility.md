@@ -11,7 +11,7 @@ Windows boundaries the code works around, their checks, and what lacks native ac
 - File lock liveness treats access denied as alive (`store::file_lock`).
 - File URLs are handled only in `platform::file_url`; encoded separators are rejected.
 - `canonicalize` yields `\\?\` paths and expands 8.3 names that Node keeps, breaking Pi trust and Node module resolution: `platform::paths::canonical_for_cli` converts for external CLIs and Node; real file access keeps the original path.
-- Agents run in a kill-on-close Job Object at below-normal priority under a CPU cap (`agentCpuCap`), since parallel runs under Defender starve the desktop in kernel time.
+- Agents run in a kill-on-close Job Object under a CPU cap (`agentCpuCap`, `ACPIRA_AGENT_CPU_CAP`) and below-normal priority by default (`agentPriority`, `ACPIRA_AGENT_PRIORITY`), since parallel runs under Defender starve the desktop in kernel time; switching to `normal` avoids starvation on already-saturated hosts. Lifting an unset CPU cap must skip `SetInformationJobObject(JobObjectCpuRateControlInformation)` (Windows returns `ERROR_INVALID_PARAMETER`). `AgentProcess` `INIT_TIMEOUT` is 120 s to cover cold starts on loaded Windows machines.
 - Session lock takeover only targets a verified direct child of another sidecar (`lock_holder.rs`).
 - Remote / WSL: the backend OS decides command syntax; `agents.json` keeps local Windows and remote Linux config apart.
 - Release sidecars: MSVC target, static CRT (`scripts/release/sidecar-targets.mjs`).
