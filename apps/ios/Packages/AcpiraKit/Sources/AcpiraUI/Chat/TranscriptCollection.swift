@@ -690,7 +690,7 @@ final class TranscriptCollectionView: UICollectionView {
       restoreEnd(heldEnd)
     } else if let visibleAnchor { keepOnScreen(visibleAnchor) }
 
-    let geometry = viewportGeometry
+    var geometry = viewportGeometry
     let dockGlides = dockGlides
     defer {
       self.dockGlides = false
@@ -723,9 +723,8 @@ final class TranscriptCollectionView: UICollectionView {
     if needsInitialBottomPosition, window != nil, bounds.height > 0, contentSize.height > 0 {
       needsInitialBottomPosition = false
       maintainsBottomAnchor = true
-      isRestoringBottomAnchor = true
-      contentOffset = CGPoint(x: contentOffset.x, y: geometry.bottomOffset)
-      isRestoringBottomAnchor = false
+      settleAtBottom()
+      geometry = viewportGeometry
       return
     }
 
@@ -742,6 +741,23 @@ final class TranscriptCollectionView: UICollectionView {
     isRestoringBottomAnchor = true
     contentOffset = CGPoint(x: contentOffset.x, y: bottomY)
     isRestoringBottomAnchor = false
+  }
+
+  /// The opening position. The end is first known from estimated heights, and the rows that turn out to stand there
+  /// are measured only by the pass after the offset moved, which moves the end again. Left to the passes that follow,
+  /// a chat opened on rows a screen above its end, jumped there during the push and slid the last stretch: the passes
+  /// are made here, before the first frame is drawn
+  private func settleAtBottom() {
+    isRestoringBottomAnchor = true
+    defer { isRestoringBottomAnchor = false }
+    for _ in 0..<8 {
+      let target = viewportGeometry.bottomOffset
+      let height = contentSize.height
+      guard abs(contentOffset.y - target) > 0.5 else { break }
+      contentOffset.y = target
+      UIView.performWithoutAnimation { super.layoutSubviews() }
+      if abs(contentSize.height - height) <= 0.5 { break }
+    }
   }
 
   struct VisibleItem {

@@ -182,7 +182,9 @@ struct InlineText: View {
       .fixedSize(horizontal: false, vertical: true)
       .onPreferenceChange(Text.LayoutKey.self) { layouts in
         let total = chipGrowth(layouts, growth)
-        Task { @MainActor in if extra != total { extra = total } }
+        // In this pass, not a task's hop later: the paragraph then grew after its row was measured and placed, and
+        // a chat just opened slid by the chip lines' growth
+        MainActor.assumeIsolated { if extra != total { extra = total } }
       }
       .padding(.bottom, extra)
       .frame(maxWidth: .infinity, alignment: .leading)
