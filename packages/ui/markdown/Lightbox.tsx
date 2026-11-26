@@ -12,6 +12,8 @@ const ZOOM_SPEED = 0.002;
 // Chromium / WebView2 encodes trackpad pinch as ctrlKey wheel deltas ~5x finer than scroll deltas.
 const CTRL_WHEEL_ZOOM_SPEED = ZOOM_SPEED * 5;
 const GEOM_CACHE_MS = 200;
+// A touch-display pinch follows its pointerdown within this window (matches apps/desktop/src/init.js).
+const GESTURE_PRESS_MS = 500;
 
 export interface ZoomOptions {
   // Intrinsic content dimensions for non-<img> targets (e.g. inline SVG viewBox) so zoom can reach 1:1 readable text and beyond.
@@ -304,8 +306,25 @@ export function useImageZoom(resetKey?: string, options?: ZoomOptions) {
       zoomBy(Math.exp(-e.deltaY * speed), e.clientX, e.clientY);
     };
 
+    // A finger pinch on a macOS touch display presses the page first (pointerdown, then pointercancel) and its gesture
+    // events need not target the element under the fingers, so a small surface (an inline diagram) claims the pinch by
+    // where that press landed; a trackpad pinch has no press and targets the element under the cursor.
+    let press = { at: -1e9, inside: false };
+    const onPressCapture = (e: PointerEvent) => {
+      press = { at: e.timeStamp, inside: e.target instanceof Node && surface.contains(e.target) };
+    };
+    const ownsGesture = (e: WebKitGestureEvent): boolean => {
+      if (e.target instanceof Node && surface.contains(e.target)) return true;
+      if (press.inside && e.timeStamp - press.at < GESTURE_PRESS_MS) return true;
+      const p = gesturePoint(e);
+      // Hit-test rather than compare rectangles, so a card under an open lightbox never claims the lightbox's pinch.
+      const hit = p ? document.elementFromPoint(p.x, p.y) : null;
+      return !!hit && surface.contains(hit);
+    };
+
     const onGestureStart = (ev: Event) => {
       const e = ev as WebKitGestureEvent;
+      if (!ownsGesture(e)) return;
       e.preventDefault();
       e.stopPropagation();
       const scale = typeof e.scale === 'number' && Number.isFinite(e.scale) && e.scale > 0 ? e.scale : 1;
@@ -314,10 +333,11 @@ export function useImageZoom(resetKey?: string, options?: ZoomOptions) {
 
     const onGestureChange = (ev: Event) => {
       const e = ev as WebKitGestureEvent;
+      const g = gestureRef.current;
+      if (!g) return;
       e.preventDefault();
       e.stopPropagation();
-      const g = gestureRef.current;
-      if (!g || typeof e.scale !== 'number' || !Number.isFinite(e.scale) || e.scale <= 0) return;
+      if (typeof e.scale !== 'number' || !Number.isFinite(e.scale) || e.scale <= 0) return;
       const factor = e.scale / g.scale;
       const nextPoint = gesturePoint(e);
       const prevPoint = g.point;
@@ -330,6 +350,7 @@ export function useImageZoom(resetKey?: string, options?: ZoomOptions) {
     };
 
     const onGestureEnd = (ev: Event) => {
+      if (!gestureRef.current) return;
       ev.preventDefault();
       ev.stopPropagation();
       gestureRef.current = null;
@@ -400,9 +421,11 @@ export function useImageZoom(resetKey?: string, options?: ZoomOptions) {
     };
 
     surface.addEventListener('wheel', onWheel, { passive: false });
-    surface.addEventListener('gesturestart', onGestureStart, { passive: false });
-    surface.addEventListener('gesturechange', onGestureChange, { passive: false });
-    surface.addEventListener('gestureend', onGestureEnd, { passive: false });
+    // Window capture phase: runs before the desktop shell's window-zoom pinch handler (apps/desktop/src/init.js)
+    window.addEventListener('pointerdown', onPressCapture, { capture: true, passive: true });
+    window.addEventListener('gesturestart', onGestureStart, { capture: true, passive: false });
+    window.addEventListener('gesturechange', onGestureChange, { capture: true, passive: false });
+    window.addEventListener('gestureend', onGestureEnd, { capture: true, passive: false });
     surface.addEventListener('pointerdown', onTouchDown);
     window.addEventListener('blur', onBlur);
     window.addEventListener('resize', clearBaseGeom);
@@ -412,9 +435,10 @@ export function useImageZoom(resetKey?: string, options?: ZoomOptions) {
       detachTouchWindow();
       clearBaseGeom();
       surface.removeEventListener('wheel', onWheel);
-      surface.removeEventListener('gesturestart', onGestureStart);
-      surface.removeEventListener('gesturechange', onGestureChange);
-      surface.removeEventListener('gestureend', onGestureEnd);
+      window.removeEventListener('pointerdown', onPressCapture, { capture: true });
+      window.removeEventListener('gesturestart', onGestureStart, { capture: true });
+      window.removeEventListener('gesturechange', onGestureChange, { capture: true });
+      window.removeEventListener('gestureend', onGestureEnd, { capture: true });
       surface.removeEventListener('pointerdown', onTouchDown);
       window.removeEventListener('blur', onBlur);
       window.removeEventListener('resize', clearBaseGeom);

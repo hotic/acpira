@@ -102,6 +102,83 @@ export function prepareSvgForExport(svg: string, size?: SvgSize): string {
   });
 }
 
+// Decodes the standalone SVG into an image canvas code can draw at any scale.
+async function decodeDiagram(svg: string, size: SvgSize): Promise<HTMLImageElement> {
+  const img = new Image();
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(prepareSvgForExport(svg, size))}`;
+  await img.decode();
+  return img;
+}
+
+// A zoomed diagram is a transformed layer, and WebKit composites a large transformed layer (inline SVG or canvas
+// alike) at a capped contents scale, so zooming in stretches soft pixels. Once a view settles, this draws just the
+// on-screen part of the vector SVG at device resolution into an opaque overlay canvas pinned 1:1 in screen space above
+// the diagram (`detail`, absolutely positioned in `host`, never inside the transformed layer). It hides itself while
+// `base` already shows at most `sharpPerUnit` device px per diagram unit. Callers hide it while a gesture moves.
+function drawDiagramDetail({ detail, base, view, host, img, size, sharpPerUnit, background }: {
+  detail: HTMLCanvasElement;
+  base: HTMLElement;
+  view: HTMLElement;
+  host: HTMLElement;
+  img: HTMLImageElement;
+  size: SvgSize;
+  sharpPerUnit: number;
+  background: string;
+}): void {
+  const hide = () => { detail.style.display = 'none'; detail.width = 0; detail.height = 0; };
+  const box = base.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  if (!box.width) return hide();
+  const perUnit = box.width / size.width; // screen px per diagram unit
+  if (perUnit * dpr <= sharpPerUnit * 1.05) return hide();
+  const clip = view.getBoundingClientRect();
+  // Snap to device pixels so the overlay bitmap maps 1:1 onto the screen.
+  const snap = (v: number) => Math.round(v * dpr) / dpr;
+  const left = snap(Math.max(box.left, clip.left));
+  const top = snap(Math.max(box.top, clip.top));
+  const right = snap(Math.min(box.right, clip.right));
+  const bottom = snap(Math.min(box.bottom, clip.bottom));
+  if (right <= left || bottom <= top) return hide();
+  const w = Math.round((right - left) * dpr);
+  const h = Math.round((bottom - top) * dpr);
+  const origin = host.getBoundingClientRect();
+  detail.width = w;
+  detail.height = h;
+  Object.assign(detail.style, {
+    display: 'block',
+    left: `${left - origin.left - host.clientLeft}px`,
+    top: `${top - origin.top - host.clientTop}px`,
+    width: `${w / dpr}px`,
+    height: `${h / dpr}px`,
+  });
+  const ctx = detail.getContext('2d');
+  if (!ctx) return hide();
+  // Opaque fill so the soft layer underneath never shows through around the sharp glyphs.
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, w, h);
+  // Scale through the context transform and draw the whole SVG, letting the canvas bounds clip: WebKit rasterizes
+  // an SVG at its intrinsic size for a source-rect drawImage, which would just stretch the same soft pixels.
+  ctx.setTransform(perUnit * dpr, 0, 0, perUnit * dpr, (box.left - left) * dpr, (box.top - top) * dpr);
+  // Draw twice for WebKit foreignObject reliability (docs/dev/webview.md)
+  ctx.drawImage(img, 0, 0, size.width, size.height);
+  ctx.drawImage(img, 0, 0, size.width, size.height);
+}
+
+// Settle-debounced redraw of a detail overlay: `schedule` hides the overlay at once (it cannot follow a moving view)
+// and runs the latest `redraw` once writes stop for DETAIL_SETTLE_MS.
+function useDetailLayer() {
+  const detailRef = useRef<HTMLCanvasElement | null>(null);
+  const redrawRef = useRef<() => void>(() => {});
+  const timer = useRef<number | undefined>(undefined);
+  const schedule = useCallback(() => {
+    if (detailRef.current) detailRef.current.style.display = 'none';
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => redrawRef.current(), DETAIL_SETTLE_MS);
+  }, []);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return { detailRef, redrawRef, schedule };
+}
+
 // Rasterizes a rendered Mermaid SVG onto a padded HiDPI PNG so Copy image works cleanly via ClipboardItem.
 async function renderMermaidToPng(svg: string, size: SvgSize | undefined, theme: Theme): Promise<Blob> {
   const dims = size ?? parseSvgSize(svg) ?? { width: 800, height: 600 };
@@ -142,12 +219,24 @@ async function copyMermaidImage(svg: string, size: SvgSize | undefined, theme: T
 
 // Neutral dark/light Mermaid palettes matching Acpira's grey surfaces and hairline borders (instead of Mermaid's muddy
 // default `#333` dark clusters).
+// A concrete font list, never the bare `monospace` generic: the zoom overlay, Copy image and the lightbox draw the SVG
+// as an image, whose `monospace` resolves to Courier while the page's resolves to its own fixed font, and CSS variables
+// do not reach inside an image either. Named installed fonts resolve the same in both places.
+const MERMAID_FONT_FALLBACK = '"SF Mono", Menlo, Monaco, Consolas, monospace';
+function mermaidFont(): string {
+  const token = typeof document === 'undefined' ? '' : getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim();
+  return token && !token.includes('var(') ? token : MERMAID_FONT_FALLBACK;
+}
+
 function mermaidConfig(theme: Theme): MermaidConfig {
   const dark = theme === 'dark';
+  const fontFamily = mermaidFont();
   return {
     startOnLoad: false,
     theme: 'base',
+    fontFamily,
     themeVariables: dark ? {
+      fontFamily,
       darkMode: true,
       background: 'transparent',
       primaryColor: '#1f2329',
@@ -178,6 +267,7 @@ function mermaidConfig(theme: Theme): MermaidConfig {
       noteTextColor: '#dde2ea',
       noteBorderColor: '#3e4552',
     } : {
+      fontFamily,
       darkMode: false,
       background: 'transparent',
       primaryColor: '#f6f7f9',
@@ -286,7 +376,42 @@ export function MermaidBlock({ chart }: { chart: string }) {
   }, [chart, theme]);
 
   const size = useMemo(() => (svg ? parseSvgSize(svg) : undefined), [svg]);
-  const inlineZoom = useImageZoom(svg, { naturalSize: size, wheelMode: 'ctrl-only' });
+  const inlineDetail = useDetailLayer();
+  const inlineZoom = useImageZoom(svg, { naturalSize: size, wheelMode: 'ctrl-only', onViewChange: inlineDetail.schedule });
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const surfaceElRef = useRef<HTMLElement | null>(null);
+  const inlineImg = useRef<{ svg: string; img: HTMLImageElement } | null>(null);
+  inlineDetail.redrawRef.current = () => {
+    const detail = inlineDetail.detailRef.current;
+    const base = inlineZoom.targetRef.current;
+    const view = surfaceElRef.current;
+    const host = cardRef.current;
+    if (!detail || !base || !view || !host || !svg || !size) return;
+    const draw = (img: HTMLImageElement) => drawDiagramDetail({
+      detail, base, view, host, img, size,
+      // At rest the inline SVG is vector-sharp at its layout size.
+      sharpPerUnit: (base.offsetWidth / size.width) * (window.devicePixelRatio || 1),
+      background: getComputedStyle(host).backgroundColor,
+    });
+    if (inlineImg.current?.svg === svg) return draw(inlineImg.current.img);
+    const want = svg;
+    void decodeDiagram(want, size).then(img => {
+      inlineImg.current = { svg: want, img };
+      if (svg === want) draw(img);
+    }).catch(() => {});
+  };
+  const inlineSurfaceRef = useCallback((el: HTMLElement | null) => {
+    surfaceElRef.current = el;
+    inlineZoom.surfaceRef(el);
+  }, [inlineZoom.surfaceRef]);
+  // A width change reflows the card under an unchanged transform, so refresh the overlay.
+  useEffect(() => {
+    const el = surfaceElRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => inlineDetail.schedule());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [svg, showSource, inlineDetail.schedule]);
   const sourceCopy = useCopied(chart);
 
   if (failed || !svg) {
@@ -334,6 +459,7 @@ export function MermaidBlock({ chart }: { chart: string }) {
   return (
     <>
       <div
+        ref={cardRef}
         data-mermaid
         className={cn('group/mermaid relative min-w-0 overflow-hidden bg-code', CODE_CARD)}
       >
@@ -372,7 +498,7 @@ export function MermaidBlock({ chart }: { chart: string }) {
             clicking at rest opens the frameless Lightbox, and right-click offers Copy image / Copy code */}
         <DiagramMenu svg={svg} chart={chart} size={size} theme={theme}>
           <div
-            ref={inlineZoom.surfaceRef}
+            ref={inlineSurfaceRef}
             role="button"
             tabIndex={0}
             aria-label={t('diagram.expand')}
@@ -403,6 +529,8 @@ export function MermaidBlock({ chart }: { chart: string }) {
             />
           </div>
         </DiagramMenu>
+        {/* Sharp overlay for a settled zoom; before the scale label in DOM order so the label stays on top */}
+        <canvas ref={inlineDetail.detailRef} aria-hidden className="pointer-events-none absolute hidden" />
 
         {inlineZoom.transformed && (
           <div
@@ -434,17 +562,8 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
   const [rasterFailed, setRasterFailed] = useState(false);
   const useFallbackSvg = !size || rasterFailed;
   const scopedSvg = useMemo(() => (useFallbackSvg ? scopeSvgIds(svg, 'lb') : undefined), [svg, useFallbackSvg]);
-  // Re-rasterize the visible part at screen resolution once a zoom / pan settles (see redrawDetail below).
-  const detailTimer = useRef<number | undefined>(undefined);
-  const detailRef = useRef<HTMLCanvasElement | null>(null);
-  const redrawDetailRef = useRef<() => void>(() => {});
-  const scheduleDetail = useCallback(() => {
-    // The detail layer is pinned in screen space, so it cannot follow a moving view: drop it until the view settles.
-    if (detailRef.current) detailRef.current.style.display = 'none';
-    window.clearTimeout(detailTimer.current);
-    detailTimer.current = window.setTimeout(() => redrawDetailRef.current(), DETAIL_SETTLE_MS);
-  }, []);
-  useEffect(() => () => window.clearTimeout(detailTimer.current), []);
+  // Sharp overlay for a settled zoom (drawDiagramDetail).
+  const { detailRef, redrawRef: redrawDetailRef, schedule: scheduleDetail } = useDetailLayer();
   const zoom = useImageZoom(svg, { naturalSize: size, wheelMode: 'zoom', onViewChange: scheduleDetail });
   // Callback ref state (not useRef) because Dialog.Portal mounts its children after the initial effect runs.
   const [popup, setPopup] = useState<HTMLDivElement | null>(null);
@@ -510,51 +629,17 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
     };
   }, [canvasEl, svg, size, rasterFailed]);
 
-  // The base canvas is capped (MAX_LIGHTBOX_CANVAS_*), so a large diagram zoomed past its raster scale would be a
-  // stretched bitmap. Once the view settles, draw just the on-screen part of the vector SVG at device resolution into
-  // an opaque overlay canvas pinned 1:1 in screen space above the stage. It must stay outside the transformed stage:
-  // WebKit composites a canvas inside a scaled layer at a capped contents scale, which blurs it again.
+  // The base canvas is capped (MAX_LIGHTBOX_CANVAS_*), so past its raster scale a settled view gets the sharp overlay.
   redrawDetailRef.current = () => {
     const detail = detailRef.current;
     const raster = rasterRef.current;
-    if (!detail || !canvasEl || !raster || !size || !popup) return;
-    const hide = () => { detail.style.display = 'none'; detail.width = 0; detail.height = 0; };
-    const base = canvasEl.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    if (!base.width) return hide();
-    const perUnit = base.width / size.width; // screen px per diagram unit
-    // The base bitmap is enough up to its own raster scale.
-    if (perUnit * dpr <= raster.scale * 1.05) return hide();
-    const view = popup.getBoundingClientRect();
-    // Snap to device pixels so the overlay bitmap maps 1:1 onto the screen.
-    const snap = (v: number) => Math.round(v * dpr) / dpr;
-    const left = snap(Math.max(base.left, view.left));
-    const top = snap(Math.max(base.top, view.top));
-    const right = snap(Math.min(base.right, view.right));
-    const bottom = snap(Math.min(base.bottom, view.bottom));
-    if (right <= left || bottom <= top) return hide();
-    const w = Math.round((right - left) * dpr);
-    const h = Math.round((bottom - top) * dpr);
-    detail.width = w;
-    detail.height = h;
-    Object.assign(detail.style, {
-      display: 'block',
-      left: `${left - view.left}px`,
-      top: `${top - view.top}px`,
-      width: `${w / dpr}px`,
-      height: `${h / dpr}px`,
+    const stage = canvasEl?.parentElement;
+    if (!detail || !canvasEl || !stage || !raster || !size || !popup) return;
+    drawDiagramDetail({
+      detail, base: canvasEl, view: popup, host: popup, img: raster.img, size,
+      sharpPerUnit: raster.scale,
+      background: getComputedStyle(stage).backgroundColor,
     });
-    const ctx = detail.getContext('2d');
-    if (!ctx) return hide();
-    // Opaque card fill so the soft base bitmap never shows through around the sharp glyphs.
-    ctx.fillStyle = getComputedStyle(canvasEl.parentElement ?? canvasEl).backgroundColor;
-    ctx.fillRect(0, 0, w, h);
-    // Scale through the context transform and draw the whole SVG, letting the canvas bounds clip: WebKit rasterizes
-    // an SVG at its intrinsic size for a source-rect drawImage, which would just stretch the same soft pixels.
-    ctx.setTransform(perUnit * dpr, 0, 0, perUnit * dpr, (base.left - left) * dpr, (base.top - top) * dpr);
-    // Draw twice for WebKit foreignObject reliability (docs/dev/webview.md)
-    ctx.drawImage(raster.img, 0, 0, size.width, size.height);
-    ctx.drawImage(raster.img, 0, 0, size.width, size.height);
   };
 
   // A resize moves the visible region, so refresh the detail layer too.
