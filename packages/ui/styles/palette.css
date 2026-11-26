@@ -23,6 +23,12 @@
   --focus-outline: none;
 }
 
+.acp-shell[data-theme="light"] {
+  --widget-bg: var(--bg-0);
+  --menu-bg: var(--bg-0);
+  --suggest-bg: var(--bg-0);
+}
+
 /* Follow the host only in automatic mode. The original dark/light palette remains
    complete for fixed themes and hosts that do not publish these semantic roles.
    The desktop files layout's chat lies on the canvas with its own --bg-0 (desktop.css): its steps count from there. */
@@ -33,20 +39,20 @@
   --fg-strong: var(--fg-1);
   --action-fg: var(--fg-2);
   --shimmer-base: var(--action-fg);
-  /* Custom cards have no native counterpart; retain the host hue with opaque tonal steps. */
-  --bg-1: color-mix(in srgb, var(--bg-0), var(--fg-1) 3%);
-  --bg-2: color-mix(in srgb, var(--bg-0), var(--fg-1) 6%);
+  /* Unified conversation card step over the host canvas: 4.5% on dark (see light step below). */
+  --bg-1: color-mix(in srgb, var(--bg-0), var(--fg-1) 4.5%);
+  --bg-2: color-mix(in srgb, var(--bg-0), var(--fg-1) 8%);
   --bg-code: var(--bg-1);
   --line: color-mix(in srgb, var(--fg-1) 10%, transparent);
   --line-strong: var(--vscode-widget-border, color-mix(in srgb, var(--fg-1) 22%, var(--bg-0)));
-  --conversation-line: color-mix(in srgb, var(--fg-1) 16%, transparent);
+  --conversation-line: color-mix(in srgb, var(--fg-1) 14%, transparent);
   /* Focus stays a neutral step up, as hover and selection do; the accent is kept for high contrast. */
   --conversation-line-focus: color-mix(in srgb, var(--fg-1) 36%, transparent);
   --hover: color-mix(in srgb, var(--fg-1) 6%, transparent);
   --active: color-mix(in srgb, var(--fg-1) 11%, transparent);
   --chip: color-mix(in srgb, var(--fg-1) 8%, transparent);
   /* Clearly above --active (11%), the primary button's rest fill, so its hover reads */
-  --chip-hover: color-mix(in srgb, var(--fg-1) 18%, transparent);
+  --chip-hover: color-mix(in srgb, var(--fg-1) 16%, transparent);
   --widget-bg: var(--vscode-editorWidget-background, var(--bg-1));
   --widget-fg: var(--vscode-editorWidget-foreground, var(--fg-1));
   --widget-border: var(--vscode-editorWidget-border, var(--line-strong));
@@ -57,10 +63,11 @@
   --suggest-bg: var(--vscode-editorSuggestWidget-background, var(--widget-bg));
   --suggest-fg: var(--vscode-editorSuggestWidget-foreground, var(--widget-fg));
   --suggest-border: var(--vscode-editorSuggestWidget-border, var(--widget-border));
-  --input-bg: var(--vscode-input-background, var(--bg-1));
-  --input-fg: var(--vscode-input-foreground, var(--fg-1));
-  --input-placeholder: var(--vscode-input-placeholderForeground, var(--fg-3));
-  --input-border: var(--vscode-input-border, var(--conversation-line));
+  /* Keep composer, inline editors, sent messages and dock cards on one unified surface fill and border. */
+  --input-bg: var(--bg-1);
+  --input-fg: var(--fg-1);
+  --input-placeholder: var(--fg-3);
+  --input-border: var(--conversation-line);
   --cmp-bg: var(--input-bg);
   --cmp-bg-lift: var(--input-bg);
   --option-hover-bg: var(--vscode-list-hoverBackground, var(--hover));
@@ -68,6 +75,15 @@
   --option-selected-bg: var(--vscode-list-inactiveSelectionBackground, var(--active));
   --option-selected-fg: var(--vscode-list-inactiveSelectionForeground, var(--fg-1));
   --shadow: 0 8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.22)), 0 1px 2px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.12));
+}
+
+/* Light surfaces need a wider luminance step than dark ones so cards read clearly on both off-white and pure-white host canvases. */
+.acp-shell[data-theme="light"]:not([data-theme-fixed]),
+.acp-shell[data-theme="light"][data-layout="files"]:not([data-theme-fixed]) > :is([data-sheet], [data-subagent-panel="docked"]) {
+  --bg-1: color-mix(in srgb, var(--bg-0), var(--fg-1) 7.5%);
+  --bg-2: color-mix(in srgb, var(--bg-0), var(--fg-1) 11.5%);
+  --conversation-line-focus: color-mix(in srgb, var(--fg-1) 38%, transparent);
+  --widget-bg: var(--vscode-editorWidget-background, var(--bg-0));
 }
 
 /* Both high-contrast schemes need visible boundaries even when neighboring fills match. */

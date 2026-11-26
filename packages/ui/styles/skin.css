@@ -19,17 +19,17 @@
   --fg-strong: var(--fg-1);
   --action-fg: var(--fg-2);
   --shimmer-base: var(--action-fg);
-  --bg-1: color-mix(in srgb, var(--bg-0), var(--fg-1) 3%);
-  --bg-2: color-mix(in srgb, var(--bg-0), var(--fg-1) 6%);
+  --bg-1: color-mix(in srgb, var(--bg-0), var(--fg-1) 4.5%);
+  --bg-2: color-mix(in srgb, var(--bg-0), var(--fg-1) 8%);
   --bg-code: var(--bg-1);
   --line: color-mix(in srgb, var(--fg-1) 10%, transparent);
   --line-strong: color-mix(in srgb, var(--fg-1) 22%, var(--bg-0));
-  --conversation-line: color-mix(in srgb, var(--fg-1) 16%, transparent);
+  --conversation-line: color-mix(in srgb, var(--fg-1) 14%, transparent);
   --conversation-line-focus: color-mix(in srgb, var(--fg-1) 36%, transparent);
   --hover: color-mix(in srgb, var(--fg-1) 6%, transparent);
   --active: color-mix(in srgb, var(--fg-1) 11%, transparent);
   --chip: color-mix(in srgb, var(--fg-1) 8%, transparent);
-  --chip-hover: color-mix(in srgb, var(--fg-1) 18%, transparent);
+  --chip-hover: color-mix(in srgb, var(--fg-1) 16%, transparent);
   --widget-bg: var(--bg-1); --widget-fg: var(--fg-1); --widget-border: var(--line-strong);
   --menu-bg: var(--widget-bg); --menu-fg: var(--widget-fg); --menu-border: var(--widget-border); --menu-separator: var(--line);
   --suggest-bg: var(--widget-bg); --suggest-fg: var(--widget-fg); --suggest-border: var(--widget-border);
@@ -38,18 +38,24 @@
   --option-hover-bg: var(--hover); --option-hover-fg: var(--fg-1);
   --option-selected-bg: var(--active); --option-selected-fg: var(--fg-1);
 }
+.acp-shell.acp-shell[data-skin][data-theme="light"] {
+  --bg-1: color-mix(in srgb, var(--bg-0), var(--fg-1) 7.5%);
+  --bg-2: color-mix(in srgb, var(--bg-0), var(--fg-1) 11.5%);
+  --conversation-line-focus: color-mix(in srgb, var(--fg-1) 38%, transparent);
+  --widget-bg: var(--bg-0);
+}
 /* The skin picker's "no skin" picture (PluginCard DefaultLookThumb): tokens.css's own palette for the current scheme,
    set on the picture itself so neither the skin in effect nor the host's colours repaint it */
 .skin-default-thumb {
   --thumb-around: #121212;
-  --bg-0: #181818; --bg-1: #1f1f1f;
-  --line: rgba(255, 255, 255, 0.07); --line-strong: #3c3c3c;
+  --bg-0: #181818; --bg-1: #212121;
+  --line: rgba(255, 255, 255, 0.08); --line-strong: #3c3c3c;
   --fg-3: #767676; --btn-1-bg: rgba(255, 255, 255, 0.95);
 }
 [data-theme="light"] .skin-default-thumb {
-  --thumb-around: #e9e9e9;
-  --bg-0: #f3f3f3; --bg-1: #ffffff;
-  --line: rgba(0, 0, 0, 0.07); --line-strong: #cecece;
+  --thumb-around: #ebebeb;
+  --bg-0: #ffffff; --bg-1: #ececec;
+  --line: rgba(0, 0, 0, 0.09); --line-strong: #cecece;
   --fg-3: #767676; --btn-1-bg: #151515;
 }
 @layer components {
