@@ -89,6 +89,13 @@ impl AcpSession {
       return;
     }
     if c.acp_session_id.as_deref().is_some_and(|a| a != session_id) {
+      if !c.replaying
+        && let Some(dropped) = self.codex_drop(&c, &session_id, &kind, &u)
+      {
+        drop(c);
+        self.log_codex_drop(dropped);
+        return;
+      }
       if c.tree.has_peer_session(&session_id) {
         // Replay content is dropped for a node restored from the record
         if !c.replaying || !c.tree.peer_restored(&session_id) {
@@ -153,28 +160,9 @@ impl AcpSession {
     if c.replaying && kind == "notice" {
       return;
     }
-    if kind == "notice" && self.vendor == Vendor::Codex && codex_notices::drop_on_update(&u, c.proc_turn_seen) {
-      let head: String = u.get("title").and_then(Value::as_str).unwrap_or("").lines().next().unwrap_or("").chars().take(80).collect();
+    if let Some(dropped) = self.codex_drop(&c, &session_id, &kind, &u) {
       drop(c);
-      self.log(&format!("codex resume notice ignored: {head}"));
-      return;
-    }
-    // codex-acp reports MCP startup skips/failures as failed `tool_call` updates after session/new or resume:
-    // keep them out of the transcript so they never fabricate an empty "Done" turn or append to an older turn
-    if matches!(kind.as_str(), "tool_call" | "tool_call_update")
-      && self.vendor == Vendor::Codex
-      && let Some(report) = codex_notices::mcp_startup_report(&u)
-    {
-      drop(c);
-      match report {
-        codex_notices::McpStartupReport::Skipped { server, detail } => {
-          self.log(&format!("codex MCP `{server}` skipped: {detail}"));
-        }
-        codex_notices::McpStartupReport::Failed { ref server, ref detail } => {
-          self.log(&format!("codex MCP `{server}` startup failed: {detail}"));
-          self.notify(&report.toast_text());
-        }
-      }
+      self.log_codex_drop(dropped);
       return;
     }
     if c.phase.running
@@ -457,6 +445,65 @@ impl AcpSession {
       }
     }
   }
+
+  /// Vendor of the CLI that emitted this `session/update`: a summoned child's harness agent, else the root session's
+  fn update_vendor(&self, c: &Core, session_id: &str) -> Vendor {
+    if let Some(thread) = session_id.strip_prefix("relay:")
+      && let Some(r) = c.tree.relay_latest(thread)
+    {
+      return Vendor::of(&r.harness.agent);
+    }
+    self.vendor
+  }
+
+  /// Whether a Codex startup / config notice or MCP startup pseudo tool call should be dropped from the transcript
+  fn codex_drop(&self, c: &Core, session_id: &str, kind: &str, u: &Value) -> Option<CodexDrop> {
+    if self.update_vendor(c, session_id) != Vendor::Codex {
+      return None;
+    }
+    if kind == "notice" {
+      let turn_seen = if let Some(thread) = session_id.strip_prefix("relay:") {
+        c.relays.procs.get(thread).is_some_and(|rp| rp.turn_seen)
+      } else if c.acp_session_id.as_deref().is_some_and(|a| a != session_id) {
+        // Native Codex child: already spawned inside a turn; still drop global config / deprecation / resume warnings
+        true
+      } else {
+        c.proc_turn_seen
+      };
+      if codex_notices::drop_on_update(u, turn_seen) {
+        let head: String = u.get("title").and_then(Value::as_str).unwrap_or("").lines().next().unwrap_or("").chars().take(80).collect();
+        return Some(CodexDrop::Notice(head));
+      }
+    }
+    // codex-acp reports MCP startup skips/failures as failed `tool_call` updates after session/new or resume:
+    // keep them out of the transcript so they never fabricate an empty "Done" turn or append to an older turn
+    if matches!(kind, "tool_call" | "tool_call_update")
+      && let Some(report) = codex_notices::mcp_startup_report(u)
+    {
+      return Some(CodexDrop::Mcp(report));
+    }
+    None
+  }
+
+  fn log_codex_drop(&self, dropped: CodexDrop) {
+    match dropped {
+      CodexDrop::Notice(head) => self.log(&format!("codex notice ignored: {head}")),
+      CodexDrop::Mcp(report) => match &report {
+        codex_notices::McpStartupReport::Skipped { server, detail } => {
+          self.log(&format!("codex MCP `{server}` skipped: {detail}"));
+        }
+        codex_notices::McpStartupReport::Failed { server, detail } => {
+          self.log(&format!("codex MCP `{server}` startup failed: {detail}"));
+          self.notify(&report.toast_text());
+        }
+      },
+    }
+  }
+}
+
+enum CodexDrop {
+  Notice(String),
+  Mcp(codex_notices::McpStartupReport),
 }
 
 /// The newest text the host sent the agent: the last steer into the current agent turn, else the prompt that opened it
@@ -508,7 +555,7 @@ mod tests {
   use acpira_shared::transcript::{AgentBlock, AgentTurn, SessionStatus, ToolContent, Turn, TurnStop, UserTurn};
 
   use crate::acp::agents::registry::AgentRegistry;
-  use crate::acp::session::{AcpSession, InertPolicy, SessionDeps};
+  use crate::acp::session::{AcpSession, Core, InertPolicy, SessionDeps};
   use crate::acp::vendors::Vendor;
   use crate::store::transcript_store::TranscriptStore;
 
@@ -691,5 +738,189 @@ mod tests {
     // Child permission targeting `<child>:call_3` resolves to Target::Node, not Target::Root
     let target = s.target_for_call(&mut c, Vendor::Antigravity, Some(root), Some(&format!("{child}:call_3")));
     assert_eq!(target, Some(crate::acp::session::gates::Target::Node(c.tree.summaries()[0].core.id.clone())));
+  }
+
+  #[test]
+  fn summoned_codex_child_drops_config_notices_and_mcp_startup_reports_without_splitting_prose() {
+    use acpira_shared::subagents::{RelayMode, SubagentHarness};
+    use crate::acp::transcript::subagent_tree::{RelayOpen, RouteCtx};
+
+    let (s, _dir) = antigravity_session();
+    let thread = "t-codex-1";
+    let route = crate::acp::session::relay::route_key(thread);
+    let node_id = {
+      let mut c = s.core.lock();
+      let harness = SubagentHarness {
+        agent: "codex".into(),
+        persona: Some("astra".into()),
+        mode: RelayMode::Consult,
+        thread: thread.into(),
+        round: 1,
+        session_id: None,
+        effort: Some("max".into()),
+        group: None,
+      };
+      let node = c.tree.relay_open(RelayOpen {
+        parent: None,
+        turn_index: 0,
+        harness,
+        role: "Astra".into(),
+        title: "Consult @Astra".into(),
+        task: "review".into(),
+        model: Some("gpt-6.2-astra".into()),
+      });
+      let Core { tree, state, .. } = &mut *c;
+      tree.relay_bind(&node, &route, "codex-native-1", &mut RouteCtx { turn_index: 0, root_turns: &mut state.turns });
+      node
+    };
+
+    // Mid-turn streaming prose with Codex config/deprecation warnings fired in between (e.g. nested subagent spawn)
+    s.on_update(json!({
+      "sessionId": route,
+      "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "我会沿" } }
+    }));
+    s.on_update(json!({
+      "sessionId": route,
+      "update": {
+        "sessionUpdate": "notice",
+        "severity": "warning",
+        "title": "`[features].multi_agent` is deprecated. It still controls the V1 fallback."
+      }
+    }));
+    s.on_update(json!({
+      "sessionId": route,
+      "update": {
+        "sessionUpdate": "notice",
+        "severity": "warning",
+        "title": "Codex is ignoring 2 unrecognized configuration settings. Check for typos or deprecated settings.\n  user (/Users/dev/.codex/config.toml): `features.remote_connections` is ignored."
+      }
+    }));
+    s.on_update(json!({
+      "sessionId": route,
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "mcp_startup.acpira.1111",
+        "kind": "other",
+        "title": "mcp__acpira__startup",
+        "status": "failed",
+        "content": [{
+          "type": "content",
+          "content": { "type": "text", "text": "[codex-acp] MCP server `acpira` was not started, because the Codex config already defines an MCP server with this name." }
+        }]
+      }
+    }));
+    s.on_update(json!({
+      "sessionId": route,
+      "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "文件快照核对。" } }
+    }));
+    // Error notices always stay even before `turn_seen` is set
+    s.on_update(json!({
+      "sessionId": route,
+      "update": { "sessionUpdate": "notice", "severity": "error", "title": "Rate limit exceeded" }
+    }));
+
+    let c = s.core.lock();
+    let (turns, _, _) = c.tree.transcript(&node_id).unwrap();
+    let blocks = &turns.iter().rev().find_map(|t| t.as_agent()).unwrap().blocks;
+    let texts: Vec<&str> = blocks
+      .iter()
+      .filter_map(|b| match b {
+        AgentBlock::Text(t) => Some(t.markdown.as_str()),
+        _ => None,
+      })
+      .collect();
+    let notice_titles: Vec<&str> = blocks
+      .iter()
+      .filter_map(|b| match b {
+        AgentBlock::Notice(n) => Some(n.title.as_str()),
+        _ => None,
+      })
+      .collect();
+    let tool_count = blocks.iter().filter(|b| matches!(b, AgentBlock::ToolCall(_))).count();
+    assert_eq!(texts, ["我会沿文件快照核对。"]);
+    assert_eq!(notice_titles, ["Rate limit exceeded"]);
+    assert_eq!(tool_count, 0);
+  }
+
+  #[test]
+  fn native_codex_child_drops_config_warnings_while_summoned_claude_child_under_codex_keeps_notices() {
+    use acpira_shared::subagents::{RelayMode, SubagentHarness};
+    use crate::acp::transcript::subagent_tree::{RelayOpen, RouteCtx};
+
+    let (s, _notices, _dir) = codex_session();
+    let claude_thread = "t-claude-1";
+    let claude_route = crate::acp::session::relay::route_key(claude_thread);
+    // Announce a native Codex child session via standard subagent lifecycle
+    s.on_update(json!({
+      "sessionId": "codex-thread-1",
+      "update": { "sessionUpdate": "subagent_update", "subagentSessionId": "codex-child-1", "state": "running", "name": "Topology" }
+    }));
+    let (native_node, claude_node) = {
+      let mut c = s.core.lock();
+      let native = c.tree.node_for_peer("codex-child-1").unwrap();
+      let harness = SubagentHarness {
+        agent: "claude".into(),
+        persona: Some("fable".into()),
+        mode: RelayMode::Consult,
+        thread: claude_thread.into(),
+        round: 1,
+        session_id: None,
+        effort: None,
+        group: None,
+      };
+      let claude = c.tree.relay_open(RelayOpen {
+        parent: None,
+        turn_index: 0,
+        harness,
+        role: "Fable".into(),
+        title: "Consult @Fable".into(),
+        task: "review".into(),
+        model: None,
+      });
+      let Core { tree, state, .. } = &mut *c;
+      tree.relay_bind(&claude, &claude_route, "claude-native-1", &mut RouteCtx { turn_index: 0, root_turns: &mut state.turns });
+      (native, claude)
+    };
+
+    // Native Codex child drops global deprecation warning
+    s.on_update(json!({
+      "sessionId": "codex-child-1",
+      "update": { "sessionUpdate": "notice", "severity": "warning", "title": "`[features].multi_agent` is deprecated." }
+    }));
+    // Native Codex child keeps genuine live turn warning
+    s.on_update(json!({
+      "sessionId": "codex-child-1",
+      "update": { "sessionUpdate": "notice", "severity": "warning", "title": "PreToolUse hook blocked the command" }
+    }));
+    // Summoned Claude child under a Codex parent is NOT filtered by Codex notice rules
+    s.on_update(json!({
+      "sessionId": claude_route,
+      "update": { "sessionUpdate": "notice", "severity": "warning", "title": "Configuration warning" }
+    }));
+
+    let c = s.core.lock();
+    let (native_turns, _, _) = c.tree.transcript(&native_node).unwrap();
+    let native_notices: Vec<&str> = native_turns
+      .iter()
+      .filter_map(|t| t.as_agent())
+      .flat_map(|t| &t.blocks)
+      .filter_map(|b| match b {
+        AgentBlock::Notice(n) => Some(n.title.as_str()),
+        _ => None,
+      })
+      .collect();
+    assert_eq!(native_notices, ["PreToolUse hook blocked the command"]);
+
+    let (claude_turns, _, _) = c.tree.transcript(&claude_node).unwrap();
+    let claude_notices: Vec<&str> = claude_turns
+      .iter()
+      .filter_map(|t| t.as_agent())
+      .flat_map(|t| &t.blocks)
+      .filter_map(|b| match b {
+        AgentBlock::Notice(n) => Some(n.title.as_str()),
+        _ => None,
+      })
+      .collect();
+    assert_eq!(claude_notices, ["Configuration warning"]);
   }
 }

@@ -1,11 +1,13 @@
-//! Codex startup / resume notices and MCP startup reports (codex-acp 2.8.0 / codex 0.170.0).
+//! Codex startup / config notices and MCP startup reports (codex-acp 2.8.0–2.12.1 / codex 0.170.0+).
 //!
 //! Unlike `session/new` (which attaches its event tracker after `thread/start`), `session/resume` attaches
 //! `startCodexTurnTracker` before `thread/resume` and flushes buffered notifications asynchronously when the
 //! session installs. `thread/resume` emits global config warnings (`configWarning`, `deprecationNotice`) and a
 //! model-mismatch warning (`This session was recorded with model … but is resuming with …`, because `thread/resume`
 //! omits `model` and starts on `config.toml`'s default before Acpira's `adopt_controls` restores the session's model).
-//! Left unfiltered, those notices land on the last settled turn and stack again on every idle reopen.
+//! Spawning native Codex subagents mid-turn also re-loads `config.toml` and re-emits the same global `configWarning`
+//! and `deprecationNotice` events (which carry no `threadId`, so `codex-acp` routes them onto the root session).
+//! Left unfiltered, those notices land on settled turns or split live streaming text mid-sentence.
 //!
 //! After `session/new` / `resume` / `load`, `McpSessionStartup` also publishes skipped or failed MCP server startups
 //! as `status: "failed"` `tool_call` updates (`toolCallId: mcp_startup.<server>.<uuid>`, `title: mcp__<server>__startup`).
@@ -95,8 +97,9 @@ fn startup_content_text(u: &Value) -> String {
 /// Whether a Codex `notice` update should be dropped instead of appended to the transcript.
 ///
 /// Error notices are always kept. Before any turn has started on the current process, every non-error notice is a
-/// startup / resume notification rather than conversation content. Resume-only warnings are also recognized by text
-/// in case a queued prompt opens a turn before `codex-acp` finishes flushing its `thread/resume` queue.
+/// startup / resume notification rather than conversation content. Global config / deprecation and resume-only
+/// warnings are also recognized by text because `codex-acp` flushes them both around `thread/resume` and mid-turn
+/// whenever Codex loads `config.toml` for a newly spawned subagent.
 pub(crate) fn drop_on_update(u: &Value, turn_seen: bool) -> bool {
   let severity = u.get("severity").and_then(Value::as_str);
   if severity == Some("error") {
@@ -105,15 +108,16 @@ pub(crate) fn drop_on_update(u: &Value, turn_seen: bool) -> bool {
   if !turn_seen {
     return true;
   }
-  severity == Some("warning") && u.get("title").and_then(Value::as_str).is_some_and(is_resume_warning)
+  severity == Some("warning") && u.get("title").and_then(Value::as_str).is_some_and(is_config_or_resume_warning)
 }
 
-/// Warnings Codex emits only while opening / resuming a thread (never from turn work itself)
-fn is_resume_warning(title: &str) -> bool {
+/// Global config / deprecation / resume warnings Codex emits when loading config or reopening a thread
+fn is_config_or_resume_warning(title: &str) -> bool {
   let t = title.trim();
   (t.starts_with("This session was recorded with model ") && t.contains(" but is resuming with "))
     || (t.starts_with("Codex is ignoring ") && t.contains("unrecognized configuration"))
     || t.contains("` is deprecated")
+    || matches!(t, "Configuration warning" | "Deprecated configuration")
 }
 
 #[cfg(test)]
@@ -150,6 +154,8 @@ mod tests {
     assert!(drop_on_update(&deprecated, true));
     assert!(drop_on_update(&ignored, true));
     assert!(drop_on_update(&model, true));
+    assert!(drop_on_update(&notice("warning", "Configuration warning"), true));
+    assert!(drop_on_update(&notice("warning", "Deprecated configuration"), true));
   }
 
   #[test]
