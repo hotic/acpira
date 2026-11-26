@@ -30,7 +30,7 @@ export function PlanCard({ entries, live, goal }: { entries?: PlanEntry[]; live?
     {foldable && <PlanCaret open={open} />}
   </>;
   return (
-    <Card className="plan-card flex min-w-0 flex-col gap-(--plan-section-gap) px-pad py-(--plan-pad-y)" data-open={open || undefined}>
+    <Card className="plan-card flex min-w-0 flex-col gap-(--plan-section-gap) px-card-pad py-(--plan-pad-y)" data-open={open || undefined}>
       {goal
         ? <GoalHead {...goal} toggle={entries && { open, onToggle: foldable ? toggle : undefined, trailing: count }} />
         : foldable ? (

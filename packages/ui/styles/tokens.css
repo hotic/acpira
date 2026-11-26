@@ -254,17 +254,17 @@
   /* Plan cards scroll their body past this height so the approval bar stays next to the plan */
   --plan-body-max: min(calc(var(--row) * 14), 55dvh);
   --question-option-pad: 4px;
-  /* A control in a bordered dock card (the question card, the notices): 8px from the card's outer edge, its 1px border
-     included, so it stands on the line of the composer's chips and send button below (the composer's outline is an
-     inset ring, the cards' a border). Bare text sits a quarter of the 8px outline radius further in */
+  /* A control in a bordered dock card (the question footer, the notices): 8px from the card's outer edge, its 1px border
+     included, so its box stands on the line of the composer's chips and send button below (the composer's outline is an
+     inset ring, the cards' a border). Card content (the to-do list, the question header and options, the composer's text)
+     sits on the --pad content line (14px at default density, matching the icon inside the composer's leading chip) */
   --card-corner: calc(8px - 1px);
-  --card-corner-text: calc(var(--card-corner) + 2px);
   --question-description-gap: 2px;
   --question-focus-width: 2px;
   /* Only the pinned to-do list has a bounded viewport; historical plans grow naturally. */
   --plan-rows: 7;
-  /* With the card's 1px border, the head row's hover fill stands 8px from the top edge, as from the sides (chat.css .plan-card) */
-  --plan-pad-y: 7px;
+  /* With the card's 1px border, the to-do card's top and bottom match its side corner line (8px from the outer edge) */
+  --plan-pad-y: var(--card-corner);
   --plan-section-gap: 4px;
   --plan-entry-pad-y: 2px;
   /* Max rows shown in a menu; beyond that it scrolls inside the menu (Devin's 210 models) */
@@ -615,10 +615,14 @@
      those controls the same 8px from the card's side and bottom edge at every density */
   --spacing-corner-b: calc(8px - (var(--ctl) - var(--ctl-sm)) / 2);
   --spacing-card-corner: var(--card-corner);
-  --spacing-card-corner-text: var(--card-corner-text);
-  /* The composer's text, its command hint and caret: on the leading edge of the bar's first chip below (the bar's px-2,
-     8px in from the field's outline ring) plus the 2px optical step bare text over a box takes (card-corner-text) */
-  --spacing-composer-text: calc(8px + 2px);
+  /* Leading content padding inside a bordered dock card: --pad less its 1px border, so card text, icons and option keys
+     line up on the --pad column with the composer's text and the glyph inside its leading chip (reads the shell's density) */
+  --spacing-card-pad: calc(var(--pad) - 1px);
+  /* Horizontal bleed of a dock card's full-width hover row (to-do head, question option) from --pad out to the 8px corner line */
+  --spacing-card-bleed: calc(var(--pad) - 8px);
+  /* The composer's text, its command hint and caret: on the --pad content line, aligned with the dock cards above and
+     with the leading icon inside the bar's first chip below */
+  --spacing-composer-text: var(--pad);
   /* A popup's ruled search line (ui/Command.tsx), its rule included, pulled up over the popup's p-1: the glyphs at its ends
      (the glass, the model panel's +) sit 10px from the popup's top edge and from the rule, a little under their 12px side
      inset, so the line reads as tall as the model panel's PairSwitch band at its foot (4px, a 26px track, 4px) */

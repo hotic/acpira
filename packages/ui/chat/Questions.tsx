@@ -170,11 +170,10 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
           {/* The question is the card's head: a band of its own over a hairline, as the actions are under one, so it never
               reads as the first row of the answers. A text question has no rule: there the question is the field's label,
               and a rule between a label and its field parts them. The head stays outside the answer scrollport and its fade.
-              One leading line runs down the card: the keys, the field's edge and the footer buttons all stand 8px in from
-              the card's outer edge (card-corner), the composer's line, since a label that starts well inside the edge of the
-              box under it reads as a slip. The question's text sits a hair further in than those outlines: flush with a
-              rounded outline, bare text looks outdented. */}
-          <div className={cn('flex shrink-0 flex-col gap-(--question-section-gap) px-card-corner-text pt-(--question-head-pad)',
+              Two clean vertical lines run down the dock: card content (the question text, option keys and text fields) sits
+              on the --pad content line (card-pad, aligned with the to-do card above and the composer's text and chip icon
+              below), while outer controls and option hover fills stand 8px in from the card's outer edge (card-corner). */}
+          <div className={cn('flex shrink-0 flex-col gap-(--question-section-gap) px-card-pad pt-(--question-head-pad)',
             current.kind !== 'text' && 'border-b border-line pb-(--question-head-pad)')}>
             {subtitle && <div className="text-3 text-fg-3">{subtitle}</div>}
             {/* No glyph: it put the question in the answers' text column behind their keys. No row min height either: its
@@ -184,7 +183,7 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
               <h3 id={titleId} className="m-0 min-w-0 text-2 font-medium text-fg-strong [overflow-wrap:anywhere]">{current.text}</h3>
             </Row>
           </div>
-          <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex min-h-0 flex-col gap-(--question-section-gap) overflow-y-auto overscroll-y-contain px-card-corner py-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
+          <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex min-h-0 flex-col gap-(--question-section-gap) overflow-y-auto overscroll-y-contain px-card-pad py-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
             {block.message && page === 0 && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{block.message}</p>}
             <QuestionItem question={current} titleId={titleId} pick={picks[current.id] ?? EMPTY}
               onAttach={accepts ? attach : undefined}
@@ -212,8 +211,9 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
 // One question per page, compact type, shared row alignment and persistent actions.
 // Every focusable control in the card shows the same inset ring; the "other" row lights up while its input has focus.
 const focusRing = 'focus-visible:shadow-[inset_0_0_0_var(--question-focus-width)_var(--fg-2)]';
-// A row's fill bleeds out by its own padding (the group's negative margin), so its key stays on the card's leading line
-const optionRowClass = 'w-full rounded-md p-(--question-option-pad) active:bg-active';
+// A row's fill bleeds horizontally from the --pad content line out to the 8px corner line (card-bleed), so its key
+// stays on the content line while hover / selection lines up with the footer buttons and composer chips below
+const optionRowClass = 'w-full rounded-md px-card-bleed py-(--question-option-pad) active:bg-active';
 // The key is a hint, one step under the label it stands for
 const optionKeyClass = 'flex size-lead items-center justify-center rounded-sm border border-line text-3 text-fg-3';
 
@@ -239,7 +239,7 @@ function QuestionItem({ question: q, titleId, pick, onAttach, onRemoveImages, on
   return (
     <section className="flex min-w-0 flex-col gap-(--question-section-gap)">
       {/* A text question has no choices: an empty group would still take a section gap above the field */}
-      {q.kind !== 'text' && <div role={groupRole} aria-labelledby={titleId} className="-mx-(--question-option-pad) flex min-w-0 flex-col">
+      {q.kind !== 'text' && <div role={groupRole} aria-labelledby={titleId} className="-mx-card-bleed flex min-w-0 flex-col">
         {q.options.map((o, i) => (
           <OptionRow key={o.id} keyLabel={KEYS[i] ?? String(i + 1)} selected={pick.options.includes(o.id)}
             role={q.kind === 'multiple' ? 'checkbox' : 'radio'} onClick={() => onChoose(o.id)}>

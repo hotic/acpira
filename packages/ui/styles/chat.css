@@ -182,10 +182,9 @@
      that label line; a mark filling the slot (Orb, subagent bars) overhangs it by the air on each side */
   :is([data-thread], [data-subagent-thread], .plan-card) { --row-gap: calc(var(--gap) + 4px); --indent: calc(var(--icon) + var(--row-gap)); }
   :is([data-thread], [data-subagent-thread], .plan-card) .row-lead { margin-inline: calc((var(--icon) - var(--lead)) / 2); }
-  /* The to-do dock's card (chat/Plan.tsx): its head row's hover fill stands 8px in from the card's outer edge (the 1px
-     border included), on the vertical lines of the composer's chips and send button below, while the row's text stays on
-     pad. Set here rather than in tokens.css so --pad is the shell's density, not the root's */
-  .plan-card { --row-hit-outset: calc(var(--pad) + 1px - 8px); }
+  /* The to-do dock's card (chat/Plan.tsx): its lead icons stand on the --pad content line (card-pad) with the question
+     card and composer text below, while its head row's hover fill bleeds out to the 8px corner line */
+  .plan-card { --row-hit-outset: calc(var(--pad) - 8px); }
 
   /* Dock cards (chat/Alert.tsx DockCard): text block, then the actions on its line. Below 30rem (the notice tier) a
      card that has a way around its primary takes two bands instead: the actions drop into a footer strip that spans the
