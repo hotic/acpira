@@ -269,10 +269,16 @@ private fun Head(node: SubagentSummary, model: String, brand: String?, lead: Sid
       horizontalArrangement = Arrangement.spacedBy(Metrics.s2),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      Text(model, color = Palette.fg1, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false, modifier = Modifier.weight(1f, fill = false))
-      Text(t("sidekick.takes"), color = Palette.fg2, maxLines = 1, softWrap = false)
-      node.harness?.round?.takeIf { it > 1 }?.let {
-        Text(t("subagents.round", "n" to it), style = WebType.text3, color = Palette.fg3, maxLines = 1, softWrap = false)
+      // The model, the verb and the round measure first as one group, the model giving way inside it only when the three
+      // outgrow the row; the task takes what is left (SidekickRelay.tsx's zero-basis task). Weighting the model and the
+      // task alike split the room in half, cutting the model short whenever the task was long. A Row whose weighted
+      // children do not fill wraps them (Compose foundation-layout 1.12 `RowColumnMeasurePolicy.measure`)
+      Row(horizontalArrangement = Arrangement.spacedBy(Metrics.s2), verticalAlignment = Alignment.CenterVertically) {
+        Text(model, color = Palette.fg1, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false, modifier = Modifier.weight(1f, fill = false))
+        Text(t("sidekick.takes"), color = Palette.fg2, maxLines = 1, softWrap = false)
+        node.harness?.round?.takeIf { it > 1 }?.let {
+          Text(t("subagents.round", "n" to it), style = WebType.text3, color = Palette.fg3, maxLines = 1, softWrap = false)
+        }
       }
       SqueezedTitle(title)
       node.harness?.effort?.let { EffortTag(ComposerControls.effortLabel(SessionOption(it, it))) }

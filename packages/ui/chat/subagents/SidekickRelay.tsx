@@ -121,12 +121,14 @@ export function SidekickRelay({ node, onInspect }: { node: SubagentSummary; onIn
         </>}
       >
         <span className="sidekick-sheen" aria-hidden />
-        {/* Under room pressure the task gives up its width first, then the model name; the verb always stays */}
+        {/* Under room pressure the task gives up its width first, then the model name; the verb always stays. The task
+            only takes the room left (zero basis): a shrink weight alone still took a fraction of a pixel from the name,
+            enough for its ellipsis, whenever the task was long */}
         <span className="sidekick-label flex min-w-0 items-baseline gap-gap overflow-hidden">
           <span className="sidekick-name min-w-0 truncate text-fg-1">{model}</span>
           <span className="shrink-0 text-fg-2">{t('sidekick.takes')}</span>
           {(node.harness?.round ?? 1) > 1 && <span className="shrink-0 text-3 text-fg-3">{t('subagents.round', { n: node.harness!.round })}</span>}
-          {title && <span className="min-w-0 truncate text-fg-3 [flex-shrink:1000]">{title}</span>}
+          {title && <span className="min-w-0 grow basis-0 truncate text-fg-3">{title}</span>}
         </span>
       </Row>
       <div className="sidekick-window" data-more={items.length > slots ? '' : undefined} style={{ '--sidekick-slots': slots } as CSSProperties}>
