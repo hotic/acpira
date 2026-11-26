@@ -42,8 +42,15 @@ impl Keyed for SubagentGroup {
 
 /// A page's edit applied onto the file as it is now: entries the page removed go, the ones it changed are written
 /// over; the ones it left alone keep the file's version, which another window may have changed meanwhile. An entry
-/// new to the page is added even when another window took its id meanwhile (sanitizing renumbers it)
+/// new to the page is added even when another window took its id meanwhile (sanitizing renumbers it). When the page
+/// changed the relative order of entries it kept from `base`, the merged list adopts that order while keeping any
+/// entries added concurrently by another window
 fn merge<T: Keyed>(current: Vec<T>, base: &[T], next: Vec<T>) -> Vec<T> {
+  let base_kept: Vec<&str> = base.iter().map(Keyed::key).filter(|k| next.iter().any(|n| n.key() == *k)).collect();
+  let next_kept: Vec<&str> = next.iter().map(Keyed::key).filter(|k| base.iter().any(|b| b.key() == *k)).collect();
+  let reordered = base_kept != next_kept;
+  let next_order: Vec<String> = if reordered { next.iter().map(|n| n.key().to_owned()).collect() } else { Vec::new() };
+
   let mut out = current;
   out.retain(|o| !base.iter().any(|b| b.key() == o.key()) || next.iter().any(|n| n.key() == o.key()));
   for n in next {
@@ -55,6 +62,16 @@ fn merge<T: Keyed>(current: Vec<T>, base: &[T], next: Vec<T>) -> Vec<T> {
       Some(o) if known => *o = n,
       _ => out.push(n),
     }
+  }
+  if reordered {
+    let mut ordered = Vec::with_capacity(out.len());
+    for key in &next_order {
+      if let Some(pos) = out.iter().position(|o| o.key() == key) {
+        ordered.push(out.remove(pos));
+      }
+    }
+    ordered.extend(out);
+    return ordered;
   }
   out
 }
@@ -241,6 +258,52 @@ mod tests {
     // Deleting A from that same base removes A only
     let stored = roster.save(&edit(json!([]))).await.unwrap();
     assert_eq!(stored.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["b", "b-2"]);
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[tokio::test]
+  async fn reordering_applies_new_order_and_preserves_concurrent_edits() {
+    let dir = std::env::temp_dir().join(format!("acpira-roster-reorder-{}", std::process::id()));
+    let roster = Roster::new(&dir);
+    let initial = roster
+      .save(&json!([
+        { "name": "Opus", "agent": "claude", "when": "first" },
+        { "name": "Grok", "agent": "acpira", "when": "second" },
+        { "name": "Astra", "agent": "codex", "when": "third" },
+      ]))
+      .await
+      .unwrap();
+    let base = serde_json::to_value(&initial).unwrap();
+
+    // Window 1 edits Grok and adds Neon; Window 2, from the original base, reorders Astra ahead of Opus
+    let mut w1 = base.clone();
+    w1[1]["when"] = json!("updated by w1");
+    w1.as_array_mut().unwrap().push(json!({ "name": "Neon", "agent": "antigravity" }));
+    roster.save(&json!({ "base": base, "personas": w1 })).await.unwrap();
+
+    let reordered = json!([base[2], base[0], base[1]]);
+    let stored = roster.save(&json!({ "base": base, "personas": reordered })).await.unwrap();
+    assert_eq!(stored.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["astra", "opus", "grok", "neon"]);
+    assert_eq!(stored[2].when, "updated by w1");
+
+    // A non-reordering edit from an older base keeps the new order
+    let mut edited_opus = base.clone();
+    edited_opus[0]["when"] = json!("edited opus");
+    let stored = roster.save(&json!({ "base": base, "personas": edited_opus })).await.unwrap();
+    assert_eq!(stored.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["astra", "opus", "grok", "neon"]);
+    assert_eq!(stored[1].when, "edited opus");
+
+    // Reordering groups works the same way
+    let groups_base = json!([
+      { "name": "Alpha", "members": ["opus"] },
+      { "name": "Beta", "members": ["astra"] },
+    ]);
+    roster.save(&json!({ "baseGroups": [], "groups": groups_base })).await.unwrap();
+    let g_base = serde_json::to_value(roster.groups()).unwrap();
+    let g_reordered = json!([g_base[1], g_base[0]]);
+    roster.save(&json!({ "baseGroups": g_base, "groups": g_reordered })).await.unwrap();
+    assert_eq!(roster.groups().iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), ["beta", "alpha"]);
+
     std::fs::remove_dir_all(&dir).ok();
   }
 }

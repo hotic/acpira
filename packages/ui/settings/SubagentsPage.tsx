@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Users } from 'lucide-react';
 import type { AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { SettingsView } from '@acpira/shared/settings';
@@ -15,6 +15,7 @@ import { t } from '../i18n';
 import { DangerAction, DialogBody, Field, FormField, FormGrid, FormRows, ItemRow, Note, Section, SectionAction, Select, SettingsDialog, Switch, TextBox, type Option } from './controls';
 import type { SettingsPage } from './Nav';
 import type { SettingsHandlers } from './SettingsShell';
+import { orderById, SortableRows } from './SortableRows';
 
 // The read-only mode the relay finds on the CLIs whose modes are recorded (docs/acp-agents-compat.md; null = none);
 // any other CLI is tried at run time against acp/session/relay.rs READ_ONLY_MODES
@@ -60,8 +61,18 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
   const toList = () => onReplace({ kind: 'subagents' });
   // A persona just added: its page opens once the stored list brings it back, and is not closed while it is on its way
   const [adding, setAdding] = useState<string>();
+  // Hold a freshly committed order locally until the host snapshot carrying it arrives
+  const [pendingOrder, setPendingOrder] = useState<string[]>();
+  useEffect(() => setPendingOrder(undefined), [list]);
+  const ordered = useMemo(() => (pendingOrder ? orderById(list, pendingOrder) : list), [list, pendingOrder]);
   const save = (next: SubagentPersona[]) => (on.saveSubagents ? on.saveSubagents(list, next) : on.setSetting('subagents', next));
-  const current = list.find(p => p.id === open);
+  const commitOrder = (ids: string[]) => {
+    const next = orderById(ordered, ids);
+    if (next.map(p => p.id).join('\0') === ordered.map(p => p.id).join('\0')) return;
+    setPendingOrder(next.map(p => p.id));
+    save(next);
+  };
+  const current = ordered.find(p => p.id === open);
   // A persona deleted (or renamed into another id) elsewhere closes its page
   useEffect(() => { if (open && !current && adding !== open) toList(); }, [open, current, adding]);
   // The stored list is back after an add: the wait is over either way; without the new persona (the host gave it
@@ -74,52 +85,71 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
     if (open === adding && !list.some(p => p.id === adding)) toList();
     setAdding(undefined);
   }, [list, adding, open]);
-  const full = list.length >= PERSONA_MAX;
+  const full = ordered.length >= PERSONA_MAX;
   const add = () => {
     // Unknown availability (the engine's first probe still running) counts as available, as on every other page
     const agent = agents.find(a => a.available !== false)?.id ?? agents[0]?.id;
     if (!agent || full) return;
     // The id comes from the name the way the host derives it, so the page knows what to open when the list comes back
-    const next = sanitizePersonas([...list, { name: uniqueName(t('subagents.page.newName'), list), agent, mode: 'inherit', when: '', enabled: true }]);
+    const next = sanitizePersonas([...ordered, { name: uniqueName(t('subagents.page.newName'), ordered), agent, mode: 'inherit', when: '', enabled: true }]);
     const id = next[next.length - 1]!.id;
     save(next);
     setAdding(id);
     onPage({ kind: 'subagents', persona: id });
   };
-  const group = useGroupList(groups, list, on, page.group, onPage, toList);
-  const update = (id: string, patch: Partial<SubagentPersona>) => save(list.map(p => (p.id === id ? { ...p, ...patch } : p)));
+  const group = useGroupList(groups, ordered, on, page.group, onPage, toList);
+  const update = (id: string, patch: Partial<SubagentPersona>) => save(ordered.map(p => (p.id === id ? { ...p, ...patch } : p)));
   const saveGroups = (next: SubagentGroup[]) => group.save(next);
   // A dialog's close is a step back to the lists on the trail
   const close = () => toList();
+  const dialogOpen = !!open || !!page.group;
   return <>
     <Section title={t('subagents.page.list')} desc={t('subagents.page.listDesc')}
       action={<SectionAction icon={<Plus />} disabled={full || adding !== undefined} onClick={add}>{t('subagents.page.add')}</SectionAction>}>
-      {list.length === 0 && <Note>{t('subagents.page.empty')}</Note>}
-      {list.map(p => (
-        <ItemRow key={p.id} onEdit={() => onPage({ kind: 'subagents', persona: p.id })} editLabel={p.name}
-          lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents, controls[p.agent])}
-          trailing={<Switch checked={p.enabled} label={t('subagents.page.enabledNamed', { name: p.name })} onChange={enabled => update(p.id, { enabled })} />} />
-      ))}
+      {ordered.length === 0 && <Note>{t('subagents.page.empty')}</Note>}
+      {ordered.length > 0 && (
+        <SortableRows
+          items={ordered}
+          canDrag={adding === undefined && !dialogOpen && ordered.length > 1}
+          dataAttr="data-persona-row"
+          onReorder={commitOrder}
+          renderRow={(p, { dragging, keyShortcuts }) => (
+            <ItemRow onEdit={() => onPage({ kind: 'subagents', persona: p.id })} editLabel={p.name}
+              dragging={dragging} editKeyShortcuts={keyShortcuts}
+              lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents, controls[p.agent])}
+              trailing={<span data-no-drag className="flex shrink-0 items-center"><Switch checked={p.enabled} label={t('subagents.page.enabledNamed', { name: p.name })} onChange={enabled => update(p.id, { enabled })} /></span>} />
+          )}
+        />
+      )}
     </Section>
     {/* A group needs subagents to hold, so it can be added only once there is one; without the save handler (no host
         to merge into the file) the list is shown but not edited */}
     <Section title={t('subagents.groups.list')} desc={t('subagents.groups.listDesc')}
       action={on.saveSubagentGroups && <SectionAction icon={<Plus />} disabled={!group.canAdd} onClick={group.add}>{t('subagents.page.add')}</SectionAction>}>
-      {groups.length === 0 && <Note>{t('subagents.groups.empty')}</Note>}
-      {groups.map(g => (
-        <ItemRow key={g.id} onEdit={on.saveSubagentGroups ? () => onPage({ kind: 'subagents', group: g.id }) : undefined} editLabel={g.name}
-          lead={<Users />} title={g.name} desc={membersOf(g, list)}
-          trailing={on.saveSubagentGroups && <Switch checked={g.enabled} label={t('subagents.page.enabledNamed', { name: g.name })}
-            onChange={enabled => saveGroups(groups.map(x => (x.id === g.id ? { ...x, enabled } : x)))} />} />
-      ))}
+      {group.ordered.length === 0 && <Note>{t('subagents.groups.empty')}</Note>}
+      {group.ordered.length > 0 && (
+        <SortableRows
+          items={group.ordered}
+          canDrag={!!on.saveSubagentGroups && group.adding === undefined && !dialogOpen && group.ordered.length > 1}
+          dataAttr="data-group-row"
+          onReorder={group.commitOrder}
+          renderRow={(g, { dragging, keyShortcuts }) => (
+            <ItemRow onEdit={on.saveSubagentGroups ? () => onPage({ kind: 'subagents', group: g.id }) : undefined} editLabel={g.name}
+              dragging={dragging} editKeyShortcuts={keyShortcuts}
+              lead={<Users />} title={g.name} desc={membersOf(g, ordered)}
+              trailing={on.saveSubagentGroups && <span data-no-drag className="flex shrink-0 items-center"><Switch checked={g.enabled} label={t('subagents.page.enabledNamed', { name: g.name })}
+                onChange={enabled => saveGroups(group.ordered.map(x => (x.id === g.id ? { ...x, enabled } : x)))} /></span>} />
+          )}
+        />
+      )}
     </Section>
     {current && <PersonaDialog persona={current} agents={agents} controls={controls[current.agent]} shapes={shapes?.[current.agent]} onClose={close}
-      onChange={patch => update(current.id, patch)} onDelete={() => { toList(); save(list.filter(p => p.id !== current.id)); }} />}
+      onChange={patch => update(current.id, patch)} onDelete={() => { toList(); save(ordered.filter(p => p.id !== current.id)); }} />}
     {group.current && (() => {
       const g = group.current;
-      return <GroupDialog group={g} personas={list} agents={agents} onClose={close}
-        onChange={patch => saveGroups(groups.map(x => (x.id === g.id ? { ...x, ...patch } : x)))}
-        onDelete={() => { toList(); saveGroups(groups.filter(x => x.id !== g.id)); }} />;
+      return <GroupDialog group={g} personas={ordered} agents={agents} onClose={close}
+        onChange={patch => saveGroups(group.ordered.map(x => (x.id === g.id ? { ...x, ...patch } : x)))}
+        onDelete={() => { toList(); saveGroups(group.ordered.filter(x => x.id !== g.id)); }} />;
     })()}
   </>;
 }
@@ -129,8 +159,17 @@ export function SubagentsPage({ page, onPage, onReplace, settings, agents, contr
 function useGroupList(groups: SubagentGroup[], personas: SubagentPersona[], on: SettingsHandlers, open: string | undefined,
   onPage: (page: SettingsPage) => void, toList: () => void) {
   const [adding, setAdding] = useState<string>();
+  const [pendingOrder, setPendingOrder] = useState<string[]>();
+  useEffect(() => setPendingOrder(undefined), [groups]);
+  const ordered = useMemo(() => (pendingOrder ? orderById(groups, pendingOrder) : groups), [groups, pendingOrder]);
   const save = (next: SubagentGroup[]) => on.saveSubagentGroups?.(groups, next);
-  const current = groups.find(g => g.id === open);
+  const commitOrder = (ids: string[]) => {
+    const next = orderById(ordered, ids);
+    if (next.map(g => g.id).join('\0') === ordered.map(g => g.id).join('\0')) return;
+    setPendingOrder(next.map(g => g.id));
+    save(next);
+  };
+  const current = ordered.find(g => g.id === open);
   useEffect(() => { if (open && !current && adding !== open) toList(); }, [open, current, adding]);
   const shown = useRef(groups);
   useEffect(() => {
@@ -140,16 +179,16 @@ function useGroupList(groups: SubagentGroup[], personas: SubagentPersona[], on: 
     if (open === adding && !groups.some(g => g.id === adding)) toList();
     setAdding(undefined);
   }, [groups, adding, open]);
-  const canAdd = personas.length > 0 && groups.length < GROUP_MAX && adding === undefined;
+  const canAdd = personas.length > 0 && ordered.length < GROUP_MAX && adding === undefined;
   const add = () => {
     if (!canAdd) return;
-    const next = sanitizeGroups([...groups, { name: uniqueName(t('subagents.groups.newName'), groups), members: [], when: '', enabled: true }], personas);
+    const next = sanitizeGroups([...ordered, { name: uniqueName(t('subagents.groups.newName'), ordered), members: [], when: '', enabled: true }], personas);
     const id = next[next.length - 1]!.id;
     save(next);
     setAdding(id);
     onPage({ kind: 'subagents', group: id });
   };
-  return { current, save, add, canAdd };
+  return { current, ordered, adding, save, commitOrder, add, canAdd };
 }
 
 // A group row's second line: its members by name, in the order their rounds start
