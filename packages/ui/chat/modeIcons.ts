@@ -1,45 +1,64 @@
-import { Bug, CircleDashed, Code, Eye, FolderPen, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldCheck, ShieldEllipsis, ShieldHalf, ShieldOff, Sparkles, Unplug, Users, type LucideIcon } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import type { SessionOption } from '@acpira/shared/transcript';
 import { t } from '../i18n';
+import {
+  AgentGlyph,
+  AskShieldGlyph,
+  AutoEditShieldGlyph,
+  AutoShieldGlyph,
+  ChatGlyph,
+  CodeGlyph,
+  CustomModeGlyph,
+  DebugGlyph,
+  FullAccessShieldGlyph,
+  PlanGlyph,
+  RawGlyph,
+  ReadOnlyGlyph,
+  SmartGlyph,
+  TeamGlyph,
+  WorkspaceGlyph,
+  type ModeIcon,
+} from './modeGlyphs';
+
+export type { ModeIcon } from './modeGlyphs';
 
 // ACP modes carry only id / name / description, so the glyph is inferred from keywords in id + name (Devin: code / smart / ask / plan / bypass;
 // Grok synthetic: default / plan / yolo; Droid spec; Kimi and custom agents fall through the same table). First match wins; unknown modes get a dashed circle
-const RULES: [RegExp, LucideIcon][] = [
+const RULES: [RegExp, ModeIcon][] = [
   // The built-in agent's Raw mode: the agent's tools unplugged, the model reached directly
-  [/\braw\b/, Unplug],
-  [/bypass|yolo|auto[\s-]?accept|full[\s-]?access|unsafe/, ShieldOff],
-  [/debug/, Bug],
-  [/plan|\bspec\b/, ListTodo],
-  [/read[\s-]?only/, Eye],
+  [/\braw\b/, RawGlyph],
+  [/bypass|yolo|auto[\s-]?accept|full[\s-]?access|unsafe/, FullAccessShieldGlyph],
+  [/debug/, DebugGlyph],
+  [/plan|\bspec\b/, PlanGlyph],
+  [/read[\s-]?only/, ReadOnlyGlyph],
   // Codex `workspace-write`: edits allowed inside the workspace only
-  [/workspace/, FolderPen],
-  [/\bask\b|chat|question/, MessageCircleQuestionMark],
-  [/smart|\bauto\b/, Sparkles],
-  [/code|edit|build/, Code],
+  [/workspace/, WorkspaceGlyph],
+  [/\bask\b|chat|question/, ChatGlyph],
+  [/smart|\bauto\b/, SmartGlyph],
+  [/code|edit|build/, CodeGlyph],
   // The built-in agent's Team mode (and other agents' multi-agent modes): it leads the summoned agents
-  [/\bteam\b|multitask|orchestrat/, Users],
-  [/agent|default|normal/, InfinityIcon],
+  [/\bteam\b|multitask|orchestrat/, TeamGlyph],
+  [/agent|default|normal/, AgentGlyph],
 ];
 
-export function modeIcon(mode: SessionOption): LucideIcon {
+export function modeIcon(mode: SessionOption): ModeIcon {
   // The adapter's explicit classification outranks keyword guesses.
-  if (mode.kind === 'full_access') return ShieldOff;
-  if (mode.kind === 'auto_review') return Sparkles;
-  if (mode.id === 'auto_edit' || mode.id === 'acceptEdits') return Code;
+  if (mode.kind === 'full_access') return FullAccessShieldGlyph;
+  if (mode.kind === 'auto_review') return SmartGlyph;
+  if (mode.id === 'auto_edit' || mode.id === 'acceptEdits') return CodeGlyph;
   return Object.hasOwn(BY_ID, mode.id) ? BY_ID[mode.id]! : byKeyword(mode);
 }
 
 // Ids the keywords misread: Droid's `normal` is named "Auto (Off)" (asks before edits), its `auto-low` allows edits and its
 // `auto-high` approves everything; Hermes's `accept_edits` allows workspace edits only and `dont_ask` edits anywhere but
 // sensitive paths (`acp_adapter/modes.py`), so neither is full access
-const BY_ID: Record<string, LucideIcon> = {
-  normal: InfinityIcon, 'auto-low': Code, 'auto-high': ShieldOff, accept_edits: FolderPen, dont_ask: Code,
+const BY_ID: Record<string, ModeIcon> = {
+  normal: AgentGlyph, 'auto-low': CodeGlyph, 'auto-high': FullAccessShieldGlyph, accept_edits: WorkspaceGlyph, dont_ask: CodeGlyph,
 };
 
-function byKeyword(mode: SessionOption): LucideIcon {
+function byKeyword(mode: SessionOption): ModeIcon {
   const key = `${mode.id} ${mode.name}`.toLowerCase();
-  return RULES.find(([re]) => re.test(key))?.[1] ?? CircleDashed;
+  return RULES.find(([re]) => re.test(key))?.[1] ?? CustomModeGlyph;
 }
 
 // The toolbar's short name for a mode the built-in integrations are known to send (Claude, Codex, Devin, Grok, OpenCode, the
@@ -102,9 +121,14 @@ export function accessLabel(level: SessionOption): string {
 
 // The approval levels (the built-in agent's, and `auto` from the engine's split of Claude / Antigravity modes) as one
 // shield family, so the chip reads as a scale; other levels keep their mode glyph
-const ACCESS_ICON: Record<string, LucideIcon> = { ask: ShieldEllipsis, 'auto-edit': ShieldCheck, auto: ShieldHalf, full: ShieldOff };
+const ACCESS_ICON: Record<string, ModeIcon> = {
+  ask: AskShieldGlyph,
+  'auto-edit': AutoEditShieldGlyph,
+  auto: AutoShieldGlyph,
+  full: FullAccessShieldGlyph,
+};
 
-export function accessIcon(level: SessionOption): LucideIcon {
+export function accessIcon(level: SessionOption): ModeIcon {
   return Object.hasOwn(ACCESS_ICON, level.id) ? ACCESS_ICON[level.id]! : modeIcon(level);
 }
 

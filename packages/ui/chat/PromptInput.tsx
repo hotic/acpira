@@ -52,7 +52,7 @@ export function PromptInput({ ref, marks, className, value, onScroll, ...props }
     {marks?.length ? <div ref={mirror} aria-hidden="true" className={cn(className,
       'pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word]',
     )}>
-      {commandSegments(value, marks)}{'\u200b'}
+      {commandSegments(value, marks)}{value.endsWith('\n') ? '\u200b' : null}
     </div> : null}
     <textarea {...props} ref={merged} value={value} onScroll={e => { sync(); onScroll?.(e); }}
       className={cn(className, 'relative block w-full', marks?.length && 'text-transparent caret-fg-strong selection:text-fg-strong')} />

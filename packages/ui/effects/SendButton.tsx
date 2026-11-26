@@ -12,7 +12,7 @@ export interface SendButtonProps {
   onClick?: () => void;
 }
 
-// Send / stop in one, a --ctl-sm flat button, one tier below the toolbar chips' neighbors. Dim when empty, lit when there's text or a run in progress.
+// Send / stop in one, a --send-size flat button, one tier below the toolbar chips' neighbors. Dim when empty, lit when there's text or a run in progress.
 // Three modes: accent lights up with the accent color; icon is inverted-neutral; metal adds a silver ring around the same solid surface
 // (effects/MetalRing). The ring's wrapper owns the inverted fill and icon color; the button stays on screen whatever the ring does.
 export function SendButton({ running, filled, theme = 'dark', onClick }: SendButtonProps) {
@@ -29,7 +29,7 @@ export function SendButton({ running, filled, theme = 'dark', onClick }: SendBut
       data-metal={metal || undefined}
       data-part={metal ? undefined : 'composer-send'}
       className={cn(
-        'send-btn inline-flex size-ctl-sm shrink-0 items-center justify-center rounded-md [&_svg]:size-icon disabled:cursor-default',
+        'send-btn inline-flex size-send shrink-0 items-center justify-center rounded-md [&_svg]:size-icon disabled:cursor-default',
         send === 'accent' && on && '[--send-bg-on:var(--accent)] [--send-ink-on:var(--accent-fg)]',
       )}
     >

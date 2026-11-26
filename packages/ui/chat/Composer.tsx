@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { Plus, Shrink, SquareDashedMousePointer, TextSelect, X, type LucideIcon } from 'lucide-react';
+import { Plus, Shrink, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
 import type { ConfigControl, Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@acpira/shared/transcript';
 import type { EditorSelection, FileHit } from '@acpira/shared/protocol';
 import type { HiddenMap } from '@acpira/shared/settings';
@@ -22,7 +22,7 @@ import { collectDrafts, collectImageSources, hasPayload, hiddenText, imageSource
 import { droppedPathResolver, hostDragPaths } from '../vscodeApi';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
 import { SlashList, commandAt, commandHint, completeCommand, isHostAction, promptMarks, useSlashHits, type HostAction, type SlashHit } from './Slash';
-import { accessIcon, accessLabel, modeHint, modeIcon, modeLabel, modeName } from './modeIcons';
+import { accessIcon, accessLabel, modeHint, modeIcon, modeLabel, modeName, type ModeIcon } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
 import { parkDraftText, useComposerDraft } from './useComposerDraft';
@@ -91,6 +91,7 @@ export interface ComposerProps {
   modelShapes?: ModelShapes;
   sidekickShapes?: ModelShapes;
   onCompact: () => void;
+  onOpenReport?: () => void;
   // Session-level navigation is omitted from history and queued-message editors.
   toolbarStart?: ReactNode;
   // Opens an agent's model settings (defaults to this session's agent; the sidekick CLI rail passes the open CLI)
@@ -180,6 +181,8 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
   useLayoutEffect(() => { onBeam(beamActive); }, [onBeam, beamActive]);
   const dim = p.running || p.disabled;
   const { models, reasoning, modelConfig, collaboration, permission, agent, sidekick, sidekickEffort, sidekickFast, other } = composerControls(p.controls.options);
+  // Current provider settings supersede learned parameters, including when a model's last level was removed.
+  const pickerShapes = useMemo(() => p.controls.modelParams ? { ...p.modelShapes, ...p.controls.modelParams } : p.modelShapes, [p.controls.modelParams, p.modelShapes]);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
   // Permission as a control of its own beside the modes (the built-in agent's approval): the permission chip is the one
   // solid chip, and a working mode is a pill picked from the / list
@@ -488,8 +491,10 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {/* Kept attachments of an edited prompt lead the same wrapping row as freshly pasted ones */}
+      {/* Kept attachments of an edited prompt lead the same wrapping row as freshly pasted ones; inline editors match
+          UserMessage's py-gap top inset so opening or closing an edit never shifts the thumbnails */}
       <DraftChips drafts={drafts} before={p.edit?.hasAttachments ? p.edit.attachments : undefined}
+        className={p.edit ? 'px-pad pt-gap' : undefined}
         onRemove={gone => setDrafts(d => d.filter((_, j) => !gone.includes(j)))}
         onUpdate={(i, next) => setDrafts(d => d.map((x, j) => (j === i ? next : x)))} />
       <PromptInput
@@ -510,8 +515,11 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
         onPaste={onPaste}
         placeholder={p.disabled ? t('composer.notReady') : p.revisePlan ? t('composer.placeholder.revisePlan') : p.running ? t(p.steer ? 'composer.placeholder.steer' : 'composer.placeholder.queue') : t('composer.placeholder')}
         className={cn(
-          // The text starts on the bar's chip line (composer-text) in every composer, inline editors included
-          'min-w-0 resize-none bg-transparent px-composer-text pt-2.5 pb-1 text-1 outline-none transition-[color,min-height]',
+          // The text starts on the --pad line in every composer; inline editors also match UserMessage's py-gap / gap-gap
+          // vertical rhythm so clicking to edit never nudges the text up or down. Do not transition color: toggling
+          // textarea text-transparent when command/summon marks appear would ghost over the mirror layer for 150ms
+          'min-w-0 resize-none bg-transparent px-composer-text pb-1 text-1 outline-none transition-[min-height]',
+          p.edit ? 'pt-gap' : 'pt-2.5',
           'max-h-[calc(8*var(--text-1-lh))] placeholder:text-fg-3',
           // Queued / follow-up text while a turn runs stays at full strength; only an unready session dims the field
           p.disabled ? 'text-fg-3/60 placeholder:text-fg-3/60' : 'text-fg-strong',
@@ -523,15 +531,13 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       {mentionOpen && <MentionList anchor={fieldRef} hits={hits} personas={personas} active={active} empty={span!.query.length > 0} onHover={setActive} onPick={pick} />}
       {/* The row is a container: below the sm tier (a 380 sidebar leaves ~324 here) the mode chip collapses to icon + caret so the option chips keep their room —
           the same move Cursor makes in a narrow sidebar; the editor panel is wide enough for the names */}
-      {/* The row is always --ctl tall: the context ring is the one --ctl control among --ctl-sm chips, and it comes and goes with
-          the agent's usage knowledge (Grok reports none until the first model round, none again right after a model switch) —
-          without the floor the whole composer jumped by the difference every time. The floor lives on the row, not the fieldset:
-          a fieldset lays children out in an anonymous inner box that ignores the fieldset's min-height, so items-center there
-          only centered the chips within their own --ctl-sm height and they rode a few px above the row-centered send button.
-          box-content keeps the floor off the padding: under the preflight's border-box, min-h-ctl minus the vertical padding left less than a chip */}
-      <div className="group/bar @container box-content flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-corner-b" data-squeezed={squeeze > 0 || undefined}>
+      {/* The row keeps a --ctl vertical floor so toolbar height stays consistent across densities and custom plugin slot
+          controls; box-content keeps the floor off the padding (under border-box, min-h-ctl minus vertical padding left less than a chip) */}
+      <div className="group/bar @container box-content flex min-h-ctl min-w-0 items-center gap-1 pl-pad pr-composer-end pt-1 pb-corner-b" data-squeezed={squeeze > 0 || undefined}>
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 shrink-0 items-center gap-1 border-0 p-0">
-          <div className="flex shrink-0 items-center gap-1">
+          {/* -ml-2 cancels the leading quiet chip's px-1.5 plus the ~2px optical margin inside 24x24 icon viewBoxes so
+              the visible glyph aligns flush under the --pad text / caret line while its hover box sits in an 8px corner */}
+          <div className="-ml-2 flex shrink-0 items-center gap-1">
             {/* Working mode first (Codex collaboration_mode: Build / Plan), then the permission modes; both are solid chips that never truncate */}
             {collaboration.map(c => (
               <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)}
@@ -577,7 +583,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
           {[...other, ...(!models.length ? [...modelConfig, ...sidekick, ...sidekickEffort, ...sidekickFast] : [])].map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
-          {p.usage && !tight && <ContextRing sessionId={p.sessionId} usage={p.usage} turns={p.turns} compacting={p.compacting} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
+          {p.usage && !tight && <ContextRing sessionId={p.sessionId} usage={p.usage} turns={p.turns} compacting={p.compacting} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenReport={p.onOpenReport} onOpenChange={onOpenChange} />}
           {models.map((c, i) => (
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
               modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} sidekickEffort={i === 0 ? sidekickEffort[0] : undefined} sidekickFast={i === 0 ? sidekickFast[0] : undefined}
@@ -585,7 +591,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
               onConfigure={i === 0 && p.main && !p.edit ? p.onAddModel : undefined}
               toggleRef={i === 0 && p.main && !p.edit ? modelToggle : undefined}
               hiddenConfig={p.hidden} onSqueeze={i === 0 ? setSqueeze : undefined}
-              memory={i === 0 ? p.modelMemory : undefined} shapes={i === 0 ? p.modelShapes : undefined} sidekickShapes={i === 0 ? p.sidekickShapes : undefined}
+              memory={i === 0 ? p.modelMemory : undefined} shapes={i === 0 ? pickerShapes : undefined} sidekickShapes={i === 0 ? p.sidekickShapes : undefined}
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.onAddModel && p.main && !p.edit && !p.controlsLocked && !models.length && (
@@ -595,7 +601,7 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
             <ReasoningControl key={c.id} control={c} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
         </fieldset>
-        {p.edit && !p.edit.dismissOnOutside && <IconButton title={t('history.cancel')} aria-label={t('history.cancel')} onClick={p.edit.onCancel}><X /></IconButton>}
+        {p.edit && !p.edit.dismissOnOutside && <IconButton size="sm" className="rounded-sm" title={t('history.cancel')} aria-label={t('history.cancel')} onClick={p.edit.onCancel}><X /></IconButton>}
         <SendButton running={showStop} filled={canSend && rewrite !== 'busy'} theme={p.theme} onClick={showStop ? p.onStop : () => { void send(); }} />
       </div>
     </div>
@@ -640,13 +646,13 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeL
   onOpenChange: (open: boolean) => void;
   // Codex's collaboration `default` is its Build mode, not the permission default beside it
   labelOf?: (mode: SessionOption) => string;
-  iconOf?: (mode: SessionOption) => LucideIcon;
+  iconOf?: (mode: SessionOption) => ModeIcon;
 }) {
   const mode = modes.find(m => m.id === value);
   const ModeIcon = mode ? iconOf(mode) : undefined;
   return (
     <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
-      <DropdownMenu.Trigger render={<Chip variant="solid" data-part="composer-mode" className="shrink-0" narrow="icon"
+      <DropdownMenu.Trigger render={<Chip data-part="composer-mode" className="shrink-0" narrow="icon"
         title={mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : title}
         icon={ModeIcon && <ModeIcon strokeWidth={1.75} />}>
         {mode ? labelOf(mode) : title}
@@ -666,19 +672,20 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeL
   );
 }
 
-// The working mode in force, after the permission chip: outlined where the chip is filled, so it reads as a removable
-// token and not a second menu. Its × goes back to the first mode; below the sm tier only the glyph and the × stay
+// The working mode in force, after the permission chip: borderless like the sibling chips, with a unified hover fill so
+// it reads as a light removable token rather than a boxed badge. Its × goes back to the first mode; below the sm tier
+// only the glyph and the × stay
 function ModePill({ mode, onExit }: { mode: SessionOption; onExit: () => void }) {
   const Icon = modeIcon(mode);
   const name = modeName(mode);
   const exit = t('composer.modeExit', { mode: name });
   return (
     <span title={[mode.name, mode.description].filter(Boolean).join(t('common.metaSep'))}
-      className="inline-flex h-ctl-sm shrink-0 animate-[acp-fade-in_var(--dur-open)_ease-out] items-center gap-1 rounded-sm border border-line pr-0.5 pl-1.5 text-3 text-fg-1">
+      className="inline-flex h-ctl-sm shrink-0 animate-[acp-fade-in_var(--dur-open)_ease-out] items-center gap-1 rounded-sm px-1.5 text-3 text-fg-2 transition-colors hover:bg-active hover:text-fg-1">
       <Icon className="size-icon shrink-0" strokeWidth={1.75} />
       <span className="@max-sm:hidden group-data-[squeezed]/bar:hidden">{name}</span>
       <button type="button" title={exit} aria-label={exit} onClick={onExit}
-        className="flex size-4 shrink-0 items-center justify-center rounded-xs text-fg-3 outline-none transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1">
+        className="flex size-4 shrink-0 items-center justify-center rounded-xs text-fg-3 outline-none transition-colors hover:text-fg-strong focus-visible:text-fg-strong">
         <X className="size-3" strokeWidth={1.75} />
       </button>
     </span>

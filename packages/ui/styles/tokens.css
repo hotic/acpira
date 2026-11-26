@@ -28,19 +28,19 @@
 
   /* Three surface levels: base / raised / overlay, plus the code background */
   --bg-0: var(--host-bg, #181818);
-  --bg-1: #1f1f1f;
-  --bg-2: #262626;
-  --bg-code: #1f1f1f;
+  --bg-1: #212121;
+  --bg-2: #292929;
+  --bg-code: var(--bg-1);
 
-  --line: rgba(255, 255, 255, 0.06);
-  /* User cards and the composer share a quiet outline; focus strengthens only the input. */
-  --conversation-line: rgba(255, 255, 255, 0.12);
-  --conversation-line-focus: rgba(255, 255, 255, 0.20);
-  --chip: rgba(255, 255, 255, 0.07);
+  --line: rgba(255, 255, 255, 0.08);
+  /* Conversation surfaces (messages, composer, dock cards, code) share one fill and outline; focus strengthens border and shadow only. */
+  --conversation-line: rgba(255, 255, 255, 0.13);
+  --conversation-line-focus: rgba(255, 255, 255, 0.36);
+  --chip: rgba(255, 255, 255, 0.09);
   /* Hover of a chip-filled control and of the primary button (rest --active): one step clearly above both */
-  --chip-hover: rgba(255, 255, 255, 0.14);
-  --cmp-bg: rgba(255, 255, 255, 0.04);
-  --cmp-bg-lift: rgba(255, 255, 255, 0.08);
+  --chip-hover: rgba(255, 255, 255, 0.16);
+  --cmp-bg: var(--bg-1);
+  --cmp-bg-lift: var(--cmp-bg);
   /* Inverted solid: the send button's lit state and the settings switch; Button itself is tonal (grey fill / outline) and never uses it; no colored buttons anywhere in the app */
   --btn-1-bg: rgba(255, 255, 255, 0.95);
   --btn-1-fg: #151515;
@@ -54,8 +54,8 @@
   --active: rgba(255, 255, 255, 0.08);
   --focus: var(--host-focus, #0078d4);
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
-  /* Card lift under the tonal surface axis; light themes take a much fainter one, as --shadow does */
-  --tonal-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  /* Card lift under the tonal surface axis; light themes rely on tonal contrast instead of resting shadows */
+  --tonal-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
   /* Full-shell dim behind the image lightbox */
   --scrim: rgba(0, 0, 0, 0.72);
 
@@ -103,9 +103,10 @@
   /* @ summon pills (a subagent persona named in the prompt): one colour, distinct from the command blue */
   --summon: #d2a8ff;
   /* Command / summon pills: the background's reach past the text, the gap it always leaves to a neighbour, and the width
-     one whitespace character is counted as (a little under a space in the UI fonts, so the real gap comes out wider) */
-  --mark-overhang: 4px;
-  --mark-clear: 1.5px;
+     one whitespace character is counted as. 2px overhang fits inside one ASCII space (0.25em - 1px ≈ 2.25px at 13px),
+     so a lone @Sol and `@Sol text` keep the exact same pill padding without shrinking when typing after the mark */
+  --mark-overhang: 2px;
+  --mark-clear: 1px;
   --mark-space: 0.25em;
   --agent-devin: #6ea8fe;
   --agent-devin-fg: #0b1220;
@@ -148,6 +149,8 @@
   --row-hit-outset: 6px;
   --ctl: 28px;
   --ctl-sm: 22px;
+  /* Send button square: matches --ctl-sm at compact / default, and stops one step shorter at airy so it never feels oversized */
+  --send-size: var(--ctl-sm);
   --lead: 20px;
   --icon: 14px;
   /* A folder on an SSH host (remote/RemoteFolderIcon): the globe badge's disc, hanging 4px past the icon's lower right
@@ -255,9 +258,8 @@
   --plan-body-max: min(calc(var(--row) * 14), 55dvh);
   --question-option-pad: 4px;
   /* A control in a bordered dock card (the question footer, the notices): 8px from the card's outer edge, its 1px border
-     included, so its box stands on the line of the composer's chips and send button below (the composer's outline is an
-     inset ring, the cards' a border). Card content (the to-do list, the question header and options, the composer's text)
-     sits on the --pad content line (14px at default density, matching the icon inside the composer's leading chip) */
+     included. Dock card content (the to-do list, the question header and options) and the composer sit on the --pad
+     content line (14px at default density, 16px at airy, 12px at compact) */
   --card-corner: calc(8px - 1px);
   --question-description-gap: 2px;
   --question-focus-width: 2px;
@@ -316,19 +318,18 @@
   --action-fg: #707070;
   --fg-3: #767676;
   --fg-strong: #000000;
-  --bg-0: var(--host-bg, #f8f8f8);
-  --bg-1: #ffffff;
-  --bg-2: #f1f1f1;
-  --bg-code: #efefef;
-  --line: rgba(0, 0, 0, 0.06);
-  --conversation-line: rgba(0, 0, 0, 0.10);
-  --conversation-line-focus: rgba(0, 0, 0, 0.18);
-  --chip: #f4f4f4;
-  --chip-hover: #e0e0e0;
-  --cmp-bg: rgba(255, 255, 255, 0.04);
-  /* Hover / drag lift of the composer field: a dark tint, since a white one vanishes on the light page */
-  --cmp-bg-lift: rgba(0, 0, 0, 0.03);
-  --send-bg: rgba(0, 0, 0, 0.04);
+  --bg-0: var(--host-bg, #ffffff);
+  --bg-1: #ececec;
+  --bg-2: #e2e2e2;
+  --bg-code: var(--bg-1);
+  --line: rgba(0, 0, 0, 0.09);
+  --conversation-line: rgba(0, 0, 0, 0.14);
+  --conversation-line-focus: rgba(0, 0, 0, 0.38);
+  --chip: rgba(0, 0, 0, 0.08);
+  --chip-hover: rgba(0, 0, 0, 0.14);
+  --cmp-bg: var(--bg-1);
+  --cmp-bg-lift: var(--cmp-bg);
+  --send-bg: rgba(0, 0, 0, 0.07);
   --send-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
   --send-ink: rgba(0, 0, 0, 0.5);
   --btn-1-bg: #151515;
@@ -338,7 +339,7 @@
   --active: rgba(0, 0, 0, 0.07);
   --focus: var(--host-focus, #005fb8);
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
-  --tonal-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --tonal-shadow: none;
   --shimmer-base: var(--action-fg);
   --scrim: rgba(0, 0, 0, 0.45);
   --ok: #2f7a5b;
@@ -393,7 +394,7 @@
   --pad: 12px; --pad-y: 12px; --page: 16px; --gap: 6px; --msg-gap: 12px; --hdr: 44px; --text-1-lh: calc(var(--ui-font-size) + 5px);
 }
 [data-density="airy"] {
-  --row: 32px; --row-dense: 28px; --chat-row: 30px; --process-row: 24px; --process-prose-gap: 12px; --ctl: 32px; --ctl-sm: 26px;
+  --row: 32px; --row-dense: 28px; --chat-row: 30px; --process-row: 24px; --process-prose-gap: 12px; --ctl: 32px; --ctl-sm: 26px; --send-size: 24px;
   --pad: 16px; --pad-y: 22px; --page: 24px; --gap: 12px; --msg-gap: 24px; --hdr: 60px;
   /* Text keeps the default density's line height: airy opens the space between things, not between the lines of one */
 }
@@ -403,8 +404,8 @@
 [data-font="geist"] { --font: "Geist Variable", "Geist", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
 
 [data-surface="hairline"] { --card-line: var(--line); --card-bg: var(--bg-1); --card-shadow: none; }
-/* Tonal pairs the raised fill with the conversation outline, so cards read as bubbles rather than bare fills */
-[data-surface="tonal"]    { --card-line: var(--conversation-line); --card-bg: var(--bg-2); --card-shadow: var(--tonal-shadow); }
+/* Tonal shares the unified conversation card fill and outline with messages, composer and code blocks */
+[data-surface="tonal"]    { --card-line: var(--conversation-line); --card-bg: var(--bg-1); --card-shadow: var(--tonal-shadow); }
 [data-surface="stroke"]   { --card-line: var(--line-strong); --card-bg: var(--bg-0); --card-shadow: none; }
 
 [data-accent="brand"]  { --accent: var(--brand); --accent-fg: var(--brand-fg); }
@@ -596,6 +597,7 @@
   --spacing-row-dense: var(--row-dense);
   --spacing-ctl: var(--ctl);
   --spacing-ctl-sm: var(--ctl-sm);
+  --spacing-send: var(--send-size);
   --spacing-lead: var(--lead);
   --spacing-icon: var(--icon);
   --spacing-icon-ctl: var(--icon-ctl);
@@ -611,17 +613,23 @@
      from the side as from the top and bottom, so a hover box around it sits evenly in the chip's corner */
   --spacing-tab-cap: calc((var(--ctl) - 2 * var(--icon-fill-inset) - var(--icon)) / 2);
   --spacing-bar-bleed: calc((var(--ctl) - var(--icon)) / 2 - 8px);
-  /* Bottom padding under a --ctl row whose corner controls are --ctl-sm (the composer bar): with the row's px-2 it leaves
-     those controls the same 8px from the card's side and bottom edge at every density */
+  /* Bottom padding under a --ctl row whose corner controls are --ctl-sm (the composer bar): seats the send button
+     and quiet toolbar controls 8px–9px off the bottom edge so the bar never floats high */
   --spacing-corner-b: calc(8px - (var(--ctl) - var(--ctl-sm)) / 2);
+  /* Trailing padding of the composer toolbar: mirrors the leading quiet chip's hover edge (pad - 6px, 8px floor)
+     so the send button sits symmetrically in the bottom-right corner across all densities */
+  --spacing-composer-end: max(8px, calc(var(--pad) - 6px));
+  /* Top and side inset of a composer DraftChips row when led by a grey pill chip (annotations / file tag): 4px less than
+     --pad so rounded pill chips sit in a square corner (12/10/8px) while bare image thumbnails stay on --pad */
+  --spacing-draft-chip: calc(var(--pad) - 4px);
   --spacing-card-corner: var(--card-corner);
   /* Leading content padding inside a bordered dock card: --pad less its 1px border, so card text, icons and option keys
-     line up on the --pad column with the composer's text and the glyph inside its leading chip (reads the shell's density) */
+     line up on the --pad column with the composer below (reads the shell's density) */
   --spacing-card-pad: calc(var(--pad) - 1px);
   /* Horizontal bleed of a dock card's full-width hover row (to-do head, question option) from --pad out to the 8px corner line */
   --spacing-card-bleed: calc(var(--pad) - 8px);
-  /* The composer's text, its command hint and caret: on the --pad content line, aligned with the dock cards above and
-     with the leading icon inside the bar's first chip below */
+  /* The composer's text, its command hint and caret: on the --pad content line, aligned with sent messages, the thread
+     column, attachment thumbnails (DraftChips) and the composer toolbar controls below */
   --spacing-composer-text: var(--pad);
   /* A popup's ruled search line (ui/Command.tsx), its rule included, pulled up over the popup's p-1: the glyphs at its ends
      (the glass, the model panel's +) sit 10px from the popup's top edge and from the rule, a little under their 12px side

@@ -1,14 +1,17 @@
 import { useContext, useState, type ReactNode } from 'react';
-import { FileText, Folder, Image as ImageIcon, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
+import { FileText, Folder, Image as ImageIcon, SquareDashedMousePointer, TextSelect } from 'lucide-react';
 import type { Attachment, Draft } from '@acpira/shared/transcript';
 import { attachmentLabel, imageMimeOf } from '@acpira/shared/attachments';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
-import { AnimatedImage } from './AnimatedImage';
-import { Lightbox } from './Lightbox';
+import { Removable } from '../ui/Removable';
+
+export { Removable };
+import { AnimatedImage } from '../markdown/AnimatedImage';
+import { Lightbox } from '../markdown/Lightbox';
 import { TextPeek } from './TextPeek';
 import { isFolderUri } from './drafts';
-import { OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
+import { OpenBlobContext, OpenToolFileContext, parseFileLink } from '../markdown/fileLinks';
 import { QuoteChip } from './Quotes';
 
 // An image open in the Lightbox: the source to show, the name for labels, and what its right-click menu needs
@@ -154,8 +157,9 @@ export function DraftChips({ drafts, before, onRemove, onUpdate, className }: {
   before?: ReactNode;
   onRemove?: (indices: number[]) => void;
   onUpdate?: (index: number, draft: Draft) => void;
-  // Replaces the composer's padding (a question card lines the row up with its own text column). The composer's p-2
-  // stands the first tile 8px from the field's top and side, on the leading edge of the bar's chips below, box over box
+  // Replaces the composer's padding (a question card passes p-0 to align with its own px-card-pad; inline editors pass
+  // px-pad pt-gap to match UserMessage). Pill-led draft rows (annotations / files) use square draft-chip corners (pad - 4px)
+  // while image-led rows stay on the --pad content spine
   className?: string;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -163,8 +167,9 @@ export function DraftChips({ drafts, before, onRemove, onUpdate, className }: {
   const openFile = useContext(OpenToolFileContext);
   if (!drafts.length && !before) return null;
   const { quotes, named } = split(drafts);
+  const pillLead = !before && (quotes.length > 0 || (named.length > 0 && !isImage(named[0]!.item)));
   return (
-    <div className={cn('flex flex-wrap items-start gap-chip-gap px-2 pt-2', className)}>
+    <div className={cn('flex flex-wrap items-start gap-chip-gap', pillLead ? 'px-draft-chip pt-draft-chip' : 'px-pad pt-3', className)}>
       {before}
       {quotes.length > 0 && (
         <Removable label={t('quote.removeAll')} onRemove={onRemove ? () => onRemove(quotes.map(q => q.index)) : undefined}>
@@ -318,29 +323,5 @@ function AttachmentTag({ name = 'image.png', src, mimeType, image, icon, title, 
         : image ? <ImageIcon strokeWidth={1.5} /> : icon ?? <FileText strokeWidth={1.5} />}
       {!(thumbnail && image) && <span className="truncate">{name}</span>}
     </Tag>
-  );
-}
-
-// Wraps a chip with a remove button riding its top-right corner — a badge over the edge, so it never lands on the
-// label (and keeps the thumbnail's corner visible too). Shown on hover / focus, inert while hidden.
-export function Removable({ label, onRemove, disabled, children }: { label: string; onRemove?: () => void; disabled?: boolean; children: ReactNode }) {
-  return (
-    <span className="group/chip relative inline-flex max-w-full min-w-0">
-      {children}
-      {onRemove && <button
-        type="button"
-        disabled={disabled}
-        aria-label={label}
-        title={t('common.remove')}
-        onClick={onRemove}
-        className={cn(
-          'pointer-events-none absolute -top-2 -right-2 flex size-icon-ctl items-center justify-center rounded-full border border-line-strong bg-bg-2 text-fg-2 opacity-0 transition-opacity',
-          'group-hover/chip:pointer-events-auto group-hover/chip:opacity-100 group-focus-within/chip:pointer-events-auto group-focus-within/chip:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100',
-          'hover:bg-bg-1 hover:text-fg-1',
-        )}
-      >
-        <X className="size-3" strokeWidth={2} />
-      </button>}
-    </span>
   );
 }

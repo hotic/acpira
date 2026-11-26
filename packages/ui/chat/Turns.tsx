@@ -1,5 +1,5 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Check, ChevronRight, Compass, FileText, Hand, Info, ListTodo, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
+import { Check, ChevronRight, Compass, FileText, Hand, Info, ListTodo, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import { isSessionTool } from '@acpira/shared/sessionLinks';
@@ -27,12 +27,12 @@ import { useTailWindow } from './tailWindow';
 import { ProcessChunks } from './ProcessChunks';
 import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
 import { useFollowing } from './useBottomFollow';
-import { Prose } from './Prose';
-import { AgentImage } from './AgentImage';
-import { FileMenu } from './ImageMenu';
+import { Prose } from '../markdown/Prose';
+import { AgentImage } from '../markdown/AgentImage';
+import { FileMenu } from '../markdown/ImageMenu';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
-import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from './fileLinks';
+import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from '../markdown/fileLinks';
 import { PlanDocument } from './PlanDocument';
 import { TurnAttachments } from './Attachments';
 import { clockStart, elapsedDuration, splitCodexBlocks, visibleSteps } from './folding';
@@ -80,22 +80,21 @@ export function UserMessage({ turn, blobUrl, onEdit, commands, summons }: {
         } : undefined}
         className={cn(
           'relative flex w-full shrink-0 flex-col px-pad text-1 text-fg-1 [overflow-wrap:anywhere]',
-          // Cards stick within an exchange; an opaque surface under the translucent chip color stops replies bleeding through.
-          userMessage !== 'plain' && 'user-message-card py-gap bg-[linear-gradient(var(--chip),var(--chip))] transition-shadow',
-          // An editable prompt opens on click; its outline firms up while the actions appear below.
+          // Cards stick within an exchange; the opaque surface fill matches the inline editor and stops replies bleeding through.
+          userMessage !== 'plain' && 'user-message-card py-gap',
+          // An editable prompt opens on click; like the composer, its border stays quiet on hover and only lifts once editing starts.
           onEdit && 'cursor-pointer',
-          onEdit && userMessage !== 'plain' && 'hover:shadow-[inset_0_0_0_1px_var(--conversation-line-focus)]',
           userMessage === 'plain' && 'bg-bg-0 py-gap font-medium',
         )}
       >
-        {/* Attachments and text share one scrollport, so thumbnails scroll away instead of holding a fixed share of the cap */}
-        <div ref={fade} className="scroll-fade scroll-thin flex max-h-(--user-message-max) min-h-0 flex-col gap-gap overflow-y-auto [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]">
+        {/* Attachments and text share one scrollport, so thumbnails scroll away instead of holding a fixed share of the cap;
+            when marks are present, expand the scrollport box by 2px without shifting content so overhanging pills are never clipped */}
+        <div ref={fade} className={cn(
+          'scroll-fade scroll-thin flex max-h-(--user-message-max) min-h-0 flex-col gap-gap overflow-y-auto [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
+          marks.length > 0 && '-mx-0.5 -my-0.5 px-0.5 py-0.5',
+        )}>
           {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
-          {shown && <div className={cn(
-            'shrink-0 whitespace-pre-wrap',
-            // A command / summon mark's background overhangs its line box on any side; without room inside the padding box the scrollport shaves it.
-            marks.length > 0 && 'py-0.5 px-1',
-          )}>{marks.length ? commandSegments(shown, marks) : shown}</div>}
+          {shown && <div className="shrink-0 whitespace-pre-wrap">{marks.length ? commandSegments(shown, marks) : shown}</div>}
         </div>
       </Surface>
     </div>
@@ -198,21 +197,20 @@ export function NoticeRow({ block }: { block: NoticeBlock }) {
 }
 
 // Agent message: consecutive "lines" (thought / plan / tool, commands included) are grouped together; prose / permission cards each stand alone as blocks.
-// The top-level activity owns the only Orb; detailed rows show their own verbs with static icons.
+// Each turn's activity owns its Orb (observed subagent transcripts included); detailed rows show their own verbs with static icons.
 // Memoized: the host pushes the whole view on every stream chunk and `reuse` keeps finished turns by reference, so only the live turn renders.
 // `memoryKey` names the turn for fold memory (session + turn); without one the fold state lives only in the component.
-export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb', onFailureAction, joined }: {
+export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, onFailureAction, joined }: {
   turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings;
   // Nodes anchored to this turn plus the session-wide list (breadcrumbs/descendant counts may cross turns)
   subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string) => void;
   // Off for a turn a hidden continue carries on (`isContinue` in Shell.tsx); fork also needs `TurnActionsContext.fork`
   actions?: boolean;
-  // Working-row lead: the Orb belongs to the root conversation; the inspector uses a static icon
-  lead?: 'orb' | 'static';
   // AIR sessionFailure notice actions (retry / sign in / new session), available on the last settled turn
   onFailureAction?: (action: FailureAction) => void;
   // Continues the turn above (a hidden continue, or the subagent report row): one row gap instead of a message gap.
-  // 'rows': right under the report rows, so a reply that opens with a row (its fold head, a thought) keeps their pitch
+  // 'rows': right under rows that hold their own room (the report rows, an action row), so a reply that opens with a row
+  // (its fold head, a thought, a compaction) keeps a row's pitch
   joined?: boolean | 'rows';
 }) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
@@ -274,7 +272,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
         {(visible || (lastSection && ((running && !planWait) || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
           running={lastSection && running} compactionOnly={compactionOnly} onPermission={onPermission}
           memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)}
-          subagents={lastSection ? restNodes : undefined} allSubagents={lastSection ? allSubagents : undefined} onInspect={onInspect} lead={lead} />}
+          subagents={lastSection ? restNodes : undefined} allSubagents={lastSection ? allSubagents : undefined} onInspect={onInspect} />}
         {section.plan && <PlanDocument block={section.plan}
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
@@ -291,18 +289,17 @@ interface SubagentSlots {
   subagents?: SubagentSummary[];
   allSubagents?: SubagentSummary[];
   onInspect?: (id: string) => void;
-  lead?: 'orb' | 'static';
 }
 
-function AgentContent({ turn, index, running, compactionOnly, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; index: number; running: boolean; compactionOnly?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
+function AgentContent({ turn, index, running, compactionOnly, onPermission, memoryKey, subagents, allSubagents, onInspect }: { turn: AgentTurn; index: number; running: boolean; compactionOnly?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { fold } = useAppearance();
   const working = running && !compactionOnly;
-  if (fold === 'codex') return <CodexMessage turn={turn} running={running} working={working} onPermission={onPermission} memoryKey={memoryKey} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />;
-  return <FlatMessage turn={turn} running={running} working={working} fold={fold} onPermission={onPermission} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />;
+  if (fold === 'codex') return <CodexMessage turn={turn} running={running} working={working} onPermission={onPermission} memoryKey={memoryKey} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} />;
+  return <FlatMessage turn={turn} running={running} working={working} fold={fold} onPermission={onPermission} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} />;
 }
 
 // Every fold mode but codex: lines and standalone blocks in transcript order
-function FlatMessage({ turn, running, working, fold, onPermission, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working: boolean; fold: Appearance['fold']; onPermission: OnPermission } & SubagentSlots) {
+function FlatMessage({ turn, running, working, fold, onPermission, subagents, allSubagents, onInspect }: { turn: AgentTurn; running: boolean; working: boolean; fold: Appearance['fold']; onPermission: OnPermission } & SubagentSlots) {
   // Plan approvals live on the plan card and the open question card above the composer; neither takes a slot in the message
   const groups = groupBlocks(turn.blocks.filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)));
   const box = useRef<HTMLDivElement>(null);
@@ -311,7 +308,7 @@ function FlatMessage({ turn, running, working, fold, onPermission, subagents, al
   let at = 0;
   return (
     <div ref={box} className="flex min-w-0 flex-col gap-gap">
-      <Activity turn={turn} running={working} leadKind={lead} />
+      <Activity turn={turn} running={working} />
       <QuietEntranceContext.Provider value={tail.quiet}>
         {groups.map((g, gi) => {
           const size = groupSize(g);
@@ -429,7 +426,7 @@ function Outcome({ turn }: { turn: AgentTurn }) {
 // A pending user decision suspends the animation until the turn can continue.
 // Live compaction is a row at its transcript position, like a running tool; the activity stays generic
 // (a heading label read as belonging to an earlier, finished compaction row further up).
-function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb'): { label: string; title?: string; active: boolean; quiet?: boolean; lead: ReactNode } {
+function liveActivity(turn: AgentTurn): { label: string; title?: string; active: boolean; quiet?: boolean; lead: ReactNode } {
   if (turn.blocks.some(b => b.type === 'permission' && !b.planId)) {
     return { label: t('host.awaitingApproval'), active: false, lead: <Hand className="size-icon" strokeWidth={1.5} /> };
   }
@@ -441,8 +438,7 @@ function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb'): { la
   if (turn.blocks.some(b => b.type === 'question' && !b.outcome)) {
     return { label: t('host.awaitingAnswers'), active: false, lead: <MessageCircleQuestion className="size-icon" strokeWidth={1.5} /> };
   }
-  // The Orb belongs to the root turn only; observed child transcripts get a static lead
-  const lead = leadKind === 'static' ? <Bot className="size-icon" strokeWidth={1.5} /> : <Orb kind="think" />;
+  const lead = <Orb kind="think" />;
   // A provider retry (network blip, overload) relabels the working row, unless the turn's retry row already says so
   const retry = turn.retry;
   if (retry && !turn.blocks.some(b => b.type === 'notice' && b.retry?.status === 'in_progress')) {
@@ -453,8 +449,8 @@ function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb'): { la
   return { label: t('host.working'), active: true, lead };
 }
 
-function Activity({ turn, running: working, leadKind = 'orb' }: { turn: AgentTurn; running: boolean; leadKind?: 'orb' | 'static' }) {
-  const activity = liveActivity(turn, leadKind);
+function Activity({ turn, running: working }: { turn: AgentTurn; running: boolean }) {
+  const activity = liveActivity(turn);
   // A quiet activity retires the row like a finished turn, with the same exit transition
   const running = working && !activity.quiet;
   const [present, setPresent] = useState(running);
@@ -600,7 +596,7 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // row read as the same status twice, and swapping it for the fold head at the first tool replayed the entrance).
 // Permission cards stay outside; the latest reply remains visible while it streams.
 // `working` is false while a /compact reply shows only its compaction row, which retires the head the same way a settled turn does
-function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
+function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions, notices, goalsLead, goals, compactions } = useMemo(() => splitCodexBlocks(turn.blocks, running), [turn.blocks, running]);
   const appearance = useAppearance();
   // The kinds of step the reader left out (Appearance `show*`) drop out before grouping; the head still names them live
@@ -611,7 +607,7 @@ function CodexMessage({ turn, running, working = running, onPermission, memoryKe
   return (
     <div className="flex min-w-0 flex-col gap-gap">
       {goalsLead.map((b, i) => <GoalRow key={`goal${i}`} block={b} />)}
-      <CodexFold turn={turn} blocks={stableProcess} running={working} replyBusy={replyBusy && reply.length > 0} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
+      <CodexFold turn={turn} blocks={stableProcess} running={working} replyBusy={replyBusy && reply.length > 0} hasTools={hasTools} memoryKey={memoryKey} />
       {notices.map(b => <NoticeRow key={b.id} block={b} />)}
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
         <>
@@ -646,7 +642,7 @@ function waitState(turn: AgentTurn): number {
 // both are done, however the turn was mounted (a live session opened mid-turn shows what it is doing). A reader
 // scrolled away from the bottom holds every automatic close until they return. A manual toggle always wins; it is
 // written to fold memory under `memoryKey`, so a rebuilt message (or a reloaded webview) keeps what the reader chose.
-const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; replyBusy: boolean; hasTools: boolean; memoryKey?: string; lead?: 'orb' | 'static' }) {
+const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; replyBusy: boolean; hasTools: boolean; memoryKey?: string }) {
   useLocale();
   const recall = (key: string | undefined) => ({ key, manual: key ? rememberedFold(key) : undefined });
   const [choice, setChoice] = useState(() => recall(memoryKey));
@@ -676,7 +672,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   const items = useMemo(() => activeProcess ? groupProcess(blocks) : EMPTY_ITEMS, [activeProcess, blocks]);
   const continuing = continuingToolItem(items, running && turn.blocks.at(-1) === blocks.at(-1));
   const store = useProcessFolds(items, manual === undefined && keepProcess === 'off', live, following, memoryKey);
-  const activity = liveActivity(turn, lead);
+  const activity = liveActivity(turn);
   const since = clockStart(turn);
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
   // A plain-reply head retires straight from its Working look without flashing a Done check while the reply drains or fades.
@@ -773,7 +769,6 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
   && (prev.turn.blocks.at(-1) === prev.blocks.at(-1)) === (next.turn.blocks.at(-1) === next.blocks.at(-1))
   && prev.hasTools === next.hasTools
   && prev.memoryKey === next.memoryKey
-  && prev.lead === next.lead
   && clockStart(prev.turn) === clockStart(next.turn)
   && prev.turn.startedAt === next.turn.startedAt
   && prev.turn.stop === next.turn.stop

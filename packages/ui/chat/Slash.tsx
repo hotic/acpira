@@ -5,13 +5,14 @@ import type { SlashCommand } from '@acpira/shared/transcript';
 import { presentCommand } from '@acpira/shared/commandPresentation';
 import { getLocale, t } from '../i18n';
 import { CompletionList } from './Completion';
+import type { ModeIcon } from './modeIcons';
 import { matchCommands } from './slashCommands';
 
 export { commandAt, commandHint, commandMarks, completeCommand, matchCommands, promptMarks, summonMarks, type CommandMark, type SlashSpan } from './slashCommands';
 
 // Something the shell does itself, listed by name ahead of the agent's commands: entering a working mode, compacting.
 // `id` is its English handle, matched beside the localized label so `/plan` finds it in any language
-export interface HostAction { id: string; label: string; description?: string; icon: LucideIcon; run: () => void }
+export interface HostAction { id: string; label: string; description?: string; icon: ModeIcon; run: () => void }
 export type SlashHit = SlashCommand | HostAction;
 export const isHostAction = (hit: SlashHit): hit is HostAction => 'run' in hit;
 

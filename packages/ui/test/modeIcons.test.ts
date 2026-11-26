@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { Code, ShieldOff, Sparkles } from 'lucide-react';
 import { LOCALES, translate } from '@acpira/shared/i18n';
-import { modeIcon, modeLabel } from '../chat/modeIcons';
+import { AskShieldGlyph, AutoEditShieldGlyph, AutoShieldGlyph, CodeGlyph, FullAccessShieldGlyph, SmartGlyph } from '../chat/modeGlyphs';
+import { accessIcon, modeIcon, modeLabel } from '../chat/modeIcons';
 import { setLocale } from '../i18n';
 
 afterEach(() => setLocale('en'));
@@ -36,14 +36,21 @@ describe('ACP mode presentation', () => {
       expect(modeLabel(codex)).toBe(translate(locale, 'composer.modeShort.auto'));
       expect(modeLabel({ id: 'agent', name: 'Agent' })).toBe(translate(locale, 'composer.modeShort.agent'));
     }
-    expect(modeIcon(codex)).toBe(Sparkles);
-    expect(modeIcon({ id: 'custom', name: 'Custom', kind: 'auto_review' })).toBe(Sparkles);
+    expect(modeIcon(codex)).toBe(SmartGlyph);
+    expect(modeIcon({ id: 'custom', name: 'Custom', kind: 'auto_review' })).toBe(SmartGlyph);
   });
 
   it('uses the edit glyph for automatic file edits rather than automatic permission review', () => {
-    expect(modeIcon({ id: 'auto_edit', name: 'Auto Edit' })).toBe(Code);
-    expect(modeIcon({ id: 'acceptEdits', name: 'Accept edits' })).toBe(Code);
-    expect(modeIcon({ id: 'auto', name: 'Auto' })).toBe(Sparkles);
+    expect(modeIcon({ id: 'auto_edit', name: 'Auto Edit' })).toBe(CodeGlyph);
+    expect(modeIcon({ id: 'acceptEdits', name: 'Accept edits' })).toBe(CodeGlyph);
+    expect(modeIcon({ id: 'auto', name: 'Auto' })).toBe(SmartGlyph);
+  });
+
+  it('maps the approval ladder to the solid shield family', () => {
+    expect(accessIcon({ id: 'ask', name: 'Ask' })).toBe(AskShieldGlyph);
+    expect(accessIcon({ id: 'auto-edit', name: 'Auto-edit' })).toBe(AutoEditShieldGlyph);
+    expect(accessIcon({ id: 'auto', name: 'Auto' })).toBe(AutoShieldGlyph);
+    expect(accessIcon({ id: 'full', name: 'Full access' })).toBe(FullAccessShieldGlyph);
   });
 
   it('keeps unknown and custom modes verbatim instead of guessing from their names', () => {
@@ -56,7 +63,7 @@ describe('ACP mode presentation', () => {
     setLocale('zh-CN');
     const mode = { id: 'code', name: 'Code', kind: 'full_access' };
     expect(modeLabel(mode)).toBe('完全访问');
-    expect(modeIcon(mode)).toBe(ShieldOff);
-    expect(modeIcon({ id: 'custom', name: 'Custom', kind: 'full_access' })).toBe(ShieldOff);
+    expect(modeIcon(mode)).toBe(FullAccessShieldGlyph);
+    expect(modeIcon({ id: 'custom', name: 'Custom', kind: 'full_access' })).toBe(FullAccessShieldGlyph);
   });
 });

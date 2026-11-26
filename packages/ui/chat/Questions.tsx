@@ -12,7 +12,7 @@ import { imeKey } from '../ui/ime';
 import { questionOptionIndex } from './questionKeys';
 import { DraftChips, TurnAttachments } from './Attachments';
 import { collectImages } from './drafts';
-import { BlobUrlContext } from './fileLinks';
+import { BlobUrlContext } from '../markdown/fileLinks';
 
 // `images`: image drafts by question id, sent only by a card that takes them (QuestionBlock.images)
 export type OnAnswer = (blockId: string, answers: QuestionAnswers, skip?: boolean, images?: Record<string, ImageDraft[]>) => void;
@@ -171,8 +171,8 @@ export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock;
               reads as the first row of the answers. A text question has no rule: there the question is the field's label,
               and a rule between a label and its field parts them. The head stays outside the answer scrollport and its fade.
               Two clean vertical lines run down the dock: card content (the question text, option keys and text fields) sits
-              on the --pad content line (card-pad, aligned with the to-do card above and the composer's text and chip icon
-              below), while outer controls and option hover fills stand 8px in from the card's outer edge (card-corner). */}
+              on the --pad content line (card-pad, aligned with the to-do card above and the composer below), while outer
+              controls and option hover fills stand 8px in from the card's outer edge (card-corner). */}
           <div className={cn('flex shrink-0 flex-col gap-(--question-section-gap) px-card-pad pt-(--question-head-pad)',
             current.kind !== 'text' && 'border-b border-line pb-(--question-head-pad)')}>
             {subtitle && <div className="text-3 text-fg-3">{subtitle}</div>}

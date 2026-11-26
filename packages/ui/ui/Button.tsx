@@ -219,7 +219,7 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
       className={cn('group/chip', chipVariants({ variant }), className)}
       {...rest}
     >
-      {icon && <span className={cn('flex shrink-0 items-center [&_svg]:size-icon', variant === 'quiet' && 'text-fg-3')}>{icon}</span>}
+      {icon && <span className="flex shrink-0 items-center [&_svg]:size-icon">{icon}</span>}
       {/* A null label leaves just the icon (the model chip stepping down to its marks) */}
       {children != null && <span className={cn('truncate text-left', tags ? 'shrink-0' : 'grow', narrow === 'icon' && '@max-sm:hidden group-data-[squeezed]/bar:hidden', narrow === 'icon-xl' && '@max-xl:hidden')}>
         {children}

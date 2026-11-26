@@ -3,7 +3,6 @@ import { ChartBarStacked, Shrink } from 'lucide-react';
 import type { ContextCategory, ContextReport } from '@acpira/shared/context';
 import type { Turn, Usage } from '@acpira/shared/transcript';
 import { contextApi, lastSplit } from '../context/api';
-import { panel } from '../panel/store';
 import { CATEGORY_BG, categoryLabel } from '../context/categories';
 import { desktopShell } from '../desktop';
 import { t, useLocale } from '../i18n';
@@ -12,14 +11,14 @@ import { Chip, CORNER_CHIP } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { compactingNow, liveUsage, overCompactBudget, usageFill } from './usageBreakdown';
 
-// Context usage: a --icon-sized ring inside a --ctl-square button; hovering shows the usage card (Cursor-style), and agents with /compact can be compacted from its title row.
+// Context usage: a --icon-sized ring inside a --ctl-sm square button (matching sibling toolbar chips); hovering shows the usage card (Cursor-style), and agents with /compact can be compacted from its title row.
 // Focus opens the card only when it arrives from another element (Tab / Shift+Tab). Focus the popup hands back after closing — outside click, Escape, the compact
 // button — has no relatedTarget (the card is already gone), and opening on it would reopen the card the user just dismissed
 const EMPTY_TURNS: Turn[] = [];
 
-export function ContextRing({ sessionId, usage, turns = EMPTY_TURNS, compacting: compactingProp, canCompact, compactAt, running, disabled, onCompact, onOpenChange }: {
+export function ContextRing({ sessionId, usage, turns = EMPTY_TURNS, compacting: compactingProp, canCompact, compactAt, running, disabled, onCompact, onOpenReport, onOpenChange }: {
   sessionId?: string; usage: Usage; turns?: Turn[]; compacting?: boolean; canCompact: boolean; compactAt?: number; running?: boolean; disabled?: boolean;
-  onCompact: () => void; onOpenChange: (open: boolean) => void;
+  onCompact: () => void; onOpenReport?: () => void; onOpenChange: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const shown = useMemo(() => liveUsage(usage, turns, running), [usage, turns, running]);
@@ -39,7 +38,7 @@ export function ContextRing({ sessionId, usage, turns = EMPTY_TURNS, compacting:
       <Popover.Trigger openOnHover delay={120} closeDelay={250} onFocus={e => { if (e.relatedTarget) setOpen(true); }}
         render={<button type="button" data-open={open || undefined}
           aria-label={stale ? t('usage.compactedStale') : t('usage.usedPct', { pct: Math.round(pct * 100) })}
-          className="inline-flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[open]:bg-active data-[open]:text-fg-1"
+          className="inline-flex size-ctl-sm shrink-0 items-center justify-center rounded-sm text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[open]:bg-active data-[open]:text-fg-1"
         >
           <svg className="context-ring size-icon -rotate-90" viewBox="0 0 16 16" fill="none"
             data-shift={shift} data-stale={stale || undefined} data-compacting={compacting || undefined}>
@@ -53,7 +52,7 @@ export function ContextRing({ sessionId, usage, turns = EMPTY_TURNS, compacting:
         <UsagePanel
           usage={shown}
           split={split}
-          onReport={split && desktopShell() ? () => { panel.openContext(); setOpen(false); } : undefined}
+          onReport={split && desktopShell() && onOpenReport ? () => { onOpenReport(); setOpen(false); } : undefined}
           pct={pct}
           fill={fill}
           compactAt={compactAt}
