@@ -61,15 +61,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -1025,8 +1024,9 @@ private fun HostTag(alias: String, view: ConnectionView?) {
 private fun Breathing(on: Boolean, content: @Composable () -> Unit) {
   if (!on || !LocalMotion.current) return content()
   val loop = rememberInfiniteTransition(label = "breathe")
-  val level by loop.animateFloat(1f, BREATHE_LOW, infiniteRepeatable(tween(BREATHE_MS), RepeatMode.Reverse), label = "breatheLevel")
-  Box(Modifier.alpha(level)) { content() }
+  val level = loop.animateFloat(1f, BREATHE_LOW, infiniteRepeatable(tween(BREATHE_MS), RepeatMode.Reverse), label = "breatheLevel")
+  // Read in the layer, so a breath composes nothing again
+  Box(Modifier.graphicsLayer { alpha = level.value }) { content() }
 }
 
 /**
@@ -1112,17 +1112,19 @@ fun StateMark(state: SessionState, unread: Boolean) {
   val held = LocalSyncing.current && (state == SessionState.working || state == SessionState.waiting || state == SessionState.background)
   val motion = LocalMotion.current && !held
   val loop = rememberInfiniteTransition(label = "state")
+  // The loops' values are read where a layer is set up, never while composing: read in composition, every mark on
+  // screen was composed again for each frame of its loop
   Breathing(held) {
   Box(Modifier.size(Metrics.stateSlot), contentAlignment = Alignment.Center) {
     when (state) {
       SessionState.working -> {
         // animate-spin: one turn a second, linear; it turns with motion off too, not while held
-        val turn by loop.animateFloat(0f, FULL_TURN, infiniteRepeatable(tween(SPIN_MS, easing = LinearEasing)), label = "spin")
-        Lucide("loaderCircle", Palette.fg2, Modifier.rotate(if (held) 0f else turn), size = Metrics.stateRing)
+        val turn = loop.animateFloat(0f, FULL_TURN, infiniteRepeatable(tween(SPIN_MS, easing = LinearEasing)), label = "spin")
+        Lucide("loaderCircle", Palette.fg2, Modifier.graphicsLayer { rotationZ = if (held) 0f else turn.value }, size = Metrics.stateRing)
       }
       SessionState.waiting -> {
         // acp-mark-beat: 0 / 100% 1, 20% 1.5, 40% 1.1, 55% 1.35, 75% 1, eased between keys
-        val beat by loop.animateFloat(
+        val beat = loop.animateFloat(
           1f, 1f,
           infiniteRepeatable(keyframes {
             durationMillis = BEAT_MS
@@ -1134,11 +1136,17 @@ fun StateMark(state: SessionState, unread: Boolean) {
           }),
           label = "beat",
         )
-        Box(Modifier.size(Metrics.stateDot).scale(if (motion) beat else 1f).background(Palette.warn, CircleShape))
+        Box(
+          Modifier.size(Metrics.stateDot).graphicsLayer {
+            val by = if (motion) beat.value else 1f
+            scaleX = by
+            scaleY = by
+          }.background(Palette.warn, CircleShape),
+        )
       }
       SessionState.error -> {
         // acp-mark-flash: lit, then two dips to 0.2 at 70% and 82%, linear between keys
-        val flash by loop.animateFloat(
+        val flash = loop.animateFloat(
           1f, 1f,
           infiniteRepeatable(keyframes {
             durationMillis = FLASH_MS
@@ -1150,22 +1158,29 @@ fun StateMark(state: SessionState, unread: Boolean) {
           }),
           label = "flash",
         )
-        Box(Modifier.size(Metrics.stateDot).alpha(if (motion) flash else 1f).background(Palette.danger, CircleShape))
+        Box(Modifier.size(Metrics.stateDot).graphicsLayer { alpha = if (motion) flash.value else 1f }.background(Palette.danger, CircleShape))
       }
       SessionState.unread -> {
         // The halo: a copy of the dot growing to 2.6 times while it fades, ease-out over 2 s; invisible at rest
         if (motion) {
-          val p by loop.animateFloat(0f, 1f, infiniteRepeatable(tween(HALO_MS, easing = { 1 - (1 - it) * (1 - it) })), label = "halo")
-          Box(Modifier.size(Metrics.stateUnread).scale(1 + HALO_GROWTH * p).alpha(HALO_ALPHA * (1 - p)).background(Palette.fgStrong, CircleShape))
+          val p = loop.animateFloat(0f, 1f, infiniteRepeatable(tween(HALO_MS, easing = { 1 - (1 - it) * (1 - it) })), label = "halo")
+          Box(
+            Modifier.size(Metrics.stateUnread).graphicsLayer {
+              val by = 1 + HALO_GROWTH * p.value
+              scaleX = by
+              scaleY = by
+              alpha = HALO_ALPHA * (1 - p.value)
+            }.background(Palette.fgStrong, CircleShape),
+          )
         }
         Box(Modifier.size(Metrics.stateUnread).background(Palette.fgStrong, CircleShape))
       }
       SessionState.background -> {
-        val turn by loop.animateFloat(0f, FULL_TURN, infiniteRepeatable(tween(ORBIT_MS, easing = LinearEasing)), label = "orbit")
+        val turn = loop.animateFloat(0f, FULL_TURN, infiniteRepeatable(tween(ORBIT_MS, easing = LinearEasing)), label = "orbit")
         val ring = if (unread) Palette.fgStrong else Palette.fg3
         Lucide("circle", ring, size = Metrics.stateRing)
         // The orbit rides the ring's own line (Lucide's circle: r 10 in a 24-unit box)
-        Box(Modifier.size(Metrics.stateRing).rotate(if (motion) turn else 0f), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.size(Metrics.stateRing).graphicsLayer { rotationZ = if (motion) turn.value else 0f }, contentAlignment = Alignment.TopCenter) {
           Box(Modifier.offset(y = orbitTop(Metrics.stateRing, Metrics.stateOrbit)).size(Metrics.stateOrbit).background(if (unread) Palette.fgStrong else Palette.fg2, CircleShape))
         }
         if (unread) Box(Modifier.size(Metrics.stateInner).background(Palette.fgStrong, CircleShape))
