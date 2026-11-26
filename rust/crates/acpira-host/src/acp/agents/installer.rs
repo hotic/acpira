@@ -544,8 +544,28 @@ impl Installs {
     self.push();
   }
 
-  /// Start `line` for `agent` unless one is running already; `install_node` downloads Acpira's private portable Node.js
-  /// LTS first when npm is missing. `done(success)` runs after the end has been pushed
+  fn clear_stale_missing_node(&self, except: &str) {
+    let mut dropped = Vec::new();
+    {
+      let mut entries = self.entries.lock();
+      entries.retain(|id, e| {
+        let stale = id != except && e.progress.status == AgentInstallStatus::Failed && e.progress.missing_node == Some(true);
+        if stale {
+          dropped.push(id.clone());
+        }
+        !stale
+      });
+      if !dropped.is_empty() {
+        self.order.lock().retain(|id| !dropped.contains(id));
+      }
+    }
+    if !dropped.is_empty() {
+      self.push();
+    }
+  }
+
+  /// Start `line` for `agent` unless an install is running already; `install_node` downloads Acpira's private portable
+  /// Node.js LTS first when npm is missing. `done(success)` runs after the end has been pushed
   pub fn start(
     self: &Arc<Self>,
     agent: &str,
@@ -557,11 +577,12 @@ impl Installs {
   ) -> bool {
     {
       let mut entries = self.entries.lock();
-      if entries.get(agent).is_some_and(|e| e.progress.status == AgentInstallStatus::Running) {
+      // Only one in-app install runs at a time on an engine: two concurrent installs would race on a missing portable
+      // Node.js runtime or shared global npm prefix
+      if entries.values().any(|e| e.progress.status == AgentInstallStatus::Running) {
         return false;
       }
-      let mut log = Log::default();
-      log.push(format!("$ {}", first_line(&line)));
+      let log = Log::default();
       let cancel = Cancel::default();
       entries.insert(
         agent.to_owned(),
@@ -624,19 +645,23 @@ impl Installs {
           )
           .await;
           match installed {
-            Ok(_) => match plan(&line, os).await {
-              Ok(p) => p,
-              Err(PlanError::NodeMissing) => {
-                me.set(&agent, |e| {
-                  e.progress.status = AgentInstallStatus::Failed;
-                  e.progress.error = Some(messages.node_missing.clone());
-                  e.progress.missing_node = Some(true);
-                  e.cancel = None;
-                });
-                done(false);
-                return;
+            Ok(_) => {
+              // Portable Node.js is now installed: clear stale missing-Node failures on other agents
+              me.clear_stale_missing_node(&agent);
+              match plan(&line, os).await {
+                Ok(p) => p,
+                Err(PlanError::NodeMissing) => {
+                  me.set(&agent, |e| {
+                    e.progress.status = AgentInstallStatus::Failed;
+                    e.progress.error = Some(messages.node_missing.clone());
+                    e.progress.missing_node = Some(true);
+                    e.cancel = None;
+                  });
+                  done(false);
+                  return;
+                }
               }
-            },
+            }
             Err(err) if err.downcast_ref::<crate::remote::archive::DownloadCancelled>().is_some() || cancel.is_cancelled() => {
               me.set(&agent, |e| {
                 e.progress.status = AgentInstallStatus::Cancelled;
@@ -667,6 +692,9 @@ impl Installs {
           return;
         }
       };
+      // Record the command line only once planning succeeded (so an early NodeMissing failure keeps an empty log, and a
+      // managed Node.js download logs before the command that uses it)
+      log.lock().push(format!("$ {}", first_line(&line)));
       me.set(&agent, |e| {
         e.progress.proxy = plan.proxy.clone();
         e.progress.prefix = plan.prefix.clone();
@@ -991,8 +1019,9 @@ mod tests {
     assert!(installs.start("mine", line.into(), Os::current(), false, messages(), move |ok| {
       let _ = tx.send(ok);
     }));
-    // A second click while it runs starts nothing
+    // A second click (same agent or another agent) while one runs starts nothing
     assert!(!installs.start("mine", "echo again".into(), Os::current(), false, messages(), |_| {}));
+    assert!(!installs.start("other", "echo other".into(), Os::current(), false, messages(), |_| {}));
     assert!(!rx.await.unwrap());
     let last = installs.list().pop().unwrap();
     assert_eq!(last.status, AgentInstallStatus::Failed);

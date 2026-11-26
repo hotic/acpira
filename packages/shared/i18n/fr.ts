@@ -1381,6 +1381,7 @@ export const fr = {
   'settings.install.nodePrompt': 'L’installation de {agent} nécessite Node.js, qui est introuvable sur cette machine. Acpira peut télécharger une version portable officielle de Node.js LTS dans ~/.acpira/runtime/node sans modifier le PATH du système, puis installer {agent}.',
   'settings.install.nodeConfirm': 'Installer Node.js et continuer',
   'settings.install.nodeManual': 'Télécharger Node.js manuellement',
+  'settings.install.busy': 'Attendez la fin de l’installation de {agent}',
   'settings.agent.probing': 'Vérification…',
   'settings.fact.binary': 'Exécutable',
   'settings.fact.versionUnknown': 'Version inconnue',

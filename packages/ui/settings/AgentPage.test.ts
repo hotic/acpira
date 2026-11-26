@@ -184,9 +184,10 @@ describe('in-app agent install', () => {
 
   it('offers installing portable Node.js when an npm install failed due to missing Node.js', () => {
     const failed = renderAgent(agent, {}, {
-      agent: 'codex', status: 'failed', log: [], error: t('host.installNeedsNode'), missingNode: true,
+      agent: 'codex', status: 'failed', log: ['$ npm install -g example-agent'], error: t('host.installNeedsNode'), missingNode: true,
     }, withTerminal);
     expect(failed).toContain('Install Node.js and continue');
+    expect(failed).not.toContain('aria-label="Install log"');
     const dialog = renderToStaticMarkup(createElement(NodeInstallDialog, {
       agentName: 'Codex', onConfirm: vi.fn(), onManual: vi.fn(), onClose: vi.fn(),
     }));
@@ -194,6 +195,18 @@ describe('in-app agent install', () => {
     expect(dialog).toContain('~/.acpira/runtime/node');
     expect(dialog).toContain('>Download Node.js manually</button>');
     expect(dialog).toContain('>Install Node.js and continue</button>');
+  });
+
+  it('disables install actions while another agent is installing', () => {
+    const markup = renderToStaticMarkup(page({
+      agent, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on: withTerminal,
+      install: { agent: 'codex', status: 'failed', log: [], error: t('host.installNeedsNode'), missingNode: true },
+      installingAgent: 'Claude',
+      inventory: { agent: agent.id, binary: null, steer: false, scannedAt: '2026-09-30T00:00:00Z', config: [], mcp: [], skills: [], rules: [] },
+    }));
+    expect(markup).toContain('Wait for Claude to finish installing');
+    expect(markup).toMatch(/disabled=""[^>]*title="Wait for Claude to finish installing"[^>]*>.*Install<\/button>/);
+    expect(markup).toMatch(/disabled=""[^>]*title="Wait for Claude to finish installing"[^>]*>Install Node\.js and continue<\/button>/);
   });
 });
 

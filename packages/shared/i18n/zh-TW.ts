@@ -1402,6 +1402,7 @@ export const zhTW = {
   'settings.install.nodePrompt': '安裝 {agent} 需要 Node.js，但這台機器未偵測到。可由 Acpira 下載官方可攜版 Node.js LTS 到 ~/.acpira/runtime/node（不修改系統 PATH），完成後自動繼續安裝 {agent}。',
   'settings.install.nodeConfirm': '安裝 Node.js 並繼續',
   'settings.install.nodeManual': '手動下載 Node.js',
+  'settings.install.busy': '正在安裝 {agent}，請等待完成',
   'settings.agent.probing': '正在探測…',
   'settings.agent.version': '{name} {version}',
   // Home list (drill-down) and the facts card on an agent page

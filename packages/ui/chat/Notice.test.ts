@@ -89,6 +89,13 @@ describe('Notice missing-CLI and SSH auth UX', () => {
     });
     expect(missingNode).toContain('>Install Node.js and continue</button>');
     expect(missingNode).toContain('Download Node.js manually');
+
+    const blocked = renderNotice({
+      agent: { id: 'codex', name: 'Codex', available: false, install: { command: 'npm install -g @agentclientprotocol/codex-acp' } },
+      onInstall: vi.fn(),
+      installingAgent: 'Claude',
+    });
+    expect(blocked).toMatch(/disabled=""[^>]*title="Wait for Claude to finish installing"[^>]*>Install<\/button>/);
   });
 
   it('promotes terminal auth methods ahead of browser OAuth when remoteAuth is set', () => {

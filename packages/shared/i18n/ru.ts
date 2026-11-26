@@ -1410,6 +1410,7 @@ export const ru = {
   'settings.install.nodePrompt': 'Для установки {agent} нужен Node.js, но он не найден на этой машине. Acpira может скачать официальную портативную сборку Node.js LTS в ~/.acpira/runtime/node без изменения системного PATH и продолжить установку {agent}.',
   'settings.install.nodeConfirm': 'Установить Node.js и продолжить',
   'settings.install.nodeManual': 'Скачать Node.js вручную',
+  'settings.install.busy': 'Дождитесь завершения установки {agent}',
   'settings.agent.probing': 'Проверка…',
   'settings.fact.binary': 'Исполняемый файл',
   'settings.fact.version': 'Версия',

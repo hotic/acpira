@@ -1374,6 +1374,7 @@ export const ko = {
   'settings.install.nodePrompt': '{agent}을(를) 설치하려면 Node.js가 필요하지만 이 머신에서 감지되지 않았습니다. Acpira가 시스템 PATH를 바꾸지 않고 공식 포터블 Node.js LTS를 ~/.acpira/runtime/node에 내려받은 뒤 {agent} 설치를 이어서 진행할 수 있습니다.',
   'settings.install.nodeConfirm': 'Node.js 설치 후 계속',
   'settings.install.nodeManual': 'Node.js 직접 다운로드',
+  'settings.install.busy': '{agent} 설치가 완료될 때까지 기다려 주세요',
   'settings.agent.probing': '확인 중…',
   'settings.fact.binary': '실행 파일',
   'settings.fact.version': '버전',

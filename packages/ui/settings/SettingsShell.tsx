@@ -353,13 +353,17 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'connections' && access && <RemoteAccessSection view={access} />}
                   {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} agents={p.agents} settings={p.settings} on={p.on} remote={remote} />}
                   {page.kind === 'subagents' && <SubagentsPage page={page} onPage={trail.go} onReplace={trail.replace} settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
-                  {agent && (
+                  {agent && (() => {
+                    const otherInstall = p.installs?.find(i => i.status === 'running' && i.agent !== agent.id);
+                    const installingAgent = otherInstall ? (p.agents.find(a => a.id === otherInstall.agent)?.name ?? otherInstall.agent) : undefined;
+                    return (
                     <AgentDialog
                       key={`${agent.id}:${page.kind === 'agent' ? page.tab ?? '' : ''}`}
                       agent={agent}
                       initialTab={page.kind === 'agent' ? page.tab : undefined}
                       accounts={p.accounts.filter(a => a.agent === agent.id)}
                       install={p.installs?.find(i => i.agent === agent.id)}
+                      installingAgent={installingAgent}
                       accountAction={p.accountActions?.find(a => a.agent === agent.id)}
                       inventory={p.inventories[agent.id]}
                       controls={p.controls[agent.id]}
@@ -376,7 +380,8 @@ export function SettingsShell(p: SettingsShellProps) {
                       onShared={() => trail.go({ kind: 'shared' })}
                       onClose={() => trail.replace({ kind: 'models' })}
                     />
-                  )}
+                    );
+                  })()}
                 </Page>
               </main>
               {/* The desktop shell's toasts while this page is up */}

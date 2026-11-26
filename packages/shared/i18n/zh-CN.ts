@@ -1421,6 +1421,7 @@ export const zhCN = {
   'settings.install.nodePrompt': '安装 {agent} 需要 Node.js，但这台机器未检测到。可以由 Acpira 下载官方便携版 Node.js LTS 到 ~/.acpira/runtime/node（不修改系统 PATH），完成后自动继续安装 {agent}。',
   'settings.install.nodeConfirm': '安装 Node.js 并继续',
   'settings.install.nodeManual': '手动下载 Node.js',
+  'settings.install.busy': '正在安装 {agent}，请等待完成',
   'settings.agent.probing': '正在探测…',
   'settings.agent.version': '{name} {version}',
   // Home list (drill-down) and the facts card on an agent page

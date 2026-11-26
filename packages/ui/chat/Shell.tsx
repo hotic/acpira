@@ -224,6 +224,8 @@ export interface ShellProps {
   accountId?: string;
   accountAction?: AccountAction;
   agentInstall?: AgentInstallProgress;
+  // Another agent currently installing on this engine (blocks starting a second install)
+  installingAgent?: string;
   // The session runs in an SSH host's engine (SessionView.remoteAuth): no local terminal can unlock that host's keychain
   remoteAuth?: boolean;
   // That host's CLI availability, kept separate from this machine's settings and install state.
@@ -1577,7 +1579,7 @@ export function Shell(p: ShellProps) {
                   <Notice
                     status={p.status} error={p.error} agent={p.agent} authMethods={p.authMethods}
                     accounts={p.accounts?.filter(x => x.agent === p.agent.id)} accountId={p.accountId}
-                    accountAction={p.accountAction} remoteAuth={p.remoteAuth} remoteHost={remoteHost} install={p.agentInstall}
+                    accountAction={p.accountAction} remoteAuth={p.remoteAuth} remoteHost={remoteHost} install={p.agentInstall} installingAgent={p.installingAgent}
                     onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(folderAgent(p.cwd))}
                     onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
                     onAddAccountKey={on.addAccountKey ? key => on.addAccountKey!(p.agent.id, key) : undefined}

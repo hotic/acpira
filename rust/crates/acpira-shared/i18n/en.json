@@ -1380,6 +1380,7 @@
   "settings.install.nodePrompt": "Installing {agent} requires Node.js, which was not found on this machine. Acpira can download an official portable Node.js LTS into ~/.acpira/runtime/node without changing your system PATH, then continue installing {agent}.",
   "settings.install.nodeConfirm": "Install Node.js and continue",
   "settings.install.nodeManual": "Download Node.js manually",
+  "settings.install.busy": "Wait for {agent} to finish installing",
   "settings.agent.probing": "Probing…",
   "settings.agent.version": "{name} {version}",
   "settings.fact.binary": "Executable",

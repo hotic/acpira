@@ -53,6 +53,8 @@ export interface AgentSettingsProps {
   accounts: AccountInfo[];
   // This agent's latest in-app install, if any
   install?: AgentInstallProgress;
+  // Display name of another agent currently installing on the same engine (blocks starting a second install)
+  installingAgent?: string;
   // This agent's latest account action, if any (the API key field follows its check)
   accountAction?: AccountAction;
   inventory?: AgentInventory;
@@ -136,7 +138,7 @@ export function AgentDialog(p: AgentSettingsProps & {
 }
 
 // One tab's blocks. The reads it needs run while the dialog is open: the inventory once, the quotas every minute
-export function AgentSettings({ agent, accounts, install, accountAction, inventory, controls, providers, settings, env, on, onShared, tab, detect, busy }: AgentSettingsProps & { tab: AgentTab; detect?: number; busy?: boolean }) {
+export function AgentSettings({ agent, accounts, install, installingAgent, accountAction, inventory, controls, providers, settings, env, on, onShared, tab, detect, busy }: AgentSettingsProps & { tab: AgentTab; detect?: number; busy?: boolean }) {
   useEffect(() => { if (!inventory) on.refreshInventory(agent.id); }, [agent.id, inventory, on]);
   // Re-read when the dialog opens and whenever the set of accounts changes (a login finishes while it is open)
   const accountKey = accounts.map(a => a.id).join();
@@ -153,9 +155,9 @@ export function AgentSettings({ agent, accounts, install, accountAction, invento
   const sources = { agent, inventory, env, on, onShared };
   switch (tab) {
     case 'overview': return <>
-      {agent.install && agent.available === false && <InstallSection agent={agent} install={install} env={env} on={on} />}
+      {agent.install && agent.available === false && <InstallSection agent={agent} install={install} installingAgent={installingAgent} env={env} on={on} />}
       <AgentFacts agent={agent} inventory={inventory} env={env} on={on} />
-      {agent.install && agent.available !== false && <InstallSection agent={agent} install={install} env={env} on={on} />}
+      {agent.install && agent.available !== false && <InstallSection agent={agent} install={install} installingAgent={installingAgent} env={env} on={on} />}
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
       <SshHostSection agent={agent} settings={settings} on={on} />
       <ConfigSection agent={agent} files={inventory?.config} env={env} on={on} />
@@ -589,9 +591,11 @@ function SearchedDirs({ dirs, env }: { dirs: string[]; env: SettingsEnv }) {
 // Keep installation commands reachable after detection, including agents whose CLI is already installed. Install runs the
 // line in the background on the engine's machine (the remote host of a Remote window) and streams its log here; the
 // command row keeps a copy button and a terminal fallback for installers that want a person at the keyboard.
-function InstallSection({ agent, install, env, on }: { agent: AgentInfo; install?: AgentInstallProgress; env: SettingsEnv; on: SettingsHandlers }) {
+function InstallSection({ agent, install, installingAgent, env, on }: { agent: AgentInfo; install?: AgentInstallProgress; installingAgent?: string; env: SettingsEnv; on: SettingsHandlers }) {
   const { command, docs } = agent.install!;
   const running = install?.status === 'running';
+  const busyLabel = !running && installingAgent ? t('settings.install.busy', { agent: installingAgent }) : undefined;
+  const blocked = !!busyLabel;
   const [nodePrompt, setNodePrompt] = useState(false);
   const [askedFrom, setAskedFrom] = useState<AgentInstallProgress | null | undefined>(undefined);
   const [lastStatus, setLastStatus] = useState(install?.status);
@@ -601,6 +605,7 @@ function InstallSection({ agent, install, env, on }: { agent: AgentInfo; install
     if (wasRunning && install?.status === 'failed' && install.missingNode) setNodePrompt(true);
     if (install?.status === 'running' || install?.status === 'success') setNodePrompt(false);
   }
+  if (blocked && nodePrompt) setNodePrompt(false);
   if (askedFrom !== undefined && install !== askedFrom) {
     if (install?.status === 'failed' && install.missingNode) {
       setAskedFrom(undefined);
@@ -610,18 +615,20 @@ function InstallSection({ agent, install, env, on }: { agent: AgentInfo; install
     }
   }
   const startInstall = () => {
+    if (blocked) return;
     setAskedFrom(install ?? null);
     on.installAgent(agent.id);
   };
   const action = command && (running
     ? <SectionAction icon={<X />} onClick={() => on.cancelInstall?.(agent.id)} disabled={!on.cancelInstall}>{t('settings.install.cancel')}</SectionAction>
-    : <SectionAction icon={<Download />} onClick={startInstall}>{t('settings.install.run')}</SectionAction>);
+    : <SectionAction icon={<Download />} onClick={startInstall} disabled={blocked} title={busyLabel}>{t('settings.install.run')}</SectionAction>);
   return <>
     <Section title={t('settings.install.title', { agent: agent.name })} desc={command ? t('settings.install.desc') : undefined} action={action}>
       {command && install && (
         <InstallProgressRow
           install={install}
           env={env}
+          busyLabel={busyLabel}
           onPromptNode={install.status === 'failed' && install.missingNode ? () => setNodePrompt(true) : undefined}
         />
       )}
@@ -664,7 +671,7 @@ const INSTALL_STATUS: Record<AgentInstallProgress['status'], MsgKey> = {
 // prefix) there instead. The whole log waits behind a toggle in a box of fixed height and opens by itself when the
 // install fails; a success has no log. Reported 2026-10-14: the log used to grow under the row line by line, up to the
 // output cap, and fold away on success
-function InstallProgressRow({ install, env, onPromptNode }: { install: AgentInstallProgress; env: SettingsEnv; onPromptNode?: () => void }) {
+function InstallProgressRow({ install, env, busyLabel, onPromptNode }: { install: AgentInstallProgress; env: SettingsEnv; busyLabel?: string; onPromptNode?: () => void }) {
   const { status } = install;
   const running = status === 'running';
   const [open, setOpen] = useState(status === 'failed');
@@ -679,29 +686,36 @@ function InstallProgressRow({ install, env, onPromptNode }: { install: AgentInst
     install.proxy && t('settings.install.proxy', { proxy: install.proxy }),
     install.prefix && t('settings.install.prefix', { dir: shortPath(install.prefix, env) }),
   ].filter(Boolean).join(t('common.metaSep'));
-  const log = status !== 'success' && install.log.length > 0;
+  // Skip a lone echoed `$ <cmd>` line when missingNode failed before the command ever ran, so the row does not unfold an
+  // empty command box that only repeats the Install command row right below it
+  const hasRealLog = !(install.missingNode && install.log.length === 1 && install.log[0]!.startsWith('$ '));
+  const log = status !== 'success' && install.log.length > 0 && hasRealLog;
   const newest = running ? newestLine(install.log) : undefined;
   const detail = running ? newest || facts || undefined : status === 'failed' && install.error ? undefined : facts || undefined;
   return (
     <Collapsible.Root open={log && open} onOpenChange={setOpen}>
       <ItemRow
-        // Top-aligned only under an error, so the status line stays anchored above multi-line error copy; when a wide
-        // prompt action shares the title line, extraWide lets the error span the card's full width under it
-        className={cn(install.error && !onPromptNode && 'items-start')}
-        title={running ? <Shimmer>{label}</Shimmer> : <span className={cn(status === 'failed' ? 'text-danger' : status === 'cancelled' ? 'text-fg-2' : 'text-fg-1')}>{label}</span>}
+        // Top-aligned under an error or action so the status title stays anchored with the log toggle on the first line
+        className={cn((install.error || onPromptNode) && 'items-start')}
+        title={running ? <Shimmer>{label}</Shimmer> : <span className={cn(status === 'cancelled' ? 'text-fg-2' : 'text-fg-1')}>{label}</span>}
         desc={detail && <span title={detail}>{detail}</span>}
-        extra={install.error && <p className="m-0 text-3 text-danger [overflow-wrap:anywhere]">{install.error}</p>}
-        extraWide={!!(install.error && onPromptNode)}
+        extra={(install.error || onPromptNode) && <>
+          {install.error && <p className="m-0 text-3 text-fg-3 [overflow-wrap:anywhere]">{install.error}</p>}
+          {onPromptNode && (
+            <div className="py-gap-half">
+              <Button variant="primary" disabled={!!busyLabel} title={busyLabel} onClick={onPromptNode} className="disabled:pointer-events-none disabled:opacity-50">
+                {t('settings.install.nodeConfirm')}
+              </Button>
+            </div>
+          )}
+        </>}
         // One text line tall: the button overflows into the row's padding, so the row keeps its height when a success
         // drops the toggle, and under an error it stays on the status line
-        trailing={(onPromptNode || log) && (
-          <span className={cn('flex h-(--text-2-lh) items-center', log && 'gap-3')}>
-            {onPromptNode && <SectionAction icon={<Download />} onClick={onPromptNode}>{t('settings.install.nodeConfirm')}</SectionAction>}
-            {log && (
-              <IconButton title={t('settings.install.log')} aria-label={t('settings.install.log')} aria-expanded={open} onClick={() => setOpen(v => !v)} className="-mr-ctl-bleed text-fg-2">
-                {open ? <ChevronUp strokeWidth={1.75} /> : <ChevronDown strokeWidth={1.75} />}
-              </IconButton>
-            )}
+        trailing={log && (
+          <span className="flex h-(--text-2-lh) items-center">
+            <IconButton title={t('settings.install.log')} aria-label={t('settings.install.log')} aria-expanded={open} onClick={() => setOpen(v => !v)} className="-mr-ctl-bleed text-fg-2">
+              {open ? <ChevronUp strokeWidth={1.75} /> : <ChevronDown strokeWidth={1.75} />}
+            </IconButton>
           </span>
         )}
       />

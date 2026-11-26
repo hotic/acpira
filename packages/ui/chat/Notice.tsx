@@ -48,6 +48,8 @@ export interface NoticeProps {
   remoteHost?: string;
   // Missing-CLI install on whichever engine owns the session (local or SSH host)
   install?: AgentInstallProgress;
+  // Another agent currently installing on this engine (blocks starting a second install)
+  installingAgent?: string;
   onInstall?: (installNode?: boolean) => void;
   onCancelInstall?: () => void;
   onInstallInTerminal?: () => void;
@@ -121,7 +123,7 @@ export function ConnectingNotice({ status, agent }: { status: SessionStatus; age
 // Once an import found no local login, signing in in the terminal becomes the primary and import stays greyed out in the menu.
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
-export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onAddAccountKey, onUnlock, onTakeOver, onRunHere, remoteAuth, remoteHost, install, onInstall, onCancelInstall, onInstallInTerminal, onOpenExternal }: NoticeProps) {
+export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onAddAccountKey, onUnlock, onTakeOver, onRunHere, remoteAuth, remoteHost, install, installingAgent, onInstall, onCancelInstall, onInstallInTerminal, onOpenExternal }: NoticeProps) {
   // The pasted-key way open: the box takes the actions' place until the key is sent or the way is cancelled
   const [keying, setKeying] = useState(false);
   // Confirmation dialog when an npm-based install failed because Node.js is missing
@@ -213,7 +215,11 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     showRetry = true;
   } else if (installCommand && onInstall) {
     const missingNode = install?.status === 'failed' && !!install.missingNode;
+    const busyLabel = !installing && installingAgent ? t('settings.install.busy', { agent: installingAgent }) : undefined;
+    const blocked = !!busyLabel;
+    if (blocked && nodePrompt) setNodePrompt(false);
     const triggerInstall = () => {
+      if (blocked) return;
       setAskedFrom(install ?? null);
       onInstall();
     };
@@ -221,17 +227,17 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       primary = { key: 'cancelInstall', label: t('settings.install.cancel'), run: onCancelInstall };
       groups = [runHere];
     } else if (missingNode) {
-      primary = { key: 'installNode', label: t('settings.install.nodeConfirm'), run: () => setNodePrompt(true) };
+      primary = { key: 'installNode', label: t('settings.install.nodeConfirm'), disabled: blocked, title: busyLabel, run: () => setNodePrompt(true) };
       groups = [
         [
-          { key: 'install', label: t('settings.install.run'), icon: rowIcon(Download), title: installCommand, run: triggerInstall },
+          { key: 'install', label: t('settings.install.run'), icon: rowIcon(Download), disabled: blocked, title: busyLabel ?? installCommand, run: triggerInstall },
           ...(onOpenExternal ? [{ key: 'nodeManual', label: t('settings.install.nodeManual'), icon: rowIcon(ExternalLink), run: () => onOpenExternal(NODEJS_DOWNLOAD_URL) }] : []),
           ...(onInstallInTerminal ? [{ key: 'installTerminal', label: t('settings.install.terminal'), icon: rowIcon(SquareTerminal), title: installCommand, run: onInstallInTerminal }] : []),
         ],
         runHere,
       ];
     } else {
-      primary = { key: 'install', label: t('settings.install.run'), title: installCommand, run: triggerInstall };
+      primary = { key: 'install', label: t('settings.install.run'), disabled: blocked, title: busyLabel ?? installCommand, run: triggerInstall };
       groups = [
         onInstallInTerminal && !installing
           ? [{ key: 'installTerminal', label: t('settings.install.terminal'), icon: rowIcon(SquareTerminal), title: installCommand, run: onInstallInTerminal }]
@@ -299,7 +305,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       alt={otherCount === 1
         ? others[0]!.map(w => <Button key={w.key} className={methodButton} title={w.title} disabled={w.disabled} onClick={w.run}>{w.label}</Button>)
         : otherCount > 1 && <OtherWays groups={others} />}
-      actions={primary && <Button variant="primary" className={methodButton} title={primary.title} onClick={primary.run}>{primary.label}</Button>}
+      actions={primary && <Button variant="primary" className={`${methodButton} disabled:pointer-events-none disabled:opacity-50`} disabled={primary.disabled} title={primary.title} onClick={primary.run}>{primary.label}</Button>}
       trail={showRetry && <IconButton size="sm" aria-label={retry.label} title={retry.label} onClick={onRetry}><RotateCw strokeWidth={1.5} /></IconButton>}
     />
     {nodePrompt && installCommand && onInstall && (

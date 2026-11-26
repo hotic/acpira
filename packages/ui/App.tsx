@@ -806,6 +806,10 @@ export function App() {
       accountId={session?.accountId}
       accountAction={session?.remoteAuth ? session.remoteAuth.action : accountActions.find(action => action.agent === agent.id)}
       agentInstall={session?.remoteAuth ? session.remoteAuth.install : agentInstalls.find(install => install.agent === agent.id)}
+      installingAgent={session?.remoteAuth ? undefined : (() => {
+        const other = agentInstalls.find(i => i.status === 'running' && i.agent !== agent.id);
+        return other ? (agents.find(a => a.id === other.agent)?.name ?? other.agent) : undefined;
+      })()}
       remoteAuth={!!session?.remoteAuth}
       hostAgents={session?.remoteAuth?.agents}
       hidden={hidden}

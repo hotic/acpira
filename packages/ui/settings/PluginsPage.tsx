@@ -281,6 +281,11 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
       {visible.map(a => {
         const on = enabled(a);
         const last = on && enabledCount === 1;
+        const runningInstall = installs?.find(i => i.status === 'running');
+        const updating = runningInstall?.agent === a.id;
+        const blockedBy = runningInstall && runningInstall.agent !== a.id
+          ? (agents.find(x => x.id === runningInstall.agent)?.name ?? runningInstall.agent)
+          : undefined;
         return (
           <div
             key={a.id}
@@ -290,7 +295,7 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
             className={cn('relative min-w-0 touch-none select-none', lifted === a.id && 'z-10')}
           >
             <AgentTile agent={a} on={on} last={last} dragging={lifted === a.id} inventory={inventories[a.id]}
-              updating={installs?.some(i => i.agent === a.id && i.status === 'running')} onUpdate={() => onUpdate(a.id)}
+              updating={updating} blockedBy={blockedBy} onUpdate={() => onUpdate(a.id)}
               onToggle={v => toggle(a.id, v)} onOpen={() => onOpen(a.id)} onKeyDown={e => onKeyDown(e, a.id)} />
           </div>
         );
@@ -301,9 +306,10 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
 
 // One agent: its mark in a square, name and what it is, the switch; the foot names where the module comes from, the
 // gear and the version or detection state. A click anywhere on the tile but its switch opens the dialog too
-function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate, onToggle, onOpen, onKeyDown }: {
+function AgentTile({ agent: a, on, last, dragging, inventory, updating, blockedBy, onUpdate, onToggle, onOpen, onKeyDown }: {
   agent: AgentInfo;
   updating?: boolean;
+  blockedBy?: string;
   onUpdate: () => void;
   on: boolean;
   last: boolean;
@@ -353,8 +359,9 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, onUpdate
           {updating
             ? <Shimmer className="max-w-full truncate px-2 text-3 whitespace-nowrap text-fg-2">{t('settings.plugins.updating')}</Shimmer>
             : a.update && (
-              <button type="button" onClick={onUpdate}
-                className="flex h-ctl-sm items-center gap-2 rounded-md px-2 text-3 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover">
+              <button type="button" onClick={onUpdate} disabled={!!blockedBy}
+                title={blockedBy ? t('settings.install.busy', { agent: blockedBy }) : undefined}
+                className="flex h-ctl-sm items-center gap-2 rounded-md px-2 text-3 text-fg-1 transition-colors enabled:hover:bg-hover focus-visible:bg-hover disabled:pointer-events-none disabled:opacity-50">
                 <UpdateDot />
                 <UpdateLabel version={a.update} />
               </button>
