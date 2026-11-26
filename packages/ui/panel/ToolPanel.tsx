@@ -27,6 +27,7 @@ import { takeArrival } from '../plugins/arrivals';
 import { flyStandIn } from '../plugins/Pieces';
 import { motionOff } from '../effects/magic';
 import { playWhoosh } from '../effects/whoosh';
+import { useDocumentHidden, useWindowFocused } from '../plugins/motion';
 import { FILES_TAB, allLiveTabs, anyTab, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
 import { TerminalFrame } from './TerminalFrame';
 
@@ -484,7 +485,18 @@ function ToolPanel(p: ToolPanelProps) {
 
 const NO_INFO: ContextTabInfo = {};
 
-const BROWSER_SLEEP_MS = 10 * 60_000;
+// Hidden tabs keep their page alive briefly across tab switches; a hidden/occluded window or a long-unfocused window
+// sleeps even the active browser tab so background dev pages (WebGL, animations, timers) cannot burn CPU/GPU indefinitely
+export const BROWSER_SLEEP_MS = 10 * 60_000;
+export const BROWSER_BLUR_SLEEP_MS = 5 * 60_000;
+export const BROWSER_HIDDEN_SLEEP_MS = 2 * 60_000;
+
+export function browserSleepDelay(shown: boolean, focused: boolean, hidden: boolean): number | undefined {
+  if (shown && focused && !hidden) return undefined;
+  if (hidden) return BROWSER_HIDDEN_SLEEP_MS;
+  if (!focused) return BROWSER_BLUR_SLEEP_MS;
+  return BROWSER_SLEEP_MS;
+}
 
 // One browser tab: the browser page in a frame of this page's origin (panel/browserTabs.ts). The shell opens the tab's relay
 // as it mounts and navigates it each time the tab is asked to show a page (`nav`); it closes the relay when the tab goes.
@@ -492,16 +504,31 @@ const BROWSER_SLEEP_MS = 10 * 60_000;
 // `root`: the session folder; one on an SSH host makes the tab show that host's dev servers
 export function BrowserFrame({ tab, shown, stage, root }: { tab: Extract<PanelTab, { kind: 'browser' }>; shown: boolean; stage?: boolean; root: string }) {
   const ref = useCallback((el: HTMLIFrameElement | null) => registerBrowserFrame(tab.id, el), [tab.id]);
-  // Out of sight for BROWSER_SLEEP_MS the tab drops its frame: the page it shows shares this page's WebContent process
-  // and main thread, and `display: none` stops its frames but not its timers or its memory. The relay stays open; shown
-  // again, the frame loads anew, says browserReady and the shell sends the page last asked for (in-page navigation and
-  // scroll are lost, as after a reload)
+  const focused = useWindowFocused();
+  const hidden = useDocumentHidden();
+  const delay = browserSleepDelay(shown, focused, hidden);
+  // Out of sight (another tab, closed panel, hidden window) or unfocused for its grace window, the tab drops its frame:
+  // the page it shows shares this page's WebContent process and main thread, and `display: none` stops its frames but
+  // not its timers or GPU memory. The relay stays open; active again (or navigated by an agent), the frame loads anew,
+  // says browserReady and the shell sends the page last asked for (in-page navigation and scroll are lost, as after a reload)
   const [slept, setSlept] = useState(false);
+  const navSeen = useRef(tab.nav);
   useEffect(() => {
-    if (shown) { setSlept(false); return; }
-    const timer = setTimeout(() => setSlept(true), BROWSER_SLEEP_MS);
+    const navigated = tab.nav !== navSeen.current;
+    navSeen.current = tab.nav;
+    if (delay === undefined) {
+      if (slept) setSlept(false);
+      return;
+    }
+    // An agent opening or navigating a tab while the window sits visible beside an IDE wakes it for another grace window
+    if (navigated && shown && !hidden) {
+      if (slept) { setSlept(false); return; }
+    } else if (slept) {
+      return;
+    }
+    const timer = setTimeout(() => setSlept(true), delay);
     return () => clearTimeout(timer);
-  }, [shown]);
+  }, [delay, shown, hidden, tab.nav, slept]);
   const folder = parseRemoteFolder(root) ? root : undefined;
   useEffect(() => () => vscodeApi().postMessage({ type: 'panelBrowserClose', tab: tab.id }), [tab.id]);
   useEffect(() => {
@@ -509,9 +536,22 @@ export function BrowserFrame({ tab, shown, stage, root }: { tab: Extract<PanelTa
     // Only a new ask (or another host) navigates: the page naming its own address (titled) must not reload it
   }, [tab.id, tab.nav, folder]);
   const src = `${location.origin}/index.html?host=browser&tab=${encodeURIComponent(tab.id)}${stage ? '&stage' : ''}`;
-  if (slept && !shown) return null;
-  // `hidden` (display: none) when not shown so WebKit suspends the iframe's requestAnimationFrame and layer compositing while in the background
-  return <iframe ref={ref} title={tab.title || t('panel.browser')} src={src} aria-hidden={!shown || undefined} className={cn('absolute inset-0 size-full border-0 bg-transparent', !shown && 'hidden')} />;
+  if (slept && delay !== undefined) {
+    if (!shown || hidden) return null;
+    // Slept while still visible in a long-unfocused window: a quiet resting surface instead of a blank hole; clicking
+    // focuses the window and wakes the page immediately
+    return (
+      <div data-browser-slept onPointerDown={() => setSlept(false)}
+        className="absolute inset-0 flex flex-col items-center justify-center gap-gap px-page text-center text-fg-3">
+        <Globe strokeWidth={1} className="size-ctl" />
+        <p className="m-0 max-w-full truncate text-2">{tabLabel(tab)}</p>
+      </div>
+    );
+  }
+  const hide = !shown || hidden;
+  // `hidden` (display: none) when not shown or when the window is occluded/minimized so WebKit suspends the iframe's
+  // requestAnimationFrame and layer compositing immediately
+  return <iframe ref={ref} title={tab.title || t('panel.browser')} src={src} aria-hidden={hide || undefined} className={cn('absolute inset-0 size-full border-0 bg-transparent', hide && 'hidden')} />;
 }
 
 interface ProjectFilesInput {

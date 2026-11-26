@@ -102,9 +102,12 @@ fn main() {
       let Some(a) = app::try_app() else { return };
       let label = window.label();
       match event {
-        WindowEvent::Focused(true) => {
+        WindowEvent::Focused(focused) => {
           if let Some(w) = a.window_by_label(label) {
-            a.on_focus(&w);
+            if *focused {
+              a.on_focus(&w);
+            }
+            w.set_focused(*focused);
           }
         }
         WindowEvent::CloseRequested { .. } => a.window_closing(label),

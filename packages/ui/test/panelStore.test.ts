@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dedupeRecentPages } from '../panel/browserTabs';
 import { FILES_TAB, anyModule, panel, panelState } from '../panel/store';
-import { projectPath } from '../panel/ToolPanel';
+import { BROWSER_BLUR_SLEEP_MS, BROWSER_HIDDEN_SLEEP_MS, BROWSER_SLEEP_MS, browserSleepDelay, projectPath } from '../panel/ToolPanel';
 import { setPluginSlots } from '../pluginSlots';
 import { refreshMediaUrl } from '../panel/files';
 
@@ -205,5 +205,18 @@ describe('open_browser from a session that is not on screen', () => {
     expect(panel.openBrowserFor('s-a', '/proj-a', 'http://localhost:4301/')).toBe(false);
     expect(panelState().tabs.some(t => t.kind === 'browser' && t.url === 'http://localhost:4301/')).toBe(false);
     panel.setScope('project');
+  });
+});
+
+describe('browserSleepDelay', () => {
+  it('stays awake while shown in a focused visible window, and sleeps faster when blurred or occluded', () => {
+    expect(browserSleepDelay(true, true, false)).toBeUndefined();
+    expect(browserSleepDelay(false, true, false)).toBe(BROWSER_SLEEP_MS);
+    expect(browserSleepDelay(true, false, false)).toBe(BROWSER_BLUR_SLEEP_MS);
+    expect(browserSleepDelay(false, false, false)).toBe(BROWSER_BLUR_SLEEP_MS);
+    expect(browserSleepDelay(true, true, true)).toBe(BROWSER_HIDDEN_SLEEP_MS);
+    expect(browserSleepDelay(true, false, true)).toBe(BROWSER_HIDDEN_SLEEP_MS);
+    expect(BROWSER_HIDDEN_SLEEP_MS).toBeLessThan(BROWSER_BLUR_SLEEP_MS);
+    expect(BROWSER_BLUR_SLEEP_MS).toBeLessThan(BROWSER_SLEEP_MS);
   });
 });

@@ -15,11 +15,20 @@ export function useReducedMotion(): boolean {
   return reduced;
 }
 
-// Shared window-focus store: drives both React hooks (WorkingBeam / plugins) and non-React canvas engines (Orb, MetalRing),
-// and mirrors `!focused` onto `html[data-window-blurred]` so CSS pauses ambient loops while unfocused on Windows WebView2
+// Shared window-focus store: drives both React hooks (WorkingBeam / plugins / BrowserFrame) and non-React canvas engines
+// (Orb, MetalRing), and mirrors `!focused` onto `html[data-window-blurred]` so CSS pauses ambient loops while unfocused
+// on Windows WebView2
+declare global {
+  interface Window { __acpiraFocus?: (focused: boolean) => void }
+}
+
 let focusedState = typeof document !== 'undefined' ? document.hasFocus() : true;
 let watching = false;
 const focusSubs = new Set<() => void>();
+
+let hiddenState = typeof document !== 'undefined' ? document.hidden : false;
+let watchingHidden = false;
+const hiddenSubs = new Set<() => void>();
 
 function applyFocusAttr(focused: boolean) {
   if (typeof document !== 'undefined') {
@@ -34,22 +43,34 @@ function setFocusedState(next: boolean) {
   for (const fn of focusSubs) fn();
 }
 
+function syncHidden() {
+  const next = document.hidden;
+  if (next === hiddenState) return;
+  hiddenState = next;
+  for (const fn of hiddenSubs) fn();
+}
+
 export function watchWindowFocus(): void {
   if (watching || typeof window === 'undefined' || typeof document === 'undefined') return;
   watching = true;
-  focusedState = document.hasFocus();
+  focusedState = !document.hidden && document.hasFocus();
   applyFocusAttr(focusedState);
+  // Desktop shell pushes OS window focus directly so losing focus while focus sits inside a cross-origin browser iframe still blurs
+  window.__acpiraFocus = (focused: boolean) => setFocusedState(focused && !document.hidden);
   // Focus moving into one of the page's own frames blurs the window too, while the document keeps it
-  const on = () => setFocusedState(true);
-  const off = () => setTimeout(() => setFocusedState(document.hasFocus()));
-  const onVis = () => setFocusedState(!document.hidden && document.hasFocus());
+  const on = () => setFocusedState(!document.hidden);
+  const off = () => setTimeout(() => setFocusedState(!document.hidden && document.hasFocus()));
+  const onVis = () => {
+    syncHidden();
+    setFocusedState(!document.hidden && document.hasFocus());
+  };
   window.addEventListener('focus', on);
   window.addEventListener('blur', off);
   document.addEventListener('visibilitychange', onVis);
 }
 
 export function isWindowFocused(): boolean {
-  if (!watching && typeof document !== 'undefined') return document.hasFocus();
+  if (!watching && typeof document !== 'undefined') return !document.hidden && document.hasFocus();
   return focusedState;
 }
 
@@ -61,6 +82,24 @@ export function subscribeWindowFocused(fn: () => void): () => void {
 
 export function useWindowFocused(): boolean {
   return useSyncExternalStore(subscribeWindowFocused, isWindowFocused, () => true);
+}
+
+function subscribeDocumentHidden(fn: () => void): () => void {
+  if (typeof document !== 'undefined' && !watchingHidden) {
+    watchingHidden = true;
+    hiddenState = document.hidden;
+    document.addEventListener('visibilitychange', syncHidden);
+  }
+  hiddenSubs.add(fn);
+  return () => { hiddenSubs.delete(fn); };
+}
+
+export function useDocumentHidden(): boolean {
+  return useSyncExternalStore(
+    subscribeDocumentHidden,
+    () => (watchingHidden ? hiddenState : (typeof document !== 'undefined' ? document.hidden : false)),
+    () => false,
+  );
 }
 
 export function useInView(ref: RefObject<Element | null>): boolean {

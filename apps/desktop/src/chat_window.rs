@@ -266,6 +266,12 @@ impl ChatWindow {
     let _ = self.window.eval(format!("window.__acpiraTheme && window.__acpiraTheme({dark})"));
   }
 
+  /// Pushes OS window focus into the page so losing focus while focus sits inside a cross-origin browser iframe still
+  /// triggers blurred-window throttling and browser tab sleep
+  pub fn set_focused(&self, focused: bool) {
+    let _ = self.window.eval(format!("window.__acpiraFocus && window.__acpiraFocus({focused})"));
+  }
+
   /// Brought up with the keyboard; a background run only makes sure it shows, behind everything
   pub fn reveal(&self) {
     if crate::app::app().background {
