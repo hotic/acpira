@@ -18,7 +18,7 @@ use super::switch::{SwitchStrategy, parked_until, pick_fallback};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::rpc::BoxFuture;
-use crate::acp::session::SessionAccountHooks;
+use super::SessionAccountHooks;
 use crate::i18n::{t, tp};
 use crate::store::transcript_store::LogFn;
 use crate::util::{ms_of_iso, now_iso, now_ms};
@@ -27,6 +27,9 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const UNLOCK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// How long an unforced read (the open account view, focus) reuses the last answer
 const QUOTA_MAX_AGE_MS: i64 = 30_000;
+/// Minimum cooldown between explicit manual quota refreshes, so repeated clicks cannot hammer vendor endpoints
+const MANUAL_QUOTA_COOLDOWN_SECS: u32 = 15;
+const MANUAL_QUOTA_COOLDOWN_MS: i64 = MANUAL_QUOTA_COOLDOWN_SECS as i64 * 1000;
 /// Pause after a 429 without a usable Retry-After, as Claude Code does for the same endpoint (2.1.284: 5 min, capped at
 /// 1 h); doubles per consecutive 429 because the endpoint has been seen answering 429 for hours to steady polling
 const QUOTA_RATE_LIMIT_BASE_MS: i64 = 5 * 60_000;
@@ -302,6 +305,17 @@ impl AccountManager {
     self.providers.get(agent).is_some_and(|p| p.accepts_keys())
   }
 
+  /// Quota is read only on an explicit user refresh, never automatically
+  pub fn manual_quota(&self, agent: &str) -> bool {
+    self.providers.get(agent).is_some_and(|p| p.manual_quota())
+  }
+
+  /// Minimum cooldown between explicit manual quota refreshes, honouring the provider's own rate-limit floor
+  pub fn manual_quota_cooldown_secs(&self, agent: &str) -> u32 {
+    let floor = self.providers.get(agent).map_or(0, |p| p.quota_min_interval().as_secs().min(u32::MAX as u64) as u32);
+    floor.max(MANUAL_QUOTA_COOLDOWN_SECS)
+  }
+
   /// The saved accounts, then the ones plugins list
   pub fn list(&self) -> Vec<AccountInfo> {
     let mut list: Vec<AccountInfo> = self.store.list(None).into_iter().map(|a| self.with_quota(a)).collect();
@@ -478,6 +492,10 @@ impl AccountManager {
   /// another host left in the shared cache — is reused: for 30 s (at least the provider's floor) on unforced reads, for
   /// the provider's floor on forced ones; a 429 pause holds against both
   pub fn refresh_quota(self: &Arc<Self>, id: &str, force: bool) -> BoxFuture<()> {
+    self.refresh_quota_inner(id, force, false)
+  }
+
+  fn refresh_quota_inner(self: &Arc<Self>, id: &str, force: bool, manual: bool) -> BoxFuture<()> {
     let me = self.clone();
     let id = id.to_owned();
     Box::pin(async move {
@@ -494,13 +512,13 @@ impl AccountManager {
         let _ = rx.wait_for(|done| *done).await;
         return;
       }
-      me.read_quota(&id, force).await;
+      me.read_quota(&id, force, manual).await;
       me.fetching.lock().remove(&id);
       let _ = tx.send(true);
     })
   }
 
-  async fn read_quota(self: &Arc<Self>, id: &str, force: bool) {
+  async fn read_quota(self: &Arc<Self>, id: &str, force: bool, manual: bool) {
     let Some(a) = self.store.get(id) else { return };
     let Some(p) = self.providers.get(&a.agent).cloned() else { return };
     // A locked store cannot hand out the token; the last known quota stays until it is unlocked
@@ -513,6 +531,10 @@ impl AccountManager {
     {
       self.emit();
     }
+    // Manual-only providers (e.g. `agy -p /usage`) still adopt cached reads above, but never hit the CLI automatically
+    if p.manual_quota() && !manual {
+      return;
+    }
     // A 429 pause holds even against forced reads (turn ends, focus); other failures wait only for unforced ones
     if let Some(f) = self.quota_failures.lock().get(id)
       && now_ms() < f.until_ms
@@ -521,7 +543,13 @@ impl AccountManager {
       return;
     }
     let floor = p.quota_min_interval().as_millis() as i64;
-    let fresh_for = if force { floor } else { floor.max(QUOTA_MAX_AGE_MS) };
+    let fresh_for = if manual {
+      floor.max(MANUAL_QUOTA_COOLDOWN_MS)
+    } else if force {
+      floor
+    } else {
+      floor.max(QUOTA_MAX_AGE_MS)
+    };
     if let Some(have) = self.quotas.lock().get(id)
       && now_ms() - ms_of_iso(&have.fetched_at).unwrap_or(0) < fresh_for
     {
@@ -573,6 +601,15 @@ impl AccountManager {
   pub async fn refresh_quotas(self: &Arc<Self>, agent: Option<&str>, force: bool) {
     let ids: Vec<String> = self.store.list(agent).into_iter().map(|a| a.id).collect();
     let tasks: Vec<_> = ids.iter().map(|id| tokio::spawn(self.refresh_quota(id, force))).collect();
+    for t in tasks {
+      let _ = t.await;
+    }
+  }
+
+  /// Explicit user refresh: reaches providers that opt out of automatic reads (`AccountProvider::manual_quota`)
+  pub async fn refresh_quotas_manual(self: &Arc<Self>, agent: Option<&str>) {
+    let ids: Vec<String> = self.store.list(agent).into_iter().map(|a| a.id).collect();
+    let tasks: Vec<_> = ids.iter().map(|id| tokio::spawn(self.refresh_quota_inner(id, true, true))).collect();
     for t in tasks {
       let _ = t.await;
     }
@@ -1405,5 +1442,77 @@ mod adopt_tests {
     assert_eq!(env.get("HTTPS_PROXY"), Some(&Some("http://127.0.0.1:8080".into())));
     assert_eq!(env.get("CUSTOM_FLAG"), Some(&Some("1".into())));
     assert_eq!(env.get("CLAUDE_CONFIG_DIR"), Some(&Some("/Users/dev/.acpira/accounts/claude/isolated".into())));
+  }
+
+  #[tokio::test]
+  async fn manual_quota_provider_skips_automatic_reads_and_adopts_cache() {
+    use acpira_shared::num::Num;
+    use acpira_shared::transcript::QuotaWindow;
+
+    struct ManualQuota {
+      reads: Arc<AtomicUsize>,
+    }
+    impl AccountProvider for ManualQuota {
+      fn agent(&self) -> &str {
+        "antigravity"
+      }
+      fn manual_quota(&self) -> bool {
+        true
+      }
+      fn import_local(&self) -> BoxFuture<Option<AccountDraft>> {
+        Box::pin(async { None })
+      }
+      fn login(&self) -> BoxFuture<Result<LoginFlow>> {
+        Box::pin(async { Err(anyhow!("no login here")) })
+      }
+      fn quota(&self, _cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {
+        let reads = self.reads.clone();
+        Some(Box::pin(async move {
+          let n = reads.fetch_add(1, Ordering::SeqCst) + 1;
+          Ok(
+            Some(AccountQuota {
+              windows: vec![QuotaWindow { id: "5hGemini".into(), remaining: Num(1.0 - n as f64 * 0.1), resets_at: None }],
+              on_demand_balance_usd: None,
+              fetched_at: now_iso(),
+            })
+            .into(),
+          )
+        }))
+      }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let log: LogFn = Arc::new(|_| {});
+    let vault = Arc::new(FileVault::new(dir.path().join("secrets.json"), log.clone()));
+    let store = Arc::new(AccountStore::new(dir.path().join("accounts.json"), vault, log.clone()));
+    store.load().await.unwrap();
+    let acc = store
+      .add("antigravity", AccountDraft { label: "a@example.com".into(), detail: None, secret: "/tmp/h".into(), meta: None })
+      .await
+      .unwrap();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let m1 = AccountManager::new(store.clone(), vec![Arc::new(ManualQuota { reads: reads.clone() })], log.clone(), Arc::new(|_, _, _, _| {}), Arc::new(|_, _| {}));
+    assert!(m1.manual_quota("antigravity"));
+
+    // Automatic reads (unforced or forced) never invoke the provider
+    m1.refresh_quota(&acc.id, false).await;
+    m1.refresh_quota(&acc.id, true).await;
+    m1.refresh_quotas(Some("antigravity"), true).await;
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    assert!(m1.get(&acc.id).unwrap().quota.is_none());
+
+    // Explicit manual refresh reads once, and an immediate repeat stays within the built-in cooldown
+    m1.refresh_quotas_manual(Some("antigravity")).await;
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    assert_eq!(m1.get(&acc.id).unwrap().quota.unwrap().windows[0].remaining.0, 0.9);
+    m1.refresh_quotas_manual(Some("antigravity")).await;
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    assert_eq!(m1.manual_quota_cooldown_secs("antigravity"), MANUAL_QUOTA_COOLDOWN_SECS);
+
+    // Another window adopts the shared disk cache on an automatic read without calling the provider
+    let m2 = AccountManager::new(store, vec![Arc::new(ManualQuota { reads: reads.clone() })], log, Arc::new(|_, _, _, _| {}), Arc::new(|_, _| {}));
+    m2.refresh_quotas(Some("antigravity"), false).await;
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    assert_eq!(m2.get(&acc.id).unwrap().quota.unwrap().windows[0].remaining.0, 0.9);
   }
 }

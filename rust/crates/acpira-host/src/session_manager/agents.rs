@@ -14,7 +14,7 @@ use acpira_shared::turn_settings::capture_turn_settings;
 
 use super::{LOGIN_PATH_REFRESH, PROBE_INTERVAL, SessionManager};
 use crate::acp::agents::login_path;
-use crate::acp::agents::probe_controls::probe_agent_controls;
+use crate::acp::probe::probe_controls::probe_agent_controls;
 use crate::acp::agents::registry::{AgentRegistry, SELF_AGENT_ID};
 use crate::acp::session::AcpSession;
 use crate::acp::transport::rpc::BoxFuture;
@@ -307,9 +307,14 @@ impl SessionManager {
         if let Some(m) = self.deps.accounts.as_ref().filter(|m| m.supports(&a.id)) {
           a.accounts = Some(true);
           a.account_keys = m.accepts_keys(&a.id).then_some(true);
+          a.manual_quota = m.manual_quota(&a.id).then_some(true);
+          a.quota_cooldown = Some(m.manual_quota_cooldown_secs(&a.id));
           a.credentials_locked = m.credentials_locked(&a.id).then_some(true);
         } else {
           a.local_account = self.deps.local_accounts.as_ref().and_then(|l| l.get(&a.id));
+          if a.local_account.is_some() {
+            a.quota_cooldown = Some(crate::accounts::local::MANUAL_QUOTA_COOLDOWN_SECS);
+          }
         }
         a
       })

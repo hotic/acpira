@@ -20,7 +20,7 @@ import { hitShortcut } from '../keybindings';
 import { ShortcutsPage } from './ShortcutsPage';
 import { AboutPage } from './AboutPage';
 import { webviewState } from '../vscodeApi';
-import { ShellToasts, TitleRow } from '../chat/DesktopFrame';
+import { ShellToasts, TitleRow } from '../shell/DesktopFrame';
 import { usePreferredPaneWidth } from '../chat/subagents/InspectorSplitter';
 import { PageRail, samePage, type SettingsPage } from './Nav';
 import { General } from './General';
@@ -41,7 +41,7 @@ import type { StorageAction, StorageDetail } from '@acpira/shared/storage';
 import type { SharedAction } from '@acpira/shared/sharedConfig';
 import type { ProviderAction, ProviderProbe } from '@acpira/shared/providers';
 import type { ProvidersState } from './ProvidersSection';
-import { Page, PageHeader, SectionAction } from './controls';
+import { Page, PageHeader, SectionAction } from '../chrome/controls';
 
 // Every action the settings page sends to the host; the LAB implements these with a fake host, the real page with postMessage
 export interface SettingsHandlers {
@@ -57,8 +57,8 @@ export interface SettingsHandlers {
   // AgentInfo.accountKeys: check a pasted API key with the vendor and store it as an account
   addAccountKey?: (agent: AgentId, key: string) => void;
   removeAccount: (id: string) => void;
-  // An agent page with accounts opened: re-read their quotas
-  refreshQuota?: (agent: AgentId) => void;
+  // An agent page with accounts opened: re-read their quotas (`manual` for an explicit user refresh click)
+  refreshQuota?: (agent: AgentId, manual?: boolean) => void;
   // AgentInfo.credentialsLocked: unlock the credential store in a host terminal
   unlockCredentials?: (agent: AgentId) => void;
   // Run the agent's install line in the background on the engine's machine (`installNode` fetches Acpira's private

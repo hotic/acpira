@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useLayoutEffect, useRef } from 'react';
-import { Check, LockKeyhole, LogIn, Plus, X } from 'lucide-react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Check, LockKeyhole, LogIn, Plus, RefreshCw, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo } from '@acpira/shared/transcript';
 import type { AddAccountVia } from '@acpira/shared/protocol';
 import { PluginAccountRows } from '../plugins/AccountRows';
@@ -22,46 +22,122 @@ export interface AccountPanelProps {
   onSelectAccount: (id: string) => void;
   onAddAccount: (agent: AgentInfo['id'], via: AddAccountVia) => void;
   onRemoveAccount: (id: string) => void;
-  // Called when the panel opens (and every minute while open), so the quotas on its rows are fresh
-  onRefreshQuota?: (agent: AgentInfo['id']) => void;
+  // Called when the panel opens (and every minute while open unless manualQuota), or with manual=true on user click
+  onRefreshQuota?: (agent: AgentInfo['id'], manual?: boolean) => void;
   // Shown while AgentInfo.credentialsLocked: unlock the credential store in a terminal
   onUnlockCredentials?: (agent: AgentInfo['id']) => void;
+}
+
+const DEFAULT_QUOTA_COOLDOWN_SECS = 15;
+
+// Tracks an in-flight manual quota refresh and enforces the provider's cooldown (`AgentInfo.quotaCooldown`) so
+// repeated clicks stay disabled instead of hammering vendor rate limits
+export function useQuotaRefresh(
+  agent: AgentInfo,
+  timestamps: (string | undefined)[],
+  rateLimited: boolean,
+  onRefreshQuota?: (agent: AgentInfo['id'], manual?: boolean) => void,
+) {
+  const cooldownMs = (agent.quotaCooldown ?? DEFAULT_QUOTA_COOLDOWN_SECS) * 1000;
+  const [refreshing, setRefreshing] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const key = `${timestamps.map(ts => ts ?? '').join('|')}|${rateLimited}`;
+  const seen = useRef(key);
+  useEffect(() => {
+    if (seen.current !== key) {
+      seen.current = key;
+      setRefreshing(false);
+    }
+  }, [key]);
+  useEffect(() => {
+    if (!refreshing) return;
+    const timer = setTimeout(() => setRefreshing(false), 15_000);
+    return () => clearTimeout(timer);
+  }, [refreshing]);
+  useEffect(() => {
+    setRefreshing(false);
+    setCooldownUntil(0);
+    setNow(Date.now());
+  }, [agent.id]);
+
+  // Every tracked account already has a fresh answer: stay cooled down until the earliest one ages past the floor
+  const parsed = timestamps.map(ts => (ts ? Date.parse(ts) : Number.NaN));
+  const dataUntil = parsed.length > 0 && parsed.every(ms => Number.isFinite(ms))
+    ? Math.min(...parsed) + cooldownMs
+    : 0;
+  const until = Math.max(cooldownUntil, dataUntil);
+  const cooling = !refreshing && until > now;
+
+  // Single wake-up when cooldown ends; no interval polling
+  useEffect(() => {
+    if (until <= now) return;
+    const timer = setTimeout(() => setNow(Date.now()), until - now + 50);
+    return () => clearTimeout(timer);
+  }, [until, now]);
+
+  const disabled = refreshing || cooling || rateLimited;
+  const refresh = () => {
+    if (disabled || !onRefreshQuota) return;
+    const at = Date.now();
+    seen.current = key;
+    setNow(at);
+    setCooldownUntil(at + cooldownMs);
+    setRefreshing(true);
+    onRefreshQuota(agent.id, true);
+  };
+  return { refreshing, disabled, refresh };
 }
 
 // True when the agent has something for the account menu to show: stored logins (Devin) or the CLI's own official account (Grok, Kimi)
 export const hasAccountMenu = (agent: AgentInfo) => !!(agent.accounts || agent.localAccount);
 
 // The account menu of the current session's agent; starting a session with another agent is the plus menu's job.
-// Stored logins: a bar on top (agent name · "＋": import the local login if never imported, otherwise sign in a new one in the terminal;
+// Stored logins: a bar on top (agent name · manual refresh + "＋": import the local login if never imported, otherwise sign in a new one in the terminal;
 // unlock instead while the keychain is locked),
 // one account per row (removable on hover) with its quota bars when the provider reports any (Devin: one per window the plan has).
 // Official account: the identity and quota the CLI keeps itself, read-only but for the header's sign-in when the login is missing or expired
 export function AccountPanel(p: AccountPanelProps) {
   const { onRefreshQuota, agent } = p;
   const contributed = !p.remoteAuth && <PluginAccountRows agent={agent.id} session={p.session} showCheck={!p.accountId} only={!hasAccountMenu(agent)} />;
+  const saved = p.accounts.filter(a => !a.plugin);
+  const timestamps = p.agent.localAccount
+    ? [p.agent.localAccount.quota?.fetchedAt]
+    : saved.map(a => a.quota?.fetchedAt);
+  const rateLimited = !p.agent.localAccount && saved.length > 0 && saved.every(a => a.quotaIssue === 'rate_limited');
+  const { refreshing, disabled: refreshDisabled, refresh } = useQuotaRefresh(agent, timestamps, rateLimited, onRefreshQuota);
+  // Lucide's RefreshCw fills 18/24 of its box while Plus fills 14/24, so size-3 (12px) balances their optical size
+  const refreshAction = onRefreshQuota
+    ? {
+      label: t('common.refresh'),
+      icon: <span className={cn('inline-flex size-3', refreshing && 'animate-spin live-spin')}><RefreshCw className="size-full" strokeWidth={1.75} /></span>,
+      disabled: refreshDisabled,
+      onClick: refresh,
+    }
+    : undefined;
   useEffect(() => {
+    // Non-manual call on open still syncs local logins and adopts cached quota from disk; manual-only providers never poll
     onRefreshQuota?.(agent.id);
+    if (agent.manualQuota) return;
     const timer = setInterval(() => onRefreshQuota?.(agent.id), 60_000);
     return () => clearInterval(timer);
-  }, [agent.id, onRefreshQuota]);
+  }, [agent.id, agent.manualQuota, onRefreshQuota]);
 
   const list = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     (list.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]') ?? list.current?.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus({ preventScroll: true });
   }, []);
 
-  // One action per panel, the header's square at the right end: the fix for the state the body names when there is one
-  // (sign in, unlock), otherwise adding an account. An in-body button drew the popover's only outline, centred on two
-  // text lines it aligned with neither, and squeezed the text it sat beside
   if (p.agent.localAccount) {
     const local = p.agent.localAccount;
     const login = localLoginNeeded(local)
       ? { label: t('notice.goLogin'), icon: <LogIn strokeWidth={1.75} />, onClick: () => { p.onAddAccount(p.agent.id, 'login'); p.close(); } }
       : undefined;
-    // A known login is tagged in the header's free right end: on the identity line the tag cut the email short
-    const tag = !login && knownLogin(p.agent, local) && <span className="shrink-0 px-2 text-3 text-fg-3">{t('quota.officialAccount')}</span>;
+    const canRefreshLocal = !login && local.status !== 'loading' && refreshAction;
+    // A known login is tagged beside the header's right action: on the identity line the tag cut the email short
+    const tag = !login && knownLogin(p.agent, local) && <span className={cn('shrink-0 text-3 text-fg-3', canRefreshLocal ? 'px-1' : 'px-2')}>{t('quota.officialAccount')}</span>;
     return <div className="flex flex-col">
-      <PanelHeader action={login} tail={tag}>{p.agent.name}</PanelHeader>
+      <PanelHeader action={login ?? (canRefreshLocal || undefined)} tail={tag}>{p.agent.name}</PanelHeader>
       <LocalAccountBody agent={p.agent} account={local} />
       {contributed}
     </div>;
@@ -74,8 +150,9 @@ export function AccountPanel(p: AccountPanelProps) {
     ? { label: t('notice.unlock'), icon: <LockKeyhole strokeWidth={1.75} />, onClick: () => { p.onUnlockCredentials?.(p.agent.id); p.close(); } }
     : undefined;
   const add = { label: t('composer.addAccount'), icon: <Plus strokeWidth={1.75} />, onClick: () => { p.onAddAccount(p.agent.id, 'auto'); p.close(); } };
+  const manualRefresh = !p.agent.credentialsLocked && !unlock && saved.length > 0 ? refreshAction : undefined;
   return <div className="flex flex-col">
-    <PanelHeader action={unlock ?? add}>{p.agent.name}</PanelHeader>
+    <PanelHeader actions={manualRefresh ? [manualRefresh, add] : undefined} action={manualRefresh ? undefined : (unlock ?? add)}>{p.agent.name}</PanelHeader>
     {/* pb-1: the title's ink sits a line gap below its box, so the last quota bar needs that much more room above the popup
         edge to look as far from it; outside the rows, so their hover fill keeps its shape */}
     <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-none flex max-h-pop flex-col overflow-y-auto pb-1">

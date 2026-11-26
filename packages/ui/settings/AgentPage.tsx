@@ -20,14 +20,14 @@ import { Collapsible } from '../ui/Collapsible';
 import { useScrollFade } from '../ui/useScrollFade';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
-import { localLoginNeeded } from '../chat/AccountPanel';
+import { localLoginNeeded, useQuotaRefresh } from '../chat/AccountPanel';
 import { remoteOffered, useConnections } from '../remote/api';
 import { ModelMark } from '../chat/ModelMark';
 import {
   DialogBody, Dot, FactRow, Field, FormField, Group, inputBox, ItemRow, Meta, Note, PathText, SearchRow, Section, SectionAction, Select, SettingsDialog,
   Switch, Tabs, TextBox, pathSep, shortPath,
-} from './controls';
-import { NODEJS_DOWNLOAD_URL, NodeInstallDialog } from './NodeInstallDialog';
+} from '../chrome/controls';
+import { NODEJS_DOWNLOAD_URL, NodeInstallDialog } from '../chrome/NodeInstallDialog';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
 import {
@@ -146,9 +146,10 @@ export function AgentSettings({ agent, accounts, install, installingAgent, accou
   useEffect(() => {
     if (!hasQuota) return;
     on.refreshQuota?.(agent.id);
+    if (agent.manualQuota) return;
     const timer = setInterval(() => on.refreshQuota?.(agent.id), 60_000);
     return () => clearInterval(timer);
-  }, [agent.id, hasQuota, accountKey, on]);
+  }, [agent.id, hasQuota, agent.manualQuota, accountKey, on]);
   // The built-in agent's behaviour lives in the same file as its sources
   useEffect(() => { if (agent.id === BUILTIN_AGENT_ID && !providers) on.providers?.(); }, [agent.id, providers, on]);
 
@@ -176,16 +177,38 @@ export function AgentSettings({ agent, accounts, install, installingAgent, accou
 }
 
 function AccountsTab({ agent, accounts, action, on }: { agent: AgentInfo; accounts: AccountInfo[]; action?: AccountAction; on: SettingsHandlers }) {
+  const saved = accounts.filter(a => !a.plugin);
+  const timestamps = agent.localAccount
+    ? [agent.localAccount.quota?.fetchedAt]
+    : saved.map(a => a.quota?.fetchedAt);
+  const rateLimited = !agent.localAccount && saved.length > 0 && saved.every(a => a.quotaIssue === 'rate_limited');
+  const { refreshing, disabled: refreshDisabled, refresh } = useQuotaRefresh(agent, timestamps, rateLimited, on.refreshQuota);
+  const canRefresh = saved.length > 0 && !agent.credentialsLocked && !!on.refreshQuota;
+  const canRefreshLocal = !!agent.localAccount && !localLoginNeeded(agent.localAccount) && agent.localAccount.status !== 'loading' && !!on.refreshQuota;
   return <>
     {/* The sign-in stands where the accounts section keeps "Add account": the section's one action, at its title's end */}
     {agent.localAccount && <Section title={t('quota.officialAccount')} desc={t('quota.local.desc')}
-      action={localLoginNeeded(agent.localAccount) && <SectionAction icon={<LogIn />} onClick={() => on.addAccount(agent.id)}>{t('notice.goLogin')}</SectionAction>}>
+      action={localLoginNeeded(agent.localAccount)
+        ? <SectionAction icon={<LogIn />} onClick={() => on.addAccount(agent.id)}>{t('notice.goLogin')}</SectionAction>
+        : canRefreshLocal
+          ? <SectionAction icon={<span className={cn('inline-flex', refreshing && 'animate-spin live-spin')}><RefreshCw /></span>} disabled={refreshDisabled} onClick={refresh}>{t('common.refresh')}</SectionAction>
+          : undefined}>
       <ItemRow title={<AccountLabel label={agent.localAccount.label} detail={agent.localAccount.detail} />}
         extra={<LocalAccountQuota account={agent.localAccount} />} />
     </Section>}
     {agent.accounts && (
       <Section title={t('settings.agent.accounts')} count={accounts.length} desc={t('settings.agent.accounts.desc')}
-        action={<SectionAction icon={<Plus />} onClick={() => on.addAccount(agent.id)}>{t('settings.agent.addAccount')}</SectionAction>}>
+        action={<div className="flex shrink-0 items-center gap-gap">
+          {canRefresh && (
+            <SectionAction
+              className="mr-0"
+              icon={<span className={cn('inline-flex', refreshing && 'animate-spin live-spin')}><RefreshCw /></span>}
+              disabled={refreshDisabled}
+              onClick={refresh}
+            >{t('common.refresh')}</SectionAction>
+          )}
+          <SectionAction icon={<Plus />} onClick={() => on.addAccount(agent.id)}>{t('settings.agent.addAccount')}</SectionAction>
+        </div>}>
         {agent.credentialsLocked && <ItemRow lead={<LockKeyhole />} title={t('notice.locked.short')}
           trailing={on.unlockCredentials && <SectionAction onClick={() => on.unlockCredentials?.(agent.id)}>{t('notice.unlock')}</SectionAction>} />}
         {accounts.length === 0 && <Note>{t('settings.agent.accounts.none')}</Note>}

@@ -15,6 +15,9 @@ use crate::store::data_dir::home_dir;
 use crate::util::{iso_of_ms, ms_of_iso, now_iso, now_ms};
 
 const MAX_AGE_MS: i64 = 30_000;
+/// Minimum cooldown between manual quota refreshes for official CLI accounts (Grok, Kimi)
+pub const MANUAL_QUOTA_COOLDOWN_SECS: u32 = 15;
+const MANUAL_COOLDOWN_MS: i64 = MANUAL_QUOTA_COOLDOWN_SECS as i64 * 1000;
 
 fn name_of(agent: &str) -> Option<&'static str> {
   match agent {
@@ -90,6 +93,15 @@ impl LocalAccounts {
   }
 
   pub async fn refresh(&self, agent: Option<&str>, force: bool) {
+    self.refresh_with_floor(agent, if force { 0 } else { MAX_AGE_MS }).await;
+  }
+
+  /// Explicit user refresh: skips the 30 s background cache but still enforces the manual cooldown
+  pub async fn refresh_manual(&self, agent: Option<&str>) {
+    self.refresh_with_floor(agent, MANUAL_COOLDOWN_MS).await;
+  }
+
+  async fn refresh_with_floor(&self, agent: Option<&str>, min_age_ms: i64) {
     let agents: Vec<&str> = match agent {
       Some(a) => vec![a],
       None => vec!["grok", "kimi"],
@@ -97,7 +109,7 @@ impl LocalAccounts {
     for a in agents {
       let Some(name) = name_of(a) else { continue };
       let _serial = self.fetching.lock().await;
-      if !force && now_ms() - self.checked.lock().get(a).copied().unwrap_or(0) < MAX_AGE_MS {
+      if min_age_ms > 0 && now_ms() - self.checked.lock().get(a).copied().unwrap_or(0) < min_age_ms {
         continue;
       }
       let env = (self.env)(a);

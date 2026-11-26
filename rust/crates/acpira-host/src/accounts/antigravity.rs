@@ -43,8 +43,7 @@ use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
 use crate::util::{iso_of_ms, ms_of_iso, now_iso, random_uuid};
 
-/// The account env entry naming a saved account's gemini dir; `spawn_args` makes it `--gemini-dir`
-pub const STORE_ENV: &str = "ACPIRA_ANTIGRAVITY_GEMINI_DIR";
+pub use crate::acp::vendors::antigravity::{STORE_ENV, spawn_args};
 /// The variables `agy` takes for an SSH session
 const SSH_ENV: [&str; 3] = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"];
 /// Stands in for a session's addresses: `agy` only looks at whether the variable is set
@@ -87,14 +86,6 @@ fn store_of(home: &Path) -> PathBuf {
 /// Whether this engine runs inside an SSH session, where `agy` already keeps every login in files
 fn in_ssh() -> bool {
   SSH_ENV.iter().any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
-}
-
-/// The flags a saved account adds to the agent's command line; empty for other agents and for the local login
-pub fn spawn_args(agent: &str, account_env: Option<&StrMap>) -> Vec<String> {
-  match account_env.and_then(|e| e.get(STORE_ENV)) {
-    Some(dir) if agent == "antigravity" => vec!["--gemini-dir".to_owned(), dir.clone()],
-    _ => Vec::new(),
-  }
 }
 
 /// The email of a stored login (`{ token: { access_token, refresh_token, … }, auth_method, id_token_email }`)
@@ -281,9 +272,13 @@ impl AccountProvider for AntigravityAccountProvider {
     private_store_error(Path::new(env.get(STORE_ENV)?), &default_home())
   }
 
-  /// Every read starts `agy` for a few seconds
+  /// Quota runs `agy -p /usage` outside ACP, so it is triggered only on an explicit user refresh with a 30 s cooldown
+  fn manual_quota(&self) -> bool {
+    true
+  }
+
   fn quota_min_interval(&self) -> Duration {
-    Duration::from_secs(60)
+    Duration::from_secs(30)
   }
 
   fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {

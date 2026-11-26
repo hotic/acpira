@@ -98,6 +98,11 @@ pub trait AccountProvider: Send + Sync {
   fn quota_min_interval(&self) -> std::time::Duration {
     std::time::Duration::ZERO
   }
+  /// Quota is read only on an explicit user refresh (`refresh_quotas_manual`), never automatically on startup, turn
+  /// end, fallback or panel open: for CLIs whose quota read is an out-of-band command rather than an ACP / API call
+  fn manual_quota(&self) -> bool {
+    false
+  }
   /// The account was removed: drop whatever the provider keeps outside the vault
   fn forget(&self, _cred: AccountCredential) -> Option<BoxFuture<()>> {
     None

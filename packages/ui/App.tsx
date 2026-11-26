@@ -12,7 +12,7 @@ import { SessionViews } from './sessionViews';
 import { BASE_APPEARANCE, type Appearance } from './appearance';
 import { LocaleContext, setLocale, t, whenLocale } from './i18n';
 import { loadLocale } from '@acpira/shared/i18n/load';
-import { Shell, type ShellHandlers } from './chat/Shell';
+import { Shell, type ShellHandlers } from './shell/Shell';
 import { setAgentMarks } from './chat/AgentMark';
 import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
@@ -27,7 +27,7 @@ import { desktopShell, postWindowControl, pushShellToast, runShellCommand, setDe
 import { setActiveKeybindings } from './keybindings';
 import { connectionOp, deliverRemote, useConnections, watchConnections } from './remote/api';
 import { deliverRemoteAccess, watchRemoteAccess } from './remote/access';
-import type { QuickSettings } from './chat/DesktopFrame';
+import type { QuickSettings } from './shell/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import type { UsageView } from '@acpira/shared/usage';
 import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelection, setEditorCopy, setEditorSelection } from './chat/editorContext';
@@ -568,7 +568,7 @@ export function App() {
     // To this page's own engine, which binds the viewer's current session once the key is stored
     addAccountKey: (agent, key) => post({ type: 'addAccountKey', agent, key }),
     removeAccount: id => post({ type: 'removeAccount', sessionId: activeId.current, id }),
-    refreshQuota: agent => post({ type: 'refreshQuota', sessionId: activeId.current, agent }),
+    refreshQuota: (agent, manual) => post({ type: 'refreshQuota', sessionId: activeId.current, agent, ...(manual ? { manual: true } : {}) }),
     unlockCredentials: agent => post({ type: 'unlockCredentials', sessionId: activeId.current, agent }),
     runHere: (agent, cwd) => {
       const info = agentsRef.current.find(a => a.id === agent) ?? { id: agent };
@@ -651,7 +651,7 @@ export function App() {
     addAccount: agent => post({ type: 'addAccount', agent, via: 'auto' }),
     addAccountKey: (agent, key) => post({ type: 'addAccountKey', agent, key }),
     removeAccount: id => post({ type: 'removeAccount', id }),
-    refreshQuota: agent => post({ type: 'refreshQuota', agent }),
+    refreshQuota: (agent, manual) => post({ type: 'refreshQuota', agent, ...(manual ? { manual: true } : {}) }),
     unlockCredentials: agent => post({ type: 'unlockCredentials', agent }),
     installAgent: (agent, installNode) => post({ type: 'installAgent', agent, ...(installNode ? { installNode: true } : {}) }),
     cancelInstall: agent => post({ type: 'cancelInstall', agent }),

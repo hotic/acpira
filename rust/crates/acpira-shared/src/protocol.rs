@@ -1142,6 +1142,9 @@ pub enum WebviewMsg {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
     agent: AgentId,
+    /// Explicit user click: required for providers whose quota is read only on demand (`AgentInfo::manual_quota`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    manual: Option<bool>,
   },
   Compact {
     session_id: Option<String>,

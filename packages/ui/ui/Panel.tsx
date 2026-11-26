@@ -21,6 +21,7 @@ export interface FooterAction {
   label: string;
   icon: ReactNode;
   onClick: MouseEventHandler<HTMLButtonElement>;
+  disabled?: boolean;
 }
 
 export interface PanelBarProps {
@@ -31,6 +32,8 @@ export interface PanelBarProps {
   onClick?: MouseEventHandler<HTMLButtonElement>;
   // Square button at the right edge
   action?: FooterAction;
+  // Multiple square buttons at the right edge, left to right; only the last bleeds past the edge when no tail follows
+  actions?: FooterAction[];
   // A small control at the right edge when the action slot needs more than a button (e.g. a picker)
   tail?: ReactNode;
 }
@@ -38,8 +41,9 @@ export interface PanelBarProps {
 // A --ctl-tall bar at either edge of a menu, one divider between it and the options area (modeled on Devin's agent menu).
 // Layout is [lead] [text …spacer…] [action]: the text takes its natural width, so an entry highlights as a small pill rather than the whole bar.
 // Text is row-sized (text-2), not caption-sized — the bar is part of the menu, not a footnote to it
-function PanelBar({ edge, lead, children, onClick, action, tail }: PanelBarProps & { edge: 'top' | 'bottom' }) {
+function PanelBar({ edge, lead, children, onClick, action, actions, tail }: PanelBarProps & { edge: 'top' | 'bottom' }) {
   const text = 'flex h-ctl min-w-0 items-center gap-1 px-2 text-left text-2';
+  const right = actions ?? (action ? [action] : []);
   return (
     <div className={cn('flex items-center gap-1 border-line', edge === 'top' ? 'mb-1 border-b pb-1' : 'mt-1 border-t pt-1')}>
       {/* The squares bleed so their glyphs stand on the rows' icon and text edges (tokens.css bar-bleed) */}
@@ -53,8 +57,16 @@ function PanelBar({ edge, lead, children, onClick, action, tail }: PanelBarProps
         )
         : <div className={cn(text, 'text-fg-1')}><span className="truncate">{children}</span></div>)}
       <span className="min-w-0 flex-1" />
-      {action && <BarButton {...action} className="-me-bar-bleed" />}
       {tail}
+      {right.length > 1
+        ? (
+          // Grouped header actions use compact squares (`size-ctl-sm`) so adjacent icons read as one tight cluster;
+          // `pe-2` minus `-me-ctl-sm-bleed` keeps the trailing glyph on the rows' 8px right text edge at every density
+          <span className="flex shrink-0 items-center gap-0.5 pe-2">
+            {right.map((item, i) => <BarButton key={item.label} {...item} compact className={i === right.length - 1 ? '-me-ctl-sm-bleed' : undefined} />)}
+          </span>
+        )
+        : right.map(item => <BarButton key={item.label} {...item} className="-me-bar-bleed" />)}
     </div>
   );
 }
@@ -64,14 +76,19 @@ export function PanelHeader(p: PanelBarProps) { return <PanelBar edge="top" {...
 // Footer of a menu: a note or an entry on the left, one action on the right
 export function PanelFooter(p: PanelBarProps) { return <PanelBar edge="bottom" {...p} />; }
 
-function BarButton({ label, icon, onClick, className }: FooterAction & { className?: string }) {
+function BarButton({ label, icon, onClick, disabled, compact, className }: FooterAction & { compact?: boolean; className?: string }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
+      disabled={disabled}
       onClick={onClick}
-      className={cn('flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-3 outline-none transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 [&_svg]:size-icon', className)}
+      className={cn(
+        'flex shrink-0 items-center justify-center rounded-md text-fg-3 outline-none transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 disabled:pointer-events-none disabled:opacity-40 [&>svg]:size-icon',
+        compact ? 'size-ctl-sm' : 'size-ctl',
+        className,
+      )}
     >
       {icon}
     </button>

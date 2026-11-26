@@ -271,7 +271,7 @@ impl SessionManager {
             entry.text,
             vec![],
             false,
-            Some(crate::acp::session::prompt::Staged { prepared: entry.prepared, edited: false, id: Some(entry.id) }),
+            Some(crate::acp::session::prompt::Staged { prepared: entry.prepared, edited: false, id: Some(entry.id), from_edit: false }),
             None,
           )
           .await;
@@ -529,21 +529,30 @@ impl SessionManager {
         self.pool.invalidate(None);
       }
       W::UnlockCredentials { agent, .. } => self.unlock_credentials(&agent).await?,
-      W::RefreshQuota { agent, .. } => {
+      W::RefreshQuota { agent, manual, .. } => {
         let a = self.deps.accounts.clone();
         let l = self.deps.local_accounts.clone();
         let (ag1, ag2) = (agent.clone(), agent);
+        let manual = manual.unwrap_or(false);
         tokio::join!(
           async move {
             if let Some(a) = a {
               // The account view is open: a login made in a terminal since shows up without a click
               a.sync_local(Some(&ag1)).await;
-              a.refresh_quotas(Some(&ag1), false).await;
+              if manual {
+                a.refresh_quotas_manual(Some(&ag1)).await;
+              } else {
+                a.refresh_quotas(Some(&ag1), false).await;
+              }
             }
           },
           async move {
             if let Some(l) = l {
-              l.refresh(Some(&ag2), false).await;
+              if manual {
+                l.refresh_manual(Some(&ag2)).await;
+              } else {
+                l.refresh(Some(&ag2), false).await;
+              }
             }
           }
         );

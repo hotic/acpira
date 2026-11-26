@@ -27,6 +27,12 @@ pub struct AgentInfo {
   /// Its account layer also takes a pasted API key as an account (`addAccountKey`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub account_keys: Option<bool>,
+  /// Quota is read only on an explicit user refresh, never automatically (e.g. `agy -p /usage`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub manual_quota: Option<bool>,
+  /// Minimum seconds between manual quota refreshes (mirrors the provider's rate-limit floor)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub quota_cooldown: Option<u32>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub credentials_locked: Option<bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,6 +214,9 @@ pub struct SessionControls {
   pub mode_id: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub mode_config_id: Option<String>,
+  /// Model-specific parameters advertised by the agent, including empty lists for models with none.
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub model_params: ModelShapes,
   #[serde(default)]
   pub options: Vec<ConfigControl>,
 }
