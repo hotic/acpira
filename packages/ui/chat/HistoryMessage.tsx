@@ -8,7 +8,6 @@ import { Composer, type ComposerProps } from './Composer';
 import { EditAttachments } from './Attachments';
 import { dropDraft, parkedDraft } from './useComposerDraft';
 import { UserMessage } from './Turns';
-import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
 import { Row } from '../ui/Row';
 import { AgentMark } from './AgentMark';
@@ -21,7 +20,7 @@ interface HistoryContextValue {
   sessionId: string;
   edit: (request: EditTurnRequest) => Promise<void>;
   editing?: number;
-  select: (index?: number) => void;
+  select: (index?: number, turnId?: string) => void;
   editable: boolean;
   // Remembered per-model parameters (shared/modelShapes.ts); changes only when the agent reveals a new model's shape
   shapes?: ModelShapes;
@@ -31,10 +30,8 @@ export const HistoryContext = createContext<HistoryContextValue | undefined>(und
 export const HistoryComposerContext = createContext<ComposerProps | undefined>(undefined);
 
 // One frame per prompt, kept mounted while the card and its inline editor swap inside it: it carries the sticky positioning
-// (so a card stuck at the top opens its editor right there instead of jumping back to its natural place). Opening the editor is
-// instant — a click should land in the text at once, like direct manipulation; only the way back (cancel / sent) animates: the
-// opaque base animates its own height while the returning card fades in. Automatic prompts render nothing. Keep the base outside
-// the fade so replies cannot show through the editor or the swapping content.
+// (so a card stuck at the top opens its editor right there instead of jumping back to its natural place). Opening and
+// closing the editor never fades the card; only the opaque base's height glides back on close so the swap stays crisp.
 // Sticky positioning never changes the card height; long prompts keep the same bounded, scrollable body.
 export const HistoryMessage = memo(function HistoryMessage(p: {
   turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string; commands?: readonly SlashCommand[]; summons?: readonly string[];
@@ -44,22 +41,27 @@ export const HistoryMessage = memo(function HistoryMessage(p: {
   const context = useContext(HistoryContext);
   const { motion } = useAppearance();
   const base = useRef<HTMLDivElement>(null);
-  // Height measured right before an animated swap; the layout effect animates from it once the replacement has laid out
+  // Height measured right before swapping between card and inline editor; `editorHeight` keeps the editor's height so a
+  // session patch arriving before editTurnResult (which auto-closes the editor on turn id change) still glides shut smoothly
   const from = useRef<number>(undefined);
-  // Swap counter remounts the content; `fade` is true only for the way back, so opening the editor never fades
-  const [swap, setSwap] = useState({ n: 0, fade: false });
+  const editorHeight = useRef<number>(undefined);
+  // Optimistic submitted view held only until the engine's replacement turn lands, preventing a brief flash of the old text
+  const [submitted, setSubmitted] = useState<{ prev: UserTurn; turn: UserTurn }>();
+  useEffect(() => {
+    if (submitted && submitted.prev !== p.turn) setSubmitted(undefined);
+  }, [submitted, p.turn]);
   const editor = context && context.editing === p.turnIndex ? context : undefined;
   const editing = !!editor;
   const select = (index?: number) => {
-    const closing = index === undefined;
-    from.current = closing ? base.current?.offsetHeight : undefined;
-    setSwap(s => ({ n: s.n + 1, fade: closing }));
-    context!.select(index);
+    from.current = base.current?.offsetHeight;
+    context!.select(index, index !== undefined ? p.turn.id : undefined);
   };
   useLayoutEffect(() => {
     const el = base.current;
-    const start = from.current;
+    if (editing && el) editorHeight.current = el.offsetHeight;
+    const start = from.current ?? (!editing ? editorHeight.current : undefined);
     from.current = undefined;
+    if (!editing) editorHeight.current = undefined;
     if (!el || start === undefined) return;
     const end = el.offsetHeight;
     if (start === end || motion === 'none' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -75,16 +77,24 @@ export const HistoryMessage = memo(function HistoryMessage(p: {
   const editable = !!context?.editable;
   // An unsent edit closed by a click elsewhere keeps showing as edited (its text and the attachments it kept), so the
   // card never reads as the original until reopened. Read at render: closing the editor re-renders this card
-  const shown = editor || !context ? p.turn : parkedTurn(p.turn, editKey(context.sessionId, p.turn, p.turnIndex));
+  const pendingTurn = submitted?.prev === p.turn ? submitted.turn : undefined;
+  const shown = editor || !context ? p.turn : pendingTurn ?? parkedTurn(p.turn, editKey(context.sessionId, p.turn, p.turnIndex));
   return (
     // The wrapper reaches one gap above the card (pt-gap, given back by -mt-gap) and sticks flush at the top: the card stops
     // below the thread's top fade (thread-fade), and the band, painted in the page's colour while stuck, hides the rows
     // that scrolled under the card. A card pushed out by the next exchange dissolves through the fade instead of a flat cut
     <div data-sticky-prompt className="peer/prompt pointer-events-none sticky top-0 z-10 -mt-gap flex min-w-0 shrink-0 flex-col pt-gap">
       <div ref={base} data-part="user-message" data-turn={p.turnIndex} className="pointer-events-auto flex min-w-0 flex-col rounded-lg bg-bg-0">
-        <div key={swap.n} className={cn('flex min-w-0 flex-col', swap.fade && 'fade-in')}>
+        <div className="flex min-w-0 flex-col">
           {editor
-            ? <HistoryEditor {...p} context={editor} onClose={() => select(undefined)} />
+            ? <HistoryEditor
+                key={editKey(editor.sessionId, p.turn, p.turnIndex)}
+                {...p}
+                context={editor}
+                onSubmitting={() => { editorHeight.current = base.current?.offsetHeight; }}
+                onSubmitted={turn => setSubmitted({ prev: p.turn, turn })}
+                onClose={() => select(undefined)}
+              />
             : <UserMessage {...p} turn={shown} onEdit={editable ? () => select(p.turnIndex) : undefined} />}
         </div>
       </div>
@@ -111,8 +121,9 @@ function parkedTurn(turn: UserTurn, key: string): UserTurn {
   return { ...turn, text, ...(dropped ? { attachments: turn.attachments!.filter((_, i) => retained!.includes(i)) } : {}) };
 }
 
-function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
-  turn: UserTurn; turnIndex: number; blobUrl?: (blob: string) => string; context: HistoryContextValue; onClose: () => void;
+function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onSubmitting, onSubmitted, onClose }: {
+  turn: UserTurn; turnIndex: number; blobUrl?: (blob: string) => string; context: HistoryContextValue;
+  onSubmitting: () => void; onSubmitted: (turn: UserTurn) => void; onClose: () => void;
 }) {
   // Provided together with HistoryContext by the shell; the editor is the only reader
   const composer = useContext(HistoryComposerContext)!;
@@ -139,10 +150,13 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
     return () => document.removeEventListener('pointerdown', outside);
   }, [onClose, pending]);
   const send = async (text: string, attachments: Draft[]) => {
+    onSubmitting();
     setPending(true);
     try {
       await c.edit({ sessionId: c.sessionId, turnIndex, turnCount, originalText: turn.text, turnId: turn.id,
         text, attachments, retainedAttachments: retained, settings: captureTurnSettings(controls) });
+      const keptAttachments = turn.attachments ? turn.attachments.filter((_, i) => retained.includes(i)) : undefined;
+      onSubmitted({ ...turn, text, ...(keptAttachments ? { attachments: keptAttachments } : {}) });
       discard();
       onClose();
     } finally { setPending(false); }
