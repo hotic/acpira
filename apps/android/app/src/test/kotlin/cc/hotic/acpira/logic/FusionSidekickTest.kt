@@ -192,12 +192,18 @@ class FusionSidekickTest {
     val fast = ConfigControl("fast", "Fast mode", "speed", type = "boolean", options = options("false" to "Off", "true" to "On"), value = "true")
     val approval = ConfigControl("approval", "Approval", "_permission_mode", options = options("ask" to "Manual", "full" to "Bypass"), value = "full")
     val speed = ConfigControl("speed", "Speed", "model_config", options = options("standard" to "Standard", "fast" to "Fast"), value = "standard")
+    val ultrafast = ConfigControl("speed", "Speed", "model_config", options = options("standard" to "Standard", "ultrafast" to "Ultrafast"), value = "ultrafast")
     val agent = ConfigControl("agent", "Agent", null, options = options("default" to "Default", "reviewer" to "reviewer"), value = "default")
+
+    assertTrue(ComposerControls.isFast(ultrafast))
+    assertTrue(ComposerControls.fastOn(ultrafast))
+    assertEquals("ultrafast", ComposerControls.fastValue(ultrafast, true))
+    assertEquals("standard", ComposerControls.fastValue(ultrafast, false))
 
     val split = ComposerControls.split(listOf(model, fast, approval, agent)) { null }
     assertEquals(listOf("fast"), split.modelConfig.map { it.id })
     assertEquals(listOf("agent"), split.agent.map { it.id })
     assertEquals("agent", choices(listOf(model, fast, approval, agent)).agent?.id)
-    assertEquals(listOf("model", "agent"), ModelSettings.catalogs(listOf(model, fast, approval, speed, agent))!!.map { it.control.id })
+    assertEquals(listOf("model", "agent"), ModelSettings.catalogs(listOf(model, fast, approval, speed, ultrafast, agent))!!.map { it.control.id })
   }
 }

@@ -534,7 +534,8 @@ private let fusionOptions: [SessionOption] = [
     let fast = control(#"{"id":"fast-mode","name":"Fast mode","category":"model_config","type":"boolean","value":"true","options":[{"id":"false","name":"Off"},{"id":"true","name":"On"}]}"#)
     let fastSpeed = control(#"{"id":"fast","name":"Fast mode","category":"speed","type":"boolean","value":"true","options":[{"id":"false","name":"Off"},{"id":"true","name":"On"}]}"#)
     let speed = control(#"{"id":"speed","name":"Speed","category":"model_config","value":"fast","options":[{"id":"standard","name":"Standard"},{"id":"fast","name":"Fast"}]}"#)
-    for c in [fast, fastSpeed, speed] {
+    let ultrafast = control(#"{"id":"speed","name":"Speed","category":"model_config","value":"ultrafast","options":[{"id":"standard","name":"Standard"},{"id":"ultrafast","name":"Ultrafast"}]}"#)
+    for c in [fast, fastSpeed, speed, ultrafast] {
       #expect(ComposerControls.isFast(c))
       #expect(ComposerControls.fastOn(c))
       #expect(ComposerControls.modelConfigChip(c) == "Fast")
@@ -545,6 +546,8 @@ private let fusionOptions: [SessionOption] = [
     #expect(split.agent.map(\.id) == ["agent"])
     #expect(ComposerControls.fastValue(fast, on: false) == "false")
     #expect(ComposerControls.fastValue(speed, on: false) == "standard")
+    #expect(ComposerControls.fastValue(ultrafast, on: true) == "ultrafast")
+    #expect(ComposerControls.fastValue(ultrafast, on: false) == "standard")
     let breakfast = control(#"{"id":"breakfast","name":"Breakfast","type":"boolean","value":"true","options":[]}"#)
     #expect(!ComposerControls.isFast(breakfast))
   }

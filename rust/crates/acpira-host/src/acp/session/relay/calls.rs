@@ -49,8 +49,8 @@ impl AcpSession {
       (
         value(SIDEKICK_CONFIG, SIDEKICK_CATEGORY),
         value(SIDEKICK_EFFORT_CONFIG, SIDEKICK_EFFORT_CATEGORY),
-        // A boolean option or the Standard / Fast select, both read as their value
-        value(SIDEKICK_FAST_CONFIG, SIDEKICK_FAST_CATEGORY).map(|v| v == "true" || v == "fast"),
+        // A boolean option or the Standard / Fast (or Ultrafast) select, both read as their value
+        value(SIDEKICK_FAST_CONFIG, SIDEKICK_FAST_CATEGORY).map(|v| matches!(v.as_str(), "true" | "fast" | "ultrafast")),
       )
     };
     let pick = pick?;

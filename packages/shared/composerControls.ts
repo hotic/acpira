@@ -93,20 +93,29 @@ export function reasoningChip(control: ConfigControl): string | undefined {
   return p.efforts.find(o => o.id === p.value)?.name;
 }
 
-// One "Fast" switch whatever the wire shape: Devin's native Standard / Fast select (`speed`), the codex / claude
-// adapters' boolean (`fast-mode` "Fast mode", `fast`), and the embedded model-name variant all read the same.
+const FAST_OPTION_IDS = ['fast', 'ultrafast'] as const;
+
+function fastOptionId(control: ConfigControl): string | undefined {
+  if (control.type === 'boolean' || control.options.length !== 2) return;
+  if (!control.options.some(option => option.id === 'standard')) return;
+  return control.options.find(option => (FAST_OPTION_IDS as readonly string[]).includes(option.id))?.id;
+}
+
+// One "Fast" switch whatever the wire shape: Devin's native Standard / Fast (or SWE-2's Standard / Ultrafast) select
+// (`speed`), the codex / claude adapters' boolean (`fast-mode` "Fast mode", `fast`), and the embedded model-name
+// variant all read the same.
 export function isFastControl(control: ConfigControl): boolean {
   if (control.type === 'boolean') return /(^|[\s_-])fast($|[\s_-])/i.test(control.id) || /^fast( mode)?$/i.test(control.name);
-  return control.options.length === 2 && ['standard', 'fast'].every(id => control.options.some(option => option.id === id));
+  return !!fastOptionId(control);
 }
 
 export function fastOn(control: ConfigControl): boolean {
-  return control.value === (control.type === 'boolean' ? 'true' : 'fast');
+  return control.value === (control.type === 'boolean' ? 'true' : (fastOptionId(control) ?? 'fast'));
 }
 
 // The wire value that turns a Fast control on or off
 export function fastValue(control: ConfigControl, on: boolean): string {
-  return control.type === 'boolean' ? String(on) : on ? 'fast' : 'standard';
+  return control.type === 'boolean' ? String(on) : on ? (fastOptionId(control) ?? 'fast') : 'standard';
 }
 
 export function modelConfigChip(control: ConfigControl): string | undefined {

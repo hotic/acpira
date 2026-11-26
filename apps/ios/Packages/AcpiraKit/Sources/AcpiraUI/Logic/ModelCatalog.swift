@@ -341,15 +341,20 @@ enum ComposerControls {
     return p.off ? nil : p.efforts.first { $0.id == p.value }?.name
   }
 
+  private static func fastOptionId(_ c: ConfigControl) -> String? {
+    guard c.type != "boolean", c.options.count == 2, c.options.contains(where: { $0.id == "standard" }) else { return nil }
+    return c.options.first { $0.id == "fast" || $0.id == "ultrafast" }?.id
+  }
+
   static func isFast(_ c: ConfigControl) -> Bool {
     if c.type == "boolean" {
       return c.id.firstMatch(of: CatalogPatterns.fastId) != nil || c.name.wholeMatch(of: CatalogPatterns.fastName) != nil
     }
-    return c.options.count == 2 && ["standard", "fast"].allSatisfy { id in c.options.contains { $0.id == id } }
+    return fastOptionId(c) != nil
   }
 
-  static func fastOn(_ c: ConfigControl) -> Bool { c.value == (c.type == "boolean" ? "true" : "fast") }
-  static func fastValue(_ c: ConfigControl, on: Bool) -> String { c.type == "boolean" ? String(on) : on ? "fast" : "standard" }
+  static func fastOn(_ c: ConfigControl) -> Bool { c.value == (c.type == "boolean" ? "true" : (fastOptionId(c) ?? "fast")) }
+  static func fastValue(_ c: ConfigControl, on: Bool) -> String { c.type == "boolean" ? String(on) : on ? (fastOptionId(c) ?? "fast") : "standard" }
 
   static func modelConfigChip(_ c: ConfigControl) -> String? {
     if isFast(c) { return fastOn(c) ? "Fast" : nil }

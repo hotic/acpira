@@ -699,20 +699,26 @@ export class ComposerControls {
     return p.efforts.length > 1 || p.offId !== undefined;
   }
 
+  private static fastOptionId(c: ConfigControl): string | undefined {
+    if (c.type === 'boolean' || c.options.length !== 2 || !c.options.some((o: SessionOption) => o.id === 'standard')) {
+      return undefined;
+    }
+    return c.options.find((o: SessionOption) => o.id === 'fast' || o.id === 'ultrafast')?.id;
+  }
+
   static isFast(c: ConfigControl): boolean {
     if (c.type === 'boolean') {
       return /(^|[\s_-])fast($|[\s_-])/i.test(c.id) || /^fast( mode)?$/i.test(c.name);
     }
-    return c.options.length === 2 &&
-      ['standard', 'fast'].every((id: string) => c.options.some((o: SessionOption) => o.id === id));
+    return ComposerControls.fastOptionId(c) !== undefined;
   }
 
   static fastOn(c: ConfigControl): boolean {
-    return c.value === (c.type === 'boolean' ? 'true' : 'fast');
+    return c.value === (c.type === 'boolean' ? 'true' : (ComposerControls.fastOptionId(c) ?? 'fast'));
   }
 
   static fastValue(c: ConfigControl, on: boolean): string {
-    return c.type === 'boolean' ? `${on}` : on ? 'fast' : 'standard';
+    return c.type === 'boolean' ? `${on}` : on ? (ComposerControls.fastOptionId(c) ?? 'fast') : 'standard';
   }
 
   static split(options: ConfigControl[]): ControlSplit {

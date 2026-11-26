@@ -416,16 +416,21 @@ object ComposerControls {
 
   fun reasoningVisible(c: ConfigControl): Boolean = presentReasoning(c).let { it.efforts.size > 1 || it.offId != null }
 
+  private fun fastOptionId(c: ConfigControl): String? {
+    if (c.type == "boolean" || c.options.size != 2 || c.options.none { it.id == "standard" }) return null
+    return c.options.firstOrNull { it.id == "fast" || it.id == "ultrafast" }?.id
+  }
+
   fun isFast(c: ConfigControl): Boolean {
     if (c.type == "boolean") {
       return Regex("(^|[\\s_-])fast($|[\\s_-])", RegexOption.IGNORE_CASE).containsMatchIn(c.id) ||
         c.name.matches(Regex("fast( mode)?", RegexOption.IGNORE_CASE))
     }
-    return c.options.size == 2 && listOf("standard", "fast").all { id -> c.options.any { it.id == id } }
+    return fastOptionId(c) != null
   }
 
-  fun fastOn(c: ConfigControl) = c.value == (if (c.type == "boolean") "true" else "fast")
-  fun fastValue(c: ConfigControl, on: Boolean) = if (c.type == "boolean") on.toString() else if (on) "fast" else "standard"
+  fun fastOn(c: ConfigControl) = c.value == (if (c.type == "boolean") "true" else fastOptionId(c) ?: "fast")
+  fun fastValue(c: ConfigControl, on: Boolean) = if (c.type == "boolean") on.toString() else if (on) fastOptionId(c) ?: "fast" else "standard"
 
   /** The toolbar's split; the controls that fit nowhere have no place on the phone */
   data class Split(

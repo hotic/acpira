@@ -186,11 +186,19 @@ pub(crate) fn option_shapes(sources: &[SidekickSource], effort: Option<&str>) ->
   out
 }
 
-/// A Fast switch: a boolean, or the Standard / Fast select (`isFastControl` in packages/shared/composerControls.ts)
+/// The fast-tier option id of a 2-option Standard / Fast (or Standard / Ultrafast) select
+fn fast_option_id(c: &ConfigControl) -> Option<&str> {
+  if c.kind.is_some() || c.options.len() != 2 || !c.options.iter().any(|o| o.id == "standard") {
+    return None;
+  }
+  c.options.iter().find(|o| matches!(o.id.as_str(), "fast" | "ultrafast")).map(|o| o.id.as_str())
+}
+
+/// A Fast switch: a boolean, or the Standard / Fast (or Ultrafast) select (`isFastControl` in packages/shared/composerControls.ts)
 fn is_fast(c: &ConfigControl) -> bool {
   match c.kind {
     Some(ControlType::Boolean) => c.id.split(['_', '-', ' ']).any(|w| w.eq_ignore_ascii_case("fast")),
-    None => c.options.len() == 2 && ["standard", "fast"].iter().all(|id| c.options.iter().any(|o| o.id == *id)),
+    None => fast_option_id(c).is_some(),
   }
 }
 
@@ -202,7 +210,7 @@ pub(crate) fn native_option_shapes(options: &[ConfigControl], shapes: Option<&Mo
   let model = options.iter().find(|o| is_model_control(o))?;
   let value = |category: &str| options.iter().find(|o| o.category.as_deref() == Some(category)).and_then(|o| o.value.as_deref());
   let effort = value(SIDEKICK_EFFORT_CATEGORY);
-  let fast = value(SIDEKICK_FAST_CATEGORY).is_some_and(|v| v == "true" || v == "fast");
+  let fast = value(SIDEKICK_FAST_CATEGORY).is_some_and(|v| matches!(v, "true" | "fast" | "ultrafast"));
   let mut out = ModelShapes::new();
   for o in select.options.iter().filter(|o| o.id != NO_SIDEKICK) {
     let Some(shape) = shape_for(shapes, model, &o.id) else { continue };
@@ -210,7 +218,7 @@ pub(crate) fn native_option_shapes(options: &[ConfigControl], shapes: Option<&Mo
     if let Some(switch) = shape.iter().find(|c| is_fast(c)) {
       let on = match switch.kind {
         Some(ControlType::Boolean) => fast.to_string(),
-        None => (if fast { "fast" } else { "standard" }).to_owned(),
+        None => (if fast { fast_option_id(switch).unwrap_or("fast") } else { "standard" }).to_owned(),
       };
       controls.push(ConfigControl {
         id: NATIVE_FAST_CONFIG.into(),

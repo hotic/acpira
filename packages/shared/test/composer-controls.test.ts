@@ -52,15 +52,23 @@ describe('shared composer controls', () => {
     const speed: ConfigControl = { id: 'speed', name: 'Speed', category: 'model_config', value: 'fast', options: [
       { id: 'standard', name: 'Standard' }, { id: 'fast', name: 'Fast' },
     ] };
+    // Devin 3000.14.30821 spells the SWE-2 family's fast tier `ultrafast`
+    const ultrafast: ConfigControl = { id: 'speed', name: 'Speed', category: 'model_config', value: 'ultrafast', options: [
+      { id: 'standard', name: 'Standard' }, { id: 'ultrafast', name: 'Ultrafast' },
+    ] };
     expect(composerControls([claude]).modelConfig).toEqual([claude]);
-    for (const c of [fast, claude, speed]) {
+    for (const c of [fast, claude, speed, ultrafast]) {
       expect(isFastControl(c)).toBe(true);
       expect(fastOn(c)).toBe(true);
       expect(modelConfigChip(c)).toBe('Fast');
     }
     expect(modelConfigChip({ ...fast, value: 'false' })).toBeUndefined();
+    expect(modelConfigChip({ ...ultrafast, value: 'standard' })).toBeUndefined();
+    expect(fastOn({ ...ultrafast, value: 'standard' })).toBe(false);
     expect(fastValue(fast, false)).toBe('false');
     expect(fastValue(speed, false)).toBe('standard');
+    expect(fastValue(ultrafast, true)).toBe('ultrafast');
+    expect(fastValue(ultrafast, false)).toBe('standard');
     // "breakfast" is not Fast
     expect(isFastControl({ ...fast, id: 'breakfast', name: 'Breakfast' })).toBe(false);
   });
