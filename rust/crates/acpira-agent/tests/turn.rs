@@ -99,7 +99,7 @@ async fn an_allowed_edit_changes_the_file_and_the_model_sees_the_result() {
   let reqs = server.requests();
   assert_eq!(reqs.len(), 3);
   let read_result = &reqs[1].body["messages"].as_array().unwrap().last().unwrap()["content"];
-  assert!(read_result.as_str().unwrap().contains("     1\thello world"), "{read_result}");
+  assert!(read_result.as_str().unwrap().contains("1\thello world"), "{read_result}");
   assert_eq!(reqs[2].body["messages"].as_array().unwrap().last().unwrap()["content"], "Edited a.txt.");
   assert_prefix_stable(&server);
 }
@@ -416,7 +416,7 @@ async fn misnamed_tools_are_recovered_twice_a_turn_then_refused() {
   server.push(mock::text("ok"));
   prompt(&h, &sid, "read").await;
   let first = tool_result(&server, 1, 2);
-  assert!(first.starts_with("(\"read_file\" was taken as the read tool") && first.contains("     1\talpha"), "{first}");
+  assert!(first.starts_with("(\"read_file\" was taken as the read tool") && first.contains("1\talpha"), "{first}");
   assert!(tool_result(&server, 1, 1).contains("alpha"));
   let third = tool_result(&server, 1, 0);
   assert!(third.starts_with("Unknown tool \"ReadFile\" (did you mean \"read\"?)"), "{third}");
@@ -453,7 +453,7 @@ async fn the_todo_tool_feeds_the_to_do_bar_and_search_tools_run_without_cards() 
   let todo = ups.iter().find(|u| u["toolCallId"] == "call-1" && u["status"] == "completed").unwrap();
   assert_eq!(todo["rawOutput"]["todos"][0], json!({ "content": "find it", "status": "in_progress" }));
   assert!(ups.iter().any(|u| u["toolCallId"] == "call-1" && u["title"] == "todo"));
-  assert!(tool_result(&server, 1, 2).contains("src/lib.rs:1: pub fn answer()"));
+  assert!(tool_result(&server, 1, 2).contains("src/lib.rs\n1: pub fn answer()"));
   assert_eq!(tool_result(&server, 1, 1), "src/lib.rs\n");
   assert!(tool_result(&server, 1, 0).contains("  src/\n    lib.rs"));
 }
@@ -574,4 +574,73 @@ async fn commands_keep_temp_files_in_the_sessions_scratch_folder() {
   let (sid, first) = run(&h).await;
   names(&h.cwd().join(".acpira/tmp").join(&sid[..8]), &first);
   assert_eq!(std::fs::read_to_string(h.cwd().join(".acpira/tmp/.gitignore")).unwrap(), "*\n");
+}
+
+#[tokio::test]
+async fn pre_card_plan_critique_holds_card_revises_once_and_marks_reviewed() {
+  let (h, server, sid) = setup(json!([{ "id": "claude-opus-5-5" }, { "id": "gpt-6.2-astra" }])).await;
+  h.conn.request("session/set_mode", json!({ "sessionId": sid, "modeId": "plan" })).await.unwrap();
+  // 1. Lead submits a defective plan
+  server.push(mock::tools(&[("c1", "exit_plan", json!({ "plan": "1. Parse semver numeric tokens with float()." }))]));
+  // 2. Zero-tool cross-family strong Critic (gpt-6.2-astra) returns grounded revise verdict
+  server.push(mock::text(
+    r#"{"assessment":"revise","feedback":"Use exact non-negative integers instead of float()","defect":{"target":"float() parsing","evidence":"Plan parses numeric semver tokens with float() which breaks integer validation"}}"#,
+  ));
+  // 3. Lead revises once and calls exit_plan again -> card opens now (marked reviewed) and client auto-approves
+  server.push(mock::tools(&[("c2", "exit_plan", json!({ "plan": "1. Parse semver numeric tokens as exact base-10 integers." }))]));
+  // 4. After Build approval, Lead finishes without writes -> Draft Critique short-circuits on read_only_first_pass
+  server.push(mock::text("Plan approved and ready."));
+
+  let r = prompt(&h, &sid, "Port js/semver.js to Python").await;
+  assert_eq!(r["stopReason"], "end_turn");
+
+  // User only saw the revised plan card (never the defective first draft)
+  let perms = h.client.permissions.lock().clone();
+  assert_eq!(perms.len(), 1, "first exit_plan must be held before user card");
+  assert_eq!(perms[0]["toolCall"]["_meta"]["acpira/planReviewed"], json!(true));
+  assert!(perms[0]["toolCall"]["rawInput"]["plan"].as_str().unwrap().contains("exact base-10 integers"));
+
+  // Second request on the wire was the zero-tool cross-family Critic on gpt-6.2-astra
+  let reqs = server.requests();
+  assert_eq!(reqs.len(), 4, "1: lead draft plan, 2: zero-tool critic, 3: lead revised exit_plan, 4: post-approval reply");
+  assert_eq!(reqs[1].body["model"], "gpt-6.2-astra");
+  assert!(reqs[1].body.get("tools").is_none_or(|t| t.as_array().is_none_or(Vec::is_empty)), "critic must be strictly zero-tool");
+
+  let log = std::fs::read_to_string(h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"))).unwrap();
+  assert!(log.contains(r#""type":"critique""#) && log.contains(r#""checkpoint":"plan""#) && log.contains(r#""outcome":"revise""#), "{log}");
+}
+
+#[tokio::test]
+async fn post_edit_draft_critique_revises_once_and_skips_read_only_turns() {
+  let (h, server, sid) = setup(json!([{ "id": "claude-opus-5-5" }, { "id": "gpt-6.2-astra" }])).await;
+  std::fs::write(h.cwd().join("a.txt"), "hello world\n").unwrap();
+
+  // Turn 1: pure read-only turn -> Draft Critique short-circuits (`read_only_first_pass`) with 0 critic calls
+  server.push(mock::tools(&[("r1", "read", json!({ "path": "a.txt" }))]));
+  server.push(mock::text("It says hello world."));
+  let r1 = prompt(&h, &sid, "read a.txt").await;
+  assert_eq!(r1["stopReason"], "end_turn");
+  assert_eq!(server.requests().len(), 2, "read-only turn must skip Critique");
+
+  // Turn 2: workspace edit -> Draft Critique runs once, flags grounded defect, Lead revises once and stops
+  server.push(mock::tools(&[("e1", "edit", json!({ "path": "a.txt", "old_string": "world", "new_string": "typo" }))]));
+  server.push(mock::text("Updated a.txt."));
+  server.push(mock::text(
+    r#"{"assessment":"revise","feedback":"Replace 'typo' with 'acpira' as requested","defect":{"target":"a.txt","evidence":"edit wrote 'typo' instead of 'acpira'"}}"#,
+  ));
+  server.push(mock::tools(&[("e2", "edit", json!({ "path": "a.txt", "old_string": "typo", "new_string": "acpira" }))]));
+  server.push(mock::text("Fixed a.txt to hello acpira."));
+
+  let r2 = prompt(&h, &sid, "change world to acpira in a.txt").await;
+  assert_eq!(r2["stopReason"], "end_turn");
+  assert_eq!(std::fs::read_to_string(h.cwd().join("a.txt")).unwrap(), "hello acpira\n");
+  // Turn 1 (2 reqs) + Turn 2 (edit1 + draft + zero-tool critic + edit2 + final = 5 reqs) = 7 total (no 2nd critique!)
+  let reqs = server.requests();
+  assert_eq!(reqs.len(), 7);
+  assert_eq!(reqs[4].body["model"], "gpt-6.2-astra");
+  assert!(reqs[4].body.get("tools").is_none_or(|t| t.as_array().is_none_or(Vec::is_empty)));
+
+  let log = std::fs::read_to_string(h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"))).unwrap();
+  assert!(log.contains(r#""skipReason":"read_only_first_pass""#), "{log}");
+  assert!(log.contains(r#""type":"critique_commit""#) && log.contains(r#""revised":true"#), "{log}");
 }

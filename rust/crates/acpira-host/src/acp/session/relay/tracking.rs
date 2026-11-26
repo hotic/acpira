@@ -93,9 +93,10 @@ impl AcpSession {
     c.tree.relay_latest(thread).map(|r| crate::acp::vendors::Vendor::of(&r.harness.agent))
   }
 
-  /// Summoned rounds still running: the session has work in the background even while its own turn is over
+  /// Summoned rounds still running: the session has work in the background even while its own turn is over.
+  /// Excludes internal Turn-End Gate diagnostic rounds so the gate never defers itself (`hooks.rs`).
   pub(crate) fn relay_background(c: &Core) -> bool {
-    !c.relays.rounds.is_empty()
+    c.relays.rounds.keys().any(|th| !c.relays.gate_internal_threads.contains(th))
   }
 
   /// A round ended. With the session idle, what the background held back goes now: the workspace gate over the span

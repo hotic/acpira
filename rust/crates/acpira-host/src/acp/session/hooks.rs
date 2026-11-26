@@ -66,6 +66,8 @@ pub(crate) struct HookState {
   pub deferred: bool,
   /// The last hooks-file error shown, so a broken file is reported once rather than every turn
   pub reported: Option<String>,
+  /// Cancellation token for an in-flight Turn-End Gate zero-tool cross-family diagnosis (allows skipping while gating)
+  pub critique_cancel: Option<crate::acp::transport::cancel::Cancel>,
 }
 
 /// What a turn's prompt carries besides the user's own blocks: the context files in front (a first prompt) and the
@@ -245,18 +247,90 @@ fn same_file(host: &HookHost, a: &Path, b: &Path) -> bool {
       && matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y))
 }
 
-fn notice(severity: Severity, title: String, details: Option<String>) -> AgentBlock {
+fn notice_with(severity: Severity, info: bool, title: String, details: Option<String>, actions: Vec<FailureAction>) -> AgentBlock {
   AgentBlock::Notice(NoticeBlock {
     id: format!("hooks:{}", random_uuid()),
     revision: acpira_shared::num::Num(1.0),
     category: FailureCategory::Request,
     severity,
-    info: false,
+    info,
     title,
     details,
-    actions: vec![],
+    actions,
     retry: None,
   })
+}
+
+fn notice(severity: Severity, title: String, details: Option<String>) -> AgentBlock {
+  notice_with(severity, false, title, details, vec![])
+}
+
+/// Extract settled user Q&A pairs from root turns as User Interaction Carryover for Turn-End Gate diagnosis
+fn collect_gate_carryover(turns: &[Turn]) -> Vec<acpira_agent::critique::evidence::UserInteraction> {
+  use acpira_agent::critique::evidence::{InteractionKind, UserInteraction};
+  let mut out = vec![];
+  for turn in turns {
+    let Turn::Agent(agent) = turn else { continue };
+    for block in &agent.blocks {
+      let AgentBlock::Question(q) = block else { continue };
+      if q.outcome != Some(QuestionOutcome::Answered) {
+        continue;
+      }
+      let Some(answers) = q.answers.as_ref().filter(|a| !a.is_empty()) else { continue };
+      let prompt = q.questions.iter().map(|item| item.text.as_str()).collect::<Vec<_>>().join(" | ");
+      let response = answers
+        .iter()
+        .map(|(k, v)| match v {
+          Value::String(s) => format!("{k}={s}"),
+          Value::Array(list) => {
+            let items: Vec<String> = list.iter().map(|x| x.as_str().map(str::to_owned).unwrap_or_else(|| x.to_string())).collect();
+            format!("{k}={}", items.join(", "))
+          }
+          other => format!("{k}={other}"),
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+      out.push(UserInteraction { kind: InteractionKind::Question, prompt, response });
+    }
+  }
+  out
+}
+
+/// Latest real user prompt in the session, used as the original task for gate diagnosis and escalation handoff
+fn last_user_prompt(turns: &[Turn]) -> String {
+  turns
+    .iter()
+    .rev()
+    .find_map(|t| match t {
+      Turn::User(u) if u.auto != Some(true) && !u.text.trim().is_empty() => Some(u.text.clone()),
+      _ => None,
+    })
+    .unwrap_or_default()
+}
+
+/// Format an actionable escalation summary when Turn-End Gate exhausts all retries
+fn gate_escalation_details(
+  reasons: &[String],
+  changed_files: &[String],
+  carryover: &[acpira_agent::critique::evidence::UserInteraction],
+  suggested_peer: Option<&str>,
+) -> String {
+  let mut out = reasons.join("\n\n");
+  if !changed_files.is_empty() {
+    let shown: Vec<&str> = changed_files.iter().take(12).map(String::as_str).collect();
+    out.push_str(&format!("\n\nChanged files ({}): {}", changed_files.len(), shown.join(", ")));
+  }
+  if !carryover.is_empty() {
+    out.push_str("\n\nUser interaction carryover:");
+    for u in carryover.iter().take(6) {
+      out.push_str(&format!("\n- {} => {}", u.prompt, u.response));
+    }
+  }
+  match suggested_peer {
+    Some(peer) => out.push_str(&format!("\n\nHandoff suggestion: start a stronger cross-family model session ({peer}) with the current workspace and failure summary above.")),
+    None => out.push_str("\n\nHandoff suggestion: switch to a stronger model in a new session to take over from the current workspace."),
+  }
+  out
 }
 
 /// Push a notice row onto the session's last agent turn
@@ -328,7 +402,7 @@ impl AcpSession {
   pub(crate) async fn hook_host(&self) -> Option<HookHost> {
     let Some(f) = self.remote_folder() else { return Some(HookHost::Local) };
     let connections = self.deps.remote.clone()?;
-    match connections.ensure(&f.alias, std::time::Duration::from_secs(30)).await {
+    match connections.ensure(f.alias.clone(), std::time::Duration::from_secs(30)).await {
       Ok(client) => Some(HookHost::Remote(client)),
       Err(e) => {
         self.log(&format!("hooks: {} unreachable: {e:#}", f.alias));
@@ -702,7 +776,7 @@ impl AcpSession {
         self.hook_broken(hook, "the SSH host could not be reached, so the gate did not run");
       }
       let reasons = std::mem::take(&mut self.core.lock().hooks.denied);
-      self.gate_decided(&cfg, reasons).await;
+      self.gate_decided(&cfg, reasons, vec![]).await;
       return;
     };
     let (after, seen) = match &before {
@@ -782,7 +856,132 @@ impl AcpSession {
         }
       }
     }
-    self.gate_decided(&cfg, reasons).await;
+    self.gate_decided(&cfg, reasons, session_files).await;
+  }
+
+  /// Cancel an in-flight Turn-End Gate cross-family diagnosis so the user can skip gating wait immediately
+  pub(crate) fn skip_gate_critique(&self) {
+    if let Some(cancel) = self.core.lock().hooks.critique_cancel.take() {
+      cancel.cancel();
+    }
+  }
+
+  /// Broad model family of this session's current model (for cross-family peer verification in gate diagnosis)
+  fn session_broad_family(&self, c: &Core) -> &'static str {
+    let model = c
+      .state
+      .controls
+      .options
+      .iter()
+      .find(|o| acpira_shared::model_shapes::is_model_control(o))
+      .and_then(|o| o.value.as_deref())
+      .unwrap_or("");
+    acpira_agent::critique::peer::broad_family(model, &self.agent, "")
+  }
+
+  /// Run one zero-tool cross-family stuck diagnosis when Turn-End Gate hits round >= 2.
+  /// Uses `acpira_agent::critique::run_zero_tool` directly (no relay child spawned, so zero `relay_background`
+  /// deadlock and zero Codex 60 s tool-timeout risk); merges the grounded diagnosis into the same gate follow-up.
+  async fn gate_stuck_diagnosis(
+    &self,
+    cfg: &HooksConfig,
+    reasons: &[String],
+    session_files: &[String],
+  ) -> Option<String> {
+    let data_home = self.deps.data_home.as_ref()?;
+    let config = acpira_agent::config::ConfigCache::new(data_home.clone()).get();
+    let catalog = acpira_agent::catalog::CatalogCache::new(data_home).get();
+    let (lead_family, original_task, carryover, latest_summary, cancel) = {
+      let mut c = self.core.lock();
+      let fam = self.session_broad_family(&c);
+      let task = last_user_prompt(&c.state.turns);
+      let carry = collect_gate_carryover(&c.state.turns);
+      let summary = c
+        .state
+        .turns
+        .iter()
+        .rev()
+        .find_map(|t| match t {
+          Turn::Agent(a) => a.blocks.iter().rev().find_map(|b| match b {
+            AgentBlock::Text(tb) if !tb.markdown.trim().is_empty() => Some(tb.markdown.clone()),
+            _ => None,
+          }),
+          _ => None,
+        })
+        .unwrap_or_default();
+      let cancel = crate::acp::transport::cancel::Cancel::new();
+      c.hooks.critique_cancel = Some(cancel.clone());
+      push_notice(
+        &mut c,
+        notice_with(Severity::Warning, true, "Running cross-family gate diagnosis…".into(), None, vec![]),
+      );
+      self.touch(&mut c);
+      (fam, task, carry, summary, cancel)
+    };
+
+    let peer = acpira_agent::critique::peer::resolve_peer_for_family(&config, &catalog, lead_family, &[], None);
+    let Some((peer_provider, peer_model, peer_label)) = peer else {
+      self.core.lock().hooks.critique_cancel = None;
+      return None;
+    };
+    let Some(endpoint) = acpira_agent::llm::Endpoint::of(peer_provider, peer_model, config.api_key(&peer_provider.id)) else {
+      self.core.lock().hooks.critique_cancel = None;
+      return None;
+    };
+
+    let mut packet = acpira_agent::critique::evidence::EvidencePacket::empty(acpira_agent::critique::wire::Checkpoint::Gate);
+    acpira_agent::critique::evidence::populate_git_evidence(
+      &mut packet,
+      &cfg.root,
+      acpira_agent::critique::evidence::RenderBudget::default(),
+      &acpira_agent::critique::evidence::DefaultSecretFilter,
+    );
+    packet.gate_reasons = reasons.to_vec();
+    if packet.changed_files.is_empty() {
+      packet.changed_files = session_files.to_vec();
+      packet.total_changed_files = session_files.len();
+    }
+    packet.user_interactions = carryover.clone();
+
+    let outcome = acpira_agent::critique::run_zero_tool(
+      acpira_agent::llm::default_http(),
+      endpoint,
+      peer_model.id.clone(),
+      peer_label.clone(),
+      acpira_agent::critique::wire::Checkpoint::Gate,
+      &original_task,
+      &latest_summary,
+      &packet,
+      Some(cancel),
+    )
+    .await;
+    self.core.lock().hooks.critique_cancel = None;
+
+    match outcome {
+      acpira_agent::critique::wire::CritiqueOutcome::Revise { feedback, defect, ms, .. } => {
+        self.log(&format!("hooks: cross-family gate diagnosis from {peer_label} in {ms} ms"));
+        Some(acpira_agent::critique::wire::revision_handoff(
+          acpira_agent::critique::wire::Checkpoint::Gate,
+          &feedback,
+          &defect,
+          &carryover,
+        ))
+      }
+      acpira_agent::critique::wire::CritiqueOutcome::Invalid { reason, ms, .. } => {
+        self.log(&format!("hooks: gate diagnosis degraded ({reason}) after {ms} ms"));
+        None
+      }
+      _ => None,
+    }
+  }
+
+  /// Suggested stronger cross-family model label for the gate-gave-up handoff card, if configured
+  fn suggested_escalation_peer(&self, c: &Core) -> Option<String> {
+    let data_home = self.deps.data_home.as_ref()?;
+    let config = acpira_agent::config::ConfigCache::new(data_home.clone()).get();
+    let catalog = acpira_agent::catalog::CatalogCache::new(data_home).get();
+    let fam = self.session_broad_family(c);
+    acpira_agent::critique::peer::resolve_peer_for_family(&config, &catalog, fam, &[], None).map(|(_, _, label)| label)
   }
 
   /// Boxed: the follow-up's own end runs the gate again, a cycle an `async fn` future cannot hold
@@ -793,12 +992,19 @@ impl AcpSession {
 
   /// Send what blocked back to the agent, run the gate once more over a detached turn that ended meanwhile, or let the
   /// queue go
-  async fn gate_decided(self: &Arc<Self>, cfg: &HooksConfig, reasons: Vec<String>) {
+  async fn gate_decided(self: &Arc<Self>, cfg: &HooksConfig, reasons: Vec<String>, session_files: Vec<String>) {
     enum Next {
       FollowUp(String),
       Again(GateJob),
       Flush,
     }
+    // From round 2 onward (c.hooks.round >= 1 and still under budget), gather a fast zero-tool cross-family diagnosis
+    // BEFORE sending the single Origin::Gate follow-up so no extra lead turn is spent
+    let need_diag = {
+      let c = self.core.lock();
+      !reasons.is_empty() && !c.hooks.rerun && c.status == SessionStatus::Ready && !c.phase.running && c.hooks.round >= 1 && c.hooks.round < cfg.rounds
+    };
+    let diagnosis = if need_diag { self.gate_stuck_diagnosis(cfg, &reasons, &session_files).await } else { None };
     // The gate gave up on a goal the engine continues: that goal is paused before the queue moves
     let mut pause_goal = false;
     let next = {
@@ -827,12 +1033,22 @@ impl AcpSession {
       } else if c.hooks.round < cfg.rounds {
         c.hooks.round += 1;
         let round = c.hooks.round.to_string();
-        let details = reasons.join("\n\n");
+        let mut details = reasons.join("\n\n");
+        if let Some(diag) = &diagnosis {
+          details.push_str("\n\n");
+          details.push_str(diag);
+        }
         push_notice(&mut c, notice(Severity::Warning, tp("host.gateFailed", &[("round", &round), ("rounds", &rounds)]), Some(details.clone())));
         Next::FollowUp(tp("host.gatePrompt", &[("reason", &details)]))
       } else {
         self.log("hooks: gate gave up");
-        push_notice(&mut c, notice(Severity::Error, tp("host.gateGaveUp", &[("rounds", &rounds)]), Some(reasons.join("\n\n"))));
+        let carryover = collect_gate_carryover(&c.state.turns);
+        let peer = self.suggested_escalation_peer(&c);
+        let details = gate_escalation_details(&reasons, &session_files, &carryover, peer.as_deref());
+        push_notice(
+          &mut c,
+          notice_with(Severity::Error, false, tp("host.gateGaveUp", &[("rounds", &rounds)]), Some(details), vec![FailureAction::NewSession]),
+        );
         pause_goal = Self::end_goal_run(&mut c);
         Next::Flush
       };
@@ -935,5 +1151,59 @@ mod tests {
     tc.content = Some(ToolContent::Diff { lines: vec![], source: Some(DiffSource { path: "/w/a.kt".into(), ..Default::default() }) });
     tc.contents = Some(vec![ToolContent::Diff { lines: vec![], source: Some(DiffSource { path: "/w/b.kt".into(), ..Default::default() }) }]);
     assert_eq!(edit_paths(&tc), ["/w/a.kt", "/w/b.kt"]);
+  }
+
+  #[test]
+  fn gate_carryover_and_escalation_details_keep_only_answered_questions() {
+    let answered = AgentBlock::Question(QuestionBlock {
+      id: "q1".into(),
+      tool_call_id: None,
+      questions: vec![Question {
+        id: "k1".into(),
+        title: None,
+        text: "Use strict mode?".into(),
+        kind: QuestionKind::Single,
+        options: vec![],
+        other: None,
+        numeric: None,
+        required: None,
+      }],
+      message: None,
+      images: None,
+      answers: Some(serde_json::Map::from_iter([("k1".into(), Value::String("Yes".into()))])),
+      answer_images: None,
+      outcome: Some(QuestionOutcome::Answered),
+    });
+    let cancelled = AgentBlock::Question(QuestionBlock {
+      id: "q2".into(),
+      tool_call_id: None,
+      questions: vec![Question {
+        id: "k2".into(),
+        title: None,
+        text: "Skipped?".into(),
+        kind: QuestionKind::Single,
+        options: vec![],
+        other: None,
+        numeric: None,
+        required: None,
+      }],
+      message: None,
+      images: None,
+      answers: None,
+      answer_images: None,
+      outcome: Some(QuestionOutcome::Cancelled),
+    });
+    let turns = vec![
+      Turn::User(UserTurn { text: "Fix build failure".into(), auto: Some(false), ..Default::default() }),
+      Turn::Agent(AgentTurn { blocks: vec![answered, cancelled], ..Default::default() }),
+    ];
+    assert_eq!(last_user_prompt(&turns), "Fix build failure");
+    let carry = collect_gate_carryover(&turns);
+    assert_eq!(carry.len(), 1);
+    assert_eq!(carry[0].prompt, "Use strict mode?");
+    assert_eq!(carry[0].response, "k1=Yes");
+
+    let details = gate_escalation_details(&["cargo test failed".into()], &["src/lib.rs".into()], &carry, Some("gw/gpt-6.2-astra"));
+    assert!(details.contains("cargo test failed") && details.contains("src/lib.rs") && details.contains("gw/gpt-6.2-astra") && details.contains("k1=Yes"), "{details}");
   }
 }

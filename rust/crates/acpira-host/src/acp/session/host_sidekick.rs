@@ -62,24 +62,37 @@ fn native(options: &[ConfigControl]) -> bool {
   options.iter().any(|o| o.category.as_deref() == Some(SIDEKICK_CATEGORY) && !ours(o))
 }
 
-/// The model in use (`held`: a pick in flight) is a pair of the CLI's own, a Devin Fusion pair or an Antigravity
-/// orchestrator (a lead and a sidekick): the host offers no second sidekick beside it, and keeps its pick for when the
-/// session leaves the pair
-fn fusion_pair(options: &[ConfigControl], held: impl Fn(&str) -> Option<String>) -> bool {
+/// The model in use (`held`: a pick in flight) is a pair of the CLI's own, a Devin Fusion pair, a Copilot Fusion
+/// orchestrator, or an Antigravity orchestrator (a lead and a sidekick): the host offers no second sidekick beside it,
+/// and keeps its pick for when the session leaves the pair
+fn fusion_pair(agent: &str, options: &[ConfigControl], held: impl Fn(&str) -> Option<String>) -> bool {
   let Some(model) = options.iter().find(|o| is_model_control(o)) else { return false };
   let Some(value) = held(&model.id).or_else(|| model.value.clone()) else { return false };
-  model.options.iter().find(|o| o.id == value).is_some_and(own_pair)
+  model.options.iter().find(|o| o.id == value).is_some_and(|o| own_pair(agent, o))
 }
 
-/// A model that runs a sidekick of its own: a Devin Fusion pair, or one of Antigravity's orchestrators (a planner over
-/// its own execution model). Orchestrator ids are Antigravity's alone (agy 1.5.16)
-fn own_pair(o: &SessionOption) -> bool {
-  parse_fusion_name(&o.name).is_some() || antigravity::is_orchestrator(&o.id)
+/// Copilot CLI's native multi-model orchestrator (`auto` / `fusion` on `copilot`, or explicit HydraFusion ids/names)
+fn is_copilot_fusion(agent: &str, o: &SessionOption) -> bool {
+  let id = o.id.to_ascii_lowercase();
+  let name = o.name.to_ascii_lowercase();
+  id.starts_with("hydrafusion")
+    || name.contains("copilot fusion")
+    || name.starts_with("hydrafusion")
+    || (agent == "copilot" && matches!(id.as_str(), "auto" | "fusion"))
 }
 
-/// A model a sidekick can run on: not one that runs a sidekick of its own
+/// A model that runs a sidekick or orchestrator of its own: a Devin Fusion pair, a Copilot Fusion mode, or one of
+/// Antigravity's orchestrators (a planner over its own execution model). Orchestrator ids are Antigravity's alone
+/// (agy 1.5.16)
+fn own_pair(agent: &str, o: &SessionOption) -> bool {
+  parse_fusion_name(&o.name).is_some() || antigravity::is_orchestrator(&o.id) || is_copilot_fusion(agent, o)
+}
+
+/// A model a sidekick can run on: not one that runs a sidekick or orchestrator of its own
 fn candidate(agent: &str, o: &SessionOption) -> bool {
-  parse_fusion_name(&o.name).is_none() && !(agent == "antigravity" && antigravity::is_orchestrator(&o.id))
+  parse_fusion_name(&o.name).is_none()
+    && !(agent == "antigravity" && antigravity::is_orchestrator(&o.id))
+    && !is_copilot_fusion(agent, o)
 }
 
 /// The CLI and the model id of a pick
@@ -186,19 +199,46 @@ pub(crate) fn option_shapes(sources: &[SidekickSource], effort: Option<&str>) ->
   out
 }
 
-/// The fast-tier option id of a 2-option Standard / Fast (or Standard / Ultrafast) select
-fn fast_option_id(c: &ConfigControl) -> Option<&str> {
-  if c.kind.is_some() || c.options.len() != 2 || !c.options.iter().any(|o| o.id == "standard") {
-    return None;
+/// Whether `c` is a speed select whose options are a subset of the known speed tiers (standard/default/off + fast/ultrafast)
+fn is_speed_select(c: &ConfigControl) -> bool {
+  if c.kind.is_some() || c.options.len() < 2 {
+    return false;
   }
-  c.options.iter().find(|o| matches!(o.id.as_str(), "fast" | "ultrafast")).map(|o| o.id.as_str())
+  let has_standard = c.options.iter().any(|o| matches!(o.id.as_str(), "standard" | "default" | "off"));
+  let has_fast = c.options.iter().any(|o| matches!(o.id.as_str(), "fast" | "priority" | "ultrafast"));
+  let all_known = c.options.iter().all(|o| matches!(o.id.as_str(), "standard" | "default" | "off" | "fast" | "priority" | "ultrafast"));
+  has_standard && has_fast && all_known
 }
 
-/// A Fast switch: a boolean, or the Standard / Fast (or Ultrafast) select (`isFastControl` in packages/shared/composerControls.ts)
+/// A Fast / Speed control: a boolean, or a speed select (`isFastControl` in packages/shared/composerControls.ts)
 fn is_fast(c: &ConfigControl) -> bool {
   match c.kind {
     Some(ControlType::Boolean) => c.id.split(['_', '-', ' ']).any(|w| w.eq_ignore_ascii_case("fast")),
-    None => fast_option_id(c).is_some(),
+    None => is_speed_select(c),
+  }
+}
+
+/// Normalize a wire speed value (`true`/`false`/`standard`/`fast`/`ultrafast`) to its canonical tier name
+fn normalize_speed(v: &str) -> &'static str {
+  match v {
+    "ultrafast" => "ultrafast",
+    "true" | "fast" | "priority" => "fast",
+    _ => "standard",
+  }
+}
+
+/// Map a canonical tier (`standard` / `fast` / `ultrafast`) onto the closest value `switch` offers
+fn speed_option_value(switch: &ConfigControl, tier: &str) -> String {
+  if switch.kind == Some(ControlType::Boolean) {
+    return (tier != "standard").to_string();
+  }
+  let has = |id: &str| switch.options.iter().any(|o| o.id == id);
+  match tier {
+    "ultrafast" if has("ultrafast") => "ultrafast".to_owned(),
+    "ultrafast" | "fast" if has("fast") => "fast".to_owned(),
+    "ultrafast" | "fast" if has("priority") => "priority".to_owned(),
+    "fast" if has("ultrafast") => "ultrafast".to_owned(),
+    _ => switch.options.iter().find(|o| matches!(o.id.as_str(), "standard" | "default" | "off")).map(|o| o.id.clone()).unwrap_or_else(|| "standard".into()),
   }
 }
 
@@ -210,23 +250,20 @@ pub(crate) fn native_option_shapes(options: &[ConfigControl], shapes: Option<&Mo
   let model = options.iter().find(|o| is_model_control(o))?;
   let value = |category: &str| options.iter().find(|o| o.category.as_deref() == Some(category)).and_then(|o| o.value.as_deref());
   let effort = value(SIDEKICK_EFFORT_CATEGORY);
-  let fast = value(SIDEKICK_FAST_CATEGORY).is_some_and(|v| matches!(v, "true" | "fast" | "ultrafast"));
+  let speed = value(SIDEKICK_FAST_CATEGORY).map(normalize_speed).unwrap_or("standard");
   let mut out = ModelShapes::new();
   for o in select.options.iter().filter(|o| o.id != NO_SIDEKICK) {
     let Some(shape) = shape_for(shapes, model, &o.id) else { continue };
     let mut controls: Vec<ConfigControl> = levels_in(shape).map(|levels| effort_select(NATIVE_EFFORT_CONFIG, levels, effort)).into_iter().collect();
     if let Some(switch) = shape.iter().find(|c| is_fast(c)) {
-      let on = match switch.kind {
-        Some(ControlType::Boolean) => fast.to_string(),
-        None => (if fast { fast_option_id(switch).unwrap_or("fast") } else { "standard" }).to_owned(),
-      };
+      let val = speed_option_value(switch, speed);
       controls.push(ConfigControl {
         id: NATIVE_FAST_CONFIG.into(),
         name: "Sidekick fast".into(),
         category: Some(SIDEKICK_FAST_CATEGORY.into()),
         kind: switch.kind,
         options: switch.options.clone(),
-        value: Some(on),
+        value: Some(val),
       });
     }
     if !controls.is_empty() {
@@ -247,9 +284,9 @@ pub(crate) fn restored(options: &[ConfigControl]) -> HostSidekick {
 }
 
 /// The host's select is set aside: the CLI has its own, or the model in use is a Fusion pair
-fn set_aside(c: &Core) -> bool {
+fn set_aside(agent: &str, c: &Core) -> bool {
   let options = &c.state.controls.options;
-  native(options) || fusion_pair(options, |id| c.picks.values.get(id).map(|(v, _)| v.clone()))
+  native(options) || fusion_pair(agent, options, |id| c.picks.values.get(id).map(|(v, _)| v.clone()))
 }
 
 impl AcpSession {
@@ -313,7 +350,7 @@ impl AcpSession {
   /// Put the selects back after the options changed (`refine_controls`): an agent answer replaces the whole list.
   /// Before the first connection built them, the ones a record or an earlier session showed stay as they are
   pub(crate) fn place_host_sidekick(&self, c: &mut Core) {
-    let aside = set_aside(c);
+    let aside = set_aside(&self.agent, c);
     let Core { sidekick, state, .. } = c;
     let options = &mut state.controls.options;
     if aside {
@@ -332,7 +369,7 @@ impl AcpSession {
     if id != SIDEKICK_CONFIG && id != SIDEKICK_EFFORT_CONFIG {
       return false;
     }
-    if !c.sidekick.offered || set_aside(&c) {
+    if !c.sidekick.offered || set_aside(&self.agent, &c) {
       return true;
     }
     let known = |agent: &str| self.deps.registry.try_get(agent).is_some();
@@ -350,7 +387,7 @@ impl AcpSession {
   /// The host's sidekick as picked now, picks in flight included: its CLI, its model id there and its level
   pub(crate) fn host_sidekick(&self) -> Option<(String, String, Option<String>)> {
     let c = self.core.lock();
-    if !c.sidekick.offered || set_aside(&c) {
+    if !c.sidekick.offered || set_aside(&self.agent, &c) {
       return None;
     }
     let held = |id: &str| c.picks.values.get(id).map(|(v, _)| v.clone());
@@ -561,6 +598,39 @@ mod tests {
   }
 
   #[test]
+  fn copilot_fusion_is_no_sidekick_and_sets_select_aside() {
+    let sources = [source(
+      "copilot",
+      "GitHub Copilot",
+      &[("claude-sonnet-5.5", "Claude Sonnet 5.5"), ("auto", "Copilot Fusion"), ("hydrafusion-max", "HydraFusion Max")],
+      None,
+    )];
+    let ids: Vec<String> = build("claude", &sources, &none_hidden(), None, None)[0].options.iter().map(|o| o.id.clone()).collect();
+    assert_eq!(ids, ["none", "copilot/claude-sonnet-5.5"]);
+
+    let copilot_model = ConfigControl {
+      id: "model".into(),
+      category: Some("model".into()),
+      options: vec![option("claude-sonnet-5.5", "Claude Sonnet 5.5"), option("auto", "Copilot Fusion"), option("hydrafusion-max", "HydraFusion Max")],
+      value: Some("auto".into()),
+      ..Default::default()
+    };
+    let none = |_: &str| None;
+    assert!(fusion_pair("copilot", std::slice::from_ref(&copilot_model), none));
+    assert!(fusion_pair("copilot", &[ConfigControl { value: Some("hydrafusion-max".into()), ..copilot_model.clone() }], none));
+    assert!(!fusion_pair("copilot", &[ConfigControl { value: Some("claude-sonnet-5.5".into()), ..copilot_model }], none));
+    // Bare `auto` on another CLI is not treated as Copilot Fusion unless named Copilot Fusion / HydraFusion
+    let other = ConfigControl {
+      id: "model".into(),
+      category: Some("model".into()),
+      options: vec![option("auto", "Auto")],
+      value: Some("auto".into()),
+      ..Default::default()
+    };
+    assert!(!fusion_pair("opencode", &[other], none));
+  }
+
+  #[test]
   fn a_fusion_pair_sets_the_select_aside() {
     let model = ConfigControl {
       id: "model".into(),
@@ -570,10 +640,10 @@ mod tests {
       ..Default::default()
     };
     let none = |_: &str| None;
-    assert!(!fusion_pair(std::slice::from_ref(&model), none));
-    assert!(fusion_pair(&[ConfigControl { value: Some("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium".into()), ..model.clone() }], none));
+    assert!(!fusion_pair("devin", std::slice::from_ref(&model), none));
+    assert!(fusion_pair("devin", &[ConfigControl { value: Some("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium".into()), ..model.clone() }], none));
     // A switch in flight counts before the agent answers it
-    assert!(fusion_pair(&[model], |_| Some("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium".into())));
+    assert!(fusion_pair("devin", &[model], |_| Some("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium".into())));
     // An Antigravity orchestrator runs its own execution model the same way
     let agy = ConfigControl {
       id: "model".into(),
@@ -582,8 +652,8 @@ mod tests {
       value: Some("gemini-pro-orchestrator-neon".into()),
       ..Default::default()
     };
-    assert!(fusion_pair(std::slice::from_ref(&agy), none));
-    assert!(!fusion_pair(&[ConfigControl { value: Some("gemini-4-neon".into()), ..agy }], none));
+    assert!(fusion_pair("antigravity", std::slice::from_ref(&agy), none));
+    assert!(!fusion_pair("antigravity", &[ConfigControl { value: Some("gemini-4-neon".into()), ..agy }], none));
   }
 
   #[test]
