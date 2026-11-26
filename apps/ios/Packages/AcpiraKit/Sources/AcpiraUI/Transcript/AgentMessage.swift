@@ -26,6 +26,107 @@ struct ProcessPrefs: Equatable, Sendable {
 
 extension EnvironmentValues {
   @Entry var processPrefs = ProcessPrefs()
+  /// Per-thread live reply splitter handed down to `LiveReplyTailView` so `StreamProse` can promote settled prefix
+  /// blocks into static rows outside `body`
+  @Entry var liveReplySplits: LiveReplySplits? = nil
+}
+
+/// One frozen static reply slice promoted out of a streaming turn (`ThreadItem.Kind.replyPiece`).
+struct ReplyPieceView: View {
+  let segments: [ReplySegment]
+  let images: [ImageRef]?
+  let turnIndex: Int
+  let canTapActions: Bool
+  @Environment(\.sessionActions) private var sessionActions
+  @Environment(\.subagentTranscript) private var readOnly
+  @Environment(\.turnReveal) private var reveal
+  @Environment(\.deferSelectionSurface) private var deferSelection
+  @Environment(\.rowHitTargets) private var hitTargets
+
+  var body: some View {
+    let tap = canTapActions && !readOnly ? reveal.map { ReplyTap(index: turnIndex, reveal: $0) } : nil
+    let quote = readOnly ? nil : QuoteAction(run: sessionActions.quote)
+    let _ = {
+      hitTargets?.turnIndex = turnIndex
+      hitTargets?.canTapActions = canTapActions && !readOnly
+    }()
+    ProseRun(segments: segments)
+      .environment(\.markdownImages, images)
+      .environment(\.quoteProse, quote)
+      .environment(\.replyTap, tap)
+      .padding(.horizontal, Metrics.pad)
+      .modifier(OptionalReplyTap(tap: deferSelection ? nil : tap))
+      .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+/// The active streaming tail row of a split live turn (`ThreadItem.Kind.liveTail`): draws only the unsettled suffix
+/// via `StreamProse`, plus any closing milestones, permissions, outcome and turn actions once the turn settles.
+struct LiveReplyTailView: View {
+  let payload: LiveTailPayload
+  @Environment(\.sessionActions) private var sessionActions
+  @Environment(\.subagentTranscript) private var readOnly
+  @Environment(\.quietEntrance) private var quiet
+  @Environment(\.turnReveal) private var reveal
+  @Environment(\.liveReplySplits) private var splits
+  @Environment(\.deferSelectionSurface) private var deferSelection
+  @Environment(\.rowHitTargets) private var hitTargets
+
+  var body: some View {
+    let tap = payload.canTapActions && !readOnly ? reveal.map { ReplyTap(index: payload.index, reveal: $0) } : nil
+    let quote = readOnly ? nil : QuoteAction(run: sessionActions.quote)
+    let _ = {
+      hitTargets?.turnIndex = payload.index
+      hitTargets?.canTapActions = payload.canTapActions && !readOnly
+    }()
+    let onFreeze: ((Int) -> Int)? = splits.map { store in
+      { [index = payload.index, textIndex = payload.textIndex, committed = payload.committedUTF8,
+         tail = payload.tailMarkdown, images = payload.images] settledUTF8 in
+        store.tryFreeze(turnIndex: index, textIndex: textIndex, expectedCommittedUTF8: committed,
+                        tailMarkdown: tail, settledTailUTF8: settledUTF8, images: images)
+      }
+    }
+    VStack(alignment: .leading, spacing: Metrics.gap) {
+      StreamProse(markdown: payload.tailMarkdown, streaming: payload.streaming, images: payload.images,
+                  blockIdOffset: payload.blockIdOffset, firstListStart: payload.firstListStart,
+                  onFreezePrefix: onFreeze)
+        .id(payload.textIndex)
+        .environment(\.quoteProse, quote)
+      ForEach(payload.compactions, id: \.id) { CompactionRow(block: $0) }
+      ForEach(Array(payload.goals.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
+      ForEach(payload.permissions, id: \.id) { block in
+        PermissionCard(block: block) { sessionActions.permission(block.id, $0) }
+      }
+      if !payload.running, let settled = payload.settledTurn {
+        if turnOutcome(settled) != nil { OutcomeRow(turn: settled) }
+        if payload.actions && showsTurnActions(settled, running: false) && !readOnly {
+          TurnActions(turn: settled, index: payload.index, settings: payload.settings, retry: payload.retry,
+                      last: payload.last)
+        }
+      }
+    }
+    .environment(\.replyTap, tap)
+    .padding(.horizontal, Metrics.pad)
+    .modifier(OptionalReplyTap(tap: deferSelection ? nil : tap))
+    .environment(\.rowHeight, WebMetrics.chatRow)
+    .environment(\.rowEnter, payload.running && !quiet)
+    .environment(\.entranceScope, EntranceScope(live: payload.running, scope: payload.scope))
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+/// Only attaches a SwiftUI tap gesture when a non-hosted row actually needs tap-to-reveal; hosted collection rows
+/// handle tap-to-reveal on the shared collection gesture so SwiftUI `Text` links remain unobstructed.
+private struct OptionalReplyTap: ViewModifier {
+  let tap: ReplyTap?
+
+  func body(content: Content) -> some View {
+    if let tap {
+      content.contentShape(Rectangle()).onTapGesture { tap() }
+    } else {
+      content
+    }
+  }
 }
 
 /// One agent turn: --pad sides, a --gap column, rows at --chat-row
@@ -52,11 +153,18 @@ struct AgentMessage: View {
   @Environment(\.subagentTranscript) private var readOnly
   @Environment(\.quietEntrance) private var quiet
   @Environment(\.turnReveal) private var reveal
+  @Environment(\.deferSelectionSurface) private var deferSelection
+  @Environment(\.rowHitTargets) private var hitTargets
 
   var body: some View {
     // An older settled reply opens and closes its action row on a tap (the newest one always shows it). Rows,
     // links and buttons inside keep their own taps; the text's own taps reach it through its selection surface
-    let tap = !last && !readOnly && actions && showsTurnActions(turn, running: running) ? reveal.map { ReplyTap(index: index, reveal: $0) } : nil
+    let canTap = !last && !readOnly && actions && showsTurnActions(turn, running: running)
+    let tap = canTap ? reveal.map { ReplyTap(index: index, reveal: $0) } : nil
+    let _ = {
+      hitTargets?.turnIndex = index
+      hitTargets?.canTapActions = canTap
+    }()
     let absorbed = absorbedNotices(turn)
     let shown = displayTurn(turn, absorbed: absorbed)
     // Subagent rows sit where they were delegated: a placed delegation row stays in the turn's process, and its node
@@ -96,8 +204,7 @@ struct AgentMessage: View {
     .environment(\.delegations, placement.byId)
     .environment(\.replyTap, tap)
     .padding(.horizontal, Metrics.pad)
-    .contentShape(Rectangle())
-    .onTapGesture { tap?() }
+    .modifier(OptionalReplyTap(tap: deferSelection ? nil : tap))
     .environment(\.rowHeight, WebMetrics.chatRow)
     // Entrance effects belong to the live turn only; restored history stays still
     .environment(\.rowEnter, running && !quiet)
@@ -154,7 +261,9 @@ struct CodexMessage: View {
       // A long press on a block of the reply quotes it into the composer (Quotes.swift); a child's transcript has no
       // composer of its own to quote into
       let quote = readOnly ? nil : QuoteAction(run: actions.quote)
-      if cut == .whole {
+      if cut == .headOnly {
+        // The reply streams in separate rows below this head row
+      } else if cut == .whole {
         ForEach(Array(split.reply.enumerated()), id: \.offset) { _, block in
           StreamProse(block: block).environment(\.quoteProse, quote)
             // The reply sits under the process fold and moves with every frame of its reveal. As a group it moves as

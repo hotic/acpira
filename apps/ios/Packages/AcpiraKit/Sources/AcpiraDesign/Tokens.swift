@@ -373,6 +373,9 @@ public enum Metrics {
   public static let messagePreviewLines = 6
   /// A popover's width (--pop-w-lg)
   public static let popLg: CGFloat = 300
+  /// Widest column a markdown table cell takes before wrapping inside its horizontal scroller: keeps long prose cells
+  /// readable on a phone screen and prevents multi-thousand-point `Grid` backing textures during streaming and scrolling
+  public static let tableCellMax: CGFloat = 260
   /// The widest card a compact-adapted popover shows unclipped on a 402 pt screen (the stats card's three tiles)
   public static let popWide: CGFloat = 336
   // The phone composer (iOS only: the webview has no such layout). The desktop card's radius, controls sized for a

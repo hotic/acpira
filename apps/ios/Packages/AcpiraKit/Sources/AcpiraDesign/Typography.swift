@@ -38,10 +38,8 @@ public struct TextStyle: Hashable, Sendable {
 
   /// The line box above and below the baseline (Blink's rounding, see `baselineDepth`)
   var reach: (up: CGFloat, down: CGFloat) {
-    let f = ctFont()
-    let ascent = CTFontGetAscent(f).rounded(), descent = CTFontGetDescent(f).rounded()
-    let up = ((lineHeight - ascent - descent) / 2).rounded(.down) + ascent
-    return (up, lineHeight - up)
+    let m = FontCache.shared.metrics(for: self)
+    return (m.up, m.down)
   }
 
   /// How much a CSS line box grows above and below its own strut when the line also holds inline text in `inner`
@@ -55,13 +53,7 @@ public struct TextStyle: Hashable, Sendable {
   /// Tracking that brings the mono face to the webview's 0.6em advance (Menlo's own is 0.602em)
   public var tracking: CGFloat {
     guard mono else { return 0 }
-    let f = ctFont()
-    var unit: [UniChar] = Array("0".utf16)
-    var glyph: CGGlyph = 0
-    CTFontGetGlyphsForCharacters(f, &unit, &glyph, 1)
-    var advance = CGSize.zero
-    CTFontGetAdvancesForGlyphs(f, .horizontal, &glyph, &advance, 1)
-    return size * 0.6 - advance.width
+    return FontCache.shared.metrics(for: self).tracking
   }
 
   /// The CoreText face behind `font()` at regular weight, for metrics
@@ -129,10 +121,39 @@ final class FontCache: @unchecked Sendable {
     var mono: Bool
   }
 
+  struct StyleMetrics: Sendable {
+    var up: CGFloat
+    var down: CGFloat
+    var tracking: CGFloat
+  }
+
   static let shared = FontCache()
   private let lock = NSLock()
   private var ctFonts: [Key: CTFont] = [:]
   private var fonts: [Key: Font] = [:]
+  private var styleMetrics: [TextStyle: StyleMetrics] = [:]
+
+  func metrics(for style: TextStyle) -> StyleMetrics {
+    if let hit = lock.withLock({ styleMetrics[style] }) { return hit }
+    let f = style.ctFont()
+    let ascent = CTFontGetAscent(f).rounded(), descent = CTFontGetDescent(f).rounded()
+    let up = ((style.lineHeight - ascent - descent) / 2).rounded(.down) + ascent
+    var tracking: CGFloat = 0
+    if style.mono {
+      var unit: [UniChar] = [0x0030] // '0'
+      var glyph: CGGlyph = 0
+      CTFontGetGlyphsForCharacters(f, &unit, &glyph, 1)
+      var advance = CGSize.zero
+      CTFontGetAdvancesForGlyphs(f, .horizontal, &glyph, &advance, 1)
+      tracking = style.size * 0.6 - advance.width
+    }
+    let m = StyleMetrics(up: up, down: style.lineHeight - up, tracking: tracking)
+    return lock.withLock {
+      if let hit = styleMetrics[style] { return hit }
+      styleMetrics[style] = m
+      return m
+    }
+  }
 
   /// Made outside the lock: `make` may itself go through the cache
   func ctFont(_ key: Key, make: () -> CTFont) -> CTFont {

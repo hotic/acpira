@@ -1,5 +1,6 @@
 #if os(iOS)
 import AcpiraDesign
+import AcpiraMarkdown
 import AcpiraModels
 import SwiftUI
 import Testing
@@ -261,13 +262,39 @@ import UIKit
       .sizeThatFits(in: CGSize(width: width, height: UIView.layoutFittingExpandedSize.height))
     #expect(measured.width <= width + 0.5)
     let cell = try #require(view.cellForItem(at: IndexPath(item: 0, section: 0)))
-    let surfaces = selectionViews(in: cell)
-    #expect(!surfaces.isEmpty)
-    for surface in surfaces {
-      let frame = surface.convert(surface.bounds, to: cell)
-      #expect(frame.minX >= 0)
-      #expect(frame.maxX <= cell.bounds.width)
-    }
+    #expect(cell.bounds.width <= width + 0.5)
+    // Idle hosted rows defer creating native `SelectionTextView`s until the user interacts with a paragraph.
+    #expect(selectionViews(in: cell).isEmpty)
+  }
+
+  /// Hosted collection rows mount zero `SelectionTextView`s while idle, and still resolve the touched block and
+  /// mount selection views on demand for a double tap or context menu "Select text".
+  @Test func hostedRowsDeferSelectionViewsUntilActivated() async throws {
+    let control = TranscriptControl()
+    let md = "第一段测试文字，含有一个 [示例链接](https://example.com) 和 `src/main.swift`。\n\n第二段普通文字，用于验证按需创建选择层。"
+    let turn = AgentTurn(blocks: [.text(TextBlock(markdown: md))], stop: .end_turn)
+    let items = [ThreadItem(id: "a1", kind: .agent(turn, index: 1, scope: "s:1", running: false, last: true,
+                                                   settings: nil, retry: false, subagents: []), exchange: 0)]
+    let host = UIHostingController(rootView: TranscriptCollection(items: items, control: control, motion: false) { _ in })
+    host.safeAreaRegions = []
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    host.view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(200))
+    let view = try #require(control.view)
+    view.layoutIfNeeded()
+    let cell = try #require(view.cellForItem(at: IndexPath(item: 0, section: 0)))
+    // No SelectionTextView exists before any selection gesture
+    #expect(selectionViews(in: cell).isEmpty)
+    // The collection owns a single shared UIContextMenuInteraction for deferred block menus
+    #expect(view.interactions.contains { $0 is UIContextMenuInteraction })
+    // On-demand probe resolves web links inside list items without mounting persistent selection views
+    let listBlock = try #require(Markdown.parse("- 第一项\n- 详见 [docs](https://example.com/docs)").first)
+    let inspected = TextSelectionProbe.inspect(block: listBlock, quoteBlock: listBlock, width: 360,
+                                               pointInBlock: CGPoint(x: 90, y: 48))
+    #expect(inspected.link?.absoluteString == "https://example.com/docs")
   }
 
   /// A view that starts at the session's tail (`SessionView.earlier`), read at its top: the spinner, the turn the view

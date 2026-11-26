@@ -18,12 +18,177 @@ struct QuoteAction: Equatable {
 extension EnvironmentValues {
   /// Set along the agent's reply: its selection menu quotes the selected text into the composer
   @Entry var quoteProse: QuoteAction? = nil
+  /// When true (hosted `TranscriptCollection` cells), per-block SwiftUI `.contextMenu` modifiers are omitted and
+  /// handled by one shared `UIContextMenuInteraction` on the collection view using `rowHitTargets`.
+  @Entry var deferQuoteMenu = false
+  /// Per-cell block geometry registry populated by `BlockStackLayout` for deferred context menus and double-tap selection.
+  @Entry var rowHitTargets: RowHitTargets? = nil
+  /// Set inside a nested block (e.g. `ProseQuote`) so inner `ProseBlocks` do not overwrite the outer block's hit entry.
+  @Entry var insideQuotedBlock = false
 }
+
+/// Named coordinate space on each hosted collection row so `ProseBlocks` / `ProseRun` map block frames into cell space.
+enum RowHitSpace {
+  nonisolated static let name = "acpira.rowHitSpace"
+}
+
+/// One top-level reply block's geometry and menu metadata within a hosted cell.
+struct BlockHitEntry {
+  /// Block passed to Quote / Copy (the whole list block for a sliced list run)
+  var quoteBlock: MDBlock
+  /// Block rendered in this row (the slice or single block) for link probing and preview
+  var renderedBlock: MDBlock
+  /// Frame local to its `BlockStackLayout` container
+  var localFrame: CGRect
+  var offersSelection: Bool
+}
+
+/// Non-observable per-row storage recording top-level reply block frames during layout, without adding any
+/// `UIView`, `GeometryReader`, or SwiftUI `.contextMenu` per paragraph.
+@MainActor final class RowHitTargets {
+  struct Bucket {
+    var origin: CGPoint = .zero
+    var entries: [BlockHitEntry] = []
+  }
+
+  private var buckets: [ObjectIdentifier: Bucket] = [:]
+  /// Turn index and tap-to-reveal flag for older replies (`ReplyTap`), recorded by the row's content
+  var turnIndex: Int?
+  var canTapActions = false
+
+  func setOrigin(_ origin: CGPoint, for key: ObjectIdentifier) {
+    buckets[key, default: Bucket()].origin = origin
+  }
+
+  func setEntries(_ entries: [BlockHitEntry], for key: ObjectIdentifier) {
+    buckets[key, default: Bucket()].entries = entries
+  }
+
+  func removeBucket(_ key: ObjectIdentifier) {
+    buckets[key] = nil
+  }
+
+  func clear() {
+    buckets.removeAll(keepingCapacity: true)
+    turnIndex = nil
+    canTapActions = false
+  }
+
+  /// Resolves the reply block at `pointInRow` (in the `HostedRow` / cell content coordinate space).
+  func hit(at pointInRow: CGPoint) -> (entry: BlockHitEntry, frameInRow: CGRect)? {
+    for bucket in buckets.values {
+      for entry in bucket.entries {
+        let frame = entry.localFrame.offsetBy(dx: bucket.origin.x, dy: bucket.origin.y)
+        // Slight vertical pad covers the block gap between paragraphs so pressing near a line edge still hits
+        if frame.insetBy(dx: -4, dy: -4).contains(pointInRow) {
+          return (entry, frame)
+        }
+      }
+    }
+    return nil
+  }
+
+  nonisolated static func offersSelection(_ block: MDBlock) -> Bool {
+    switch block {
+    case .math, .rule, .code(lang: "mermaid", _): false
+    case .paragraph(let inlines): !inlines.contains { if case .image = $0 { true } else { false } }
+    default: true
+    }
+  }
+}
+
+/// Lightweight vertical stack `Layout` matching `VStack(alignment: .leading, spacing:)` that also records each child's
+/// placed bounds into `RowHitTargets` in the same layout pass — zero extra views, gestures, or preference passes.
+/// Caches subview measurements between `sizeThatFits` and `placeSubviews` so every paragraph is measured once per width.
+struct BlockStackLayout: Layout {
+  var spacing: CGFloat
+  /// Non-owning record closure run during `placeSubviews`; nil behaves identically to `VStack`
+  var onPlace: (@Sendable ([CGRect]) -> Void)? = nil
+
+  struct Cache {
+    var hasWidth = false
+    var width: CGFloat? = nil
+    var sizes: [CGSize] = []
+    var totalSize: CGSize = .zero
+  }
+
+  func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+  func updateCache(_ cache: inout Cache, subviews: Subviews) {
+    cache.hasWidth = false
+    cache.sizes.removeAll(keepingCapacity: true)
+  }
+
+  private func measure(width: CGFloat?, subviews: Subviews, cache: inout Cache) {
+    cache.sizes.removeAll(keepingCapacity: true)
+    cache.sizes.reserveCapacity(subviews.count)
+    var totalHeight: CGFloat = 0
+    var maxWidth: CGFloat = 0
+    let childProposal = ProposedViewSize(width: width, height: nil)
+    for (i, subview) in subviews.enumerated() {
+      let size = subview.sizeThatFits(childProposal)
+      cache.sizes.append(size)
+      if i > 0 { totalHeight += spacing }
+      totalHeight += size.height
+      if size.width > maxWidth { maxWidth = size.width }
+    }
+    cache.width = width
+    cache.hasWidth = true
+    cache.totalSize = CGSize(width: width ?? maxWidth, height: totalHeight)
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+    if !cache.hasWidth || cache.width != proposal.width || cache.sizes.count != subviews.count {
+      measure(width: proposal.width, subviews: subviews, cache: &cache)
+    }
+    return cache.totalSize
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+    if !cache.hasWidth || cache.width != bounds.width || cache.sizes.count != subviews.count {
+      measure(width: bounds.width, subviews: subviews, cache: &cache)
+    }
+    var y = bounds.minY
+    var frames: [CGRect] = []
+    if onPlace != nil { frames.reserveCapacity(subviews.count) }
+    for (i, subview) in subviews.enumerated() {
+      let size = cache.sizes[i]
+      if i > 0 { y += spacing }
+      subview.place(at: CGPoint(x: bounds.minX, y: y), anchor: .topLeading,
+                    proposal: ProposedViewSize(width: bounds.width, height: size.height))
+      if onPlace != nil {
+        frames.append(CGRect(x: 0, y: y - bounds.minY, width: bounds.width, height: size.height))
+      }
+      y += size.height
+    }
+    onPlace?(frames)
+  }
+}
+
+/// Long-press preview card matching `QuoteMenu`'s original styling, rendered on demand by `TranscriptCollection`
+struct QuotePreviewCard: View {
+  let text: String
+
+  var body: some View {
+    Text(web: text)
+      .textStyle(WebType.text1)
+      .foregroundStyle(Palette.fg1)
+      .lineLimit(Metrics.messagePreviewLines)
+      .truncationMode(.tail)
+      .frame(width: Metrics.popLg, alignment: .leading)
+      .fixedSize(horizontal: false, vertical: true)
+      .padding(Metrics.s3)
+      .background(Palette.bg2, in: RoundedRectangle(cornerRadius: Metrics.rCardRound))
+  }
+}
+
+/// Stable reference token giving each mounted `ProseBlocks` / `ProseRun` its own bucket key in `RowHitTargets`
+final class HitBucketToken {}
 
 extension View {
   /// The original block actions and an explicit entry into native range selection.
-  @ViewBuilder func quoteMenu(_ block: MDBlock, _ quote: QuoteAction?) -> some View {
-    if let quote, block != .rule {
+  @ViewBuilder func quoteMenu(_ block: MDBlock, _ quote: QuoteAction?, deferred: Bool = false) -> some View {
+    if !deferred, let quote, block != .rule {
       #if canImport(UIKit)
       modifier(QuoteMenu(block: block, quote: quote))
       #else

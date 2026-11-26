@@ -38,7 +38,43 @@ public enum Markdown {
   }
 
   static func lines(_ source: String) -> [String] {
-    source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+    let normalized = source.utf8.contains(0x0D) ? source.replacingOccurrences(of: "\r\n", with: "\n") : source
+    return normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+  }
+
+  /// Line boundaries (UTF-8 start offset of each line) alongside top-level blocks and list-item line starts, used
+  /// by streaming row splitting to freeze settled prefixes at exact source offsets without diverging from `BlockParser`
+  public struct SourceLayout: Sendable {
+    public let blocks: [MDBlock]
+    /// Start line index of each top-level block
+    public let starts: [Int]
+    /// End line index (exclusive) of each top-level block
+    public let ends: [Int]
+    /// For each top-level list block (keyed by block index), the start line index of each top-level item
+    public let listItemStarts: [Int: [Int]]
+    /// UTF-8 byte offset in the input string where each line starts, plus a sentinel at `source.utf8.count`
+    public let lineOffsets: [Int]
+    public let lineCount: Int
+  }
+
+  public static func parseLayout(_ source: String) -> SourceLayout {
+    // Compute UTF-8 byte start offsets for each line (preserving exact offsets even with CRLF)
+    var lineOffsets: [Int] = [0]
+    let utf8 = source.utf8
+    var idx = utf8.startIndex
+    var bytePos = 0
+    while idx < utf8.endIndex {
+      let b = utf8[idx]
+      idx = utf8.index(after: idx)
+      bytePos += 1
+      if b == 0x0A { lineOffsets.append(bytePos) }
+    }
+    lineOffsets.append(bytePos)
+    let rawLines = lines(source)
+    var parser = BlockParser(lines: rawLines)
+    let blocks = parser.blocks()
+    return SourceLayout(blocks: blocks, starts: parser.starts, ends: parser.ends,
+                        listItemStarts: parser.listItemStarts, lineOffsets: lineOffsets, lineCount: rawLines.count)
   }
 
   /// Plain text of inline content (copy, accessibility)
@@ -102,6 +138,10 @@ struct BlockParser {
   var i = 0
   /// The first line of each block `blocks()` returned
   private(set) var starts: [Int] = []
+  /// The exclusive end line of each block `blocks()` returned
+  private(set) var ends: [Int] = []
+  /// Top-level list item line starts, keyed by block index in `blocks()`
+  private(set) var listItemStarts: [Int: [Int]] = [:]
 
   init(lines: [String]) { self.lines = lines }
 
@@ -183,18 +223,26 @@ struct BlockParser {
       if BlockParser.isBlank(line) { i += 1; continue }
       // Every branch below adds exactly one block; one that adds none takes its start back
       starts.append(i)
-      if let f = BlockParser.fence(line) { out.append(fencedCode(f)); continue }
-      if line.trimmingCharacters(in: .whitespaces).hasPrefix("$$") { out.append(math()); continue }
-      if let (level, text) = BlockParser.heading(line) { out.append(.heading(level: level, Inline.parse(text))); i += 1; continue }
-      if BlockParser.isRule(line) { out.append(.rule); i += 1; continue }
-      if line.drop(while: { $0 == " " }).hasPrefix(">") { out.append(quote()); continue }
-      if BlockParser.listMarker(line) != nil { out.append(list()); continue }
-      if i + 1 < lines.count, line.contains("|"), BlockParser.isTableDelimiter(lines[i + 1]) { out.append(table()); continue }
+      if let f = BlockParser.fence(line) { out.append(fencedCode(f)); ends.append(i); continue }
+      if line.trimmingCharacters(in: .whitespaces).hasPrefix("$$") { out.append(math()); ends.append(i); continue }
+      if let (level, text) = BlockParser.heading(line) { out.append(.heading(level: level, Inline.parse(text))); i += 1; ends.append(i); continue }
+      if BlockParser.isRule(line) { out.append(.rule); i += 1; ends.append(i); continue }
+      if line.drop(while: { $0 == " " }).hasPrefix(">") { out.append(quote()); ends.append(i); continue }
+      if BlockParser.listMarker(line) != nil {
+        let blockIdx = out.count
+        let (listBlock, itemLines) = listWithLines()
+        out.append(listBlock)
+        listItemStarts[blockIdx] = itemLines
+        ends.append(i)
+        continue
+      }
+      if i + 1 < lines.count, line.contains("|"), BlockParser.isTableDelimiter(lines[i + 1]) { out.append(table()); ends.append(i); continue }
       let block = paragraph()
       // A paragraph of nothing but `<br>` tags adds no block: a model stuck repeating the tag until its output limit
       // filled one reply with thousands of them, and each stood as a paragraph of its own
       if case .paragraph(let inlines) = block, inlines.allSatisfy(Inline.isBlank) { starts.removeLast(); continue }
       out.append(block)
+      ends.append(i)
     }
     return out
   }
@@ -252,11 +300,13 @@ struct BlockParser {
     return .quote(sub.blocks())
   }
 
-  mutating func list() -> MDBlock {
+  mutating func listWithLines() -> (MDBlock, [Int]) {
     let first = BlockParser.listMarker(lines[i])!
     var items: [[MDBlock]] = []
+    var itemLines: [Int] = []
     while i < lines.count, let m = BlockParser.listMarker(lines[i]), m.ordered == first.ordered,
           m.indent < first.content, m.indent <= first.indent + 3 {
+      itemLines.append(i)
       // The item's first line, dedented to its content column
       var body = [String(lines[i].dropFirst(min(m.content, lines[i].count)))]
       i += 1
@@ -280,7 +330,7 @@ struct BlockParser {
       while j < lines.count && BlockParser.isBlank(lines[j]) { j += 1 }
       if j < lines.count, let next = BlockParser.listMarker(lines[j]), next.ordered == first.ordered, next.indent < first.content { i = j } else { break }
     }
-    return .list(ordered: first.ordered, start: first.number, items: items)
+    return (.list(ordered: first.ordered, start: first.number, items: items), itemLines)
   }
 
   mutating func table() -> MDBlock {

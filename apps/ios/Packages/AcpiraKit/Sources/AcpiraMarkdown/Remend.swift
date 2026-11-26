@@ -18,7 +18,7 @@ public enum Remend {
     n = run.htmlTags(n)
     n = run.setextHeadings(n)
     n = run.links(n)
-    if n.hasSuffix(U.units("](streamdown:incomplete-link)")) { return U.string(n) }
+    if n.hasSuffix(Tokens.incompleteLinkSuffix) { return U.string(n) }
     n = run.boldItalic(n)
     n = run.bold(n)
     n = run.italicDoubleUnderscore(n)
@@ -132,52 +132,180 @@ extension Array where Element == UInt16 {
   fileprivate func hasPrefix(_ s: [UInt16]) -> Bool { count >= s.count && self[..<s.count].elementsEqual(s) }
 }
 
-/// A compiled pattern matched over UTF-16 units; `$` in the source patterns is JavaScript's end of input (`\z`)
-private struct Pattern {
-  let regex: NSRegularExpression
-  init(_ pattern: String, lines: Bool = false) {
-    regex = try! NSRegularExpression(pattern: pattern, options: lines ? [.anchorsMatchLines] : [])
-  }
-
-  /// The first match's capture ranges (`nil` for a group that did not take part)
-  func match(_ s: S) -> [NSRange?]? {
-    let ns = U.string(s) as NSString
-    guard let m = regex.firstMatch(in: ns as String, range: NSRange(location: 0, length: ns.length)) else { return nil }
-    return (0..<m.numberOfRanges).map { m.range(at: $0).location == NSNotFound ? nil : m.range(at: $0) }
-  }
-
-  func test(_ s: S) -> Bool { match(s) != nil }
-
-  /// Every match, for `replace(/…/g, fn)`
-  func matches(_ s: S) -> [NSTextCheckingResult] {
-    let ns = U.string(s) as NSString
-    return regex.matches(in: ns as String, range: NSRange(location: 0, length: ns.length))
-  }
-
-  static func group(_ s: S, _ r: NSRange?) -> S { r.map { Array(s[$0.location..<($0.location + $0.length)]) } ?? [] }
+private enum Tokens {
+  static let incompleteLinkSuffix = U.units("](streamdown:incomplete-link)")
+  static let incompleteLinkAppend = U.units("](\(Remend.incompleteLink))")
+  static let linkMid = U.units("](")
+  static let tripleStar = U.units("***")
+  static let doubleStar = U.units("**")
+  static let doubleUnder = U.units("__")
+  static let doubleTilde = U.units("~~")
+  static let doubleDollar = U.units("$$")
+  static let tripleTick = U.units("```")
+  static let doubleTick = U.units("``")
+  static let escapedTilde = U.units("\\~")
+  static let escapedGt = U.units("\\>")
+  static let zwsp = U.units("\u{200B}")
+  static let underBold = U.units("_**")
+  static let nlDoubleDollar = U.units("\n$$")
+  static let inlineMathOpen = U.units("\\(")
+  static let blockMathOpen = U.units("\\[")
 }
 
-private enum P {
-  static let comparison = Pattern(#"^(\s*(?:[-*+]|\d+[.)]) +)>(=?\s*[$]?\d)"#, lines: true)
-  static let bold = Pattern(#"(\*\*)([^*]*\*?)\z"#)
-  static let doubleUnderscore = Pattern(#"(__)([^_]*?)\z"#)
-  static let boldItalic = Pattern(#"(\*\*\*)([^*]*?)\z"#)
-  static let singleAsterisk = Pattern(#"(\*)([^*]*?)\z"#)
-  static let singleUnderscore = Pattern(#"(_)([^_]*?)\z"#)
-  static let inlineCode = Pattern(#"(`)([^`]*?)\z"#)
-  static let strike = Pattern(#"(~~)([^~]*?)\z"#)
-  static let markersOnly = Pattern(#"\A[\s_~*`]*\z"#)
-  static let bareListItem = Pattern(#"\A[\s]*[-*+][\s]+\z"#)
-  static let oneLineFence = Pattern("\\A```[^`\\n]*```?\\z")
-  static let starRule = Pattern(#"\A\*{4,}\z"#)
-  static let underscoreTail = Pattern(#"(__)([^_]+)_\z"#)
-  static let strikeTail = Pattern(#"(~~)([^~]+)~\z"#)
-  static let htmlTail = Pattern(#"<[a-zA-Z/][^>]*\z"#)
-  static let tilde = Pattern(#"([\p{L}\p{N}_])~(?!~)(?=[\p{L}\p{N}_])"#)
-  static let dashes = Pattern(#"\A-{1,2}\z"#)
-  static let dashItem = Pattern(#"\A[\s]*-{1,2}[\s]+\z"#)
-  static let equals = Pattern(#"\A={1,2}\z"#)
-  static let equalsItem = Pattern(#"\A[\s]*={1,2}[\s]+\z"#)
+/// Fast UTF-16 character-class and suffix matchers replacing per-call NSString + NSRegularExpression scans.
+/// Every matcher mirrors its original JS/ICU pattern over UTF-16 code units.
+private enum Scan {
+  @inline(__always) static func isSpace(_ c: UInt16) -> Bool {
+    c == 0x20 || (0x09...0x0D).contains(c) || c == 0x85 || c == 0xA0 || c == 0x1680
+      || (0x2000...0x200A).contains(c) || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000
+  }
+
+  @inline(__always) static func isDigit(_ c: UInt16) -> Bool { (0x30...0x39).contains(c) }
+  @inline(__always) static func isASCIIAlpha(_ c: UInt16) -> Bool { (0x41...0x5A).contains(c) || (0x61...0x7A).contains(c) }
+
+  /// `\A[\s_~*`]*\z`
+  static func isMarkersOnly(_ s: S, from start: Int = 0) -> Bool {
+    var i = start
+    while i < s.count {
+      let c = s[i]
+      if c != U.under && c != U.tilde && c != U.star && c != U.tick && !isSpace(c) { return false }
+      i += 1
+    }
+    return true
+  }
+
+  /// `\A[\s]*[-*+][\s]+\z`
+  static func isBareListItem(_ s: S, from start: Int, to end: Int) -> Bool {
+    var i = start
+    while i < end && isSpace(s[i]) { i += 1 }
+    guard i < end else { return false }
+    let m = s[i]
+    guard m == 0x2D || m == U.star || m == 0x2B else { return false }
+    i += 1
+    guard i < end && isSpace(s[i]) else { return false }
+    while i < end && isSpace(s[i]) { i += 1 }
+    return i == end
+  }
+
+  /// `\A```[^`\n]*```?\z`
+  static func isOneLineFence(_ s: S) -> Bool {
+    guard s.count >= 5, s[0] == U.tick, s[1] == U.tick, s[2] == U.tick else { return false }
+    // Close is 2 or 3 trailing backticks
+    let closeLen: Int
+    if s.count >= 6 && s[s.count - 1] == U.tick && s[s.count - 2] == U.tick && s[s.count - 3] == U.tick {
+      closeLen = 3
+    } else if s[s.count - 1] == U.tick && s[s.count - 2] == U.tick {
+      closeLen = 2
+    } else {
+      return false
+    }
+    let bodyEnd = s.count - closeLen
+    guard bodyEnd >= 3 else { return false }
+    for i in 3..<bodyEnd {
+      if s[i] == U.tick || s[i] == U.newline { return false }
+    }
+    return true
+  }
+
+  /// `\A\*{4,}\z`
+  static func isStarRule(_ s: S) -> Bool {
+    guard s.count >= 4 else { return false }
+    for c in s { if c != U.star { return false } }
+    return true
+  }
+
+  /// `\A-{1,2}\z` or `\A={1,2}\z`
+  static func isOneOrTwo(_ s: S, of ch: UInt16) -> Bool {
+    (s.count == 1 && s[0] == ch) || (s.count == 2 && s[0] == ch && s[1] == ch)
+  }
+
+  /// `\A[\s]*<ch>{1,2}[\s]+\z`
+  static func isRepeatedItem(_ s: S, of ch: UInt16) -> Bool {
+    var i = 0
+    while i < s.count && isSpace(s[i]) { i += 1 }
+    var n = 0
+    while i < s.count && s[i] == ch { i += 1; n += 1 }
+    guard n == 1 || n == 2 else { return false }
+    guard i < s.count && isSpace(s[i]) else { return false }
+    while i < s.count && isSpace(s[i]) { i += 1 }
+    return i == s.count
+  }
+
+  /// `<[a-zA-Z/][^>]*\z` -> returns `<` index
+  static func htmlTailStart(_ s: S) -> Int? {
+    var i = s.count - 1
+    while i >= 0 {
+      let c = s[i]
+      if c == U.gt { return nil }
+      if c == U.lt {
+        if i + 1 < s.count, let next = s[js: i + 1], isASCIIAlpha(next) || next == U.slash { return i }
+        // A `<` not followed by [a-zA-Z/] cannot match, and an outer `<` can still match across it (not `>`).
+      }
+      i -= 1
+    }
+    return nil
+  }
+
+  /// `(\*\*)([^*]*\*?)\z` -> returns start of group 2 (right after `**`), or nil
+  static func boldTail(_ s: S) -> Int? {
+    guard s.count >= 2 else { return nil }
+    var i = s.count
+    if s[i - 1] == U.star { i -= 1 }
+    while i > 0 && s[i - 1] != U.star { i -= 1 }
+    guard i >= 2 && s[i - 1] == U.star && s[i - 2] == U.star else { return nil }
+    return i
+  }
+
+  /// `(\*\*\*)([^*]*?)\z` -> returns start of group 2 (right after `***`), or nil
+  static func boldItalicTail(_ s: S) -> Int? {
+    guard s.count >= 3 else { return nil }
+    var i = s.count
+    while i > 0 && s[i - 1] != U.star { i -= 1 }
+    guard i >= 3 && s[i - 1] == U.star && s[i - 2] == U.star && s[i - 3] == U.star else { return nil }
+    return i
+  }
+
+  /// `(__)([^_]*?)\z` -> returns start of group 2 (right after `__`), or nil
+  static func doubleUnderscoreTail(_ s: S) -> Int? {
+    guard s.count >= 2 else { return nil }
+    var i = s.count
+    while i > 0 && s[i - 1] != U.under { i -= 1 }
+    guard i >= 2 && s[i - 1] == U.under && s[i - 2] == U.under else { return nil }
+    return i
+  }
+
+  /// `(__)([^_]+)_\z`
+  static func hasUnderscoreTail(_ s: S) -> Bool {
+    guard s.count >= 4, s[s.count - 1] == U.under else { return false }
+    var i = s.count - 1
+    while i > 0 && s[i - 1] != U.under { i -= 1 }
+    return i < s.count - 1 && i >= 2 && s[i - 1] == U.under && s[i - 2] == U.under
+  }
+
+  /// `` (`)([^`]*?)\z `` -> returns start of group 2 (right after `` ` ``), or nil
+  static func inlineCodeTail(_ s: S) -> Int? {
+    var i = s.count
+    while i > 0 && s[i - 1] != U.tick { i -= 1 }
+    guard i >= 1 && s[i - 1] == U.tick else { return nil }
+    return i
+  }
+
+  /// `(~~)([^~]*?)\z` -> returns start of group 2 (right after `~~`), or nil
+  static func strikeTail(_ s: S) -> Int? {
+    guard s.count >= 2 else { return nil }
+    var i = s.count
+    while i > 0 && s[i - 1] != U.tilde { i -= 1 }
+    guard i >= 2 && s[i - 1] == U.tilde && s[i - 2] == U.tilde else { return nil }
+    return i
+  }
+
+  /// `(~~)([^~]+)~\z`
+  static func hasSingleStrikeTail(_ s: S) -> Bool {
+    guard s.count >= 4, s[s.count - 1] == U.tilde else { return false }
+    var i = s.count - 1
+    while i > 0 && s[i - 1] != U.tilde { i -= 1 }
+    return i < s.count - 1 && i >= 2 && s[i - 1] == U.tilde && s[i - 2] == U.tilde
+  }
 }
 
 // MARK: - Code and math context
@@ -288,7 +416,7 @@ private struct Run {
 
   /// `Z`
   static func hasMath(_ n: S) -> Bool {
-    n.contains(U.dollar) || U.includes(n, U.units("\\(")) || U.includes(n, U.units("\\["))
+    n.contains(U.dollar) || U.includes(n, Tokens.inlineMathOpen) || U.includes(n, Tokens.blockMathOpen)
   }
 
   /// `m`: inside a link / image URL `](…)`
@@ -433,12 +561,11 @@ private struct Run {
   }
 
   /// `En` / `yn`: an emphasis tail that needs no closing
-  static func closedEnough(_ n: S, _ tail: S, _ at: Int, _ c: UInt16) -> Bool {
-    if tail.isEmpty || P.markersOnly.test(tail) { return true }
-    let before = U.sub(n, 0, at)
-    let nl = U.lastIndexOf(before, [U.newline])
-    let line = U.sub(n, nl == -1 ? 0 : nl + 1, at)
-    if P.bareListItem.test(line) && tail.contains(U.newline) { return true }
+  static func closedEnough(_ n: S, _ tailStart: Int, _ at: Int, _ c: UInt16) -> Bool {
+    if tailStart >= n.count || Scan.isMarkersOnly(n, from: tailStart) { return true }
+    var nl = at - 1
+    while nl >= 0 && n[nl] != U.newline { nl -= 1 }
+    if Scan.isBareListItem(n, from: nl + 1, to: at) && n[tailStart...].contains(U.newline) { return true }
     return ruleLine(n, at, c)
   }
 
@@ -447,59 +574,101 @@ private struct Run {
   /// `un`: `a~b` is not a strikethrough opener
   mutating func singleTilde(_ n: S) -> S {
     guard n.contains(U.tilde) else { return n }
-    var out = S(), last = 0
-    for m in P.tilde.matches(n) {
-      let g1 = m.range(at: 1)
-      let o = g1.location + g1.length
-      out += n[last..<m.range.location]
-      if inCode(n, o) {
-        out += n[m.range.location..<(m.range.location + m.range.length)]
-      } else {
-        out += n[g1.location..<o] + U.units("\\~")
+    var out: S?
+    var last = 0
+    var i = 1
+    while i + 1 < n.count {
+      if n[i] == U.tilde && n[i + 1] != U.tilde && U.word(n[i - 1]) && U.word(n[i + 1]) {
+        if !inCode(n, i) {
+          if out == nil { out = S(); out!.reserveCapacity(n.count + 8) }
+          out! += n[last..<i]
+          out! += Tokens.escapedTilde
+          last = i + 1
+        }
+        // Equivalent to regex consuming `([\p{L}\p{N}_])~` so scanning continues at `i + 1`
+        i += 2
+        continue
       }
-      last = m.range.location + m.range.length
+      i += 1
     }
-    out += n[last...]
-    return out
+    guard var result = out else { return n }
+    result += n[last...]
+    return result
   }
 
-  /// `y`: `- >5` in a list item is not a quote
+  /// `y`: `- >5` in a list item is not a quote (`^(\s*(?:[-*+]|\d+[.)]) +)>(=?\s*[$]?\d)` multiline)
   mutating func comparisonOperators(_ n: S) -> S {
     guard n.contains(U.gt) else { return n }
-    var out = S(), last = 0
-    for m in P.comparison.matches(n) {
-      out += n[last..<m.range.location]
-      if inCode(n, m.range.location) {
-        out += n[m.range.location..<(m.range.location + m.range.length)]
-      } else {
-        out += Pattern.group(n, m.range(at: 1)) + U.units("\\>") + Pattern.group(n, m.range(at: 2))
+    var out: S?
+    var last = 0
+    var lineStart = 0
+    while lineStart < n.count {
+      var lineEnd = lineStart
+      while lineEnd < n.count && n[lineEnd] != U.newline { lineEnd += 1 }
+      // Match lineStart..<lineEnd
+      var i = lineStart
+      while i < lineEnd && Scan.isSpace(n[i]) { i += 1 }
+      var markerOK = false
+      if i < lineEnd {
+        let ch = n[i]
+        if ch == 0x2D || ch == U.star || ch == 0x2B {
+          i += 1
+          markerOK = true
+        } else if Scan.isDigit(ch) {
+          while i < lineEnd && Scan.isDigit(n[i]) { i += 1 }
+          if i < lineEnd && (n[i] == 0x2E || n[i] == U.rparen) {
+            i += 1
+            markerOK = true
+          }
+        }
       }
-      last = m.range.location + m.range.length
+      if markerOK && i < lineEnd && n[i] == U.space {
+        while i < lineEnd && n[i] == U.space { i += 1 }
+        if i < lineEnd && n[i] == U.gt {
+          let gt = i
+          var k = gt + 1
+          if k < lineEnd && n[k] == 0x3D { k += 1 }
+          while k < lineEnd && Scan.isSpace(n[k]) { k += 1 }
+          if k < lineEnd && n[k] == U.dollar { k += 1 }
+          if k < lineEnd && Scan.isDigit(n[k]) && !inCode(n, lineStart) {
+            if out == nil { out = S(); out!.reserveCapacity(n.count + 8) }
+            out! += n[last..<gt]
+            out! += Tokens.escapedGt
+            last = gt + 1
+          }
+        }
+      }
+      lineStart = lineEnd + 1
     }
-    out += n[last...]
-    return out
+    guard var result = out else { return n }
+    result += n[last...]
+    return result
   }
 
   /// `rn`: a tag still being written is held back
   mutating func htmlTags(_ n: S) -> S {
-    guard let m = P.htmlTail.match(n), let r = m[0], !inCode(n, r.location) else { return n }
-    return U.trimEnd(U.sub(n, 0, r.location))
+    guard let at = Scan.htmlTailStart(n), !inCode(n, at) else { return n }
+    return U.trimEnd(U.sub(n, 0, at))
   }
 
   /// `cn`: a lone `-` / `=` under a line must not turn it into a setext heading yet
   mutating func setextHeadings(_ n: S) -> S {
     let r = U.lastIndexOf(n, [U.newline])
     guard r != -1 else { return n }
-    let e = U.sub(n, r + 1), before = U.sub(n, 0, r), o = U.trim(e)
-    let prev = before.split(separator: U.newline, omittingEmptySubsequences: false).last.map(Array.init) ?? []
-    if P.dashes.test(o) && !P.dashItem.test(e) && !U.trim(prev).isEmpty { return n + U.units("\u{200B}") }
-    if P.equals.test(o) && !P.equalsItem.test(e) && !U.trim(prev).isEmpty { return n + U.units("\u{200B}") }
+    let e = U.sub(n, r + 1), o = U.trim(e)
+    guard Scan.isOneOrTwo(o, of: 0x2D) || Scan.isOneOrTwo(o, of: 0x3D) else { return n }
+    var prevStart = r - 1
+    while prevStart >= 0 && n[prevStart] != U.newline { prevStart -= 1 }
+    let prevHasNonSpace = ((prevStart + 1)..<r).contains { !U.jsSpace(n[$0]) }
+    guard prevHasNonSpace else { return n }
+    if Scan.isOneOrTwo(o, of: 0x2D) && !Scan.isRepeatedItem(e, of: 0x2D) { return n + Tokens.zwsp }
+    if Scan.isOneOrTwo(o, of: 0x3D) && !Scan.isRepeatedItem(e, of: 0x3D) { return n + Tokens.zwsp }
     return n
   }
 
   /// `B` (protocol mode): an unfinished link points at the incomplete-link href; an unfinished image is dropped
   mutating func links(_ n: S) -> S {
-    let e = U.lastIndexOf(n, U.units("]("))
+    let e = U.lastIndexOf(n, Tokens.linkMid)
     if e != -1 && !inCode(n, e), let i = linkURLTail(n, e) { return i }
     var i = n.count - 1
     while i >= 0 {
@@ -511,7 +680,7 @@ private struct Run {
 
   /// `zn`
   private mutating func linkURLTail(_ n: S, _ r: Int) -> S? {
-    if U.sub(n, r + 2).contains(U.rparen) { return nil }
+    if n[(r + 2)...].contains(U.rparen) { return nil }
     // `Y`: the `[` matching the `]` at r
     var depth = 1, o = -1, k = r - 1
     while k >= 0 {
@@ -522,7 +691,7 @@ private struct Run {
     let image = o > 0 && n[o - 1] == U.bang
     let a = U.sub(n, 0, image ? o - 1 : o)
     if image { return a }
-    return a + [U.lbracket] + U.sub(n, o + 1, r) + U.units("](\(Remend.incompleteLink))")
+    return a + [U.lbracket] + U.sub(n, o + 1, r) + Tokens.incompleteLinkAppend
   }
 
   /// `Yn`
@@ -535,45 +704,46 @@ private struct Run {
       if n[k] == U.lbracket { depth += 1 } else if n[k] == U.rbracket { depth -= 1; if depth == 0 { close = k; break } }
       k += 1
     }
-    if !U.sub(n, r + 1).contains(U.rbracket) || close == -1 {
-      return image ? U.sub(n, 0, o) : n + U.units("](\(Remend.incompleteLink))")
+    if close == -1 {
+      return image ? U.sub(n, 0, o) : n + Tokens.incompleteLinkAppend
     }
     return nil
   }
 
   /// `en`
   mutating func boldItalic(_ n: S) -> S {
-    if P.starRule.test(n) { return n }
-    guard let r = P.boldItalic.match(n) else { return n }
-    let e = Pattern.group(n, r[2]), i = U.lastIndexOf(n, U.units("***"))
-    if e.isEmpty || P.markersOnly.test(e) || inCode(n, i) || Run.insideInlineCode(n, i) || Run.ruleLine(n, i, U.star) {
+    if Scan.isStarRule(n) { return n }
+    guard let eStart = Scan.boldItalicTail(n) else { return n }
+    let i = U.lastIndexOf(n, Tokens.tripleStar)
+    if eStart >= n.count || Scan.isMarkersOnly(n, from: eStart) || inCode(n, i) || Run.insideInlineCode(n, i)
+      || Run.ruleLine(n, i, U.star) {
       return n
     }
     guard Run.tripleStars(n) % 2 == 1 else { return n }
-    return Run.doubleStars(n) % 2 == 0 && Run.singleStars(n) % 2 == 0 ? n : n + U.units("***")
+    return Run.doubleStars(n) % 2 == 0 && Run.singleStars(n) % 2 == 0 ? n : n + Tokens.tripleStar
   }
 
   /// `q`
   mutating func bold(_ n: S) -> S {
-    guard let r = P.bold.match(n) else { return n }
-    let e = Pattern.group(n, r[2]), i = U.lastIndexOf(n, U.units("**"))
-    if inCode(n, i) || Run.insideInlineCode(n, i) || Run.closedEnough(n, e, i, U.star) { return n }
+    guard let eStart = Scan.boldTail(n) else { return n }
+    let i = U.lastIndexOf(n, Tokens.doubleStar)
+    if inCode(n, i) || Run.insideInlineCode(n, i) || Run.closedEnough(n, eStart, i, U.star) { return n }
     guard Run.doubleStars(n) % 2 == 1 else { return n }
-    return e.last == U.star ? n + [U.star] : n + U.units("**")
+    return n.last == U.star ? n + [U.star] : n + Tokens.doubleStar
   }
 
   /// `J`
   mutating func italicDoubleUnderscore(_ n: S) -> S {
-    guard let r = P.doubleUnderscore.match(n) else {
-      if P.underscoreTail.test(n) {
-        let t = U.lastIndexOf(n, U.units("__"))
+    guard let eStart = Scan.doubleUnderscoreTail(n) else {
+      if Scan.hasUnderscoreTail(n) {
+        let t = U.lastIndexOf(n, Tokens.doubleUnder)
         if !(inCode(n, t) || Run.insideInlineCode(n, t)) && Run.doubleUnderscores(n) % 2 == 1 { return n + [U.under] }
       }
       return n
     }
-    let e = Pattern.group(n, r[2]), i = U.lastIndexOf(n, U.units("__"))
-    if inCode(n, i) || Run.insideInlineCode(n, i) || Run.closedEnough(n, e, i, U.under) { return n }
-    return Run.doubleUnderscores(n) % 2 == 1 ? n + U.units("__") : n
+    let i = U.lastIndexOf(n, Tokens.doubleUnder)
+    if inCode(n, i) || Run.insideInlineCode(n, i) || Run.closedEnough(n, eStart, i, U.under) { return n }
+    return Run.doubleUnderscores(n) % 2 == 1 ? n + Tokens.doubleUnder : n
   }
 
   /// `Nn`: the first single `*` that opens emphasis
@@ -594,11 +764,10 @@ private struct Run {
 
   /// `V`
   mutating func italicSingleAsterisk(_ n: S) -> S {
-    guard P.singleAsterisk.test(n) else { return n }
+    guard n.contains(U.star) else { return n }
     let e = Run.singleStarOpener(n)
     if e == -1 || inCode(n, e) || Run.insideInlineCode(n, e) { return n }
-    let i = U.sub(n, e + 1)
-    if i.isEmpty || P.markersOnly.test(i) { return n }
+    if e + 1 >= n.count || Scan.isMarkersOnly(n, from: e + 1) { return n }
     return Run.singleStars(n) % 2 == 1 ? n + [U.star] : n
   }
 
@@ -619,18 +788,17 @@ private struct Run {
 
   /// `nn`
   mutating func italicSingleUnderscore(_ n: S) -> S {
-    guard P.singleUnderscore.test(n) else { return n }
+    guard n.contains(U.under) else { return n }
     let e = Run.singleUnderscoreOpener(n)
     if e == -1 { return n }
-    let i = U.sub(n, e + 1)
-    if i.isEmpty || P.markersOnly.test(i) || inCode(n, e) || Run.insideInlineCode(n, e) { return n }
+    if e + 1 >= n.count || Scan.isMarkersOnly(n, from: e + 1) || inCode(n, e) || Run.insideInlineCode(n, e) { return n }
     guard Run.singleUnderscores(n) % 2 == 1 else { return n }
     // `Un`: `**bold _italic**` closes the italic inside the bold
-    if n.hasSuffix(U.units("**")) {
+    if n.hasSuffix(Tokens.doubleStar) {
       let r = Array(n.dropLast(2))
       if Run.doubleStars(r) % 2 == 1 {
-        let b = U.indexOf(r, U.units("**")), o = Run.singleUnderscoreOpener(r)
-        if b != -1 && o != -1 && b < o { return r + U.units("_**") }
+        let b = U.indexOf(r, Tokens.doubleStar), o = Run.singleUnderscoreOpener(r)
+        if b != -1 && o != -1 && b < o { return r + Tokens.underBold }
       }
     }
     // `Rn`: before any trailing newlines
@@ -641,12 +809,12 @@ private struct Run {
 
   /// `on`
   mutating func inlineCode(_ n: S) -> S {
-    if P.oneLineFence.test(n) && !n.contains(U.newline) {
-      return n.hasSuffix(U.units("``")) && !n.hasSuffix(U.units("```")) ? n + [U.tick] : n
+    guard n.contains(U.tick) else { return n }
+    if Scan.isOneLineFence(n) {
+      return n.hasSuffix(Tokens.doubleTick) && !n.hasSuffix(Tokens.tripleTick) ? n + [U.tick] : n
     }
-    if let e = P.inlineCode.match(n), U.count(n, U.units("```")) % 2 == 0 {
-      let i = Pattern.group(n, e[2])
-      if i.isEmpty || P.markersOnly.test(i) { return n }
+    if let iStart = Scan.inlineCodeTail(n), U.count(n, Tokens.tripleTick) % 2 == 0 {
+      if iStart >= n.count || Scan.isMarkersOnly(n, from: iStart) { return n }
       if Run.singleBackticks(n) % 2 == 1 { return n + [U.tick] }
     }
     return n
@@ -654,16 +822,16 @@ private struct Run {
 
   /// `fn`
   mutating func strikethrough(_ n: S) -> S {
-    if let r = P.strike.match(n) {
-      let o = Pattern.group(n, r[2])
-      if o.isEmpty || P.markersOnly.test(o) { return n }
-      let s = U.lastIndexOf(n, U.units("~~"))
+    guard n.contains(U.tilde) else { return n }
+    if let oStart = Scan.strikeTail(n) {
+      if oStart >= n.count || Scan.isMarkersOnly(n, from: oStart) { return n }
+      let s = U.lastIndexOf(n, Tokens.doubleTilde)
       if inCode(n, s) || Run.insideInlineCode(n, s) { return n }
-      if U.count(n, U.units("~~")) % 2 == 1 { return n + U.units("~~") }
-    } else if P.strikeTail.test(n) {
-      let s = U.lastIndexOf(n, U.units("~~"))
+      if U.count(n, Tokens.doubleTilde) % 2 == 1 { return n + Tokens.doubleTilde }
+    } else if Scan.hasSingleStrikeTail(n) {
+      let s = U.lastIndexOf(n, Tokens.doubleTilde)
       if inCode(n, s) || Run.insideInlineCode(n, s) { return n }
-      if U.count(n, U.units("~~")) % 2 == 1 { return n + [U.tilde] }
+      if U.count(n, Tokens.doubleTilde) % 2 == 1 { return n + [U.tilde] }
     }
     return n
   }
@@ -673,6 +841,7 @@ private struct Run {
 
   /// `tn`: an open `$$` block is closed
   mutating func katex(_ n: S) -> S {
+    guard n.contains(U.dollar) else { return n }
     // `Gn`: `$$` outside inline code
     var r = 0, code = false, i = 0
     while i < n.count - 1 {
@@ -682,11 +851,11 @@ private struct Run {
     }
     guard r % 2 == 1 else { return n }
     // `Xn`
-    if n.last == U.dollar && !n.hasSuffix(U.units("$$")) { return n + [U.dollar] }
-    let open = U.indexOf(n, U.units("$$"))
+    if n.last == U.dollar && !n.hasSuffix(Tokens.doubleDollar) { return n + [U.dollar] }
+    let open = U.indexOf(n, Tokens.doubleDollar)
     if open != -1 && U.indexOf(n, [U.newline], from: open) != -1 && n.last != U.newline {
-      return n + U.units("\n$$")
+      return n + Tokens.nlDoubleDollar
     }
-    return n + U.units("$$")
+    return n + Tokens.doubleDollar
   }
 }

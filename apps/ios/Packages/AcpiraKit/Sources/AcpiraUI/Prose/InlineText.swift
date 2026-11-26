@@ -114,10 +114,123 @@ struct InlineText: View {
   let strongInk: Color
   let accent: Color
   var weight: FontWeight = .regular
+  /// When true (the default for paragraphs), expands horizontally to fill the reading column; table cells pass false
+  /// so columns stay as tight as their longest wrapped line.
+  var expand: Bool = true
   /// Streaming fade signal while `StreamProse` is live. Kept as a view input rather than an environment value so
   /// selection text views never compare the full environment as a trait change on streamed updates
   var fade: StreamFadeSignal?
   @Environment(\.snapshot) private var snapshot
+  @Environment(\.deferSelectionSurface) private var deferSelection
+  @Environment(\.selectionSurfaceActive) private var selectionActive
+
+  var body: some View {
+    let liveFade = snapshot ? nil : fade
+    let needsSelection = !snapshot && (!deferSelection || selectionActive)
+    if let liveFade {
+      LiveInlineText(inlines: inlines, style: style, ink: ink, strongInk: strongInk, accent: accent,
+                     weight: weight, expand: expand, fade: liveFade, needsSelection: needsSelection)
+    } else {
+      StaticInlineText(inlines: inlines, style: style, ink: ink, strongInk: strongInk, accent: accent,
+                       weight: weight, expand: expand, needsSelection: needsSelection)
+    }
+  }
+}
+
+/// Settled paragraph with no live streaming fade: skips `TimelineView`, `GlyphFadeTracker`, and `.task`, and skips
+/// `Text.LayoutKey` preference measurement when no inline code chips are present.
+private struct StaticInlineText: View {
+  let inlines: [MDInline]
+  let style: TextStyle
+  let ink: Color
+  let strongInk: Color
+  let accent: Color
+  let weight: FontWeight
+  let expand: Bool
+  let needsSelection: Bool
+
+  var body: some View {
+    let builder = InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent)
+    let chipped = hasCode(inlines)
+    let paragraph = builder.paragraph(inlines, weight: weight, chipped: chipped)
+    Group {
+      if chipped {
+        ChippedInlineParagraph(paragraph: paragraph, style: style, ink: ink, expand: expand)
+      } else {
+        // Plain paragraphs need no chip-height preference pass or `InlineCodeRenderer`; `CSSLineRenderer` alone aligns
+        // every line to Blink's baseline depth
+        let base = paragraph
+          .lineBox(style)
+          .foregroundStyle(ink)
+          .textRenderer(CSSLineRenderer(lineHeight: style.lineHeight, depth: style.renderDepth))
+          .fixedSize(horizontal: false, vertical: true)
+        if expand {
+          base.frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+          base
+        }
+      }
+    }
+    #if canImport(UIKit)
+    .modifier(OptionalSelectionOverlay(active: needsSelection) {
+      TextSelectionSurface(text: builder.selectionParagraph(inlines, weight: weight))
+    })
+    #else
+    .textSelection(.enabled)
+    #endif
+  }
+}
+
+/// Settled paragraph holding inline code chips: measures chip-line height growth once via `Text.LayoutKey`
+private struct ChippedInlineParagraph: View {
+  let paragraph: Text
+  let style: TextStyle
+  let ink: Color
+  let expand: Bool
+  @State private var extra: CGFloat = 0
+
+  var body: some View {
+    let growth = style.inlineGrowth(WebType.mono)
+    let needsMeasure = growth.top + growth.bottom > 0
+    let base = paragraph
+      .lineBox(style)
+      .foregroundStyle(ink)
+      .textRenderer(InlineCodeRenderer(fill: Palette.hover, radius: Metrics.rSm,
+                                       outsetY: (WebType.mono.size * 0.1).rounded(.up),
+                                       lineHeight: style.lineHeight, depth: style.renderDepth,
+                                       growth: growth, extra: needsMeasure ? extra : 0, tracker: nil, now: 0))
+      .fixedSize(horizontal: false, vertical: true)
+    let measured = Group {
+      if needsMeasure {
+        base
+          .onPreferenceChange(Text.LayoutKey.self) { layouts in
+            let total = chipGrowth(layouts, growth)
+            MainActor.assumeIsolated { if extra != total { extra = total } }
+          }
+          .padding(.bottom, extra)
+      } else {
+        base
+      }
+    }
+    if expand {
+      measured.frame(maxWidth: .infinity, alignment: .leading)
+    } else {
+      measured
+    }
+  }
+}
+
+/// Live streaming paragraph with rendered-glyph fade (`StreamProse`)
+private struct LiveInlineText: View {
+  let inlines: [MDInline]
+  let style: TextStyle
+  let ink: Color
+  let strongInk: Color
+  let accent: Color
+  let weight: FontWeight
+  let expand: Bool
+  let fade: StreamFadeSignal
+  let needsSelection: Bool
   @State private var extra: CGFloat = 0
   @State private var tracker = GlyphFadeTracker()
   @State private var fading = false
@@ -129,26 +242,22 @@ struct InlineText: View {
   }
 
   var body: some View {
-    // Built once per evaluation of this body: the fade's frames in between only move the renderer's clock
-    let paragraph = InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent).paragraph(inlines, weight: weight)
-    let growth = hasCode(inlines) ? style.inlineGrowth(WebType.mono) : (top: CGFloat(0), bottom: CGFloat(0))
-    let liveFade = snapshot ? nil : fade
-    let content = liveFade == nil ? "" : Markdown.plain(inlines)
-    let _ = liveFade.map { tracker.prepare(content: content, signal: $0) }
-    let animating = liveFade != nil && (fading || tracker.isActive)
-    let pass = liveFade.map { FadePass(content: content, seedEpoch: $0.seedEpoch, seeded: $0.seeded) }
+    let builder = InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent)
+    let chipped = hasCode(inlines)
+    let paragraph = builder.paragraph(inlines, weight: weight, chipped: chipped)
+    let growth = chipped ? style.inlineGrowth(WebType.mono) : (top: CGFloat(0), bottom: CGFloat(0))
+    let content = Markdown.plain(inlines)
+    let _ = tracker.prepare(content: content, signal: fade)
+    let animating = fading || tracker.isActive
+    let pass = FadePass(content: content, seedEpoch: fade.seedEpoch, seeded: fade.seeded)
     // Pause in place instead of swapping a TimelineView for Text: tearing down the text whenever a fade settled
     // discarded its layout while the hosted row was still resizing or the process above it was closing.
     TimelineView(.animation(paused: !animating)) { timeline in
       // A settled paragraph has no fade clock. A new timestamp would invalidate its renderer during cell sizing.
-      text(paragraph, growth: growth, tracker: liveFade != nil ? tracker : nil,
+      text(paragraph, chipped: chipped, growth: growth,
            now: animating ? timeline.date.timeIntervalSinceReferenceDate : 0)
     }
     .task(id: pass) {
-      guard let pass else {
-        if fading { fading = false }
-        return
-      }
       if pass.seeded || tracker.needsSeed || !tracker.isActive {
         if fading { fading = false }
         return
@@ -160,36 +269,65 @@ struct InlineText: View {
       fading = false
     }
     #if canImport(UIKit)
-    .accessibilityHidden(true)
-    .overlay {
-      LiveOnly {
-        TextSelectionSurface(text: InlineBuilder(style: style, ink: ink, strongInk: strongInk, accent: accent)
-          .selectionParagraph(inlines, weight: weight))
-      }
-    }
+    .modifier(OptionalSelectionOverlay(active: needsSelection) {
+      TextSelectionSurface(text: builder.selectionParagraph(inlines, weight: weight))
+    })
     #else
     .textSelection(.enabled)
     #endif
   }
 
-  private func text(_ paragraph: Text, growth: (top: CGFloat, bottom: CGFloat), tracker: GlyphFadeTracker?, now: Double) -> some View {
-    paragraph
+  @ViewBuilder
+  private func text(_ paragraph: Text, chipped: Bool, growth: (top: CGFloat, bottom: CGFloat), now: Double) -> some View {
+    let needsMeasure = chipped && (growth.top + growth.bottom > 0)
+    let base = paragraph
       .lineBox(style)
       .foregroundStyle(ink)
-      .textRenderer(InlineCodeRenderer(fill: Palette.hover, radius: Metrics.rSm, outsetY: (WebType.mono.size * 0.1).rounded(.up),
-                                       lineHeight: style.lineHeight, depth: style.renderDepth, growth: growth, extra: extra,
-                                       tracker: tracker, now: now))
+      .textRenderer(InlineCodeRenderer(fill: Palette.hover, radius: Metrics.rSm,
+                                       outsetY: (WebType.mono.size * 0.1).rounded(.up),
+                                       lineHeight: style.lineHeight, depth: style.renderDepth, growth: growth,
+                                       extra: needsMeasure ? extra : 0, tracker: tracker, now: now))
       .fixedSize(horizontal: false, vertical: true)
-      .onPreferenceChange(Text.LayoutKey.self) { layouts in
-        let total = chipGrowth(layouts, growth)
-        // In this pass, not a task's hop later: the paragraph then grew after its row was measured and placed, and
-        // a chat just opened slid by the chip lines' growth
-        MainActor.assumeIsolated { if extra != total { extra = total } }
+    let measured = Group {
+      if needsMeasure {
+        base
+          .onPreferenceChange(Text.LayoutKey.self) { layouts in
+            let total = chipGrowth(layouts, growth)
+            // In this pass, not a task's hop later: the paragraph then grew after its row was measured and placed, and
+            // a chat just opened slid by the chip lines' growth
+            MainActor.assumeIsolated { if extra != total { extra = total } }
+          }
+          .padding(.bottom, extra)
+      } else {
+        base
       }
-      .padding(.bottom, extra)
-      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    if expand {
+      measured.frame(maxWidth: .infinity, alignment: .leading)
+    } else {
+      measured
+    }
   }
 }
+
+#if canImport(UIKit)
+/// Mounts the transparent native selection `UITextView` only when `active` is true, leaving SwiftUI's native text
+/// accessible and `UITextView`-free during idle scrolling and streaming.
+private struct OptionalSelectionOverlay<Surface: View>: ViewModifier {
+  let active: Bool
+  @ViewBuilder let surface: () -> Surface
+
+  func body(content: Content) -> some View {
+    if active {
+      content
+        .accessibilityHidden(true)
+        .overlay { LiveOnly { surface() } }
+    } else {
+      content
+    }
+  }
+}
+#endif
 
 private func hasCode(_ inlines: [MDInline]) -> Bool {
   inlines.contains {
@@ -214,27 +352,172 @@ struct InlineBuilder {
     list(inlines, Marks(weight: weight))
   }
 
-  /// A whole paragraph: the runs, closed by `CJKWidth.paragraphEnd` when it holds CJK
-  func paragraph(_ inlines: [MDInline], weight: FontWeight = .regular) -> Text {
-    let body = text(inlines, weight: weight)
-    return CJKWidth.needsParagraphEnd(Markdown.plain(inlines)) ? Text("\(body)\(invisible(CJKWidth.paragraphEnd))") : body
+  /// A whole paragraph: builds one flat `AttributedString` (or bare `Text(verbatim:)` for pure ASCII) whenever no
+  /// inline code chip needs a `TextAttribute`, avoiding SwiftUI's `LocalizedStringKey` interpolation resolution tree.
+  func paragraph(_ inlines: [MDInline], weight: FontWeight = .regular, chipped: Bool? = nil) -> Text {
+    guard !inlines.isEmpty else { return Text(verbatim: "") }
+    if inlines.count == 1, case .text(let s) = inlines[0], s.utf8.allSatisfy({ $0 < 0x80 }) {
+      return Text(verbatim: s).font(style.font(weight))
+    }
+    let hasChips = chipped ?? hasCode(inlines)
+    if !hasChips {
+      var out = AttributedString()
+      appendList(inlines, Marks(weight: weight), to: &out)
+      if Self.hasBreakable(inlines) {
+        var end = AttributedString(CJKWidth.paragraphEnd)
+        end.font = style.font()
+        out.append(end)
+      }
+      return Text(out)
+    }
+    let body = list(inlines, Marks(weight: weight))
+    return Self.hasBreakable(inlines) ? Text("\(body)\(invisible(CJKWidth.paragraphEnd))") : body
+  }
+
+  /// Appends non-code inlines into one flat `AttributedString` with identical fonts, CJK widening, inter-run CJK break
+  /// opportunities, bold ink, strikethrough, and link attributes as the `Text`-joined path.
+  private func appendList(_ inlines: [MDInline], _ marks: Marks, to out: inout AttributedString) {
+    for i in inlines.indices {
+      let cur = inlines[i]
+      if i > 0, !isCode(cur), !isCode(inlines[i - 1]),
+         let prev = Self.lastScalar(of: inlines[i - 1]), CJKWidth.breakable(prev),
+         let next = Self.firstScalar(of: cur), CJKWidth.breakable(next) {
+        var br = AttributedString("\u{200B}")
+        br.font = style.font()
+        out.append(br)
+      }
+      appendPiece(cur, marks, to: &out)
+    }
+  }
+
+  private func appendPiece(_ inline: MDInline, _ marks: Marks, to out: inout AttributedString) {
+    switch inline {
+    case .text(let s):
+      appendPlain(s, marks, to: &out)
+    case .lineBreak:
+      var br = AttributedString("\n")
+      br.font = style.font(marks.weight, italic: marks.italic)
+      out.append(br)
+    case .code(let s):
+      appendPlain(s, marks, to: &out)
+    case .strong(let children):
+      var m = marks; m.weight = .semibold; m.strong = true
+      appendList(children, m, to: &out)
+    case .emphasis(let children):
+      var m = marks; m.italic = true
+      appendList(children, m, to: &out)
+    case .strike(let children):
+      var m = marks; m.strike = true
+      appendList(children, m, to: &out)
+    case .image(_, let alt):
+      appendPlain(alt, marks, to: &out)
+    case .link(let url, let children):
+      var a = CJKWidth.attributed(Markdown.plain(children), size: style.size, paragraph: false)
+      a.font = style.font(marks.weight, italic: marks.italic)
+      a.foregroundColor = accent
+      a.underlineStyle = .single
+      a.link = fileTarget(url) ?? URL(string: url)
+      out.append(a)
+    }
+  }
+
+  private func appendPlain(_ s: String, _ marks: Marks, to out: inout AttributedString) {
+    guard !s.isEmpty else { return }
+    var a = CJKWidth.attributed(s, size: style.size, paragraph: false)
+    var attrs = AttributeContainer()
+    attrs.font = style.font(marks.weight, italic: marks.italic)
+    if marks.strong { attrs.foregroundColor = strongInk }
+    if marks.strike { attrs.strikethroughStyle = .single }
+    a.mergeAttributes(attrs, mergePolicy: .keepCurrent)
+    out.append(a)
   }
 
   /// Siblings in order; a code span looks at its neighbours to place its line-break opportunities, and two runs
-  /// meeting between ideographs ("中文**粗体**") get the zero-width space `CJKWidth` puts inside a run
+  /// meeting between ideographs ("中文**粗体**") get the zero-width space `CJKWidth` puts inside a run. Consecutive
+  /// non-code siblings coalesce into one `AttributedString` to keep `Text` interpolation trees shallow.
   func list(_ inlines: [MDInline], _ marks: Marks) -> Text {
-    join(inlines.indices.flatMap { i -> [Text] in
-      let previous = i > 0 ? Markdown.plain([inlines[i - 1]]).unicodeScalars.last : nil
-      let current = Markdown.plain([inlines[i]]).unicodeScalars.first
-      let seam = previous.map(CJKWidth.breakable) == true && current.map(CJKWidth.breakable) == true
-        && !isCode(inlines[i]) && !isCode(inlines[i - 1])
-      let gap = seam ? [invisible("\u{200B}")] : []
-      if case .code(let s) = inlines[i] {
-        return gap + [code(s, after: i > 0 ? Markdown.plain([inlines[i - 1]]).last : nil,
-                           before: i + 1 < inlines.count ? Markdown.plain([inlines[i + 1]]).first : nil)]
+    var parts: [Text] = []
+    parts.reserveCapacity(inlines.count)
+    var pending = AttributedString()
+    func flushPending() {
+      guard !pending.characters.isEmpty else { return }
+      parts.append(Text(pending))
+      pending = AttributedString()
+    }
+    for i in inlines.indices {
+      let cur = inlines[i]
+      if i > 0, !isCode(cur), !isCode(inlines[i - 1]),
+         let prev = Self.lastScalar(of: inlines[i - 1]), CJKWidth.breakable(prev),
+         let next = Self.firstScalar(of: cur), CJKWidth.breakable(next) {
+        var br = AttributedString("\u{200B}")
+        br.font = style.font()
+        pending.append(br)
       }
-      return gap + [piece(inlines[i], marks)]
-    })
+      if case .code(let s) = cur {
+        flushPending()
+        parts.append(code(s, after: i > 0 ? Self.lastChar(of: inlines[i - 1]) : nil,
+                          before: i + 1 < inlines.count ? Self.firstChar(of: inlines[i + 1]) : nil))
+      } else if !hasCode([cur]) {
+        appendPiece(cur, marks, to: &pending)
+      } else {
+        flushPending()
+        parts.append(piece(cur, marks))
+      }
+    }
+    flushPending()
+    return join(parts)
+  }
+
+  private static func hasBreakable(_ inlines: [MDInline]) -> Bool {
+    for inline in inlines {
+      switch inline {
+      case .text(let s), .code(let s):
+        if CJKWidth.needsParagraphEnd(s) { return true }
+      case .strong(let c), .emphasis(let c), .strike(let c), .link(_, let c):
+        if hasBreakable(c) { return true }
+      case .image(_, let alt):
+        if CJKWidth.needsParagraphEnd(alt) { return true }
+      case .lineBreak:
+        break
+      }
+    }
+    return false
+  }
+
+  private static func firstScalar(of inline: MDInline) -> Unicode.Scalar? {
+    switch inline {
+    case .text(let s), .code(let s): s.unicodeScalars.first
+    case .strong(let c), .emphasis(let c), .strike(let c), .link(_, let c): c.lazy.compactMap(firstScalar).first
+    case .image(_, let alt): alt.unicodeScalars.first
+    case .lineBreak: "\n"
+    }
+  }
+
+  private static func lastScalar(of inline: MDInline) -> Unicode.Scalar? {
+    switch inline {
+    case .text(let s), .code(let s): s.unicodeScalars.last
+    case .strong(let c), .emphasis(let c), .strike(let c), .link(_, let c): c.reversed().lazy.compactMap(lastScalar).first
+    case .image(_, let alt): alt.unicodeScalars.last
+    case .lineBreak: "\n"
+    }
+  }
+
+  private static func firstChar(of inline: MDInline) -> Character? {
+    switch inline {
+    case .text(let s), .code(let s): s.first
+    case .strong(let c), .emphasis(let c), .strike(let c), .link(_, let c): c.lazy.compactMap(firstChar).first
+    case .image(_, let alt): alt.first
+    case .lineBreak: "\n"
+    }
+  }
+
+  private static func lastChar(of inline: MDInline) -> Character? {
+    switch inline {
+    case .text(let s), .code(let s): s.last
+    case .strong(let c), .emphasis(let c), .strike(let c), .link(_, let c): c.reversed().lazy.compactMap(lastChar).first
+    case .image(_, let alt): alt.last
+    case .lineBreak: "\n"
+    }
   }
 
   /// A zero-width character in the paragraph's face: a run with no font of its own would take the environment's
@@ -312,7 +595,12 @@ struct InlineBuilder {
     let chip = Text("\(pad)\(body)\(pad)").customAttribute(InlineCodeChip())
     let lead = previous.map { !$0.isWhitespace && opens($0) } ?? true ? "" : "\u{200B}"
     let trail = next.map { !$0.isWhitespace && !$0.isPunctuation && !$0.isSymbol } ?? false ? "\u{200B}" : ""
-    return Text("\(Text(web: lead))\(chip)\(Text(web: trail))")
+    switch (lead.isEmpty, trail.isEmpty) {
+    case (true, true): return chip
+    case (false, true): return Text("\(Text(verbatim: lead))\(chip)")
+    case (true, false): return Text("\(chip)\(Text(verbatim: trail))")
+    case (false, false): return Text("\(Text(verbatim: lead))\(chip)\(Text(verbatim: trail))")
+    }
   }
 
   /// The no-break space on each side of a code chip, shared with the selection text (TextSelection.swift)

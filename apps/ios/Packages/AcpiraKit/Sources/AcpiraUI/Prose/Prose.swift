@@ -14,6 +14,8 @@ public struct Prose: View {
   var tone: ProseTone
   /// Streaming fade signal handed down while `StreamProse` is live
   var fade: StreamFadeSignal?
+  /// Top-level block index offset for a split live tail so surviving blocks keep their SwiftUI identity and heading margin
+  var blockIdOffset: Int = 0
   @Environment(\.agentAccent) private var accent
 
   /// `streaming`: the text is still arriving, so its unfinished tail is repaired first (streamdown's streaming mode)
@@ -28,15 +30,17 @@ public struct Prose: View {
   }
 
   /// Blocks parsed already (a streamed text's `StreamParse`)
-  init(blocks: [MDBlock], tone: ProseTone, fade: StreamFadeSignal? = nil) {
+  init(blocks: [MDBlock], tone: ProseTone, fade: StreamFadeSignal? = nil, blockIdOffset: Int = 0) {
     self.blocks = blocks
     self.tone = tone
     self.fade = fade
+    self.blockIdOffset = blockIdOffset
   }
 
   public var body: some View {
     if !blocks.isEmpty {
-      ProseBlocks(blocks: blocks, style: ProseStyle(tone: tone, accent: accent), fade: fade)
+      ProseBlocks(blocks: blocks, style: ProseStyle(tone: tone, accent: accent), fade: fade,
+                  blockIdOffset: blockIdOffset)
     }
   }
 }
@@ -174,6 +178,13 @@ public struct StreamProse: View {
   var tone: ProseTone
   /// The local images the engine read with the text, for its Markdown images
   var images: [ImageRef]?
+  /// Top-level block id offset for a split live tail so surviving blocks keep their SwiftUI identity and fade trackers
+  var blockIdOffset: Int = 0
+  /// Continued ordered-list start number when a split cut landed mid-list
+  var firstListStart: Int? = nil
+  /// Optional callback invoked outside `body` with the UTF-8 byte length of settled, fully faded prefix text;
+  /// returns the number of leading grapheme characters frozen out so the pacer drops them in lockstep.
+  var onFreezePrefix: ((Int) -> Int)? = nil
   @Environment(\.motionEnabled) private var motion
   @Environment(\.quietEntrance) private var quiet
   @Environment(\.rowEnter) private var rowEnter
@@ -193,6 +204,18 @@ public struct StreamProse: View {
     images = block.images
   }
 
+  init(markdown: String, streaming: Bool, tone: ProseTone = .reply, images: [ImageRef]? = nil,
+       blockIdOffset: Int = 0, firstListStart: Int? = nil, onFreezePrefix: ((Int) -> Int)? = nil) {
+    self.markdown = markdown
+    self.streaming = streaming
+    self.tone = tone
+    self.images = images
+    self.blockIdOffset = blockIdOffset
+    self.firstListStart = firstListStart
+    self.onFreezePrefix = onFreezePrefix
+    _pacer = State(initialValue: streaming ? StreamPacer(streaming: true) : nil)
+  }
+
   public var body: some View {
     Group {
       if let pacer, motion {
@@ -204,15 +227,16 @@ public struct StreamProse: View {
         // character instead of trimming a copy of the whole text on every tick
         if !text.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains) {
           let signal = StreamFadeSignal(seedEpoch: pacer.skipEpoch, seeded: resume || quiet || pacer.seeded)
-          Prose(blocks: parse(text), tone: tone, fade: signal)
+          Prose(blocks: adjusted(parse(text)), tone: tone, fade: signal, blockIdOffset: blockIdOffset)
         } else {
           // An empty Group is no view at all and would never start the task below; this holds it for the first tick
           Color.clear.frame(height: 0)
         }
       } else if streaming {
-        Prose(blocks: parse(markdown), tone: tone)
+        Prose(blocks: adjusted(parse(markdown)), tone: tone, blockIdOffset: blockIdOffset)
       } else {
-        Prose(markdown: markdown, tone: tone)
+        Prose(blocks: adjusted(Markdown.parse(markdown.trimmingCharacters(in: .newlines))), tone: tone,
+              blockIdOffset: blockIdOffset)
       }
     }
     .onAppear { receive(initial: true) }
@@ -222,10 +246,32 @@ public struct StreamProse: View {
     .environment(\.markdownImages, images)
   }
 
+  /// Applies `firstListStart` to the leading ordered list when a split cut landed in the middle of one
+  private func adjusted(_ blocks: [MDBlock]) -> [MDBlock] {
+    guard let start = firstListStart, !blocks.isEmpty,
+          case .list(true, let raw, let items) = blocks[0], raw != start else { return blocks }
+    var out = blocks
+    out[0] = .list(ordered: true, start: start, items: items)
+    return out
+  }
+
   private func receive(initial: Bool) {
-    guard var next = pacer else { return }
+    guard motion, var next = pacer else {
+      // Without pacing motion, all received text is immediately settled and eligible to freeze
+      if streaming, let onFreezePrefix, markdown.utf8.count >= ReplyPieces.budget {
+        if onFreezePrefix(markdown.utf8.count) > 0 { parse.reset() }
+      }
+      return
+    }
     let skip = quiet || (initial && (!rowEnter || gesture.active))
     next.receive(markdown, streaming: streaming, now: Date.timeIntervalSinceReferenceDate, skip: skip)
+    if skip, let onFreezePrefix, next.visible.utf8.count >= ReplyPieces.budget {
+      let dropped = onFreezePrefix(next.visible.utf8.count)
+      if dropped > 0 {
+        next.dropPrefix(dropped)
+        parse.reset()
+      }
+    }
     pacer = next
   }
 
@@ -233,6 +279,9 @@ public struct StreamProse: View {
   private func pace() async {
     guard motion, pacer != nil else { return }
     var last = Date.timeIntervalSinceReferenceDate
+    // Track how far into the settled prefix we already scanned for newlines so `onFreezePrefix` only runs when a new
+    // line enters the settled portion instead of re-parsing the tail every 32 ms
+    var lastCheckedUTF8 = 0
     while !Task.isCancelled {
       try? await Task.sleep(for: .seconds(StreamPace.standard.tick))
       // Read after the sleep: text received meanwhile must not be overwritten by a stale copy
@@ -242,6 +291,37 @@ public struct StreamProse: View {
       // before switching to static Prose (matches webview RUN_FADE_MS = STREAM_DURATION_MS + 40)
       next.tick(now: now, dt: now - last, fade: Motion.streamChar + 0.04)
       last = now
+      // Promote already-settled, fully faded prefix blocks into static thread rows so this live cell stays tiny
+      if let onFreezePrefix {
+        let settledChars = next.settledCount
+        if settledChars >= 80 {
+          let visible = next.visible
+          let settledUTF8: Int
+          if settledChars >= next.count {
+            settledUTF8 = visible.utf8.count
+          } else if let idx = visible.index(visible.startIndex, offsetBy: settledChars, limitedBy: visible.endIndex) {
+            settledUTF8 = visible[..<idx].utf8.count
+          } else {
+            settledUTF8 = 0
+          }
+          if settledUTF8 < lastCheckedUTF8 { lastCheckedUTF8 = 0 }
+          if settledUTF8 >= 64 && settledUTF8 > lastCheckedUTF8 {
+            let utf8 = visible.utf8
+            let from = utf8.index(utf8.startIndex, offsetBy: lastCheckedUTF8)
+            let to = utf8.index(utf8.startIndex, offsetBy: settledUTF8)
+            let hasNewline = utf8[from..<to].contains(0x0A)
+            lastCheckedUTF8 = settledUTF8
+            if hasNewline {
+              let dropped = onFreezePrefix(settledUTF8)
+              if dropped > 0 {
+                next.dropPrefix(dropped)
+                parse.reset()
+                lastCheckedUTF8 = 0
+              }
+            }
+          }
+        }
+      }
       if !next.streaming && !next.pending && next.reveals.isEmpty {
         pacer = nil
       } else if next != pacer {
@@ -259,12 +339,96 @@ final class StreamParse {
   /// The last text parsed and its blocks. The body runs again with the same visible text whenever only the pacer's
   /// speed, a fade or the received tail moved, and each of those ran the whole repair again
   private var last: (text: String, blocks: [MDBlock])?
+  /// Settled prefix for long unsplit streams (such as a 20K-char streaming thought): once a top-level prefix has
+  /// balanced fences/math and ends on a blank-line boundary, `Remend.repair` runs only on the unsettled tail
+  private var settledPrefix = ""
+  private var settledBlocks: [MDBlock] = []
+
+  func reset() {
+    stream = MarkdownStream()
+    last = nil
+    settledPrefix = ""
+    settledBlocks = []
+  }
 
   func callAsFunction(_ text: String) -> [MDBlock] {
     if let last, last.text.utf8.count == text.utf8.count, last.text.utf8.elementsEqual(text.utf8) { return last.blocks }
-    let blocks = stream.parse(Remend.repair(text).trimmingCharacters(in: .newlines))
-    last = (text, blocks)
-    return blocks
+    // Verify the cached prefix still matches; reset on any non-append rewrite
+    if !settledPrefix.isEmpty {
+      if text.utf8.count < settledPrefix.utf8.count || !text.utf8.starts(with: settledPrefix.utf8) {
+        settledPrefix = ""
+        settledBlocks = []
+        stream = MarkdownStream()
+      }
+    }
+    let tail = settledPrefix.isEmpty ? text : String(text[settledPrefix.endIndex...])
+    let repairedTail = Remend.repair(tail).trimmingCharacters(in: .newlines)
+    let tailBlocks = stream.parse(repairedTail)
+    var combined = settledBlocks.isEmpty ? tailBlocks : (settledBlocks + tailBlocks)
+    // For long unsplit streams (> 2 KB in the active tail), promote safe top-level blocks into `settledPrefix`
+    // so `Remend.repair` stays bounded to the last block even in `ThoughtView` or non-hosted renders
+    if tail.utf8.count > 2048, let promoted = Self.promoteSafePrefix(tail) {
+      let prefixBlocks = Markdown.parse(Remend.repair(promoted.prefix).trimmingCharacters(in: .newlines))
+      settledPrefix += promoted.prefix
+      settledBlocks += prefixBlocks
+      stream = MarkdownStream()
+      let nextTail = String(tail[promoted.cut...])
+      let nextTailBlocks = stream.parse(Remend.repair(nextTail).trimmingCharacters(in: .newlines))
+      combined = settledBlocks + nextTailBlocks
+    }
+    last = (text, combined)
+    return combined
+  }
+
+  /// Finds a safe block boundary in `tail` where fences (` ``` `), math (`$$`), and inline code ticks are closed
+  /// and a subsequent block has already begun with at least one following line.
+  private static func promoteSafePrefix(_ tail: String) -> (prefix: String, cut: String.Index)? {
+    let layout = Markdown.parseLayout(tail)
+    guard layout.blocks.count >= 3 else { return nil }
+    var safe = 0
+    while safe + 1 < layout.blocks.count && layout.starts[safe + 1] + 1 < layout.lineCount { safe += 1 }
+    guard safe > 0 else { return nil }
+    let cutByte = layout.lineOffsets[layout.starts[safe]]
+    guard cutByte >= 512, cutByte < tail.utf8.count else { return nil }
+    let cut = tail.utf8.index(tail.utf8.startIndex, offsetBy: cutByte)
+    let prefix = String(tail[..<cut])
+    // Ensure balanced fences / math / unescaped single delimiters so `Remend` state across the boundary is neutral
+    guard Self.isRemendNeutral(prefix) else { return nil }
+    return (prefix, cut)
+  }
+
+  private static func isRemendNeutral(_ s: String) -> Bool {
+    var fences = 0
+    var dollars = 0
+    var ticks = 0
+    var stars2 = 0
+    var tildes2 = 0
+    var openBrackets = 0
+    let bytes = Array(s.utf8)
+    var i = 0
+    while i < bytes.count {
+      let b = bytes[i]
+      if b == 0x5C { i += 2; continue } // backslash escape
+      if b == 0x60 { // `
+        if i + 2 < bytes.count && bytes[i + 1] == 0x60 && bytes[i + 2] == 0x60 {
+          fences += 1; i += 3; continue
+        }
+        if fences % 2 == 0 { ticks += 1 }
+      } else if fences % 2 == 0 {
+        if b == 0x24 && i + 1 < bytes.count && bytes[i + 1] == 0x24 && ticks % 2 == 0 {
+          dollars += 1; i += 2; continue
+        }
+        if ticks % 2 == 0 {
+          if b == 0x2A && i + 1 < bytes.count && bytes[i + 1] == 0x2A { stars2 += 1; i += 2; continue }
+          if b == 0x7E && i + 1 < bytes.count && bytes[i + 1] == 0x7E { tildes2 += 1; i += 2; continue }
+          if b == 0x5B { openBrackets += 1 }
+          else if b == 0x5D { openBrackets = max(0, openBrackets - 1) }
+        }
+      }
+      i += 1
+    }
+    return fences % 2 == 0 && dollars % 2 == 0 && ticks % 2 == 0 && stars2 % 2 == 0
+      && tildes2 % 2 == 0 && openBrackets == 0
   }
 }
 
@@ -319,23 +483,59 @@ struct ProseBlocks: View {
   /// Streaming fade signal: passed to every block so an earlier paragraph finishes its own fade after a new
   /// block starts instead of snapping to full opacity, while settled paragraphs stay dormant
   var fade: StreamFadeSignal?
+  /// Offset added to `ForEach` identity and `first` check when earlier blocks were frozen into separate rows
+  var blockIdOffset: Int = 0
   @Environment(\.quoteProse) private var quote
+  @Environment(\.deferQuoteMenu) private var deferQuoteMenu
+  @Environment(\.rowHitTargets) private var hitTargets
+  @Environment(\.insideQuotedBlock) private var insideQuotedBlock
   @State private var shown = ProseCap.page
+  @State private var bucket = HitBucketToken()
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Metrics.gap) {
-      ForEach(Array(blocks.prefix(shown).enumerated()), id: \.offset) { index, block in
-        ProseBlock(block: block, style: style, first: index == 0, fade: fade)
-          #if !canImport(UIKit)
-          .environment(\.quoteProse, nil)
-          #endif
-          .quoteMenu(block, quote)
+    let prefixCount = min(blocks.count, shown)
+    let trackHits = deferQuoteMenu && quote != nil && !insideQuotedBlock && hitTargets != nil
+    if trackHits {
+      let bucketKey = ObjectIdentifier(bucket)
+      let onPlace: @Sendable ([CGRect]) -> Void = { [hitTargets] frames in
+        var entries: [BlockHitEntry] = []
+        entries.reserveCapacity(min(prefixCount, frames.count))
+        for i in 0..<min(prefixCount, frames.count) {
+          let block = blocks[i]
+          guard block != .rule else { continue }
+          entries.append(BlockHitEntry(quoteBlock: block, renderedBlock: block, localFrame: frames[i],
+                                       offersSelection: RowHitTargets.offersSelection(block)))
+        }
+        MainActor.assumeIsolated { hitTargets?.setEntries(entries, for: bucketKey) }
       }
-      if blocks.count > shown {
-        ProseMore(rest: blocks.count - shown) { shown += ProseCap.page }
+      BlockStackLayout(spacing: Metrics.gap, onPlace: onPlace) {
+        blockChildren(prefixCount: prefixCount)
       }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .onGeometryChange(for: CGPoint.self) { $0.frame(in: .named(RowHitSpace.name)).origin } action: { origin in
+        hitTargets?.setOrigin(origin, for: bucketKey)
+      }
+      .onDisappear { hitTargets?.removeBucket(bucketKey) }
+    } else {
+      VStack(alignment: .leading, spacing: Metrics.gap) {
+        blockChildren(prefixCount: prefixCount)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  @ViewBuilder private func blockChildren(prefixCount: Int) -> some View {
+    ForEach(blockIdOffset..<(blockIdOffset + prefixCount), id: \.self) { absolute in
+      let block = blocks[absolute - blockIdOffset]
+      ProseBlock(block: block, style: style, first: absolute == 0, fade: fade)
+        #if !canImport(UIKit)
+        .environment(\.quoteProse, nil)
+        #endif
+        .quoteMenu(block, quote, deferred: deferQuoteMenu)
+    }
+    if blocks.count > shown {
+      ProseMore(rest: blocks.count - shown) { shown += ProseCap.page }
+    }
   }
 }
 
@@ -345,26 +545,63 @@ struct ProseRun: View {
   let segments: [ReplySegment]
   @Environment(\.agentAccent) private var accent
   @Environment(\.quoteProse) private var quote
+  @Environment(\.deferQuoteMenu) private var deferQuoteMenu
+  @Environment(\.rowHitTargets) private var hitTargets
+  @State private var bucket = HitBucketToken()
 
   var body: some View {
     let style = ProseStyle(tone: .reply, accent: accent)
-    VStack(alignment: .leading, spacing: Metrics.gap) {
-      ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-        Group {
-          switch segment {
-          case let .block(block, index):
-            ProseBlock(block: block, style: style, first: index == 0).quoteMenu(block, quote)
+    let trackHits = deferQuoteMenu && quote != nil && hitTargets != nil
+    if trackHits {
+      let bucketKey = ObjectIdentifier(bucket)
+      let onPlace: @Sendable ([CGRect]) -> Void = { [hitTargets] frames in
+        var entries: [BlockHitEntry] = []
+        entries.reserveCapacity(min(segments.count, frames.count))
+        for i in 0..<min(segments.count, frames.count) {
+          switch segments[i] {
+          case let .block(block, _):
+            guard block != .rule else { continue }
+            entries.append(BlockHitEntry(quoteBlock: block, renderedBlock: block, localFrame: frames[i],
+                                         offersSelection: RowHitTargets.offersSelection(block)))
           case let .items(list, ordered, start, items):
-            // Long-pressed, a run of the list still quotes the whole list, as the list drawn whole does
-            ProseList(ordered: ordered, start: start, items: items, style: style).quoteMenu(list, quote)
+            let slice: MDBlock = .list(ordered: ordered, start: start, items: items)
+            entries.append(BlockHitEntry(quoteBlock: list, renderedBlock: slice, localFrame: frames[i],
+                                         offersSelection: true))
           }
         }
-        #if !canImport(UIKit)
-        .environment(\.quoteProse, nil)
-        #endif
+        MainActor.assumeIsolated { hitTargets?.setEntries(entries, for: bucketKey) }
       }
+      BlockStackLayout(spacing: Metrics.gap, onPlace: onPlace) {
+        segmentChildren(style: style)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .onGeometryChange(for: CGPoint.self) { $0.frame(in: .named(RowHitSpace.name)).origin } action: { origin in
+        hitTargets?.setOrigin(origin, for: bucketKey)
+      }
+      .onDisappear { hitTargets?.removeBucket(bucketKey) }
+    } else {
+      VStack(alignment: .leading, spacing: Metrics.gap) {
+        segmentChildren(style: style)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  @ViewBuilder private func segmentChildren(style: ProseStyle) -> some View {
+    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+      Group {
+        switch segment {
+        case let .block(block, index):
+          ProseBlock(block: block, style: style, first: index == 0).quoteMenu(block, quote, deferred: deferQuoteMenu)
+        case let .items(list, ordered, start, items):
+          // Long-pressed, a run of the list still quotes the whole list, as the list drawn whole does
+          ProseList(ordered: ordered, start: start, items: items, style: style).quoteMenu(list, quote, deferred: deferQuoteMenu)
+        }
+      }
+      #if !canImport(UIKit)
+      .environment(\.quoteProse, nil)
+      #endif
+    }
   }
 }
 
@@ -483,6 +720,7 @@ struct ProseQuote: View {
     var quiet = style
     quiet.inkOverride = Palette.fg2
     return ProseBlocks(blocks: blocks, style: quiet, fade: fade)
+      .environment(\.insideQuotedBlock, true)
       .padding(.vertical, Metrics.gap)
       .padding(.horizontal, Metrics.pad)
       .background(alignment: .leading) {
@@ -617,12 +855,13 @@ struct ProseTable: View {
   }
 
   func cellView(_ cell: [MDInline], column: Int, head: Bool) -> some View {
-    InlineText(inlines: cell, style: WebType.text2, ink: head ? Palette.fg2 : style.ink, strongInk: style.strongInk,
-               accent: style.accent, weight: head ? .medium : .regular)
-      .fixedSize()
-      .padding(.vertical, Metrics.gap)
-      .padding(.horizontal, Metrics.pad)
-      .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment(column).horizontal, vertical: .top))
+    TableCellWidth(max: Metrics.tableCellMax) {
+      InlineText(inlines: cell, style: WebType.text2, ink: head ? Palette.fg2 : style.ink, strongInk: style.strongInk,
+                 accent: style.accent, weight: head ? .medium : .regular, expand: false)
+    }
+    .padding(.vertical, Metrics.gap)
+    .padding(.horizontal, Metrics.pad)
+    .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment(column).horizontal, vertical: .top))
   }
 
   func alignment(_ column: Int) -> Alignment {
@@ -631,6 +870,23 @@ struct ProseTable: View {
     case .right: .trailing
     default: .leading
     }
+  }
+}
+
+/// Caps a table cell's width inside a horizontal `ScrollView` so short columns keep their tight natural width while
+/// long prose cells wrap cleanly instead of creating multi-thousand-point `Grid` backing textures.
+private struct TableCellWidth: Layout {
+  var max: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let child = subviews.first else { return .zero }
+    let width = proposal.width.map { min($0, max) } ?? max
+    return child.sizeThatFits(ProposedViewSize(width: width, height: nil))
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                          proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
   }
 }
 

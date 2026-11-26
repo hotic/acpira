@@ -1,5 +1,6 @@
 #if os(iOS)
 import AcpiraDesign
+import AcpiraMarkdown
 import AcpiraModels
 import SwiftUI
 import UIKit
@@ -83,6 +84,7 @@ struct TranscriptViewport: UIViewRepresentable {
 struct TranscriptCollection: UIViewRepresentable {
   let items: [ThreadItem]
   let control: TranscriptControl
+  var liveSplits: LiveReplySplits? = nil
   var motion: Bool
   /// What the view leaves out ahead of its first row (`SessionView.earlier`), and the asks for it, of which one is under
   /// way at a time: the rows start with a spinner, the reader's scrolling near it asks (`AppModel.loadEarlier`), and a
@@ -126,7 +128,9 @@ struct TranscriptCollection: UIViewRepresentable {
     view.loadEarlier = earlier == nil ? nil : loadEarlier
     view.fillEarlier = earlier == nil ? nil : fillEarlier
     view.motion = motion
-    context.coordinator.update(items: items, earlier: earlier, environment: values, in: view)
+    context.coordinator.update(items: items, earlier: earlier, anchorRemap: liveSplits?.pendingAnchorRemap,
+                               environment: values, in: view)
+    liveSplits?.pendingAnchorRemap = nil
   }
 
   static func dismantleUIView(_ view: TranscriptCollectionView, coordinator: Coordinator) {
@@ -143,67 +147,182 @@ struct TranscriptCollection: UIViewRepresentable {
     return UICollectionViewCompositionalLayout(section: section)
   }
 
-  @MainActor final class Coordinator: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
+  /// Snapshot of environment values thread rows actually observe. When unchanged across streamed chunks, visible
+  /// rows whose own `ThreadItem` did not change skip reconfiguration completely.
+  private struct ThreadEnvFingerprint: Equatable {
+    var colorScheme: ColorScheme
+    var motionEnabled: Bool
+    var processPrefs: ProcessPrefs
+    var quietEntrance: Bool
+    var planContext: PlanContext
+    var widgetCanSend: Bool
+    var allSubagents: [SubagentSummary]
+    var sidekickModels: SidekickModels
+    var chatAgent: AgentInfo?
+    var syncing: Bool
+    var liveStage: String?
+    var canStopCommands: Bool
+    var promptCommands: [String]
+    var mentionPersonas: [MentionPersona]
+    var compactAt: Int?
+    var hiddenModels: [String: [String]]
+    var clockOffset: TimeInterval
+    var clockHeld: Date?
+    var dynamicTypeSize: DynamicTypeSize
+    var legibilityWeight: LegibilityWeight?
+    var layoutDirection: LayoutDirection
+    var accessibilityReduceMotion: Bool
+    var accessibilityVoiceOverEnabled: Bool
+    var displayScale: CGFloat
+    var horizontalSizeClass: UserInterfaceSizeClass?
+    var subagentTranscript: Bool
+    var initialPopup: String?
+    var media: MediaScope
+    var liveSplitsID: ObjectIdentifier?
+
+    init(_ env: EnvironmentValues) {
+      colorScheme = env.colorScheme
+      motionEnabled = env.motionEnabled
+      processPrefs = env.processPrefs
+      quietEntrance = env.quietEntrance
+      planContext = env.planContext
+      widgetCanSend = env.widgetCanSend
+      allSubagents = env.allSubagents
+      sidekickModels = env.sidekickModels
+      chatAgent = env.chatAgent
+      syncing = env.syncing
+      liveStage = env.liveStage
+      canStopCommands = env.canStopCommands
+      promptCommands = env.promptCommands
+      mentionPersonas = env.mentionPersonas
+      compactAt = env.compactAt
+      hiddenModels = env.hiddenModels
+      clockOffset = env.clockOffset
+      clockHeld = env.clockHeld
+      dynamicTypeSize = env.dynamicTypeSize
+      legibilityWeight = env.legibilityWeight
+      layoutDirection = env.layoutDirection
+      accessibilityReduceMotion = env.accessibilityReduceMotion
+      accessibilityVoiceOverEnabled = env.accessibilityVoiceOverEnabled
+      displayScale = env.displayScale
+      horizontalSizeClass = env.horizontalSizeClass
+      subagentTranscript = env.subagentTranscript
+      initialPopup = env.initialPopup
+      media = env.media
+      liveSplitsID = env.liveReplySplits.map(ObjectIdentifier.init)
+    }
+  }
+
+  @MainActor final class Coordinator: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate,
+                                      UIContextMenuInteractionDelegate {
     private let control: TranscriptControl
+    private weak var collectionView: TranscriptCollectionView?
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
     private var items: [String: ThreadItem] = [:]
     private var ids: [String] = []
     private var lastPromptID: String?
     private var queuedCount = 0
     private var earlier: ViewEarlier?
+    private var lastEnvFingerprint: ThreadEnvFingerprint?
+    /// Per-row block hit registries (populated on layout by `BlockStackLayout` without adding any per-block views)
+    private var hitTargets: [String: RowHitTargets] = [:]
+    /// The one row currently hosting on-demand native `SelectionTextView`s; nil during idle scrolling and streaming
+    private var interactiveRowID: String?
+    private var doubleTapGesture: UITapGestureRecognizer?
     /// The environment the rows read. Hosted cells do not inherit the SwiftUI environment across the representable,
     /// so it is copied in whole and handed to every cell a pass configures
     private var environment = EnvironmentValues()
 
     init(control: TranscriptControl) { self.control = control }
 
+    private func hitTarget(for id: String) -> RowHitTargets {
+      if let existing = hitTargets[id] { return existing }
+      let created = RowHitTargets()
+      hitTargets[id] = created
+      return created
+    }
+
     func connect(_ view: TranscriptCollectionView) {
+      collectionView = view
       view.delegate = self
       // One registration per row kind, so a recycled cell usually shows the same kind of row and SwiftUI updates its
       // tree instead of rebuilding it (T3 Code's per-kind pools)
-      let make = {
-        UICollectionView.CellRegistration<UICollectionViewCell, String> { [weak self] cell, _, id in
+      let make = { [weak self] (resetIdentity: Bool) in
+        UICollectionView.CellRegistration<UICollectionViewCell, String> { cell, _, id in
           guard let self, let item = self.items[id] else {
             cell.contentConfiguration = nil
             return
           }
           let environment = self.environment
-          // `.id`: a cell reused for another row starts that row's state afresh; reconfiguring the same row keeps it
+          let targets = self.hitTarget(for: id)
+          let active = self.interactiveRowID == id
+          // Plain prose slices carry no per-row state and reuse their SwiftUI view graph in place during fast flings;
+          // stateful rows (folds, streaming pacers, tables, code, images) reset identity when reused for another row.
           cell.contentConfiguration = UIHostingConfiguration {
-            HostedRow(item: item, environment: environment).id(id)
+            if resetIdentity {
+              HostedRow(item: item, environment: environment, hitTargets: targets, selectionActive: active,
+                        onSelectionEnd: { [weak self] in self?.deactivateSelection(id) })
+                .id(id)
+            } else {
+              HostedRow(item: item, environment: environment, hitTargets: targets, selectionActive: active,
+                        onSelectionEnd: { [weak self] in self?.deactivateSelection(id) })
+            }
           }
           .margins(.all, 0)
           cell.backgroundConfiguration = .clear()
         }
       }
-      let user = make(), agent = make(), other = make()
-      dataSource = UICollectionViewDiffableDataSource(collectionView: view) { view, indexPath, id in
-        let registration = id.hasPrefix("u") ? user : id.hasPrefix("a") ? agent : other
+      let user = make(true), agent = make(true), plainPiece = make(false), heavyPiece = make(true), other = make(true)
+      dataSource = UICollectionViewDiffableDataSource(collectionView: view) { [weak self] view, indexPath, id in
+        let registration: UICollectionView.CellRegistration<UICollectionViewCell, String>
+        if id.hasPrefix("u") { registration = user }
+        else if let item = self?.items[id], item.isReplyPieceRow {
+          registration = item.isPlainReplyPiece ? plainPiece : heavyPiece
+        } else if id.hasPrefix("a") { registration = agent }
+        else { registration = other }
         return view.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: id)
       }
       view.readerItemID = { [weak self] in self?.dataSource?.itemIdentifier(for: $0) }
       view.readerIndexPath = { [weak self] in self?.dataSource?.indexPath(for: $0) }
       view.onFollowChange = { [weak self] in self?.control.following.set($0) }
-      // A tap on the thread ends typing; transcript buttons and links still take the same tap
-      let tap = UITapGestureRecognizer(target: self, action: #selector(endTyping))
+      // One shared double-tap recognizer to mount native range selection on demand
+      let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+      doubleTap.numberOfTapsRequired = 2
+      doubleTap.cancelsTouchesInView = false
+      doubleTap.delegate = self
+      view.addGestureRecognizer(doubleTap)
+      doubleTapGesture = doubleTap
+      // A tap on the thread ends typing and toggles an older reply's action row (waiting out double tap);
+      // transcript buttons and links still take the same tap
+      let tap = UITapGestureRecognizer(target: self, action: #selector(handleSingleTap(_:)))
       tap.cancelsTouchesInView = false
       tap.delegate = self
+      tap.require(toFail: doubleTap)
       view.addGestureRecognizer(tap)
+      // One shared UIContextMenuInteraction replaces per-paragraph SwiftUI `.contextMenu` modifiers
+      view.addInteraction(UIContextMenuInteraction(delegate: self))
     }
 
-    /// A pass lays out new and removed rows and reconfigures the rows whose data changed, plus the visible ones (the
-    /// environment they read may have changed): a hosted row only redraws when its cell is configured again
-    func update(items rows: [ThreadItem], earlier window: ViewEarlier? = nil, environment values: EnvironmentValues,
+    /// A pass lays out new and removed rows and reconfigures the rows whose data changed, plus visible rows only when
+    /// the thread-wide environment fingerprint actually changed.
+    func update(items rows: [ThreadItem], earlier window: ViewEarlier? = nil,
+                anchorRemap: (from: String, to: String)? = nil,
+                environment values: EnvironmentValues,
                 in view: TranscriptCollectionView) {
       guard let dataSource else { return }
       environment = values
+      let fingerprint = ThreadEnvFingerprint(values)
+      let envChanged = fingerprint != lastEnvFingerprint
+      lastEnvFingerprint = fingerprint
       let next = rows.map(\.id)
       let old = Set(ids)
       // The view starts elsewhere than it did: an earlier part landed ahead of the rows (or the engine opened the
       // session at its tail again)
       let moved = !ids.isEmpty && window != earlier
       earlier = window
-      var refresh = Set(view.indexPathsForVisibleItems.compactMap { dataSource.itemIdentifier(for: $0) })
+      var refresh: Set<String> = envChanged
+        ? Set(view.indexPathsForVisibleItems.compactMap { dataSource.itemIdentifier(for: $0) })
+        : []
       for row in rows {
         if items[row.id] != row { refresh.insert(row.id) }
         items[row.id] = row
@@ -222,7 +341,11 @@ struct TranscriptCollection: UIViewRepresentable {
       }
       let structure = next != ids
       if structure {
-        for id in old.subtracting(next) { items[id] = nil }
+        for id in old.subtracting(next) {
+          items[id] = nil
+          hitTargets[id] = nil
+          if interactiveRowID == id { interactiveRowID = nil }
+        }
         ids = next
       }
       // Only rows that stay can be reconfigured; new ones are configured as they are dequeued
@@ -239,7 +362,13 @@ struct TranscriptCollection: UIViewRepresentable {
       // follow's job. An earlier part goes in above what the reader sees: new rows, and earlier blocks at the head of
       // the turn the view was cut in, which grows upwards. So that pass holds a row by its end, mid-gesture too (the
       // reader is usually scrolling up when it lands), and never by the spinner the part goes in under
-      let visible = initial || sentNow ? nil : view.firstVisibleItem(skipping: moved ? ThreadItem.earlierID : nil)
+      var visible = initial || sentNow ? nil : view.firstVisibleItem(skipping: moved ? ThreadItem.earlierID : nil)
+      // When a newly frozen row is promoted directly above the live tail that currently anchors the viewport, remap
+      // the anchor to that frozen row (whose top sits at the old live tail's top) so reading stays pixel-stable
+      if let remap = anchorRemap, let v = visible, v.itemID == remap.from, items[remap.to] != nil {
+        visible = TranscriptCollectionView.VisibleItem(itemID: remap.to, indexPath: v.indexPath,
+                                                       minYInViewport: v.minYInViewport, maxYInViewport: v.maxYInViewport)
+      }
       dataSource.apply(snapshot, animatingDifferences: false) { [weak view] in
         DispatchQueue.main.async {
           guard let view, view.maintainsBottomAnchor, !view.isTracking, !view.isDragging, !view.isDecelerating else { return }
@@ -250,8 +379,163 @@ struct TranscriptCollection: UIViewRepresentable {
       if let visible { moved ? view.keepEnd(visible) : view.keepOnScreen(visible) }
     }
 
-    @objc private func endTyping() {
+    // MARK: - On-demand selection & context menu
+
+    private enum SelectionMode { case selectAll, selectWord }
+
+    /// Mounts native `SelectionTextView` overlays on `rowID` only, then begins range selection at `pointInCell`.
+    private func activateSelection(rowID: String, pointInCell: CGPoint, mode: SelectionMode) {
+      guard let view = collectionView, let dataSource, items[rowID] != nil else { return }
+      let previous = interactiveRowID
+      interactiveRowID = rowID
+      var toReconfigure: [String] = [rowID]
+      if let previous, previous != rowID, items[previous] != nil { toReconfigure.append(previous) }
+      var snapshot = dataSource.snapshot()
+      snapshot.reconfigureItems(toReconfigure.filter { snapshot.indexOfItem($0) != nil })
+      dataSource.apply(snapshot, animatingDifferences: false)
+      view.layoutIfNeeded()
+
+      guard let indexPath = dataSource.indexPath(for: rowID),
+            let cell = view.cellForItem(at: indexPath),
+            let target = nearestSelectionView(in: cell, to: pointInCell) else { return }
+      let localPoint = cell.contentView.convert(pointInCell, to: target)
+      switch mode {
+      case .selectAll:
+        DispatchQueue.main.async { [weak target] in target?.beginSelection() }
+      case .selectWord:
+        target.beginWordSelection(at: localPoint)
+      }
+    }
+
+    /// Unmounts on-demand `SelectionTextView` overlays once the user dismisses selection.
+    private func deactivateSelection(_ rowID: String) {
+      guard interactiveRowID == rowID else { return }
+      interactiveRowID = nil
+      guard dataSource != nil else { return }
+      // Defer past `resignFirstResponder` so UIKit finishes tearing down the edit menu before reconfiguring the cell
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.interactiveRowID == nil, let dataSource = self.dataSource else { return }
+        var snapshot = dataSource.snapshot()
+        guard snapshot.indexOfItem(rowID) != nil else { return }
+        snapshot.reconfigureItems([rowID])
+        dataSource.apply(snapshot, animatingDifferences: false)
+      }
+    }
+
+    private func nearestSelectionView(in cell: UICollectionViewCell, to pointInContent: CGPoint) -> SelectionTextView? {
+      var all: [SelectionTextView] = []
+      func collect(_ v: UIView) {
+        if let tv = v as? SelectionTextView { all.append(tv); return }
+        for sub in v.subviews { collect(sub) }
+      }
+      collect(cell.contentView)
+      guard !all.isEmpty else { return nil }
+      // Prefer the view whose frame contains the point, else the vertically nearest one
+      if let exact = all.first(where: { $0.convert($0.bounds, to: cell.contentView).contains(pointInContent) }) {
+        return exact
+      }
+      return all.min { a, b in
+        let fa = a.convert(a.bounds, to: cell.contentView)
+        let fb = b.convert(b.bounds, to: cell.contentView)
+        let da = hypot(max(0, max(fa.minX - pointInContent.x, pointInContent.x - fa.maxX)),
+                       max(0, max(fa.minY - pointInContent.y, pointInContent.y - fa.maxY)))
+        let db = hypot(max(0, max(fb.minX - pointInContent.x, pointInContent.x - fb.maxX)),
+                       max(0, max(fb.minY - pointInContent.y, pointInContent.y - fb.maxY)))
+        return da < db
+      }
+    }
+
+    private func hitBlock(at locationInCollection: CGPoint) -> (id: String, cell: UICollectionViewCell,
+                                                               pointInCell: CGPoint, entry: BlockHitEntry,
+                                                               frameInCell: CGRect)? {
+      guard let view = collectionView, let dataSource,
+            let indexPath = view.indexPathForItem(at: locationInCollection),
+            let id = dataSource.itemIdentifier(for: indexPath),
+            let cell = view.cellForItem(at: indexPath),
+            let targets = hitTargets[id] else { return nil }
+      let pointInCell = view.convert(locationInCollection, to: cell.contentView)
+      guard let hit = targets.hit(at: pointInCell) else { return nil }
+      return (id, cell, pointInCell, hit.entry, hit.frameInRow)
+    }
+
+    @objc private func handleDoubleTap(_ tap: UITapGestureRecognizer) {
+      guard tap.state == .ended, let view = collectionView else { return }
+      let loc = tap.location(in: view)
+      guard let hit = hitBlock(at: loc), hit.entry.offersSelection else { return }
+      if interactiveRowID == hit.id { return }
+      activateSelection(rowID: hit.id, pointInCell: hit.pointInCell, mode: .selectWord)
+    }
+
+    @objc private func handleSingleTap(_ tap: UITapGestureRecognizer) {
+      guard tap.state == .ended, let view = collectionView else { return }
       UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+      let loc = tap.location(in: view)
+      guard let hit = hitBlock(at: loc),
+            let targets = hitTargets[hit.id],
+            targets.canTapActions, let turnIndex = targets.turnIndex else { return }
+      // Leave taps on links alone so `openURL` handles them without flipping the action row
+      let localPoint = CGPoint(x: hit.pointInCell.x - hit.frameInCell.minX,
+                               y: hit.pointInCell.y - hit.frameInCell.minY)
+      if TextSelectionProbe.anyLink(in: hit.entry.renderedBlock, width: hit.frameInCell.width,
+                                    pointInBlock: localPoint) != nil {
+        return
+      }
+      control.reveal.toggle(turnIndex)
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+      guard !environment.subagentTranscript else { return nil }
+      guard let hit = hitBlock(at: location) else { return nil }
+      // While native range selection is active on this row, leave gestures to `SelectionTextView`
+      if interactiveRowID == hit.id { return nil }
+      let localPoint = CGPoint(x: hit.pointInCell.x - hit.frameInCell.minX,
+                               y: hit.pointInCell.y - hit.frameInCell.minY)
+      let inspection = TextSelectionProbe.inspect(block: hit.entry.renderedBlock, quoteBlock: hit.entry.quoteBlock,
+                                                  width: hit.frameInCell.width, pointInBlock: localPoint)
+      let quoteText = QuoteText.of(hit.entry.quoteBlock)
+      let quoteAction = environment.sessionActions.quote
+      let offersSelection = hit.entry.offersSelection
+      let rowID = hit.id
+      let pointInCell = hit.pointInCell
+      let scheme = collectionView?.traitCollection.userInterfaceStyle == .light ? ColorScheme.light : .dark
+
+      let previewProvider: UIContextMenuContentPreviewProvider? = offersSelection ? {
+        let card = QuotePreviewCard(text: inspection.previewText)
+          .environment(\.colorScheme, scheme)
+        let host = UIHostingController(rootView: card)
+        host.view.backgroundColor = .clear
+        let size = host.sizeThatFits(in: CGSize(width: Metrics.popLg + Metrics.s3 * 2, height: 600))
+        host.preferredContentSize = size
+        return host
+      } : nil
+
+      return UIContextMenuConfiguration(identifier: nil, previewProvider: previewProvider) { [weak self] _ in
+        var items: [UIMenuElement] = []
+        if let link = inspection.link {
+          let openSystem = UIAction(title: t("browser.openSystem"), image: UIImage(systemName: "safari")) { _ in
+            WebPage.openOutside(link)
+          }
+          let copyLink = UIAction(title: t("mobile.link.copy"), image: UIImage(systemName: "link")) { _ in
+            UIPasteboardBridge.copy(link.absoluteString)
+          }
+          items.append(UIMenu(title: link.absoluteString, options: .displayInline, children: [openSystem, copyLink]))
+        }
+        items.append(UIAction(title: t("quote.add"), image: UIImage(systemName: "text.quote")) { _ in
+          quoteAction(quoteText)
+        })
+        items.append(UIAction(title: t("common.copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
+          UIPasteboardBridge.copy(quoteText)
+        })
+        if offersSelection {
+          items.append(UIAction(title: t("history.selectText"), image: UIImage(systemName: "text.cursor")) { [weak self] _ in
+            DispatchQueue.main.async {
+              self?.activateSelection(rowID: rowID, pointInCell: pointInCell, mode: .selectAll)
+            }
+          })
+        }
+        return UIMenu(children: items)
+      }
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -371,18 +655,109 @@ struct TranscriptViewportGeometry: Equatable {
 private struct HostedRow: View {
   let item: ThreadItem
   let environment: EnvironmentValues
+  let hitTargets: RowHitTargets
+  let selectionActive: Bool
+  let onSelectionEnd: () -> Void
   @Environment(\.colorScheme) private var scheme
   @State private var probe = CellSizeProbe()
 
   var body: some View {
-    ThreadItemView(item: item)
+    let base = ThreadItemView(item: item)
       .environment(\.colorScheme, scheme)
+      .environment(\.deferSelectionSurface, true)
+      .environment(\.selectionSurfaceActive, selectionActive)
+      .environment(\.selectionEndHandler, selectionActive ? SelectionEndHandler(id: item.id, run: onSelectionEnd) : nil)
+      .environment(\.deferQuoteMenu, true)
+      .environment(\.rowHitTargets, hitTargets)
       .environment(\.self, environment)
+      .coordinateSpace(.named(RowHitSpace.name))
+    if item.needsSizeProbe {
       // Content growing in place inside a horizontal ScrollView (a streaming table or code block finishing its pacing
-      // flush, or async inline-code chip growth) updates its SwiftUI frame without invalidating UIHostingConfiguration's
-      // self-sized cell height. Keep the probe outside SwiftUI state so normal frames never re-evaluate this body.
-      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { probe.heightChanged($0) }
-      .background(CellSizeAnchor(probe: probe))
+      // flush, or a live row) updates its SwiftUI frame without invalidating UIHostingConfiguration's self-sized cell
+      // height. Plain settled text slices skip the probe UIViewRepresentable altogether.
+      base
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { probe.heightChanged($0) }
+        .background(CellSizeAnchor(probe: probe))
+    } else {
+      base
+    }
+  }
+}
+
+private extension ThreadItem {
+  /// Whether this row renders directly as a `ReplyPieceView` (either a live frozen slice or a settled single-text piece).
+  var isReplyPieceRow: Bool {
+    switch kind {
+    case .replyPiece:
+      return true
+    case .agent(_, _, _, false, _, _, _, _, .piece, _):
+      return settledSlices?.count == 1
+    default:
+      return false
+    }
+  }
+
+  /// Segments rendered by a `ReplyPieceView` row, if this row is one.
+  private var pieceSegments: [ReplySegment]? {
+    switch kind {
+    case .replyPiece(let segments, _, _, _):
+      return segments
+    case .agent(_, _, _, false, _, _, _, _, .piece, _):
+      return settledSlices?.count == 1 ? settledSlices?[0].segments : nil
+    default:
+      return nil
+    }
+  }
+
+  /// Plain prose slice (paragraphs, headings, lists, blockquotes without tables, code, math, or embedded images):
+  /// carries no per-row state and can reuse its SwiftUI view graph in place across `UICollectionView` cell dequeues.
+  var isPlainReplyPiece: Bool {
+    guard let segments = pieceSegments else { return false }
+    return !segments.contains { seg in
+      switch seg {
+      case .block(let b, _):
+        return Self.hasStatefulBlock(b)
+      case .items(_, _, _, let items):
+        return items.contains { $0.contains(where: Self.hasStatefulBlock) }
+      }
+    }
+  }
+
+  private static func hasStatefulBlock(_ block: MDBlock) -> Bool {
+    switch block {
+    case .table, .code, .math:
+      return true
+    case .paragraph(let inlines):
+      return inlines.contains { if case .image = $0 { true } else { false } }
+    case .quote(let inner):
+      return inner.contains(where: hasStatefulBlock)
+    case .list(_, _, let items):
+      return items.contains { $0.contains(where: hasStatefulBlock) }
+    case .heading, .rule:
+      return false
+    }
+  }
+
+  /// Whether this row can resize asynchronously inside a horizontal `ScrollView` (tables, fenced code, or live rows).
+  var needsSizeProbe: Bool {
+    switch kind {
+    case .liveTail:
+      return true
+    case .replyPiece:
+      return !isPlainReplyPiece
+    case .agent(_, _, _, let running, _, _, _, _, let cut, _):
+      if running { return true }
+      switch cut {
+      case .piece:
+        return isReplyPieceRow ? !isPlainReplyPiece : true
+      case .whole, .head, .tail:
+        return true
+      case .headOnly:
+        return false
+      }
+    case .earlier, .user, .returns, .queue:
+      return false
+    }
   }
 }
 

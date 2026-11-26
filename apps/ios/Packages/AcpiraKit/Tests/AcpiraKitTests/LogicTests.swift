@@ -861,4 +861,24 @@ struct DetentTests {
     #expect(items[2].top == Metrics.gap)
     #expect(items[3].top == 0)
   }
+
+  @Test func automaticCompactionDoesNotStackAnExtraTopGap() {
+    var compact = UserTurn(text: "/compact")
+    compact.auto = true
+    compact.autoReason = "compact"
+    var view = SessionView(id: "s", agent: "claude", title: "", cwd: "", status: .ready)
+    view.turns = [
+      .user(UserTurn(text: "ask")),
+      .agent(AgentTurn(blocks: [.text(TextBlock(markdown: "answer"))], stop: .end_turn)),
+      .user(compact),
+      .agent(AgentTurn(blocks: [.compaction(CompactionBlock("c1", status: .completed))], stop: .end_turn)),
+      .user(UserTurn(text: "follow up")),
+    ]
+    let items = threadItems(view, wholeTurns: [])
+    #expect(items.map(\.id) == ["u0", "a1", "a3", "u4"])
+    #expect(items[1].bottom == Metrics.gap)
+    #expect(items[2].top == 0)
+    #expect(items[2].bottom == WebMetrics.msgGap)
+    #expect(items[3].top == 0)
+  }
 }

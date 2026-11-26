@@ -738,6 +738,7 @@ struct TerminalOutput: View {
   /// command's streamed output is built and laid out only down to the cut, not whole on every patch; one line more
   /// keeps the card past the cut so its fade still shows. The code sheet shows every line
   private static let previewLines = Int((WebMetrics.codeOutputMax / WebType.mono.lineHeight).rounded(.up)) + 1
+  private static let sheetLines = 60
 
   var body: some View {
     let text = outputOf(block)
@@ -746,7 +747,16 @@ struct TerminalOutput: View {
         if let command { CommandPrompt(command: command, last: text.isEmpty) }
         if !text.isEmpty {
           OutputPane(top: command != nil ? Metrics.gapHalf : Metrics.commandY) {
-            terminalLines(text, limit: inSheet ? nil : Self.previewLines)
+            if inSheet {
+              // One `Text` per piece, as `ToolOutput`'s sheet: a few hundred lines drawn as one came out empty. The
+              // lines do not wrap here, so only their count sets a piece's height
+              VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(textPieces(text.trimmingTrailingWhitespace(), lines: Self.sheetLines, chars: .max).enumerated()),
+                        id: \.offset) { terminalLines($0.element) }
+              }
+            } else {
+              terminalLines(text, limit: Self.previewLines)
+            }
           }
         }
       }
@@ -784,17 +794,46 @@ struct ToolOutput: View {
   let text: String
   @Environment(\.codeSheet) private var inSheet
 
+  /// Lines of the transcript's card, which is cut at --code-output-max and never scrolls (as `TerminalOutput`): one
+  /// line more keeps the card past the cut, so its fade still shows
+  private static let previewLines = Int((WebMetrics.codeOutputMax / WebType.mono.lineHeight).rounded(.up)) + 1
+  /// Characters a wrapped line can hold at most, in the widest column: the card's head keeps as many visual lines as
+  /// the line count above even when the text is one long line (a JSON reply)
+  private static let lineChars = 100
+  /// A sheet piece stays near 2 000 pt at the largest code size: a `Text` around 2 800 pt tall on a 3x screen
+  /// already drew nothing (likely the 8 192 px layer limit)
+  private static let pieceLines = 30
+  private static let pieceChars = 1200
+
   var body: some View {
     let body = text.trimmingTrailingWhitespace()
     if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       Group {
         if inSheet {
-          Scroller(.vertical) { content(body) }
-            .scrollBounceBehavior(.basedOnSize)
+          // One `Text` per piece: drawn whole, a page of fetched text (20 000 characters, thousands of points tall)
+          // drew nothing and showed an empty card
+          Scroller(.vertical) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+              ForEach(Array(textPieces(body, lines: Self.pieceLines, chars: Self.pieceChars).enumerated()), id: \.offset) {
+                line($0.element)
+              }
+            }
+            .padding(.horizontal, Metrics.commandX)
+            .padding(.vertical, Metrics.commandY)
+          }
+          .scrollBounceBehavior(.basedOnSize)
         } else {
           // The transcript preview never scrolls; laying it out directly avoids `UIScrollView`'s late
           // self-sizing inside `FoldLayout` (which popped the card in several frames late over rows below).
-          CappedPreview(limit: WebMetrics.codeOutputMax) { content(body) }
+          // Only its head is drawn, for the same reason as the sheet's pieces
+          let head = String(body.prefix(Self.previewLines * Self.lineChars))
+            .split(separator: "\n", maxSplits: Self.previewLines, omittingEmptySubsequences: false)
+            .prefix(Self.previewLines).joined(separator: "\n")
+          CappedPreview(limit: WebMetrics.codeOutputMax) {
+            line(head)
+              .padding(.horizontal, Metrics.commandX)
+              .padding(.vertical, Metrics.commandY)
+          }
         }
       }
       .modifier(CodeOutputFrame())
@@ -802,15 +841,45 @@ struct ToolOutput: View {
     }
   }
 
-  private func content(_ body: String) -> some View {
-    Text(web: body, size: WebType.mono.size)
+  private func line(_ piece: String) -> some View {
+    Text(web: piece, size: WebType.mono.size)
       .textStyle(WebType.mono)
       .foregroundStyle(Palette.fg2)
       .fixedSize(horizontal: false, vertical: true)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.horizontal, Metrics.commandX)
-      .padding(.vertical, Metrics.commandY)
   }
+}
+
+/// `text` cut into pieces of at most `lines` lines and `chars` characters, at line ends where a line fits and inside
+/// a longer line otherwise. A blank line never ends a piece, where a `Text` may leave its trailing break undrawn: it
+/// starts the next one instead
+func textPieces(_ text: String, lines: Int, chars: Int) -> [String] {
+  var pieces: [String] = []
+  var current: [Substring] = []
+  var size = 0
+  func close() {
+    var carried: [Substring] = []
+    while current.count > 1, current.last?.isEmpty == true { carried.insert(current.removeLast(), at: 0) }
+    if !current.isEmpty { pieces.append(current.joined(separator: "\n")) }
+    current = carried
+    size = carried.count
+  }
+  for var line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+    // A line longer than a piece goes out in slices of its own
+    while line.count > chars {
+      if current.contains(where: { !$0.isEmpty }) { close() }
+      // Blank lines carried over go first, a line break each
+      let end = line.index(line.startIndex, offsetBy: max(1, chars - current.count))
+      current.append(line[..<end])
+      close()
+      line = line[end...]
+    }
+    if !current.isEmpty, current.count >= lines || size + line.count > chars { close() }
+    current.append(line)
+    size += line.count + 1
+  }
+  if !current.isEmpty { pieces.append(current.joined(separator: "\n")) }
+  return pieces
 }
 
 /// The scrolling output area: capped by --code-output-max, sideways scrolling for long lines (in the transcript too)

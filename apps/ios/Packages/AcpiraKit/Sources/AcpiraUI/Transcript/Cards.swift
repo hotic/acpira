@@ -51,8 +51,10 @@ struct UserMessageCard: View {
             #if canImport(UIKit)
             .accessibilityHidden(true)
             .overlay {
+              // Only a prompt that holds a pill needs the surface's text laid out for the painter; any other
+              // keeps it back until touched, as a reply's paragraphs do
               TextSelectionSurface(text: selectionContent(shown, style: WebType.text1), actions: promptActions(edit: edit),
-                                   marks: marks)
+                                   marks: hasMarks(shown) ? marks : nil)
                 .environment(\.textSelectionScope, selection)
             }
             #else
@@ -94,6 +96,12 @@ struct UserMessageCard: View {
   }
 
   #if canImport(UIKit)
+  /// Whether the prompt holds a command or summon token the painter would draw a pill behind
+  private func hasMarks(_ text: String) -> Bool {
+    guard text.contains("/") || text.contains("@") else { return false }
+    return !SlashCommands.renderedMarks(text, commands: marks.commands, summons: marks.summons).marks.isEmpty
+  }
+
   private func promptActions(edit: Int?) -> [SelectionAction] {
     var items: [SelectionAction] = []
     if let edit {

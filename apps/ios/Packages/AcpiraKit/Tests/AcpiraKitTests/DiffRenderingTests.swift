@@ -128,3 +128,22 @@ import UIKit
   }
   #endif
 }
+
+/// A tool's output in the code sheet, cut into pieces short enough to draw (`textPieces`)
+@MainActor struct ToolOutputPieceTests {
+  @Test func piecesKeepTheTextInOrderWithinTheirLimitsAndEndOnText() {
+    // A fetched page: short lines with blank ones between sections, then one long line (a JSON reply)
+    let lines = (1...300).map { $0 % 50 == 0 ? "line \($0)\n" : "line \($0)" }.joined(separator: "\n")
+    let page = lines + "\n" + String(repeating: "x", count: 9_500)
+    let pieces = textPieces(page, lines: 30, chars: 1200)
+    #expect(pieces.count > 4)
+    for piece in pieces {
+      #expect(piece.count <= 1200)
+      #expect(piece.split(separator: "\n", omittingEmptySubsequences: false).count <= 30)
+      #expect(!piece.hasSuffix("\n"))
+    }
+    #expect(pieces.joined().filter { $0 != "\n" } == page.filter { $0 != "\n" })
+    // Cut only at line ends, the pieces put back together are the text itself
+    #expect(textPieces(lines, lines: 30, chars: 1200).joined(separator: "\n") == lines)
+  }
+}

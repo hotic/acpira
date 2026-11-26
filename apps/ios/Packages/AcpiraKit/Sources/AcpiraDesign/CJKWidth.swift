@@ -83,10 +83,115 @@ public enum CJKWidth {
   /// `paragraph`: the string is a whole paragraph, so it also gets the `paragraphEnd`; a run inside a larger `Text`
   /// leaves that to the paragraph (a word joiner mid-paragraph would forbid a break)
   public static func attributed(_ string: String, size: CGFloat, paragraph: Bool = true) -> AttributedString {
-    let end = paragraph && needsParagraphEnd(string) ? paragraphEnd : ""
-    var a = AttributedString(breakOpportunities(string) + end)
-    widen(&a, size: size)
-    return a
+    // Fast path: pure ASCII holds neither widened nor breakable characters, skipping scalar scans and widening
+    if string.utf8.allSatisfy({ $0 < 0x80 }) { return AttributedString(string) }
+    return CJKWidthCache.shared.get(string, size: size, paragraph: paragraph) {
+      buildAttributed(string, size: size, paragraph: paragraph)
+    }
+  }
+
+  /// Single-pass construction of break opportunities and coalesced kerned runs, avoiding O(n) `AttributedString.CharacterView`
+  /// index slicing per run while producing the exact same characters and kern runs as `breakOpportunities` + `widen`
+  private static func buildAttributed(_ string: String, size: CGFloat, paragraph: Bool) -> AttributedString {
+    var result = AttributedString()
+    let kern = size * extra
+    var kernedAttrs = AttributeContainer()
+    kernedAttrs.kern = kern
+    var chunk = String.UnicodeScalarView()
+    var inKern = false
+    var hasBreakable = false
+    var previous: Unicode.Scalar?
+    // Pending ZWSP between `previous` and the next scalar (or an explicit ZWSP from source) that bridges two widened
+    // scalars so the passage stays one attributed run
+    var pendingBridge = false
+
+    func flush() {
+      guard !chunk.isEmpty else { return }
+      var part = AttributedString(String(chunk))
+      if inKern { part.mergeAttributes(kernedAttrs) }
+      result.append(part)
+      chunk.removeAll(keepingCapacity: true)
+    }
+
+    let scalars = string.unicodeScalars
+    var idx = scalars.startIndex
+    while idx < scalars.endIndex {
+      let scalar = scalars[idx]
+      let nextIdx = scalars.index(after: idx)
+      let isBreak = breakable(scalar)
+      if isBreak { hasBreakable = true }
+      let isWide = widened(scalar)
+      // Insert zero-width break between two consecutive breakable scalars
+      if let prev = previous, breakable(prev), isBreak {
+        if inKern && isWide {
+          chunk.append("\u{200B}")
+        } else {
+          if inKern { flush(); inKern = false }
+          chunk.append("\u{200B}")
+        }
+      }
+      if pendingBridge {
+        pendingBridge = false
+        if inKern && isWide {
+          chunk.append("\u{200B}")
+        } else {
+          if inKern { flush(); inKern = false }
+          chunk.append("\u{200B}")
+        }
+      }
+      // Explicit source ZWSP bridging two widened scalars shares the kern run
+      if scalar == "\u{200B}", inKern, nextIdx < scalars.endIndex, widened(scalars[nextIdx]) {
+        pendingBridge = true
+        previous = scalar
+        idx = nextIdx
+        continue
+      }
+      if isWide != inKern {
+        flush()
+        inKern = isWide
+      }
+      chunk.append(scalar)
+      previous = scalar
+      idx = nextIdx
+    }
+    if pendingBridge {
+      if inKern { flush(); inKern = false }
+      chunk.append("\u{200B}")
+    }
+    if paragraph && hasBreakable {
+      if inKern { flush(); inKern = false }
+      chunk.append("\u{2060}")
+    }
+    flush()
+    return result
+  }
+}
+
+/// Bounded cache for `CJKWidth.attributed`, keyed by content, size and paragraph flag. Scrolling back through history
+/// and repeated UI labels hit the cache instead of re-scanning Unicode scalars and rebuilding attributed runs.
+private final class CJKWidthCache: @unchecked Sendable {
+  struct Key: Hashable {
+    var text: String
+    var size: CGFloat
+    var paragraph: Bool
+  }
+
+  static let shared = CJKWidthCache()
+  private let lock = NSLock()
+  private var entries: [Key: AttributedString] = [:]
+  private static let maxEntries = 512
+  private static let maxUTF8Bytes = 2048
+
+  func get(_ text: String, size: CGFloat, paragraph: Bool, make: () -> AttributedString) -> AttributedString {
+    guard text.utf8.count <= Self.maxUTF8Bytes else { return make() }
+    let key = Key(text: text, size: size, paragraph: paragraph)
+    if let hit = lock.withLock({ entries[key] }) { return hit }
+    let built = make()
+    lock.withLock {
+      if entries.count >= Self.maxEntries { entries.removeAll(keepingCapacity: true) }
+      entries[key] = built
+    }
+    return built
   }
 }
 
@@ -95,7 +200,12 @@ extension Text {
   /// share the UI size; text-3 / text-4 are a point or two smaller, a few hundredths of a point per character).
   /// `paragraph: false` for a run that is joined into a larger `Text` (`CJKWidth.attributed`)
   public init(web string: String, size: CGFloat = TypeScale.text1.size, paragraph: Bool = true) {
-    self.init(CJKWidth.attributed(string, size: size, paragraph: paragraph))
+    // Pure ASCII holds no widened or breakable scalars; `Text(verbatim:)` skips `AttributedString` / `NSAttributedString` bridging
+    if string.utf8.allSatisfy({ $0 < 0x80 }) {
+      self.init(verbatim: string)
+    } else {
+      self.init(CJKWidth.attributed(string, size: size, paragraph: paragraph))
+    }
   }
 
   /// `parts` as one text, joined pairwise. Each interpolation nests its operands a level deeper and resolving a text

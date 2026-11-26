@@ -356,7 +356,7 @@ struct Thread: View {
   @State private var gate = QuietGate()
   #if os(iOS)
   @State private var control = TranscriptControl()
-  @State private var live = LiveTurns()
+  @State private var liveSplits = LiveReplySplits()
   #endif
 
   var body: some View {
@@ -365,7 +365,10 @@ struct Thread: View {
     let quiet = gate.isQuiet(session: session, catchingUp: false, liveStream: stream)
     let control = control
     let session = session
-    let whole = live.note(session)
+    let splits = liveSplits
+    // Subscribe only to frozen-row promotions (every ~1-2s), never to 32ms pacing ticks
+    let _ = splits.revision
+    let whole = splits.note(session)
     // Only the viewport bridge reads animated geometry. Putting the collection in that reader reconfigured every
     // visible hosted turn on every frame of a dock fold, including an entire open process history.
     GeometryReader { proxy in
@@ -373,8 +376,10 @@ struct Thread: View {
     }
     .background {
       TranscriptCollection(items: threadItems(session, preOpen: preOpen,
-                                              loadingEarlier: model?.loadingEarlier[session.id] != nil, wholeTurns: whole),
+                                              loadingEarlier: model?.loadingEarlier[session.id] != nil,
+                                              wholeTurns: whole, liveSplits: splits),
                            control: control,
+                           liveSplits: splits,
                            motion: motion, earlier: session.earlier,
                            loadEarlier: { [model] in model?.loadEarlier(session.id) },
                            fillEarlier: { [model] in model?.fillEarlier(session.id) }) { values in
@@ -384,6 +389,7 @@ struct Thread: View {
         values.threadFollowing = control.following
         values.foldMemory = control.folds
         values.turnReveal = control.reveal
+        values.liveReplySplits = splits
       }
       // Keep drawing behind the bars and docks; their clearance is a content inset, not a smaller collection frame.
       // Top and bottom only: an open sidebar is the detail column's leading safe area, and a collection reaching

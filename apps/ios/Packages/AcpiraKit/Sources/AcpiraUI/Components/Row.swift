@@ -27,7 +27,7 @@ extension EnvironmentValues {
   /// session, so rows and streamed text already there appear in place
   @Entry var quietEntrance: Bool = false
   /// Whether the reader is moving the thread (`Thread`); outside a scrolling thread it never is
-  @Entry var scrollGesture = ScrollGesture()
+  @Entry var scrollGesture = ScrollGesture.idle
   /// RowLeadsContext: false inside a turn's process with the step icons off, where a row's lead icon gives way to the
   /// bead a rail's end already draws, so an open step runs from one bead to the next
   @Entry var rowLeads: Bool = true
@@ -38,6 +38,8 @@ extension EnvironmentValues {
 /// the entrance (the text beside it has none, and the rows alone fading under the finger read as a glitch). A class, so
 /// the thread flips it on every scroll phase without redrawing the rows that read it
 final class ScrollGesture: @unchecked Sendable {
+  /// Shared idle instance for the environment default, avoiding per-access allocation
+  static let idle = ScrollGesture()
   var active = false
 }
 

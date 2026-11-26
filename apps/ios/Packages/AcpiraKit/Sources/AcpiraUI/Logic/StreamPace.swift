@@ -30,8 +30,12 @@ struct StreamPacer: Equatable {
   var pace = StreamPace.standard
   /// The received text, as graphemes
   private(set) var target: [Character] = []
+  /// Raw string backing `target`, kept so append-only chunks skip re-splitting the entire prefix into `[Character]`
+  private var rawText = ""
   /// Characters on screen
   private(set) var count = 0
+  /// Cached visible prefix (`String(target[0..<count])`), updated incrementally as `count` grows
+  private var cachedVisible = ""
   private(set) var streaming = false
   /// Recent reveal steps, newest last, kept for one glyph fade (STREAM_DURATION_MS)
   private(set) var reveals: [StreamReveal] = []
@@ -47,27 +51,88 @@ struct StreamPacer: Equatable {
 
   /// Starts empty for a text that mounts while streaming, complete otherwise
   init(text: String = "", streaming: Bool = false) {
+    rawText = text
     target = Array(text)
     self.streaming = streaming
     count = streaming ? 0 : target.count
+    cachedVisible = streaming ? "" : text
     pos = Double(count)
   }
 
   /// The visible text still trails the received one
   var pending: Bool { count < target.count }
-  var visible: String { String(target[0..<min(count, target.count)]) }
+  var visible: String { cachedVisible }
+
+  /// Characters that have both been revealed and finished their glyph fade (safe to freeze into a static row)
+  var settledCount: Int {
+    guard let earliest = reveals.map(\.from).min() else { return count }
+    return min(count, earliest)
+  }
+
+  /// Drops `chars` already-revealed leading graphemes when a streaming reply freezes its settled prefix into static
+  /// thread rows, preserving throughput, speed, remaining backlog and active tail reveals
+  mutating func dropPrefix(_ chars: Int) {
+    guard chars > 0 else { return }
+    let n = min(chars, count, target.count)
+    guard n > 0 else { return }
+    target.removeFirst(n)
+    if let cut = rawText.index(rawText.startIndex, offsetBy: n, limitedBy: rawText.endIndex) {
+      rawText.removeSubrange(rawText.startIndex..<cut)
+    } else {
+      rawText = String(target)
+    }
+    count -= n
+    if let cut = cachedVisible.index(cachedVisible.startIndex, offsetBy: n, limitedBy: cachedVisible.endIndex) {
+      cachedVisible.removeSubrange(cachedVisible.startIndex..<cut)
+    } else {
+      cachedVisible = String(target[0..<count])
+    }
+    pos = max(0, pos - Double(n))
+    reveals = reveals.compactMap { step in
+      guard step.to > n else { return nil }
+      return StreamReveal(time: step.time, from: max(0, step.from - n), to: step.to - n)
+    }
+  }
 
   /// A new value of the streamed text. Text that does not extend the previous value (an edit, a replay) or that was
   /// already there before the reader looked (`skip`: a session opened mid-turn or the catch-up after returning to it)
   /// shows at once and measures the rate from scratch on the next chunk
   mutating func receive(_ text: String, streaming: Bool, now: Double, skip: Bool = false) {
-    let next = Array(text)
-    let appended = next.starts(with: target)
-    let added = next.count - target.count
-    target = next
+    let appended: Bool
+    let added: Int
+    if text.utf8.count >= rawText.utf8.count && text.utf8.starts(with: rawText.utf8) {
+      if text.utf8.count == rawText.utf8.count {
+        appended = true
+        added = 0
+      } else {
+        // Only split the newly appended suffix when the grapheme boundary stays intact; otherwise fall back safely
+        let suffix = text[rawText.endIndex...]
+        let combinedTailCheck = target.last.map { String($0) + String(suffix.prefix(1)) }
+        if combinedTailCheck == nil || combinedTailCheck!.count == 2 {
+          let extra = Array(suffix)
+          target.append(contentsOf: extra)
+          rawText = text
+          appended = true
+          added = extra.count
+        } else {
+          let next = Array(text)
+          appended = next.starts(with: target)
+          added = next.count - target.count
+          target = next
+          rawText = text
+        }
+      }
+    } else {
+      let next = Array(text)
+      appended = next.starts(with: target)
+      added = next.count - target.count
+      target = next
+      rawText = text
+    }
     self.streaming = streaming
     guard appended, !skip else {
-      count = next.count; pos = Double(count); speed = 0; reveals = []
+      count = target.count; pos = Double(count); speed = 0; reveals = []
+      cachedVisible = rawText
       skipEpoch += 1
       seeded = true
       if skip { at = 0 }
@@ -100,6 +165,7 @@ struct StreamPacer: Equatable {
     let next = StreamCut.cut(target, at: Int(pos), streaming: streaming)
     if next > count {
       reveals.append(StreamReveal(time: now, from: count, to: next))
+      cachedVisible.append(contentsOf: target[count..<next])
       count = next
       seeded = false
     }
