@@ -4,7 +4,8 @@
 //! the keyring alone and keeps the login in `<gemini dir>/antigravity-cli/antigravity-oauth-token` (its log: "Using
 //! file-based token storage because SSH session detected"; any of SSH_CONNECTION / SSH_CLIENT / SSH_TTY does it, and
 //! nothing else asks for the file). A saved account is therefore a private home under ~/.acpira/accounts/antigravity/
-//! holding its own `.gemini`, whose process starts with `SSH_CONNECTION` set and `--gemini-dir` naming that dir. No
+//! holding its own `.gemini`, whose process starts with `SSH_CONNECTION` and `FORCE_FILE_ENV` set (1.5.16's `agy acp`
+//! no longer leaves the keyring for an SSH variable alone) and `--gemini-dir` naming that dir. No
 //! environment variable moves the store, so the directory travels in the account env as `STORE_ENV` and `spawn_args`
 //! turns it into the flag. The account's gemini dir owns the token file and `antigravity-cli/cache` (the sign-in method
 //! and the account's default project); every other entry links into the regular ~/.gemini, so conversations, settings,
@@ -48,6 +49,10 @@ pub const STORE_ENV: &str = "ACPIRA_ANTIGRAVITY_GEMINI_DIR";
 const SSH_ENV: [&str; 3] = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"];
 /// Stands in for a session's addresses: `agy` only looks at whether the variable is set
 const SSH_STAND_IN: &str = "127.0.0.1 0 127.0.0.1 0";
+/// Keeps the login in the gemini dir's token file whatever `agy` detects (any non-empty value). From 1.5.16 `agy acp`
+/// reads the OS keyring despite an SSH variable (print mode still honours it), so without this a saved account's turns
+/// ran on the app's keyring login while its own file went unread; older versions ignore it and go by `SSH_ENV`
+const FORCE_FILE_ENV: &str = "AGY_CLI_FORCE_FILE_TOKEN_STORAGE";
 /// The gemini dir inside an account home, under the name `agy` looks for in a home directory
 const GEMINI_DIR: &str = ".gemini";
 /// `agy`'s data directory inside a gemini dir
@@ -226,7 +231,8 @@ impl AccountProvider for AntigravityAccountProvider {
         create_private_dir(dir).await?;
       }
       link_store(&store, &default_home());
-      let env: BTreeMap<String, Option<String>> = [(SSH_ENV[0].to_owned(), Some(SSH_STAND_IN.to_owned()))].into();
+      let env: BTreeMap<String, Option<String>> =
+        [(SSH_ENV[0].to_owned(), Some(SSH_STAND_IN.to_owned())), (FORCE_FILE_ENV.to_owned(), Some("true".to_owned()))].into();
       Ok(LoginFlow {
         command: bin,
         args: vec!["acp".into(), "--login".into(), "--gemini-dir".into(), store.to_string_lossy().into_owned()],
@@ -248,7 +254,8 @@ impl AccountProvider for AntigravityAccountProvider {
     let store = store_of(&account_home(cred)?);
     // Entries the regular dir gained since the last spawn join the account's
     link_store(&store, &default_home());
-    let mut env: BTreeMap<String, String> = [(STORE_ENV.to_owned(), store.to_string_lossy().into_owned())].into();
+    let mut env: BTreeMap<String, String> =
+      [(STORE_ENV.to_owned(), store.to_string_lossy().into_owned()), (FORCE_FILE_ENV.to_owned(), "true".to_owned())].into();
     // A real SSH session already has `agy` on files, and its own variables stay as they are
     if !in_ssh() {
       env.insert(SSH_ENV[0].to_owned(), SSH_STAND_IN.to_owned());
@@ -264,6 +271,7 @@ impl AccountProvider for AntigravityAccountProvider {
       eprintln!("Could not make the plugin account's gemini dir {}: {e}", store.display());
     }
     link_store(&store, &default_home());
+    env.entry(FORCE_FILE_ENV.to_owned()).or_insert_with(|| "true".to_owned());
     if !in_ssh() {
       env.entry(SSH_ENV[0].to_owned()).or_insert_with(|| SSH_STAND_IN.to_owned());
     }
@@ -282,13 +290,13 @@ impl AccountProvider for AntigravityAccountProvider {
     let binary = self.binary.clone();
     Some(Box::pin(async move {
       let home = account_home(&cred);
-      // Signed out, `agy` would sit on its sign-in prompt instead of answering
+      // Without a readable login, `agy` can wait on its sign-in prompt instead of answering
       let login = match &home {
         Some(home) => saved_login(home).await,
         None => local_login().await,
       };
       if login.as_ref().and_then(email_of).is_none() {
-        return Err(anyhow::Error::new(QuotaTokenExpired));
+        return Err(anyhow!("stored Antigravity login unavailable for quota"));
       }
       let bin = binary().await.ok_or_else(|| anyhow!("agy not found"))?;
       Ok(parse_usage(&usage(&bin, home.as_deref()).await?).into())
@@ -320,6 +328,7 @@ fn usage_command(bin: &str, home: Option<&Path>, os: crate::platform::command::O
   if let Some(home) = home {
     // Where `agy` looks for its home directory: USERPROFILE on Windows (1.5.9 ignores HOME there)
     cmd.env(if windows { "USERPROFILE" } else { "HOME" }, home);
+    cmd.env(FORCE_FILE_ENV, "true");
     if !in_ssh() {
       cmd.env(SSH_ENV[0], SSH_STAND_IN);
     }
@@ -453,6 +462,18 @@ mod tests {
     assert!(parse_usage(&serde_json::json!({ "status": "SUCCESS" })).is_none());
   }
 
+  #[tokio::test]
+  async fn missing_saved_login_makes_quota_unavailable() {
+    use acpira_shared::transcript::AccountQuotaIssue;
+
+    let home = tempfile::tempdir().unwrap();
+    let provider = AntigravityAccountProvider::new(home.path().to_owned(), std::sync::Arc::new(|| panic!("quota should not start agy without a stored login")));
+    let cred = AccountCredential { secret: home.path().to_string_lossy().into_owned(), meta: None };
+    let error = provider.quota(cred).unwrap().await.expect_err("the saved account has no login file");
+
+    assert_eq!(crate::accounts::account_manager::quota_failure(&error, None, 0).issue, AccountQuotaIssue::Unavailable);
+  }
+
   #[test]
   fn only_a_saved_antigravity_account_adds_the_store_flag() {
     let env: StrMap = [(STORE_ENV.to_owned(), "/x/acc".to_owned())].into();
@@ -495,6 +516,9 @@ mod tests {
     assert_eq!(saved_envs.get(DISABLE_AUTO_UPDATE_ENV).and_then(Option::as_deref), Some("true"));
     assert_eq!(saved_envs.get("USERPROFILE").and_then(Option::as_deref), Some(r"C:\acc"));
     assert_eq!(saved_envs.get("HOME"), None);
+    // The CLI's own login stays on the keyring; a saved account reads its token file
+    assert_eq!(envs_of(&local_win).get(FORCE_FILE_ENV), None);
+    assert_eq!(saved_envs.get(FORCE_FILE_ENV).and_then(Option::as_deref), Some("true"));
 
     let saved_posix = usage_command("agy", Some(Path::new("/tmp/acc")), Os::Posix);
     let posix_envs = envs_of(&saved_posix);
