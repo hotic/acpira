@@ -613,7 +613,7 @@ async fn a_reopened_session_resumes_with_the_same_prefix() {
 async fn the_engines_own_mcp_server_reaches_the_model_and_show_image_shows_the_picture() {
   let mut env = Env::new();
   // What the runtime hands every session: `acpira mcp` on stdio (show_image, workspace_hooks)
-  env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")));
+  env.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira"))));
   let png = env.cwd().join("shot.png");
   std::fs::write(&png, b"\x89PNG\r\n\x1a\n").unwrap();
   let s = env.session().await;
@@ -641,7 +641,7 @@ async fn the_engines_own_mcp_server_reaches_the_model_and_show_image_shows_the_p
 #[tokio::test(flavor = "multi_thread")]
 async fn show_video_saves_the_recording_without_sending_it_back_to_the_model() {
   let mut env = Env::new();
-  env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")));
+  env.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira"))));
   let clip = env.cwd().join("clip.mp4");
   let bytes = b"\0\0\0\x18ftypmp42 recording";
   std::fs::write(&clip, bytes).unwrap();
@@ -689,7 +689,7 @@ async fn read_session_goes_from_the_model_through_acpira_mcp_and_the_hub_into_a_
   let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
   let library: Arc<dyn acpira_host::session_library::SessionLibrary> = Arc::new(CannedLibrary);
   hub.set_library(Arc::downgrade(&library));
-  env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+  env.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub)));
   let s = env.session().await;
   let args = json!({ "session": "vscode://hotic.acpira/session/abc", "from": 2, "to": 3 });
   env.server.push(mock::tools(&[("r1", "acpira_read_session", args)]));
@@ -938,7 +938,7 @@ mod remote {
     r.full_access();
     let roster = Arc::new(acpira_host::relay::roster::Roster::new(r.env.root.path()));
     let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
-    r.env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+    r.env.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub)));
     let work = r.real.join("work");
     assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&work).status().unwrap().success());
     std::fs::create_dir_all(work.join(".agents")).unwrap();
@@ -978,7 +978,7 @@ mod remote {
     let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
     let shell = Arc::new(Shell::default());
     hub.set_browser(shell.clone());
-    r.env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+    r.env.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub)));
     // A dev server on the host (this machine, for the fake one) and a port nothing serves there
     let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let up = server.local_addr().unwrap().port();
@@ -1004,7 +1004,7 @@ mod remote {
     r.full_access();
     let roster = Arc::new(acpira_host::relay::roster::Roster::new(r.env.root.path()));
     let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
-    r.env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+    r.env.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub)));
     let work = r.real.join("work");
     let server = r#"
 const rl = require('readline').createInterface({ input: process.stdin });

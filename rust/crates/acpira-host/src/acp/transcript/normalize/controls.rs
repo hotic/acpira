@@ -3,6 +3,7 @@
 
 use serde_json::{Map, Value};
 
+use acpira_shared::composer_controls::{is_model_config_control, is_reasoning_control};
 use acpira_shared::transcript::*;
 
 use crate::json::{str_of, text_of};
@@ -56,6 +57,22 @@ pub fn apply_config_options(controls: &mut SessionControls, options: &[Value]) {
       controls.mode_config_id = Some(id.to_owned());
     }
   }
+  controls.model_params = options
+    .iter()
+    .find(|o| str_of(o, "category") == Some("model"))
+    .and_then(|o| o.pointer("/_meta/acpira~1modelParams")?.as_object())
+    .into_iter()
+    .flatten()
+    .filter_map(|(id, params)| {
+      let mut params = config_controls(params.as_array()?);
+      params.retain(|c| is_reasoning_control(c) || is_model_config_control(c));
+      Some((id.clone(), params))
+    })
+    .collect();
+  controls.options = config_controls(options);
+}
+
+fn config_controls(options: &[Value]) -> Vec<ConfigControl> {
   let rank = |c: &ConfigControl| CATEGORY_ORDER.iter().position(|x| Some(*x) == c.category.as_deref()).unwrap_or(CATEGORY_ORDER.len());
   let mut list: Vec<ConfigControl> = options
     .iter()
@@ -85,7 +102,7 @@ pub fn apply_config_options(controls: &mut SessionControls, options: &[Value]) {
     })
     .collect();
   list.sort_by_key(|c| rank(c));
-  controls.options = list;
+  list
 }
 
 /// A user pick → the session/set_config_option payload fields; booleans travel as `type: 'boolean'` + a real boolean

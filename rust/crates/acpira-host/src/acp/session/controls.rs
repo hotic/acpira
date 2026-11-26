@@ -7,13 +7,13 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
-use acpira_shared::composer_controls::{is_reasoning_control, thought_correction};
+use acpira_shared::composer_controls::{is_model_config_control, is_reasoning_control, thought_correction};
 use acpira_shared::models::parse_fusion_name;
 use acpira_shared::model_shapes::{ModelShapes, is_model_control, offered_model, shape_for};
 use acpira_shared::turn_settings::{capture_turn_settings, controls_for_turn};
 use acpira_shared::transcript::*;
 
-use crate::acp::agents::model_sources::refine_controls;
+use crate::acp::probe::model_sources::refine_controls;
 use crate::acp::transcript::normalize::{apply_config_options, config_option_set_value, init_controls};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::acp::session::ultracode::UltraPick;
@@ -757,7 +757,10 @@ pub(crate) fn picked_controls(c: &Core, shapes: Option<&ModelShapes>) -> Session
     && model.value.as_ref() != Some(value)
     && model.options.iter().any(|o| &o.id == value)
   {
-    if let Some(shape) = shape_for(shapes, model, value) {
+    if let Some(params) = c.state.controls.model_params.get(value) {
+      out.options.retain(|o| !is_reasoning_control(o) && !is_model_config_control(o));
+      out.options.extend(params.iter().cloned());
+    } else if let Some(shape) = shape_for(shapes, model, value) {
       out.options.retain(is_model_control);
       out.options.extend(shape.iter().cloned());
       // The host's sidekick selects are the session's, in no model's shape
@@ -765,7 +768,7 @@ pub(crate) fn picked_controls(c: &Core, shapes: Option<&ModelShapes>) -> Session
       out = controls_for_turn(&out, Some(&capture_turn_settings(&c.state.controls)));
     } else {
       // An unseen model's scale is not known yet. Do not advertise the previous model's effort or Fast meanwhile.
-      out.options.retain(|o| !is_reasoning_control(o) && !acpira_shared::composer_controls::is_model_config_control(o));
+      out.options.retain(|o| !is_reasoning_control(o) && !is_model_config_control(o));
     }
   }
   for (i, shape) in c.picks.shapes.iter().enumerate() {

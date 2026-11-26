@@ -32,6 +32,7 @@ async fn session_new_offers_the_configured_models_and_their_efforts() {
   assert_eq!((approval["category"].as_str(), approval["currentValue"].as_str()), (Some("_permission_mode"), Some("ask")));
   assert_eq!(approval["options"][2], json!({ "value": "full", "name": "Full access", "_meta": { "kind": "full_access" } }));
   assert_eq!(opts[0]["currentValue"], "mock/plain");
+  assert_eq!(opts[0]["_meta"]["acpira/modelParams"]["mock/plain"], json!([]));
   assert_eq!(opts[0]["options"][1], json!({ "value": "mock/thinker", "name": "Thinker", "description": "Mock" }));
 
   let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/thinker" })).await.unwrap();
@@ -102,6 +103,9 @@ async fn a_guessed_scale_takes_the_catalogues_and_a_saved_one_is_kept() {
   assert_eq!(levels(&s), ["low", "high", "max"]);
   let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "effort", "value": "max" })).await.unwrap();
   assert_eq!(r["configOptions"][1]["currentValue"], "max");
+  // The other model has never been selected. Its preview must already match what selecting it returns.
+  let preview = &r["configOptions"][0]["_meta"]["acpira/modelParams"]["mock/kimi-k3"][0];
   let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/kimi-k3" })).await.unwrap();
   assert_eq!(levels(&r), ["low", "medium", "high"]);
+  assert_eq!(preview, &r["configOptions"][1]);
 }
