@@ -23,20 +23,23 @@ public struct Shimmer: View {
       Text(web: text)
         .foregroundStyle(Palette.shimmerBase)
         .overlay {
-          TimelineView(.animation) { context in
-            let phase = context.date.timeIntervalSinceReferenceDate
-              .truncatingRemainder(dividingBy: Motion.shimmerCycle) / Motion.shimmerCycle
-            Text(web: text)
-              .foregroundStyle(Palette.fgStrong)
-              .mask {
-                GeometryReader { geo in
+          Text(web: text)
+            .foregroundStyle(Palette.fgStrong)
+            .mask {
+              GeometryReader { geo in
+                // The window's sweep is an animation (`Loop`), not a timeline rebuilding the label on every frame
+                Loop(period: Motion.shimmerCycle) {
                   LinearGradient(colors: [.clear, .black, .clear], startPoint: .leading, endPoint: .trailing)
                     .frame(width: geo.size.width)
-                    .offset(x: (phase * 2 - 1) * geo.size.width)
+                } move: { window, far in
+                  window.offset(x: (far ? 1 : -1) * geo.size.width)
                 }
+                // The sweep's ends are fixed when it starts: a label of another width starts it again, from the
+                // wall clock's place, so nothing jumps
+                .id(geo.size.width)
               }
-          }
-          .accessibilityHidden(true)
+            }
+            .accessibilityHidden(true)
         }
     }
   }

@@ -600,11 +600,12 @@ struct LoadingGlyph: View {
   var size: CGFloat
 
   var body: some View {
-    TimelineView(.animation) { context in
+    Loop(period: 1) {
       IconShape(icon: .loaderCircle)
         .stroke(style: StrokeStyle(lineWidth: 1.5 * size / 24, lineCap: .round, lineJoin: .round))
         .frame(width: size, height: size)
-        .rotationEffect(.degrees(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360))
+    } move: { glyph, far in
+      glyph.rotationEffect(.degrees(far ? 360 : 0))
     }
     .accessibilityLabel(Text(web: t("attach.loading")))
   }

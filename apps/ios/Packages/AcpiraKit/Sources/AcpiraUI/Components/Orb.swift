@@ -1,5 +1,8 @@
 import AcpiraDesign
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // The working Orb: thinking-orbs' `breathing` state at its 20 px preset (mode `ring`), ported from the library's
 // Canvas 2D painter (engine `Z` with the resolved opts), so the dots, their depth shading and the wobble match the
@@ -7,11 +10,25 @@ import SwiftUI
 
 public struct Orb: View {
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.snapshot) private var snapshot
   public var paused = false
 
   public init(paused: Bool = false) { self.paused = paused }
 
   public var body: some View {
+    Group {
+      #if canImport(UIKit)
+      if snapshot { canvas } else { OrbSurface(dark: scheme == .dark, paused: paused) }
+      #else
+      canvas
+      #endif
+    }
+    .frame(width: WebMetrics.lead, height: WebMetrics.lead)
+    .accessibilityLabel(Text(web: t("host.thinking")))
+  }
+
+  /// The SwiftUI painter: renders (an image renderer draws no UIKit view) and the Mac build
+  private var canvas: some View {
     TimelineView(.animation(paused: paused)) { context in
       Canvas { ctx, size in
         let t = context.date.timeIntervalSinceReferenceDate * OrbRing.speed
@@ -22,10 +39,110 @@ public struct Orb: View {
         }
       }
     }
-    .frame(width: WebMetrics.lead, height: WebMetrics.lead)
-    .accessibilityLabel(Text(web: t("host.thinking")))
   }
 }
+
+#if canImport(UIKit)
+/// The same frames painted into a bitmap under a display link. A timeline inside a thread row made SwiftUI update that
+/// row's whole view graph on every display frame for as long as a turn ran; here a frame costs the dots alone
+private struct OrbSurface: UIViewRepresentable {
+  var dark: Bool
+  var paused: Bool
+
+  func makeUIView(context: Context) -> OrbView { OrbView() }
+
+  func updateUIView(_ view: OrbView, context: Context) {
+    view.dark = dark
+    view.paused = paused
+  }
+}
+
+final class OrbView: UIView {
+  var dark = true {
+    didSet { if dark != oldValue { paint() } }
+  }
+  var paused = false {
+    didSet { if paused != oldValue { follow() } }
+  }
+  private var link: CADisplayLink?
+  /// The view's own bitmap, handed to the layer as an image. `draw(_:)` would go through the layer's backing store:
+  /// every dot's colour converted to its colour space and the fills recorded, then played back, which cost several
+  /// times the dots themselves
+  private var bitmap: CGContext?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isOpaque = false
+    backgroundColor = .clear
+    isUserInteractionEnabled = false
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    follow()
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    // The first frame, and the only one of a paused Orb
+    if bitmap == nil || paused { paint() }
+  }
+
+  /// The link runs only in a window: it retains its target, and a view that left for good must let go
+  private func follow() {
+    let runs = window != nil && !paused
+    if runs, link == nil {
+      let link = CADisplayLink(target: self, selector: #selector(step))
+      // The dots drift a few points a second, under a pixel a frame even at 30 frames a second: drawing them more
+      // often shows nothing more
+      link.preferredFrameRateRange = CAFrameRateRange(minimum: 20, maximum: 30, preferred: 30)
+      link.add(to: .main, forMode: .common)
+      self.link = link
+    } else if !runs, let link {
+      link.invalidate()
+      self.link = nil
+    }
+  }
+
+  @objc private func step() {
+    // A row waiting in the collection's reuse pool stays in the window, hidden
+    var view: UIView? = self
+    while let at = view {
+      if at.isHidden { return }
+      view = at.superview
+    }
+    paint()
+  }
+
+  private func paint() {
+    let scale = window?.screen.scale ?? traitCollection.displayScale
+    let side = Int((bounds.width * scale).rounded())
+    guard side > 0 else { return }
+    if bitmap?.width != side {
+      bitmap = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                         space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                         bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+    }
+    guard let bitmap else { return }
+    bitmap.clear(CGRect(x: 0, y: 0, width: side, height: side))
+    bitmap.saveGState()
+    // Points from the top left, as the painter counts them
+    bitmap.translateBy(x: 0, y: CGFloat(side))
+    bitmap.scaleBy(x: scale, y: -scale)
+    let t = Date().timeIntervalSinceReferenceDate * OrbRing.speed
+    for dot in OrbRing.frame(size: Double(bounds.width), time: t) {
+      let gray = dark ? 1 - dot.white : dot.white
+      bitmap.setFillColor(red: gray, green: gray, blue: gray, alpha: dot.a)
+      bitmap.fillEllipse(in: CGRect(x: dot.x - dot.r, y: dot.y - dot.r, width: 2 * dot.r, height: 2 * dot.r))
+    }
+    bitmap.restoreGState()
+    layer.contents = bitmap.makeImage()
+  }
+}
+#endif
 
 /// The `ring` painter with `resolvePreset('breathing', 20)`
 enum OrbRing {
@@ -81,6 +198,9 @@ enum OrbRing {
                         a: 0.4 + 0.6 * K))
       }
     }
-    return dots.filter { $0.a >= 0.02 }.sorted { $0.z < $1.z }
+    // In place: this runs for every frame the Orb draws
+    dots.removeAll { $0.a < 0.02 }
+    dots.sort { $0.z < $1.z }
+    return dots
   }
 }

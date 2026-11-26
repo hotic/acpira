@@ -1190,53 +1190,61 @@ struct StateMark: View {
 
   var body: some View {
     let held = syncing && (state == .working || state == .waiting || state == .background)
-    let moving = !held && (motion || state == .working)
-    TimelineView(.animation(paused: !moving || state == .unknown)) { context in
-      glyph(moving ? context.date.timeIntervalSinceReferenceDate : nil)
-    }
-    .breathing(held)
-    .frame(width: Metrics.stateSlot, height: Metrics.stateSlot)
-    .accessibilityElement()
-    .accessibilityLabel(Text(web: t(state == .background && unread ? "session.state.backgroundUnread" : "session.state.\(state.rawValue)")))
+    glyph(moving: !held && (motion || state == .working))
+      .breathing(held)
+      .frame(width: Metrics.stateSlot, height: Metrics.stateSlot)
+      .accessibilityElement()
+      .accessibilityLabel(Text(web: t(state == .background && unread ? "session.state.backgroundUnread" : "session.state.\(state.rawValue)")))
   }
 
-  /// The mark at time `t` (seconds), or on its resting frame when nil
+  /// The mark in its loop (`Loop`: an animation, so a list at rest costs the main thread nothing), or on its resting
+  /// frame. The two are separate branches, so a mark that starts moving starts its loop afresh
   @ViewBuilder
-  private func glyph(_ t: Double?) -> some View {
+  private func glyph(moving: Bool) -> some View {
     switch state {
     case .working:
       // animate-spin: one turn a second, linear
-      Icon(.loaderCircle, size: Metrics.stateRing, strokeWidth: 2.5)
-        .foregroundStyle(Palette.fg2)
-        .rotationEffect(.degrees(Self.phase(t, 1) * 360))
+      let ring = Icon(.loaderCircle, size: Metrics.stateRing, strokeWidth: 2.5).foregroundStyle(Palette.fg2)
+      if moving {
+        Loop(period: 1) { ring } move: { ring, far in ring.rotationEffect(.degrees(far ? 360 : 0)) }
+      } else {
+        ring
+      }
     case .waiting:
-      Circle().fill(Palette.warn)
-        .frame(width: Metrics.stateDot, height: Metrics.stateDot)
-        .scaleEffect(t == nil ? 1 : Self.beat(Self.phase(t, 1.4)))
+      let dot = Circle().fill(Palette.warn).frame(width: Metrics.stateDot, height: Metrics.stateDot)
+      if moving {
+        Loop(period: 1.4, shape: Self.beat) { dot } move: { dot, far in dot.scaleEffect(far ? 2 : 1) }
+      } else {
+        dot
+      }
     case .error:
-      Circle().fill(Palette.danger)
-        .frame(width: Metrics.stateDot, height: Metrics.stateDot)
-        .opacity(t == nil ? 1 : Self.flash(Self.phase(t, 3)))
+      let dot = Circle().fill(Palette.danger).frame(width: Metrics.stateDot, height: Metrics.stateDot)
+      if moving {
+        Loop(period: 3, shape: Self.flash) { dot } move: { dot, far in dot.opacity(far ? 0 : 1) }
+      } else {
+        dot
+      }
     case .unread:
+      let dot = Circle().fill(Palette.fgStrong).frame(width: Metrics.stateUnread, height: Metrics.stateUnread)
       ZStack {
         // The halo: a copy of the dot growing to 2.6 times while it fades, ease-out over 2 s; invisible at rest
-        if t != nil {
-          let p = 1 - pow(1 - Self.phase(t, 2), 2)
-          Circle().fill(Palette.fgStrong)
-            .frame(width: Metrics.stateUnread, height: Metrics.stateUnread)
-            .scaleEffect(1 + 1.6 * p)
-            .opacity(0.6 * (1 - p))
+        if moving {
+          Loop(period: 2, shape: .easeOut) { dot } move: { dot, far in dot.scaleEffect(far ? 2.6 : 1).opacity(far ? 0 : 0.6) }
         }
-        Circle().fill(Palette.fgStrong).frame(width: Metrics.stateUnread, height: Metrics.stateUnread)
+        dot
       }
     case .background:
       ZStack {
         Icon(.circle, size: Metrics.stateRing, strokeWidth: 2.5).foregroundStyle(unread ? Palette.fgStrong : Palette.fg3)
         // The orbit rides the ring's own line (Lucide's circle: r 10 in a 24-unit box), one turn in 3.6 s
-        Circle().fill(unread ? Palette.fgStrong : Palette.fg2)
+        let orbit = Circle().fill(unread ? Palette.fgStrong : Palette.fg2)
           .frame(width: Metrics.stateOrbit, height: Metrics.stateOrbit)
           .offset(y: -Metrics.stateRing * 10 / 24)
-          .rotationEffect(.degrees(Self.phase(t, 3.6) * 360))
+        if moving {
+          Loop(period: 3.6) { orbit } move: { orbit, far in orbit.rotationEffect(.degrees(far ? 360 : 0)) }
+        } else {
+          orbit
+        }
         if unread { Circle().fill(Palette.fgStrong).frame(width: Metrics.stateInner, height: Metrics.stateInner) }
       }
     case .unknown:
@@ -1244,28 +1252,12 @@ struct StateMark: View {
     }
   }
 
-  /// Where in a `period`-second loop `t` falls, 0..<1 (0 at rest)
-  private static func phase(_ t: Double?, _ period: Double) -> Double {
-    guard let t else { return 0 }
-    return t.truncatingRemainder(dividingBy: period) / period
-  }
+  /// acp-mark-beat, as growth over the resting dot: 0 / 100% 1, 20% 1.5, 40% 1.1, 55% 1.35, 75% 1, eased in and out
+  /// between keys
+  private static let beat = LoopShape.keys([LoopKey(0, 0), LoopKey(0.2, 0.5), LoopKey(0.4, 0.1), LoopKey(0.55, 0.35),
+                                            LoopKey(0.75, 0), LoopKey(1, 0)], eased: true)
 
-  /// acp-mark-beat: 0 / 100% 1, 20% 1.5, 40% 1.1, 55% 1.35, 75% 1, eased in and out between keys
-  static func beat(_ p: Double) -> Double {
-    keyframes(p, [(0, 1), (0.2, 1.5), (0.4, 1.1), (0.55, 1.35), (0.75, 1), (1, 1)], eased: true)
-  }
-
-  /// acp-mark-flash: lit, then two dips to 0.2 at 70% and 82%, linear between keys
-  static func flash(_ p: Double) -> Double {
-    keyframes(p, [(0, 1), (0.64, 1), (0.7, 0.2), (0.76, 1), (0.82, 0.2), (0.88, 1), (1, 1)], eased: false)
-  }
-
-  private static func keyframes(_ p: Double, _ keys: [(Double, Double)], eased: Bool) -> Double {
-    guard let upper = keys.firstIndex(where: { $0.0 >= p }), upper > 0 else { return keys.first?.1 ?? 1 }
-    let (p0, v0) = keys[upper - 1], (p1, v1) = keys[upper]
-    var x = p1 > p0 ? (p - p0) / (p1 - p0) : 1
-    // CSS ease-in-out, close enough as a smoothstep for a few pixels of scale
-    if eased { x = x * x * (3 - 2 * x) }
-    return v0 + (v1 - v0) * x
-  }
+  /// acp-mark-flash, as the light lost: lit, then two dips to 0.2 at 70% and 82%, linear between keys
+  private static let flash = LoopShape.keys([LoopKey(0, 0), LoopKey(0.64, 0), LoopKey(0.7, 0.8), LoopKey(0.76, 0),
+                                             LoopKey(0.82, 0.8), LoopKey(0.88, 0), LoopKey(1, 0)], eased: false)
 }
