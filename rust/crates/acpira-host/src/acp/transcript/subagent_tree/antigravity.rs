@@ -73,7 +73,9 @@ impl SubagentTree {
       if !terminal(n.status) {
         return Some(n.id.clone());
       }
-      if !(n.restored && n.status == SubagentState::Disconnected && n.turn_index < ctx.turn_index as u64) {
+      let revivable = n.status == SubagentState::Completed
+        || (n.restored && n.status == SubagentState::Disconnected && n.turn_index < ctx.turn_index as u64);
+      if !revivable {
         return None;
       }
     }
@@ -83,11 +85,14 @@ impl SubagentTree {
   fn open_or_find_antigravity_child(&mut self, child_cid: &str, ctx: &mut RouteCtx) -> String {
     if let Some(i) = self.by(&self.by_session, child_cid) {
       let n = &self.nodes[i];
-      // A restored swarm worker woken in a later turn gets a fresh node instead of reviving a terminal record
-      if !(n.restored && n.status == SubagentState::Disconnected && n.turn_index < ctx.turn_index as u64) {
+      // A restored swarm worker or previously settled non-swarm child woken for a follow-up round gets a fresh node
+      // instead of mutating a terminal record
+      let reopen = n.status == SubagentState::Completed
+        || (n.restored && n.status == SubagentState::Disconnected && n.turn_index < ctx.turn_index as u64);
+      if !reopen {
         return n.id.clone();
       }
-      let (title, role, model, agy_key) = (n.title.clone(), n.role.clone(), n.model.clone(), n.agy_key.clone());
+      let (title, role, model, agy_key, settled_step) = (n.title.clone(), n.role.clone(), n.model.clone(), n.agy_key.clone(), n.agy_settled_step);
       let mut fresh = self.new_node(
         SubagentVisibility::Session,
         SubagentPeer { session_id: Some(child_cid.to_owned()), ..Default::default() },
@@ -100,6 +105,7 @@ impl SubagentTree {
       fresh.role = role;
       fresh.model = model;
       fresh.agy_key = agy_key;
+      fresh.agy_settled_step = settled_step;
       let id = fresh.id.clone();
       let anchor_title = fresh.title.clone();
       self.by_session.insert(child_cid.to_owned(), id.clone());
@@ -392,6 +398,9 @@ impl SubagentTree {
         }
       };
 
+      let stale_idle = child
+        .idle_step
+        .is_some_and(|step| self.nodes[i].agy_settled_step.is_some_and(|prev| step <= prev));
       let mut node_changed = false;
       {
         let n = &mut self.nodes[i];
@@ -429,29 +438,35 @@ impl SubagentTree {
           n.agy_waiting = child.waiting;
           node_changed = true;
         }
-        let note = child.latest_report.as_deref().and_then(first_plain_line);
-        if note.is_some() && n.agy_note != note {
-          n.agy_note = note;
-          node_changed = true;
-        }
         for post in child.new_posts {
           append_board_post(&mut n.state, &post.text);
           n.result = Some(post.text);
           node_changed = true;
         }
-        if n.result.is_none()
-          && let Some(report) = child.latest_report
-        {
-          if last_text(&n.state.turns).is_none() {
-            append_board_post(&mut n.state, &report);
+        // Ignore a stale previous-round report while a re-woken non-swarm child has not flushed its new step yet
+        if !stale_idle {
+          let note = child.latest_report.as_deref().and_then(first_plain_line);
+          if note.is_some() && n.agy_note != note {
+            n.agy_note = note;
+            node_changed = true;
           }
-          n.result = Some(report);
-          node_changed = true;
+          if n.result.is_none()
+            && let Some(report) = child.latest_report
+          {
+            if last_text(&n.state.turns).is_none() {
+              append_board_post(&mut n.state, &report);
+            }
+            n.result = Some(report);
+            node_changed = true;
+          }
         }
       }
       let id = self.nodes[i].id.clone();
-      if child.ended && self.nodes[i].status == SubagentState::Running {
+      if child.ended && !stale_idle && self.nodes[i].status == SubagentState::Running {
         self.nodes[i].agy_waiting = false;
+        if let Some(step) = child.idle_step {
+          self.nodes[i].agy_settled_step = Some(step);
+        }
         self.transition(&id, SubagentState::Completed);
         node_changed = true;
       }
@@ -562,6 +577,7 @@ mod tests {
         model: Some("gemini-4-neon-xhigh".into()),
         waiting: true,
         ended: false,
+        idle_step: None,
         new_posts: vec![BoardPost { seq: 4, text: "@core The form is ready".into() }],
         latest_report: Some("@core The form is ready".into()),
       }],
@@ -612,6 +628,7 @@ mod tests {
         model: Some("gemini-4-neon-xhigh".into()),
         waiting: false,
         ended: true,
+        idle_step: None,
         new_posts: vec![],
         latest_report: Some("@core The form is ready".into()),
       }],
@@ -621,5 +638,85 @@ mod tests {
     let done = &t.summaries()[0].core;
     assert_eq!(done.state, SubagentState::Completed);
     assert_eq!(done.result.as_deref(), Some("@core The form is ready"));
+  }
+
+  #[test]
+  fn settled_non_swarm_child_wakes_as_fresh_node_and_ignores_stale_idle_step() {
+    let mut t = tree();
+    let mut root = NormalizeState::new(vec![Turn::Agent(AgentTurn::default())]);
+    let root_id = "10000000-0000-4000-8000-000000000001";
+    let child_id = "40000000-0000-4000-8000-000000000004";
+
+    let inv = json!({
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call_img_1",
+      "kind": "other",
+      "title": "Run invoke_subagent",
+      "status": "completed",
+      "rawInput": { "TypeName": "image-generator", "Role": "Icon generator", "Prompt": "Draw an icon" }
+    });
+    assert!(apply_update(&mut root, &inv));
+    assert!(t.annotate_antigravity_root(&inv, &mut RouteCtx { turn_index: 0, root_turns: &mut root.turns }));
+
+    // 1. Child finishes its first turn at step 4 (state still SUBAGENT_STATE_ALIVE on disk)
+    let snap1 = AntigravitySnapshot {
+      children: vec![AntigravityChildMeta {
+        conversation_id: child_id.into(),
+        swarm_name: None,
+        title: Some("Icon generator".into()),
+        role: Some("image-generator".into()),
+        task: None,
+        model: None,
+        waiting: false,
+        ended: true,
+        idle_step: Some(4),
+        new_posts: vec![],
+        latest_report: Some("Generated icon.png".into()),
+      }],
+      ..Default::default()
+    };
+    assert!(t.sync_antigravity(snap1.clone(), &mut RouteCtx { turn_index: 0, root_turns: &mut root.turns }));
+    assert_eq!(t.summaries()[0].core.state, SubagentState::Completed);
+    assert_eq!(t.summaries()[0].core.result.as_deref(), Some("Generated icon.png"));
+    assert!(!t.has_running_antigravity());
+
+    // 2. Parent follows up via `send_message`, waking the same child uuid for round 2
+    let round2_call = json!({
+      "sessionUpdate": "tool_call",
+      "toolCallId": format!("{child_id}:call_2"),
+      "kind": "other",
+      "title": "Generate variant",
+      "status": "in_progress"
+    });
+    assert!(t.route_antigravity_child(&round2_call, Some(root_id), &mut RouteCtx { turn_index: 0, root_turns: &mut root.turns }));
+    assert_eq!(t.len(), 2);
+    assert_eq!(t.summaries()[1].core.state, SubagentState::Running);
+    assert!(t.has_running_antigravity());
+
+    // 3. A poll before round 2 flushes to disk still sees idle_step=4 -> must NOT close round 2 early
+    t.sync_antigravity(snap1, &mut RouteCtx { turn_index: 0, root_turns: &mut root.turns });
+    assert_eq!(t.summaries()[1].core.state, SubagentState::Running);
+
+    // 4. Round 2 finishes at step 9 -> closes cleanly
+    let snap2 = AntigravitySnapshot {
+      children: vec![AntigravityChildMeta {
+        conversation_id: child_id.into(),
+        swarm_name: None,
+        title: Some("Icon generator".into()),
+        role: Some("image-generator".into()),
+        task: None,
+        model: None,
+        waiting: false,
+        ended: true,
+        idle_step: Some(9),
+        new_posts: vec![],
+        latest_report: Some("Generated icon_v2.png".into()),
+      }],
+      ..Default::default()
+    };
+    assert!(t.sync_antigravity(snap2, &mut RouteCtx { turn_index: 0, root_turns: &mut root.turns }));
+    assert_eq!(t.summaries()[1].core.state, SubagentState::Completed);
+    assert_eq!(t.summaries()[1].core.result.as_deref(), Some("Generated icon_v2.png"));
+    assert!(!t.has_running_antigravity());
   }
 }

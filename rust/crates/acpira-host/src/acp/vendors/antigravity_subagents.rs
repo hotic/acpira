@@ -11,7 +11,7 @@
 //!
 //! Unchanged files (same length and mtime) are not re-read, and `board.jsonl` is tailed incrementally by byte offset.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -124,8 +124,11 @@ pub struct AntigravityChildMeta {
   pub model: Option<String>,
   /// Swarm worker is parked on the board (`wake_mode: "mentions" | "anything"`) while still alive
   pub waiting: bool,
-  /// Worker was killed or `subagents/<id>.json` reports `SUBAGENT_STATE_KILLED`
+  /// Worker was killed, or a non-swarm child finished its turn and went idle on disk
   pub ended: bool,
+  /// Transcript `step_index` at which an alive non-swarm child went idle (`None` for killed children / swarm workers),
+  /// used to avoid settling a re-woken child against a stale transcript tail before its new step flushes
+  pub idle_step: Option<u64>,
   /// New messages posted to `board.jsonl` by this worker since the previous snapshot
   pub new_posts: Vec<BoardPost>,
   /// Latest message posted to `board.jsonl` by this worker (or final reply from a finished non-swarm transcript)
@@ -158,6 +161,17 @@ struct MemberEntry {
   killed: bool,
 }
 
+#[derive(Clone, Default)]
+struct ChildTranscript {
+  stamp: Option<FileStamp>,
+  /// `step_index` of the closing `PLANNER_RESPONSE` when the child finished without tool calls
+  idle_step: Option<u64>,
+  /// True while `<brain>/<child_id>/.system_generated/messages/undelivered/` holds a pending wake-up message
+  undelivered: bool,
+  /// Cached final reply (`send_message` report or closing response / content text)
+  final_reply: Option<String>,
+}
+
 /// Incremental disk reader for one Antigravity session's `.system_generated/` directory
 #[derive(Default)]
 pub struct AntigravityMetaCursor {
@@ -173,10 +187,8 @@ pub struct AntigravityMetaCursor {
   briefs: HashMap<String, String>,
   /// Latest post text per swarm worker name
   latest_posts: HashMap<String, String>,
-  /// Finished non-swarm child ids whose `transcript.jsonl` tail was already checked
-  transcript_checked: HashSet<String>,
-  /// Cached final reply per non-swarm child id
-  transcript_results: HashMap<String, String>,
+  /// Per non-swarm child transcript state, refreshed only when `transcript.jsonl` or `messages/undelivered/` changes
+  child_logs: HashMap<String, ChildTranscript>,
   /// The session's own `transcript.jsonl` as last read for the orchestrator's execution model
   root_log_stamp: Option<FileStamp>,
   worker_model: Option<String>,
@@ -209,20 +221,20 @@ impl AntigravityMetaCursor {
     if !posts_by_agent.is_empty() {
       changed = true;
     }
-    // Check finished non-swarm children's transcripts once for their closing reply
-    let finished_non_swarm: Vec<String> = self
+    // Non-swarm children (`invoke_subagent`, `image-generator`, `research`, `self`) stay `SUBAGENT_STATE_ALIVE` after
+    // finishing a turn so the parent can still follow up via `send_message`. Track their transcript tail and pending
+    // inbox so completed turns settle promptly and surface their final report.
+    let non_swarm: Vec<(String, bool)> = self
       .subagent_files
       .values()
-      .filter(|s| s.killed && !self.members.values().any(|m| m.conversation_id == s.conversation_id))
-      .filter(|s| !self.transcript_checked.contains(&s.conversation_id))
-      .map(|s| s.conversation_id.clone())
+      .filter(|s| {
+        s.role.as_deref().and_then(swarm_worker_name).is_none()
+          && !self.members.values().any(|m| m.conversation_id == s.conversation_id)
+      })
+      .map(|s| (s.conversation_id.clone(), s.killed))
       .collect();
-    for cid in finished_non_swarm {
-      self.transcript_checked.insert(cid.clone());
-      if let Some(reply) = read_child_final_reply(brain_root, &cid) {
-        self.transcript_results.insert(cid, reply);
-        changed = true;
-      }
+    for (cid, killed) in non_swarm {
+      changed |= self.read_child_state(brain_root, &cid, killed);
     }
     if !changed {
       return None;
@@ -239,6 +251,11 @@ impl AntigravityMetaCursor {
         let role = s.type_name.clone().filter(|t| t != "self" && Some(t.as_str()) != title.as_deref());
         (title, role)
       };
+      let child_log = self.child_logs.get(&s.conversation_id);
+      let idle_step = (!s.killed && swarm_name.is_none())
+        .then(|| child_log.filter(|l| !l.undelivered).and_then(|l| l.idle_step))
+        .flatten();
+      let ended = s.killed || idle_step.is_some();
       by_cid.insert(
         s.conversation_id.clone(),
         AntigravityChildMeta {
@@ -249,9 +266,10 @@ impl AntigravityMetaCursor {
           task: None,
           model: None,
           waiting: false,
-          ended: s.killed,
+          ended,
+          idle_step,
           new_posts: vec![],
-          latest_report: self.transcript_results.get(&s.conversation_id).cloned(),
+          latest_report: child_log.filter(|_| ended).and_then(|l| l.final_reply.clone()),
         },
       );
     }
@@ -270,6 +288,7 @@ impl AntigravityMetaCursor {
         model: None,
         waiting: false,
         ended: false,
+        idle_step: None,
         new_posts: vec![],
         latest_report: None,
       });
@@ -284,6 +303,7 @@ impl AntigravityMetaCursor {
       }
       entry.waiting = m.waiting && !m.killed && !entry.ended;
       entry.ended |= m.killed;
+      entry.idle_step = None;
       entry.new_posts = new_posts;
       if latest.is_some() {
         entry.latest_report = latest;
@@ -398,6 +418,33 @@ impl AntigravityMetaCursor {
     changed
   }
 
+  /// Refreshes a non-swarm child's transcript completion state and closing report when its log or inbox moved
+  fn read_child_state(&mut self, brain_root: &Path, child_id: &str, killed: bool) -> bool {
+    if !safe_id(child_id) {
+      return false;
+    }
+    let sys = brain_root.join(child_id).join(".system_generated");
+    let log_path = sys.join("logs").join("transcript.jsonl");
+    let stamp = file_stamp(&log_path);
+    let undelivered = !killed && has_undelivered_messages(&sys.join("messages").join("undelivered"));
+    let entry = self.child_logs.entry(child_id.to_owned()).or_default();
+    let mut changed = entry.undelivered != undelivered;
+    entry.undelivered = undelivered;
+    if stamp.is_none() || entry.stamp == stamp {
+      return changed;
+    }
+    entry.stamp = stamp;
+    let Some(lines) = read_tail(&log_path, CHILD_LOG_TAIL_BYTES) else { return changed };
+    let next_idle = if killed { None } else { child_idle_step(&lines) };
+    let next_reply = if killed || next_idle.is_some() { extract_child_final_reply(&lines) } else { None };
+    if entry.idle_step != next_idle || entry.final_reply != next_reply {
+      entry.idle_step = next_idle;
+      entry.final_reply = next_reply;
+      changed = true;
+    }
+    changed
+  }
+
   fn read_board(&mut self, path: &Path) -> HashMap<String, Vec<BoardPost>> {
     let mut posts: HashMap<String, Vec<BoardPost>> = HashMap::new();
     let Some(stamp) = file_stamp(path) else { return posts };
@@ -476,21 +523,42 @@ fn read_tail(path: &Path, max: u64) -> Option<String> {
   Some(if start > 0 { text.split_once('\n').map_or("", |(_, rest)| rest).to_owned() } else { text.into_owned() })
 }
 
-/// Reads the tail of a finished non-swarm child's `transcript.jsonl` to extract its closing assistant text or
-/// `send_message` report
-fn read_child_final_reply(brain_root: &Path, child_id: &str) -> Option<String> {
-  if !safe_id(child_id) {
+/// Whether a child's `messages/undelivered/` folder holds a queued message waiting to wake it
+fn has_undelivered_messages(dir: &Path) -> bool {
+  std::fs::read_dir(dir).ok().is_some_and(|mut rd| rd.any(|e| e.is_ok()))
+}
+
+/// Returns the `step_index` when a non-swarm child's transcript ends on a settled `PLANNER_RESPONSE` with no tool calls,
+/// indicating that the child finished its turn and went idle while remaining `SUBAGENT_STATE_ALIVE`
+fn child_idle_step(lines: &str) -> Option<u64> {
+  let last = lines.lines().rev().find_map(|line| {
+    let trimmed = line.trim();
+    (!trimmed.is_empty()).then(|| serde_json::from_str::<Value>(trimmed).ok()).flatten()
+  })?;
+  if last.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
     return None;
   }
-  let path = brain_root.join(child_id).join(".system_generated").join("logs").join("transcript.jsonl");
-  let lines = read_tail(&path, CHILD_LOG_TAIL_BYTES)?;
+  if let Some(status) = last.get("status").and_then(Value::as_str)
+    && status != "DONE"
+  {
+    return None;
+  }
+  let has_tools = last.get("tool_calls").and_then(Value::as_array).is_some_and(|a| !a.is_empty());
+  if has_tools {
+    return None;
+  }
+  Some(last.get("step_index").and_then(Value::as_u64).unwrap_or(0))
+}
+
+/// Extracts a finished non-swarm child's closing report from its transcript tail: prefers the latest `send_message`
+/// payload (which carries the full report to the parent) and falls back to the last `PLANNER_RESPONSE`'s `response` or
+/// `content` text
+fn extract_child_final_reply(lines: &str) -> Option<String> {
+  let mut fallback: Option<String> = None;
   for line in lines.lines().rev() {
     let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { continue };
     if v.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
       continue;
-    }
-    if let Some(reply) = v.get("response").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
-      return Some(reply.to_owned());
     }
     if let Some(calls) = v.get("tool_calls").and_then(Value::as_array) {
       for tc in calls.iter().rev() {
@@ -505,8 +573,18 @@ fn read_child_final_reply(brain_root: &Path, child_id: &str) -> Option<String> {
         }
       }
     }
+    if fallback.is_none()
+      && let Some(reply) = v
+        .get("response")
+        .or_else(|| v.get("content"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+      fallback = Some(reply.to_owned());
+    }
   }
-  None
+  fallback
 }
 
 #[cfg(test)]
@@ -604,7 +682,67 @@ mod tests {
     assert_eq!(c.title.as_deref(), Some("Example reviewer"));
     assert_eq!(c.role, None);
     assert!(c.ended);
+    assert_eq!(c.idle_step, None);
     assert_eq!(c.latest_report.as_deref(), Some("Reviewed the sample"));
+  }
+
+  #[test]
+  fn detects_alive_non_swarm_subagent_completion_from_transcript_and_respects_undelivered_inbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let brain = dir.path();
+    let sid = "50000000-0000-4000-8000-000000000015";
+    let cid = "60000000-0000-4000-8000-000000000016";
+    let sys = brain.join(sid).join(".system_generated");
+    std::fs::create_dir_all(sys.join("subagents")).unwrap();
+    std::fs::write(
+      sys.join("subagents").join(format!("{cid}.json")),
+      format!(r#"{{"conversationId":"{cid}","subagentDescriptor":{{"typeName":"image-generator","role":"Generate icon"}},"state":"SUBAGENT_STATE_ALIVE"}}"#),
+    )
+    .unwrap();
+    let child_sys = brain.join(cid).join(".system_generated");
+    let logs = child_sys.join("logs");
+    let undelivered = child_sys.join("messages/undelivered");
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::create_dir_all(&undelivered).unwrap();
+    let log = logs.join("transcript.jsonl");
+
+    // 1. Mid-turn (last step calls a tool): still running
+    std::fs::write(
+      &log,
+      "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"tool_calls\":[{\"name\":\"generate_image\",\"args\":{}}]}\n",
+    )
+    .unwrap();
+    let mut cur = AntigravityMetaCursor::new();
+    let snap = cur.poll(brain, sid, false).unwrap();
+    assert!(!snap.children[0].ended);
+    assert_eq!(snap.children[0].idle_step, None);
+
+    // 2. Child sends its report and finishes with a tool-less DONE PLANNER_RESPONSE -> settled with send_message text
+    let done = concat!(
+      "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"tool_calls\":[{\"name\":\"generate_image\",\"args\":{}}]}\n",
+      "{\"step_index\":2,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"tool_calls\":[{\"name\":\"send_message\",\"args\":{\"Message\":\"\\\"Saved icon.png\\\"\"}}]}\n",
+      "{\"step_index\":3,\"type\":\"GENERIC\",\"status\":\"DONE\"}\n",
+      "{\"step_index\":4,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"content\":\"Done, sent via send_message.\"}\n"
+    );
+    std::fs::write(&log, done).unwrap();
+    let snap = cur.poll(brain, sid, false).unwrap();
+    let c = &snap.children[0];
+    assert!(c.ended);
+    assert_eq!(c.idle_step, Some(4));
+    assert_eq!(c.latest_report.as_deref(), Some("Saved icon.png"));
+
+    // 3. A pending message in `messages/undelivered/` means the child is waking up again -> not ended
+    let pending = undelivered.join("msg1.json");
+    std::fs::write(&pending, "{}").unwrap();
+    let snap = cur.poll(brain, sid, false).unwrap();
+    assert!(!snap.children[0].ended);
+    assert_eq!(snap.children[0].idle_step, None);
+
+    // Once delivered (inbox cleared) and no new steps written yet, idle resumes
+    std::fs::remove_file(&pending).unwrap();
+    let snap = cur.poll(brain, sid, false).unwrap();
+    assert!(snap.children[0].ended);
+    assert_eq!(snap.children[0].idle_step, Some(4));
   }
 
   #[test]

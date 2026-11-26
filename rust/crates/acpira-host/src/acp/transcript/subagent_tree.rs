@@ -17,10 +17,10 @@ use acpira_shared::transcript::{
   AgentBlock, AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolKind, ToolStatus, Turn, TurnStop, UserTurn,
 };
 
-use crate::acp::session::restore_turns::restore_interrupted_turns;
 use crate::acp::transcript::normalize::{
   Log, NormalizeState, ToolCtx, activity_of, async_task_live, empty_tool, end_turn, find_tool_mut, latest_step, live_activity,
 };
+use crate::acp::transcript::restore_turns::restore_interrupted_turns;
 use crate::acp::vendors::claude_workflow_log::LogWindow;
 use crate::i18n::t;
 use crate::store::record::{SubagentPart, turn_parts};
@@ -191,6 +191,8 @@ struct Node {
   agy_waiting: bool,
   /// Single-line preview of an Antigravity worker's latest board post, shown while parked with no open tool call
   agy_note: Option<String>,
+  /// Transcript `step_index` of the last settled idle turn for an alive non-swarm Antigravity child (connection-local)
+  agy_settled_step: Option<u64>,
 }
 
 /// A root `SendMessage` call: an AIR client gets its first report without input and later ones without the tool name
@@ -389,6 +391,7 @@ impl SubagentTree {
         agy_key: None,
         agy_waiting: false,
         agy_note: None,
+        agy_settled_step: None,
       });
     }
     tree.reindex();
@@ -561,6 +564,7 @@ impl SubagentTree {
       agy_key: None,
       agy_waiting: false,
       agy_note: None,
+      agy_settled_step: None,
     }
   }
 

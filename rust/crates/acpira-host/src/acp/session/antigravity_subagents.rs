@@ -30,6 +30,13 @@ pub(crate) struct AntigravitySubagents {
   inflight: bool,
 }
 
+impl AntigravitySubagents {
+  /// Drops the cached `--gemini-dir` when a new process attaches (e.g. after switching accounts)
+  pub(crate) fn reset_dir(&mut self) {
+    self.gemini_dir = None;
+  }
+}
+
 impl AcpSession {
   /// Starts polling `.system_generated/{subagents,swarm}/` while any Antigravity child node is still running
   pub(crate) fn schedule_antigravity_subagents(&self, c: &mut Core, fast: bool) {
@@ -66,16 +73,22 @@ impl AcpSession {
       (sid, c.account_id.clone(), c.agy_subagents.gemini_dir.clone(), cursor, c.tree.has_running_orchestrator_round())
     };
 
-    let gemini_dir = match cached_dir {
-      Some(dir) => dir,
-      None => match (account_id, self.deps.accounts.as_ref()) {
-        (Some(acc), Some(hooks)) => hooks
-          .spawn_env(self.agent.clone(), acc)
-          .await
-          .and_then(|env| env.get(STORE_ENV).cloned())
-          .filter(|d| !d.is_empty())
-          .map(PathBuf::from),
-        _ => None,
+    // Prefer the running process's actual `--gemini-dir` (`AgentProcess::own_dirs`), which covers saved accounts,
+    // plugin accounts and agents.json overrides alike; fall back to account hooks when no own_dir was recorded
+    let own_dir = self.own_dirs.lock().first().cloned();
+    let gemini_dir = match own_dir {
+      Some(dir) => Some(dir),
+      None => match cached_dir {
+        Some(dir) => dir,
+        None => match (account_id, self.deps.accounts.as_ref()) {
+          (Some(acc), Some(hooks)) => hooks
+            .spawn_env(self.agent.clone(), acc)
+            .await
+            .and_then(|env| env.get(STORE_ENV).cloned())
+            .filter(|d| !d.is_empty())
+            .map(PathBuf::from),
+          _ => None,
+        },
       },
     };
     let brain = brain_dir(gemini_dir.as_deref());
