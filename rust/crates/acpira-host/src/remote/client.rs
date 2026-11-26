@@ -589,10 +589,47 @@ fn close(inner: &Inner, why: &str, graceful: bool) {
   });
 }
 
+impl crate::remote_seam::RemoteStream for Call {
+  fn next_event<'a>(&'a mut self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<crate::remote_seam::RemoteEvent>> + Send + 'a>> {
+    Box::pin(async move {
+      self.next().await.map(|ev| match ev {
+        Event::Chunk { stream, bytes } => crate::remote_seam::RemoteEvent::Chunk { stream, bytes },
+        Event::Done(Ok(v)) => crate::remote_seam::RemoteEvent::Done(Ok(v)),
+        Event::Done(Err(e)) => crate::remote_seam::RemoteEvent::Done(Err(e.to_string())),
+      })
+    })
+  }
+
+  fn send_stdin(&self, bytes: &[u8]) {
+    self.stdin(bytes);
+  }
+
+  fn close_stdin(&self) {
+    self.stdin_eof();
+  }
+}
+
+impl crate::remote_seam::RemoteClientPort for RemoteClient {
+  fn call(&self, op: String, args: Value) -> crate::acp::transport::rpc::BoxFuture<Result<crate::remote_seam::RemoteReply, String>> {
+    let client = self.clone();
+    Box::pin(async move {
+      client
+        .call(&op, args)
+        .await
+        .map(|r| crate::remote_seam::RemoteReply { value: r.value, data: r.data })
+        .map_err(|e| e.to_string())
+    })
+  }
+
+  fn request(&self, op: String, args: Value) -> Box<dyn crate::remote_seam::RemoteStream> {
+    Box::new(RemoteClient::request(self, &op, args))
+  }
+}
+
 #[cfg(test)]
 pub(super) async fn test_channel(slice_bytes: usize, pause: Duration) -> (RemoteClient, Arc< std::sync::atomic::AtomicUsize >) {
   use tokio::io::AsyncReadExt;
-  use crate::remote::helper::{self, HelperOpts};
+  use crate::remote_helper::{self, HelperOpts};
   let (client_w, mut pump_r) = tokio::io::duplex(16 * 1024);
   let (mut pump_w, helper_r) = tokio::io::duplex(16 * 1024);
   let (helper_w, client_r) = tokio::io::duplex(64 * 1024);
@@ -613,7 +650,7 @@ pub(super) async fn test_channel(slice_bytes: usize, pause: Duration) -> (Remote
       }
     }
   });
-  tokio::spawn(helper::serve(
+  tokio::spawn(remote_helper::serve(
     helper_r,
     helper_w,
     HelperOpts { version: "test".into(), dead_after_ms: DEAD_AFTER_MS, ping_every_ms: PING_EVERY_MS, login_path: false, digest: String::new() },
@@ -693,6 +730,22 @@ mod tests {
     assert_eq!(reply["takenOver"], true);
     let total = uplink.load(Ordering::Relaxed);
     assert!(total < 2 * BULK_WINDOW, "kept uploading {total} bytes after the helper rejected the write");
+    client.close();
+  }
+
+  #[tokio::test]
+  async fn write_stream_writes_multi_chunk_binary_files_atomically() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _) = test_channel(64 * 1024, Duration::ZERO).await;
+    let target = dir.path().join("nested/icon.bin");
+    let payload: Vec<u8> = (0..(200 * 1024)).map(|i| (i % 251) as u8).collect();
+    let call = client.request("writeStream", json!({ "path": target, "mkdirs": true }));
+    call.stdin(&payload);
+    call.stdin_eof();
+    let reply = call.collect().await.unwrap();
+    assert_eq!(reply.value["size"], payload.len());
+    assert_eq!(reply.value["created"], true);
+    assert_eq!(std::fs::read(&target).unwrap(), payload);
     client.close();
   }
 }

@@ -288,6 +288,32 @@ fn path_under(path: &Path, root: &Path) -> bool {
   }
 }
 
+/// Largest local file copied verbatim to a remote SSH host via `Write` (`source_local_path`)
+pub const MAX_LOCAL_COPY_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Top-level engine state / credential files under `data_root` that must never be copied to a remote host
+const PRIVATE_DATA_FILES: [&str; 4] = ["secrets.json", "accounts.json", "providers.json", "connections.json"];
+
+/// Strips the Windows verbatim `\\?\` prefix returned by `std::fs::canonicalize` so canonical paths compare cleanly
+/// against non-verbatim roots
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+  #[cfg(windows)]
+  {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+      return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+      return PathBuf::from(rest);
+    }
+  }
+  path
+}
+
+fn canonical_clean(path: &Path) -> Option<PathBuf> {
+  std::fs::canonicalize(path).ok().map(strip_verbatim)
+}
+
 /// Whether `path` names one of a local-run CLI's own files on this machine (its config / artifact / step-media
 /// folders, the engine's data root outside `<data_root>/remote`, or its temp prefixes), returning the normalized local
 /// path. Stand-in paths, relative paths, `~` paths, `..` climbs and SSH host paths return `None`
@@ -307,6 +333,48 @@ pub fn local_own_path(stand: &Stand, path: &str, home: &Path, data_root: &Path) 
   let matches_temp = stand.profile.own.temp_prefixes.iter().any(|t| p.starts_with(t.as_str()));
   let matches_root = roots.iter().any(|r| path_under(candidate, r));
   (matches_temp || matches_root).then(|| crate::store::data_dir::normalize(candidate))
+}
+
+/// Validates `path` as a readable regular file owned by the local CLI (or Acpira's non-secret data directories) before
+/// copying its bytes to an SSH host. Also canonicalizes to prevent symlink escape and blocks private Acpira state files
+pub fn copy_source_path(stand: &Stand, path: &str, home: &Path, data_root: &Path) -> Result<PathBuf, String> {
+  let Some(candidate) = local_own_path(stand, path, home, data_root) else {
+    return Err(format!(
+      "source_local_path must be an absolute path to one of your own local files (not a host, stand-in, or arbitrary local path): {path}"
+    ));
+  };
+  let canonical = std::fs::canonicalize(&candidate)
+    .map(strip_verbatim)
+    .map_err(|e| format!("cannot read source_local_path {path}: {e}"))?;
+  let canon_home = canonical_clean(home).unwrap_or_else(|| home.to_path_buf());
+  let canon_data = canonical_clean(data_root).unwrap_or_else(|| data_root.to_path_buf());
+  let mut canon_stand = stand.clone();
+  canon_stand.local = canonical_clean(&stand.local)
+    .unwrap_or_else(|| stand.local.strip_prefix(data_root).map(|rel| canon_data.join(rel)).unwrap_or_else(|_| stand.local.clone()));
+  canon_stand.own = stand.own.iter().map(|d| canonical_clean(d).unwrap_or_else(|| d.clone())).collect();
+  let canonical_str = canonical.to_string_lossy();
+  let inside_temp = stand.profile.own.temp_prefixes.iter().any(|t| canonical_str.starts_with(t.as_str()));
+  let roots = here_roots(&canon_stand, &canon_home, &canon_data);
+  let inside_stand = path_under(&canonical, &canon_stand.local) || path_under(&canonical, &canon_data.join("remote"));
+  let inside_root = roots.iter().any(|r| path_under(&canonical, r));
+  if inside_stand || (!inside_temp && !inside_root) {
+    return Err(format!("source_local_path resolves outside allowed local directories: {path}"));
+  }
+  if PRIVATE_DATA_FILES.iter().any(|f| canonical == canon_data.join(f)) {
+    return Err(format!("source_local_path cannot copy private Acpira state file: {path}"));
+  }
+  let meta = std::fs::metadata(&canonical).map_err(|e| format!("cannot stat source_local_path {path}: {e}"))?;
+  if !meta.is_file() {
+    return Err(format!("source_local_path is not a regular file: {path}"));
+  }
+  if meta.len() > MAX_LOCAL_COPY_BYTES {
+    return Err(format!(
+      "source_local_path is too large ({} bytes; max {} MiB): {path}",
+      meta.len(),
+      MAX_LOCAL_COPY_BYTES / (1024 * 1024)
+    ));
+  }
+  Ok(canonical)
 }
 
 /// The engine's refusal under every profile: a permission request of a native tool (not one of Acpira's, `caller`
@@ -734,5 +802,34 @@ mod tests {
     assert_eq!(located_path_for("/C:/Users/me/a.png", true), "C:/Users/me/a.png");
     assert_eq!(located_path_for("/c:relative.png", true), "/c:relative.png");
     assert_eq!(located_path_for("/C:/Users/me/a.png", false), "/C:/Users/me/a.png");
+  }
+
+  #[test]
+  fn copy_source_path_allows_cli_artifacts_and_blocks_private_state_and_escapes() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let data = home.join(".acpira");
+    let artifact_dir = home.join(".gemini/antigravity-cli/brain/b1");
+    let outside = root.path().join("outside.txt");
+    std::fs::create_dir_all(&artifact_dir).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let png = artifact_dir.join("icon.png");
+    std::fs::write(&png, b"\x89PNG\r\n\x1a\n").unwrap();
+    std::fs::write(&outside, b"secret").unwrap();
+    let secrets = data.join("secrets.json");
+    std::fs::write(&secrets, b"{}").unwrap();
+
+    let agy = Stand::new(profile("antigravity"), "example-host", "/home/u/proj", &data);
+    assert!(copy_source_path(&agy, &png.to_string_lossy(), &home, &data).is_ok());
+    assert!(copy_source_path(&agy, &outside.to_string_lossy(), &home, &data).is_err());
+    assert!(copy_source_path(&agy, &secrets.to_string_lossy(), &home, &data).is_err());
+    assert!(copy_source_path(&agy, &artifact_dir.to_string_lossy(), &home, &data).is_err(), "directories are rejected");
+    #[cfg(unix)]
+    {
+      let link = artifact_dir.join("escape.txt");
+      std::os::unix::fs::symlink(&outside, &link).unwrap();
+      let err = copy_source_path(&agy, &link.to_string_lossy(), &home, &data).unwrap_err();
+      assert!(err.contains("outside allowed local directories"), "{err}");
+    }
   }
 }

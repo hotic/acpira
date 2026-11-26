@@ -22,7 +22,9 @@ pub fn note(stand: &Stand, places: Option<&Value>, instructions: &[(String, Stri
      the project is one. The project tools {prefix}Read, {prefix}Write, {prefix}Edit, {prefix}MultiEdit, {prefix}Bash, {prefix}Grep, \
      {prefix}Glob and {prefix}LS run on {alias}: a relative path resolves against {host}, a path under the stand-in means the same \
      file there, and commands (git, builds, tests) run there; one started with run_in_background keeps running there, read with \
-     {prefix}BashOutput and stopped with {prefix}KillShell. Write paths as {host}/… {own}",
+     {prefix}BashOutput and stopped with {prefix}KillShell. Write paths as {host}/… To copy one of your own files on this machine \
+     (such as a generated image or binary artifact) onto {alias}, call {prefix}Write with file_path and source_local_path instead \
+     of encoding its bytes in text. {own}",
     alias = stand.alias,
     host = stand.host,
     local = stand.local.display(),
@@ -40,7 +42,7 @@ pub fn note(stand: &Stand, places: Option<&Value>, instructions: &[(String, Stri
 pub fn with_stand(mut req: Value, stand: &Stand, note: &str) -> Value {
   req["cwd"] = json!(stand.local);
   if let Some(meta) = req.get_mut("_meta").and_then(Value::as_object_mut) {
-    meta.remove(crate::acp::session::remote::META);
+    meta.remove(acpira_shared::remote::META);
   }
   let profile = &stand.profile;
   if profile.gates.contains(&Gate::ClaudeOptions) {
@@ -125,6 +127,7 @@ mod tests {
     assert!(agy_out["_meta"].get("claudeCode").is_none());
     let agy_text = agy_out["_meta"]["antigravity"]["systemPrompt"]["append"].as_str().unwrap();
     assert!(agy_text.contains("mcp_acpira_Read"));
+    assert!(agy_text.contains("source_local_path"));
     assert!(agy_text.contains("Use cargo."));
   }
 

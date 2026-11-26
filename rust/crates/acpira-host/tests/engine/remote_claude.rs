@@ -65,7 +65,7 @@ impl Remote {
     h.deps.remote = Some(connections.clone());
     let roster = Arc::new(Roster::new(h.dir.path()));
     let hub = RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
-    h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+    h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub)));
     Remote { h, _lab: lab, real, logs, connections }
   }
 
@@ -322,6 +322,40 @@ async fn antigravity_runs_in_its_stand_in_and_routes_mcp_tools_to_the_host() {
   let vw = view(&s);
   let row = agent_blocks(&vw).into_iter().rfind(|b| b["type"] == "tool_call").unwrap();
   expect_match(&row, json!({ "kind": "read", "status": "completed" }));
+
+  // Copying a binary artifact from the CLI's local data dir lands verbatim on the host without base64 in model text,
+  // using inline `write` under 2 MiB and streaming `writeStream` above it; arbitrary local paths are rejected
+  let local_dir = r.h.dir.path().join("plugins/.data/asgard-gateway");
+  std::fs::create_dir_all(&local_dir).unwrap();
+  let small_png = local_dir.join("icon.png");
+  let small_bytes: Vec<u8> = [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0x00, 0xfe, 0x80].repeat(64);
+  std::fs::write(&small_png, &small_bytes).unwrap();
+  let (cards, reply) = turn(
+    &s,
+    &format!(r#"agy-remote-call:Write {{"file_path":"assets/icon.png","source_local_path":"{}"}}"#, small_png.display()),
+    "allow_once",
+  )
+  .await;
+  assert_eq!(cards.len(), 1, "local-to-host Write asks under default mode");
+  assert!(result_text(&reply).contains("Copied"), "{reply}");
+  assert_eq!(std::fs::read(r.real.join("work/assets/icon.png")).unwrap(), small_bytes);
+  assert!(!stand.join("assets/icon.png").exists());
+
+  let large_bin = local_dir.join("large.bin");
+  let large_bytes: Vec<u8> = (0..(2 * 1024 * 1024 + 4096)).map(|i| (i % 251) as u8).collect();
+  std::fs::write(&large_bin, &large_bytes).unwrap();
+  let (_, reply) = turn(
+    &s,
+    &format!(r#"agy-remote-call:Write {{"file_path":"assets/large.bin","source_local_path":"{}"}}"#, large_bin.display()),
+    "allow_once",
+  )
+  .await;
+  assert!(result_text(&reply).contains("Copied"), "{reply}");
+  assert_eq!(std::fs::read(r.real.join("work/assets/large.bin")).unwrap(), large_bytes);
+
+  let (_, bad) = turn(&s, r#"agy-remote-call:Write {"file_path":"assets/nope.txt","source_local_path":"/etc/hosts"}"#, "allow_once").await;
+  assert_eq!(bad["result"]["isError"], true, "{bad}");
+  assert!(!r.real.join("work/assets/nope.txt").exists());
 
   // Even under full access, built-in local workspace tools outside `~/.gemini` are auto-rejected before reaching disk
   let _ = s.set_mode("bypassPermissions".into()).await;

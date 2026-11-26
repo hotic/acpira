@@ -18,6 +18,11 @@ use crate::store::data_dir::{acpira_home, home_dir};
 
 /// How much of one instructions file goes into the system prompt
 const MAX_INSTRUCTIONS: usize = 48 * 1024;
+/// Raw file bytes sent inline over the existing `write` helper op (base64 stays well under `wire::MAX_LINE` and works
+/// on older remote helpers); larger files stream over `writeStream`
+const INLINE_WRITE_LIMIT: usize = 2 * 1024 * 1024;
+/// How long a local-to-host file copy waits for the SSH connection to come (back) up
+const COPY_CONNECT_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn next_call_seq() -> u64 {
   static SEQ: AtomicU64 = AtomicU64::new(1);
@@ -158,7 +163,7 @@ impl AcpSession {
     let Some(client) = self.deps.remote.as_ref().and_then(|c| c.client(&stand.alias)) else { return vec![] };
     let read = |path: String| {
       let client = client.clone();
-      async move { client.call("read", json!({ "path": path })).await.ok().map(|r| String::from_utf8_lossy(&r.data).into_owned()) }
+      async move { client.call("read".into(), json!({ "path": path })).await.ok().map(|r| String::from_utf8_lossy(&r.data).into_owned()) }
     };
     let mut dirs: Vec<String> = places.and_then(|p| p.get("root")).and_then(Value::as_str).map(str::to_owned).into_iter().collect();
     if !dirs.contains(&stand.host) {
@@ -205,7 +210,7 @@ impl AcpSession {
     let data_root = self.data_root();
     let roots = self.here_roots(&stand);
     let here = stand_in::runs_here(name, &args, &stand, &data_root, &roots);
-    let (tool, call_args) = match tools::builtin_call(name, &args, &stand, here) {
+    let spec = match tools::resolve_call(name, &args, &stand, here) {
       Ok(x) => x,
       Err(e) => return Ok(tools::mcp_result(&Output::error(e))),
     };
@@ -230,7 +235,7 @@ impl AcpSession {
           .filter(|(_, c)| !c.claimed && c.card.is_none() && c.name == static_name)
           .filter(|(_, c)| {
             let entry_here = stand_in::runs_here(static_name, &c.input, &stand, &data_root, &roots);
-            tools::builtin_call(static_name, &c.input, &stand, entry_here).ok().as_ref() == Some(&(tool, call_args.clone()))
+            tools::resolve_call(static_name, &c.input, &stand, entry_here).ok().as_ref() == Some(&spec)
           })
           .min_by_key(|(_, c)| c.seq)
           .map(|(id, _)| id.clone());
@@ -273,7 +278,16 @@ impl AcpSession {
     if bound_id.is_some() {
       self.remote_started(&call);
     }
-    let mut out = if here { self.run_here(tool, call_args, &call).await } else { self.run_on_host(tool, call_args, &call, stop).await };
+    let mut out = match spec {
+      tools::RemoteCallSpec::Builtin { tool, args: call_args } => {
+        if here {
+          self.run_here(tool, call_args, &call).await
+        } else {
+          self.run_on_host(tool, call_args, &call, stop).await
+        }
+      }
+      tools::RemoteCallSpec::CopyLocal { source, dest, dest_here } => self.copy_local_file(&stand, &source, &dest, dest_here, &call, stop).await,
+    };
     if name == "Bash" {
       tools::name_job_tools(&mut out, &stand.profile.prefix);
     }
@@ -355,6 +369,96 @@ impl AcpSession {
         "The call did not complete on the host: {}. Whether it took effect there is unknown: check before doing it again.",
         e.message
       )),
+    }
+  }
+
+  /// Copies raw bytes from one of the local CLI's own files (`Write` with `source_local_path`) directly to `dest` on
+  /// the SSH host (or locally when `dest_here`), respecting workspace `beforeEdit` hooks and avoiding base64 through the
+  /// model's context
+  async fn copy_local_file(self: &Arc<Self>, stand: &Stand, source: &str, dest: &str, dest_here: bool, call: &str, stop: Cancel) -> Output {
+    let source_path = match stand_in::copy_source_path(stand, source, &home_dir(), &self.data_root()) {
+      Ok(p) => p,
+      Err(e) => return Output::error(e),
+    };
+    let bytes = match tokio::fs::read(&source_path).await {
+      Ok(b) if b.len() as u64 > stand_in::MAX_LOCAL_COPY_BYTES => {
+        return Output::error(format!(
+          "source_local_path is too large ({} bytes; max {} MiB): {source}",
+          b.len(),
+          stand_in::MAX_LOCAL_COPY_BYTES / (1024 * 1024)
+        ));
+      }
+      Ok(b) => b,
+      Err(e) => return Output::error(format!("cannot read source_local_path {source}: {e}")),
+    };
+    if dest_here {
+      let target = PathBuf::from(dest);
+      if let Some(parent) = target.parent()
+        && let Err(e) = tokio::fs::create_dir_all(parent).await
+      {
+        return Output::error(format!("cannot create parent folder for {dest}: {e}"));
+      }
+      if let Err(e) = crate::store::file_lock::write_atomic(&target, &bytes, None).await {
+        return Output::error(format!("cannot write {dest}: {e}"));
+      }
+      return Output {
+        model: format!("Copied {} bytes from {source} to {dest}.", bytes.len()),
+        content: vec![],
+        raw_output: Some(json!({ "bytes": bytes.len(), "source": source, "path": dest })),
+        is_error: false,
+      };
+    }
+    if !self.core.lock().hooks.asked.contains(call) {
+      let input = json!({ "file_path": dest, "source_local_path": source });
+      if let Some(reason) = self.hooks_check_edit(call, acpira_shared::transcript::ToolKind::Edit, vec![dest.to_owned()], Some(input)).await {
+        return Output::error(format!(
+          "Blocked by the workspace's beforeEdit hook: {reason}. The file was not changed; do not retry the change as it is."
+        ));
+      }
+    }
+    let Some(connections) = self.deps.remote.clone() else {
+      return Output::error("this engine has no SSH connections");
+    };
+    let client = tokio::select! {
+      c = connections.ensure(stand.alias.clone(), COPY_CONNECT_WAIT) => match c {
+        Ok(c) => c,
+        Err(e) => return Output::error(format!("{} cannot be reached: {e:#}", stand.alias)),
+      },
+      () = stop.cancelled() => return Output::error("Cancelled."),
+    };
+    let written = if bytes.len() <= INLINE_WRITE_LIMIT {
+      let req = json!({ "path": dest, "b": crate::remote::wire::b64(&bytes), "mkdirs": true });
+      tokio::select! {
+        r = client.call("write".into(), req) => r.map(|reply| reply.value),
+        () = stop.cancelled() => return Output::error("Cancelled."),
+      }
+    } else {
+      let mut stream = client.request("writeStream".into(), json!({ "path": dest, "mkdirs": true }));
+      stream.send_stdin(&bytes);
+      stream.close_stdin();
+      loop {
+        let ev = tokio::select! {
+          ev = stream.next_event() => ev,
+          () = stop.cancelled() => return Output::error("Cancelled."),
+        };
+        match ev {
+          Some(crate::remote_seam::RemoteEvent::Chunk { .. }) => {}
+          Some(crate::remote_seam::RemoteEvent::Done(r)) => break r,
+          None => break Err("the connection to the host ended before the answer; the outcome is unknown".into()),
+        }
+      }
+    };
+    match written {
+      Ok(v) => {
+        let size = v.get("size").and_then(Value::as_u64).unwrap_or(bytes.len() as u64);
+        Output {
+          model: format!("Copied {size} bytes from {source} to {dest} on {}.", stand.alias),
+          content: vec![],
+          raw_output: Some(json!({ "bytes": size, "source": source, "path": dest })),
+          is_error: false,
+        }
+      }
+      Err(e) => Output::error(format!("Failed to copy {source} to {dest} on {}: {e}", stand.alias)),
     }
   }
 

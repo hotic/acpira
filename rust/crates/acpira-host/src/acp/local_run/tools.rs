@@ -27,6 +27,37 @@ pub fn clean_input(input: &Value) -> Value {
   out
 }
 
+/// Resolved execution shape of one stand-in remote tool call
+#[derive(Debug, Clone, PartialEq)]
+pub enum RemoteCallSpec {
+  /// Executed via `acpira_agent::tools` (on the SSH host, or locally for the CLI's own files)
+  Builtin { tool: &'static str, args: Value },
+  /// Copy bytes verbatim from one of the local CLI's own files (`source_local_path`) to `dest`
+  CopyLocal { source: String, dest: String, dest_here: bool },
+}
+
+/// Resolves a remote tool call into either a built-in agent tool invocation or a local-to-host file copy (`Write` with
+/// `source_local_path`). `here`: the call's target path belongs to this machine
+pub fn resolve_call(name: &str, args: &Value, stand: &Stand, here: bool) -> Result<RemoteCallSpec, String> {
+  if name == "Write" {
+    let source = args.get("source_local_path").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+    let has_content = args.get("content").is_some_and(|v| !v.is_null());
+    if let Some(source) = source {
+      if has_content {
+        return Err("Pass either content or source_local_path, not both.".into());
+      }
+      let p = path_arg(name, args).ok_or("file_path is required")?;
+      let dest = if here { p.to_owned() } else { stand.host_path(p) };
+      return Ok(RemoteCallSpec::CopyLocal { source: source.to_owned(), dest, dest_here: here });
+    }
+    if !has_content {
+      return Err("content or source_local_path is required".into());
+    }
+  }
+  let (tool, args) = builtin_call(name, args, stand, here)?;
+  Ok(RemoteCallSpec::Builtin { tool, args })
+}
+
 /// The built-in agent's tool and arguments (`acpira_agent::tools`) for a call of a remote tool. `here`: the call runs on
 /// this machine, so its paths stay as written
 pub fn builtin_call(name: &str, args: &Value, stand: &Stand, here: bool) -> Result<(&'static str, Value), String> {
@@ -183,12 +214,17 @@ pub fn tool_defs(alias: &str) -> Vec<Value> {
     ),
     def(
       "Write",
-      format!("Write a whole file on the SSH host {alias}, creating or replacing it. Prefer Edit for a change to an existing file."),
+      format!(
+        "Write a whole file on the SSH host {alias}, creating or replacing it. Pass content for text, or source_local_path \
+         to copy bytes verbatim from one of your own local files (e.g. a generated image or binary artifact) onto {alias}. \
+         Prefer Edit for a change to an existing file."
+      ),
       json!({
         "file_path": { "type": "string", "description": path },
-        "content": { "type": "string", "description": "The complete new content" },
+        "content": { "type": "string", "description": "The complete new text content (omit when using source_local_path)" },
+        "source_local_path": { "type": "string", "description": "Absolute path to one of your own local files on this machine to copy verbatim to file_path on the host" },
       }),
-      &["file_path", "content"],
+      &["file_path"],
       false,
     ),
     def(
@@ -324,7 +360,7 @@ fn tool_named(profile: &StandProfile, s: &str) -> Option<&'static str> {
   let (mut server, mut tool, mut after_server) = (false, None, false);
   for w in s.split(|c: char| !c.is_ascii_alphanumeric() && c != '-').filter(|w| !w.is_empty()) {
     let aliased = std::mem::take(&mut after_server) && alias(w);
-    if w.eq_ignore_ascii_case(crate::host_mcp::SERVER_NAME) {
+    if w.eq_ignore_ascii_case(acpira_shared::host_tools::SERVER) {
       (server, after_server) = (true, true);
     } else if !aliased && !NAME_FILLERS.iter().any(|f| w.eq_ignore_ascii_case(f)) {
       if tool.is_some() {
@@ -344,7 +380,7 @@ const NAME_AT: [&str; 5] = ["/_meta/claudeCode/toolName", "/_meta/cognition.ai~1
 /// `_meta["acpira/mcp"]`)
 pub fn remote_name(profile: &StandProfile, u: &Value) -> Option<&'static str> {
   if let Some(m) = u.pointer("/_meta/acpira~1mcp")
-    && m.get("server").and_then(Value::as_str).is_some_and(|s| s.eq_ignore_ascii_case(crate::host_mcp::SERVER_NAME))
+    && m.get("server").and_then(Value::as_str).is_some_and(|s| s.eq_ignore_ascii_case(acpira_shared::host_tools::SERVER))
     && let Some(tool) = m.get("tool").and_then(Value::as_str)
     && let Some(n) = acpira_shared::host_tools::REMOTE.iter().find(|t| **t == tool).copied()
   {
@@ -409,7 +445,9 @@ pub fn view(name: &str, input: &Value, stand: &Stand, data_root: &Path, roots: &
       let edits = input.get("edits").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
       edits.iter().map(|e| json!({ "type": "diff", "path": p, "oldText": e.get("old_string"), "newText": e.get("new_string") })).collect()
     }
-    (Some(p), "Write") => vec![json!({ "type": "diff", "path": p, "oldText": null, "newText": input.get("content") })],
+    (Some(p), "Write") if input.get("source_local_path").and_then(Value::as_str).map(str::trim).is_none_or(str::is_empty) => {
+      vec![json!({ "type": "diff", "path": p, "oldText": null, "newText": input.get("content") })]
+    }
     _ => vec![],
   };
   NativeView { kind, title, locations, diffs, input }
@@ -545,5 +583,20 @@ mod tests {
     assert_eq!(view("KillShell", &json!({ "shell_id": "2" }), &s, data, &[]).title, "Stop job 2");
     let v = view("Read", &json!({ "file_path": "/Users/me/.acpira/remote/hosts/example-host/home/u/proj/README.md", "offset": 5 }), &s, data, &[]);
     assert_eq!(v.locations, vec![json!({ "path": "/home/u/proj/README.md", "line": 5 })]);
+    // Write with `source_local_path` copies verbatim without fabricating a text diff
+    let copy_args = json!({ "file_path": "assets/icon.png", "source_local_path": "/Users/me/.gemini/antigravity-cli/brain/b1/icon.png" });
+    assert_eq!(
+      resolve_call("Write", &copy_args, &s, false).unwrap(),
+      RemoteCallSpec::CopyLocal {
+        source: "/Users/me/.gemini/antigravity-cli/brain/b1/icon.png".into(),
+        dest: "/home/u/proj/assets/icon.png".into(),
+        dest_here: false,
+      }
+    );
+    assert!(resolve_call("Write", &json!({ "file_path": "a.txt", "content": "x", "source_local_path": "/Users/me/.gemini/x" }), &s, false).is_err());
+    assert!(resolve_call("Write", &json!({ "file_path": "a.txt" }), &s, false).is_err());
+    let v = view("Write", &copy_args, &s, data, &[]);
+    assert_eq!((v.kind, v.title.as_str(), v.diffs.len()), ("edit", "Write assets/icon.png", 0));
+    assert_eq!(v.locations, vec![json!({ "path": "/home/u/proj/assets/icon.png" })]);
   }
 }
