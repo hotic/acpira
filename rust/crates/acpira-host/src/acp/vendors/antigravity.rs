@@ -778,7 +778,7 @@ mod tests {
     };
     let text_of = |turn: &AgentTurn| match &turn.blocks[0] {
       AgentBlock::Text(t) => t.markdown.clone(),
-      _ => unreachable!(),
+      _ => panic!("expected a text block"),
     };
 
     let mut complete = turn_with("All tests pass.\n<!-- GOAL_COMPLETE -->\n");

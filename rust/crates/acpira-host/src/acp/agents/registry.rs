@@ -1263,7 +1263,6 @@ mod tests {
 
   #[tokio::test]
   async fn native_cli_offers_update_when_release_is_newer_and_uses_update_command() {
-    use super::super::cli_latest::{self, ReleaseSource};
     let r = AgentRegistry::with_os(&json!({}), Os::Posix);
     assert!(
       r.install("antigravity").unwrap().command.unwrap().contains("install.sh"),
@@ -1280,6 +1279,7 @@ mod tests {
 
     #[cfg(unix)]
     {
+      use super::super::cli_latest::{self, ReleaseSource};
       use std::os::unix::fs::PermissionsExt;
       let t = tempfile::tempdir().unwrap();
       let script = t.path().join("agy");
