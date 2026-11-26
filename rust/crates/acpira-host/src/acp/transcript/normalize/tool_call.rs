@@ -20,7 +20,7 @@ use super::content::{
   show_image_paths, tool_contents,
 };
 use super::tool_kind::{
-  ASK_TITLE, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_VIDEO_VERB, SHOW_WIDGET_VERB,
+  ASK_TITLE, named_tool, NAMED_TOOL_VERBS, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_VIDEO_VERB, SHOW_WIDGET_VERB,
   JOB_INPUT, SKILL_VERB, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_video_call, is_show_widget_call, mcp_identity, mcp_label, drop_server_prefix, session_tool_target,
   session_tool_verb, shell_verb, show_image_args, skill_load, verb_of, wakeup_time, wakeup_verb, web_search_query, web_tool, WAKEUP_STOP_VERB,
   WAKEUP_VERBS,
@@ -128,6 +128,14 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   }
   if title.is_some_and(|x| !x.is_empty() && ASK_TITLE.is_match(x.trim())) {
     set_verb(b, "verb.ask");
+  }
+  let mut named_tool = named_tool(u, meta, title, raw);
+  if let Some(tool) = named_tool.as_mut() {
+    set_verb(b, tool.verb);
+    b.kind = ToolKind::Other;
+    if let Some(steps) = tool.steps.take() {
+      b.todo_entries = Some(steps);
+    }
   }
   if let Some(shell) = shell_verb(meta, title) {
     set_verb(b, shell);
@@ -271,8 +279,11 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
         | READ_SESSION_VERB
         | SKILL_VERB
     )
-  );
-  let target = if matches!(b.verb_key.as_deref(), Some("verb.wait" | "verb.kill")) {
+  ) || b.verb_key.as_deref().is_some_and(|k| NAMED_TOOL_VERBS.contains(&k));
+  // A tool named by its bare-name title shows the target it picked; a packet without its input keeps the earlier one
+  let target = if let Some(tg) = named_tool.and_then(|tool| tool.target) {
+    Some(tg)
+  } else if matches!(b.verb_key.as_deref(), Some("verb.wait" | "verb.kill")) {
     shell_target(raw, ctx.as_deref())
   } else if b.verb_key.as_deref() == Some(WEB_SEARCH_VERB) {
     // No target until the query is known: the placeholder title ("Web search") only repeats the verb

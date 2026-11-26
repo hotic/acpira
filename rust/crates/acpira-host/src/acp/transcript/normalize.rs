@@ -688,6 +688,70 @@ mod retitled_row_tests {
     assert!(acpira_shared::todo_tools::is_todo_tool(b), "{:?} {:?}", b.verb_key, b.kind);
     assert_eq!(b.todo_entries.as_ref().expect("the to-do bar reads the list")[0].title, "fix it");
   }
+
+  fn row(s: &mut NormalizeState, id: &str) -> ToolCallBlock {
+    let loc = find_tool(&s.turns, id).unwrap();
+    let AgentBlock::ToolCall(b) = &agent(s, loc.0).blocks[loc.1] else { panic!("not a tool row") };
+    b.clone()
+  }
+
+  // agy 1.5.16 names its tools beside the ACP fields and titles each row `Run <tool>`
+  #[test]
+  fn antigravity_tools_read_as_what_they_do() {
+    let mut s = NormalizeState::new(vec![]);
+    let steps = json!([{ "status": "done", "title": "probe" }, { "status": "in_progress", "title": "wire it" }]);
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "s", "name": "update_steps", "title": "Run update_steps", "kind": "other", "rawInput": { "steps": steps.to_string() } }));
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "s", "status": "completed", "rawOutput": "OK" }));
+    let b = row(&mut s, "s");
+    assert!(acpira_shared::todo_tools::is_todo_tool(&b));
+    let entries = b.todo_entries.expect("the input is the resulting list");
+    assert_eq!((entries[1].title.as_str(), entries[0].status), ("wire it", PlanStatus::Completed));
+
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "m", "title": "Run post_message", "kind": "other", "rawInput": { "text": "@core Ready for `sheet.rs`\nmore" } }));
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "m", "title": "Run post_message", "status": "completed" }));
+    let b = row(&mut s, "m");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref()), (Some("verb.sendMessage"), Some("@core Ready for sheet.rs")));
+
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "w", "title": "Run swarm_wait", "kind": "other", "rawInput": { "mentions_only": true, "since": 15 } }));
+    let b = row(&mut s, "w");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref()), (Some("verb.awaitSubagent"), None));
+
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "t", "title": "Run manage_task", "kind": "other", "rawInput": { "Action": "kill", "TaskId": "02aac3d6/task-166" } }));
+    let b = row(&mut s, "t");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref()), (Some("verb.kill"), Some("task-166")));
+
+    // `swarm add` is the subagent tree's delegation row
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "a", "title": "Run swarm", "kind": "other", "rawInput": { "action": "add", "name": "core" } }));
+    assert_eq!(row(&mut s, "a").verb_key, None);
+  }
+
+  // claude-agent-acp 0.111.0 titles its agent-control tools with the bare name and names them in `_meta.claudeCode`
+  #[test]
+  fn claude_control_tools_read_as_what_they_do() {
+    let mut s = NormalizeState::new(vec![]);
+    let call = |id: &str, name: &str, title: &str, input: Value| {
+      json!({ "sessionUpdate": "tool_call", "toolCallId": id, "title": title, "kind": "other", "rawInput": input, "_meta": { "claudeCode": { "toolName": name } } })
+    };
+    apply_update(&mut s, &call("q", "ToolSearch", "ToolSearch", json!({ "query": "select:WebSearch,WebFetch", "max_results": 2 })));
+    let b = row(&mut s, "q");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref()), (Some("verb.loadTools"), Some("WebSearch, WebFetch")));
+
+    apply_update(&mut s, &call("k", "TaskStop", "TaskStop", json!({ "task_id": "bbd73d0x2" })));
+    assert_eq!(row(&mut s, "k").target.as_deref(), Some("bbd73d0x2"));
+    let stopped = json!({ "message": "Successfully stopped task", "task_id": "bbd73d0x2", "task_type": "local_bash", "command": "cargo test" }).to_string();
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "k", "status": "completed", "rawOutput": stopped, "_meta": { "claudeCode": { "toolName": "TaskStop" } } }));
+    let b = row(&mut s, "k");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref()), (Some("verb.kill"), Some("cargo test")));
+
+    apply_update(&mut s, &call("l", "ListAgents", "ListAgents", json!({})));
+    let b = row(&mut s, "l");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref()), (Some("verb.listSessions"), None));
+
+    let ask = json!({ "questions": [{ "question": "Which one?", "options": [] }] });
+    apply_update(&mut s, &call("a", "AskUserQuestion", "Asking for your input", ask));
+    let b = row(&mut s, "a");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref()), (Some("verb.ask"), Some("Which one?")));
+  }
 }
 
 #[cfg(test)]

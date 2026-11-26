@@ -298,6 +298,154 @@ pub(super) fn strip_verb(title: &str) -> String {
   if s.is_empty() { title.to_owned() } else { s.to_owned() }
 }
 
+/// A row named by the tool behind it, whose title is only that tool's bare name: Claude's agent-control tools and
+/// Antigravity's own ones. Its target, when any, is the one the row shows; the title never is
+pub(super) struct NamedTool {
+  pub(super) verb: &'static str,
+  pub(super) target: Option<Target>,
+  /// `update_steps` always sends the whole list and answers a bare `OK`, so its input is the resulting list
+  pub(super) steps: Option<Vec<PlanEntry>>,
+}
+
+/// The verb keys `named_tool` gives besides the shared ones (`verb.todo` / `ask` / `wait` / `kill`)
+pub(super) const NAMED_TOOL_VERBS: [&str; 11] = [
+  "verb.awaitSubagent",
+  "verb.stopSubagent",
+  "verb.readBoard",
+  "verb.sendMessage",
+  "verb.subagentStatus",
+  "verb.swarmTitle",
+  "verb.listTasks",
+  "verb.loadTools",
+  "verb.monitor",
+  "verb.listSessions",
+  "verb.notify",
+];
+
+pub(super) fn named_tool(u: &Value, meta: Option<&Map<String, Value>>, title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<NamedTool> {
+  claude_tool(u, meta, raw).or_else(|| agy_tool(u, title, raw))
+}
+
+fn str_arg<'a>(raw: Option<&'a Map<String, Value>>, key: &str) -> Option<&'a str> {
+  raw.and_then(|r| r.get(key)).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
+}
+
+fn plain(text: &str) -> Target {
+  Target { text: text.to_owned(), mono: false, from_title: false }
+}
+
+/// The first of a question tool's `questions: [{ question, … }]`, both CLIs' shape
+fn first_question(raw: Option<&Map<String, Value>>) -> Option<Target> {
+  let first = raw?.get("questions")?.as_array()?.first()?;
+  first.get("question").and_then(Value::as_str).map(str::trim).filter(|q| !q.is_empty()).map(plain)
+}
+
+/// A message's first line of prose
+fn prose(text: Option<&str>) -> Option<Target> {
+  text.and_then(crate::acp::vendors::antigravity_subagents::first_plain_line).map(|text| Target { text, mono: false, from_title: false })
+}
+
+/// claude-agent-acp (0.111.0) titles these with the bare tool name and names the tool in `_meta.claudeCode.toolName`
+/// on the call and on its result. `AskUserQuestion` is titled with its question or "Asking for your input"
+fn claude_tool(u: &Value, meta: Option<&Map<String, Value>>, raw: Option<&Map<String, Value>>) -> Option<NamedTool> {
+  let name = meta?.get("claudeCode")?.get("toolName")?.as_str()?;
+  let arg = |k: &str| str_arg(raw, k);
+  let (verb, target) = match name {
+    "AskUserQuestion" => ("verb.ask", first_question(raw)),
+    // `select:A,B` loads those tools by name; anything else is a keyword search
+    "ToolSearch" => (
+      "verb.loadTools",
+      arg("query").map(|q| match q.strip_prefix("select:") {
+        Some(names) => plain(&names.split(',').map(str::trim).filter(|n| !n.is_empty()).collect::<Vec<_>>().join(", ")),
+        None => plain(q),
+      }),
+    ),
+    "Monitor" => ("verb.monitor", arg("description").map(plain).or_else(|| arg("command").map(|c| Target { mono: true, ..plain(c) }))),
+    "TaskStop" => ("verb.kill", stopped_command(u).or_else(|| arg("task_id").map(|id| Target { mono: true, ..plain(id) }))),
+    "ListAgents" => ("verb.listSessions", None),
+    // `to` is often an agent id, `summary` the few words the model gave the message
+    "SendMessage" => ("verb.sendMessage", arg("summary").map(plain).or_else(|| prose(arg("message")))),
+    "PushNotification" => ("verb.notify", prose(arg("message"))),
+    _ => return None,
+  };
+  Some(NamedTool { verb, target, steps: None })
+}
+
+/// The command a `TaskStop` result names (`{ message, task_id, task_type, command }`, as JSON text or blocks of it)
+fn stopped_command(u: &Value) -> Option<Target> {
+  let parsed;
+  let result = match u.get("rawOutput")? {
+    Value::Object(_) => u.get("rawOutput")?,
+    Value::String(s) => {
+      parsed = serde_json::from_str::<Value>(s).ok()?;
+      &parsed
+    }
+    Value::Array(items) => {
+      parsed = serde_json::from_str::<Value>(items.iter().find_map(|i| i.get("text").and_then(Value::as_str))?).ok()?;
+      &parsed
+    }
+    _ => return None,
+  };
+  let command = result.get("command")?.as_str()?.trim();
+  (!command.is_empty()).then(|| Target { mono: true, ..plain(command) })
+}
+
+/// Antigravity's own tools (`agy` 1.5.16), all `Run <name>` rows of kind `other`: the step list, the swarm board,
+/// swarm / subagent bookkeeping and background tasks. `swarm add` and `invoke_subagent` stay with the subagent tree
+fn agy_tool(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<NamedTool> {
+  let name = str_of(u, "name")
+    .map(str::trim)
+    .filter(|n| !n.is_empty())
+    .or_else(|| title.map(str::trim).map(|t| t.strip_prefix("Run ").unwrap_or(t)))?;
+  let arg = |k: &str| str_arg(raw, k);
+  // `<conversation>/task-<n>`: the conversation half repeats the session id
+  let task = || arg("TaskId").map(|id| Target { mono: true, ..plain(id.rsplit('/').next().unwrap_or(id)) });
+  let (verb, target) = match (name, arg("action").or_else(|| arg("Action"))) {
+    ("update_steps", _) => ("verb.todo", None),
+    // Its questions go over `elicitation/create`; the row is only the call
+    ("ask_question", _) => ("verb.ask", first_question(raw)),
+    ("swarm_wait", _) => ("verb.awaitSubagent", None),
+    ("read_board", _) => ("verb.readBoard", None),
+    ("post_message", _) => ("verb.sendMessage", prose(arg("text"))),
+    ("send_message", _) => ("verb.sendMessage", prose(arg("Message"))),
+    ("swarm", Some("status")) | ("manage_subagents", Some("list")) => ("verb.subagentStatus", None),
+    ("swarm", Some("title")) => ("verb.swarmTitle", arg("title").map(plain)),
+    ("manage_subagents", Some("kill")) => ("verb.stopSubagent", None),
+    // `status` answers with the task's latest output, like Devin's `get_output`
+    ("manage_task", Some("status")) => ("verb.wait", task()),
+    ("manage_task", Some("kill")) => ("verb.kill", task()),
+    ("manage_task", Some("list")) => ("verb.listTasks", None),
+    _ => return None,
+  };
+  let steps = (name == "update_steps").then(|| raw.and_then(|r| r.get("steps")).and_then(agy_steps)).flatten();
+  Some(NamedTool { verb, target, steps })
+}
+
+/// `[{ title, status: pending | in_progress | done }]`, as an array or its JSON text
+fn agy_steps(value: &Value) -> Option<Vec<PlanEntry>> {
+  let parsed;
+  let list = match value {
+    Value::String(s) => {
+      parsed = serde_json::from_str::<Value>(s).ok()?;
+      parsed.as_array()?
+    }
+    other => other.as_array()?,
+  };
+  list
+    .iter()
+    .map(|item| {
+      let title = item.get("title")?.as_str()?.trim();
+      let status = match item.get("status")?.as_str()? {
+        "pending" => PlanStatus::Pending,
+        "in_progress" => PlanStatus::InProgress,
+        "done" | "completed" => PlanStatus::Completed,
+        _ => return None,
+      };
+      (!title.is_empty()).then(|| PlanEntry { title: title.to_owned(), status, priority: None })
+    })
+    .collect()
+}
+
 /// A skill load reads "Load skill <name>" whichever way the agent ran it
 pub const SKILL_VERB: &str = "verb.skill";
 /// Claude's `ScheduleWakeup` (`vendors::claude_wakeup`): setting a wakeup, or `stop: true` ending them. The keys also mark

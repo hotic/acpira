@@ -993,6 +993,17 @@ export const en = {
   'verb.stopSubagent': 'Stop subagent',
   // Claude's Workflow tool, recognized by its async task (taskType `workflow`); the run's name follows as the target
   'verb.workflow': 'Run workflow',
+  // Rows named by a tool whose title is only its bare name (Antigravity's swarm board and bookkeeping, Claude's
+  // agent-control tools); the message's first line follows sendMessage as the target
+  'verb.readBoard': 'Read board',
+  'verb.sendMessage': 'Send message',
+  'verb.subagentStatus': 'Check subagents',
+  'verb.swarmTitle': 'Name swarm',
+  'verb.listTasks': 'List background tasks',
+  'verb.loadTools': 'Load tools',
+  'verb.monitor': 'Watch',
+  'verb.listSessions': 'List sessions',
+  'verb.notify': 'Send notification',
 
   // AIR asyncTasks: background work the adapter reports independently of the prompt lifecycle; the tag
   // sits on its tool row and Stop goes to _session/async_task/stop
