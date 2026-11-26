@@ -223,6 +223,20 @@ export interface TurnX extends Turn {
   usage?: TurnUsage;
 }
 
+/** The harness that started a node (subagents.ts SubagentHarness): a summoned child or a round of the session's sidekick */
+export interface SubagentHarness {
+  agent: string;
+  /** `sidekick` for the session's own sidekick */
+  persona?: string;
+  mode?: string;
+  thread?: string;
+  round?: number;
+  sessionId?: string;
+  /** The reasoning effort the child session really runs */
+  effort?: string;
+  group?: string;
+}
+
 export interface SubagentSummary {
   id: string;
   parentId?: string;
@@ -238,6 +252,10 @@ export interface SubagentSummary {
   result?: string;
   permissions?: Block[];
   question?: Block;
+  toolCount?: number;
+  harness?: SubagentHarness;
+  /** A sidekick round's newest tool calls, for its relay window */
+  steps?: Block[];
 }
 
 export interface SessionViewX extends SessionView {

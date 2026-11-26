@@ -10,7 +10,7 @@
 - hvigor and its OHOS plugin come from the Huawei npm registry (`https://repo.harmonyos.com/npm/`, `@ohos/hvigor`, `@ohos/hvigor-ohos-plugin`, same version). `scripts/build.sh` links that install's `node_modules` into the project (`hvigorfile.ts` imports the plugin by name) and writes `local.properties`.
 - From the Mac, both hosts above can crawl at a few KB/s while the PC fetches them fast; a single slow connection is common, ranged parallel requests are not slowed.
 - The public SDK knows no `phone` device type (`ets/api/device-define`): `module.json5` says `default`.
-- ArkTS refuses constructor parameter properties, implicit return types on arrow callbacks and untyped object literals; `@Param` names must not shadow component attributes (`size`, `id`, `enabled`); a `@Builder` call takes no attributes (wrap it in a container), and an `@Entry` build's root must be a container. `@Builder` methods must not share a name with a component member (`key`); `@Extend` cannot be exported (shared styles are `AttributeModifier` classes, `components/composer/ComposerBits.ets` `DOCK_CARD`); `@Monitor` on an optional `@Param` warns, so watched params take defaults.
+- ArkTS refuses constructor parameter properties, implicit return types on arrow callbacks and untyped object literals; a component's members, `@Param`s and methods alike, must not shadow its attributes (`size`, `id`, `enabled`, `height`); a `@Builder` call takes no attributes (wrap it in a container), and an `@Entry` build's root must be a container. `@Builder` methods must not share a name with a component member (`key`); `@Extend` cannot be exported (shared styles are `AttributeModifier` classes, `components/composer/ComposerBits.ets` `DOCK_CARD`); `@Monitor` on an optional `@Param` warns, so watched params take defaults.
 
 ## Previewer
 
@@ -53,7 +53,6 @@
 - A `bindContextMenu` builder closes itself through `getUIContext().getContextMenuController().close()`; it has no `isShow` binding like `bindMenu`.
 - `EntryAbility` sets the keyboard to resize the page; the default lifts the whole page, bar included, off screen.
 - `defaultFocus` counts only when a page is first created: a field that swaps in later (a sheet's step) asks through `focusControl.requestFocus` on appear, or no keyboard comes until a tap. Open: not seen on a device.
-- `scripts/build.sh` with `DEV_ENGINE=host:port:token` (and `DEV_PROMPT`) compiles a default engine in, since nothing passes launch parameters to the Previewer; `apps/ios/scripts/engine.sh` takes `TOKEN` to match.
 - A field added to `SessionView` must be copied in `viewWithTurns` (`wire/Wire.ets`) too, or the app's own edits (send, stop, edit, fork) drop it; `applySessionPatch` completes the parsed patch in place, so a patch keeps every field the wire sent.
 - Turn rows key on the turn object (`store/Thread.ets` `turnKey`): a patch keeps the objects of the turns before `keep`, so their rows stay. What a row reads from the view beyond its turn (subagents, controls, the running and retryable turn) comes through the observed `ThreadContext`, written only when its content changed, not through ForEach params. The chat page keeps it in step with `view`: a `@Monitor('view')` inside the `@ObservedV2` `AppModel` never fired in the Previewer, while a component's `@Monitor('model.view')` does (it skips the initial value, hence the `aboutToAppear` call).
 - `maintainVisibleContentPosition` ignores `ForEach`: an earlier part landing in front of a windowed view is held in place by `ChatPage.holdPlace`'s jump, set in the view monitor (it runs before the rows update). Open: not seen on a device.
@@ -61,7 +60,8 @@
 - A `@Builder` handed to `.background()` is drawn once: state it reads never redraws it (the Previewer showed no fill at all once `active` turned true). And on a device a row's `stateStyles` pressed fill stayed lit after its tap opened the chat beside it; which of the two lit several rows there is open. The session row's fill is its own inner box and its press a `@Local` set from `onTouch`.
 - A child's width limit from its parent is what its content may take: its own padding comes on top (the list bar's title holds that much more back).
 - `maxLines(0)` shows no line at all (`WebMetrics.allLines` lifts the cap), and a custom component's `flexShrink` does not reach the Text inside it: a row label that must not give way is a plain `Text`.
-- Code is coloured by the regex tokenizer in `logic/Syntax.ets` (`syn_*` colours); iOS runs shiki. `PREVIEW_FIXTURE=name` / `PREVIEW_OPEN=1` for `scripts/build.sh` give `pages/Preview` one fixture at full height / with every fold open.
+- A fade over rows is a mask: a `Color.Transparent` → `Color.Black` gradient drawn `BlendMode.DST_IN` in a parent blended `BlendApplyType.OFFSCREEN` (`components/SidekickRelay.ets`). A wash from `bg0` to `Color.Transparent` drew a flat box darker than the page in the Previewer.
+- Code is coloured by the regex tokenizer in `logic/Syntax.ets` (`syn_*` colours); iOS runs shiki.
 
 ## Paired remote
 

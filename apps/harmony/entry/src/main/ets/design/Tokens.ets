@@ -418,6 +418,13 @@ export class WebMetrics {
   static readonly rowGap: number = Metrics.gap + 4;
   /** The label column (chat.css `--indent`): the icon and the row gap after it. Bodies under a row start here */
   static readonly indent: number = WebMetrics.icon + WebMetrics.rowGap;
+  /** A summoned child's mark slot, the CLI badge on its corner and how far the badge sits outside the slot (subagents.css) */
+  static readonly subagentMark: number = 20;
+  static readonly subagentBadge: number = 11;
+  static readonly subagentBadgeInset: number = -3;
+  /** Rows a sidekick relay's step window holds (the engine sends as many steps) and the fade over its top on overflow */
+  static readonly sidekickSlots: number = 4;
+  static readonly sidekickFadeRows: number = 1.1;
   /** A tappable row's press fill reaches this far past the text column */
   static readonly hit: number = 6;
   static readonly railWidth: number = 1;

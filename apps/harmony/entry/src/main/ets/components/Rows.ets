@@ -1,5 +1,5 @@
 import { Metrics, WebMetrics, WebType } from '../design/Tokens';
-import { Lucide } from './Glyphs';
+import { AgentMark, Lucide } from './Glyphs';
 import { t } from '../store/L10n';
 import { processLook } from '../store/Prefs';
 
@@ -73,9 +73,12 @@ const orbEpoch: number = Date.now();
  * meta: a diff stat, a caption, a command's ✓ / ✗ and run time
  */
 export class RowSpec {
-  /** icon, none, orb, plan */
+  /** icon, none, orb, plan, mark */
   lead: string = 'icon';
   icon: string = '';
+  /** mark: a vendor's or CLI's mark key (Icons.ets MARKS) and the name whose initial stands in without one */
+  mark: string = '';
+  markName: string = '';
   iconTint: ResourceColor | undefined = undefined;
   /** plan: the entry's status (completed, in_progress, pending) */
   planStatus: string = '';
@@ -120,6 +123,8 @@ export class RowSpec {
     const s = new RowSpec();
     s.lead = this.lead;
     s.icon = this.icon;
+    s.mark = this.mark;
+    s.markName = this.markName;
     s.iconTint = this.iconTint;
     s.planStatus = this.planStatus;
     s.mask = this.mask;
@@ -397,6 +402,8 @@ export struct AcpRow {
         Orb()
       } else if (this.spec.lead === 'plan') {
         PlanDot({ status: this.spec.planStatus })
+      } else if (this.spec.lead === 'mark') {
+        AgentMark({ agent: this.spec.mark, name: this.spec.markName, tint: this.spec.iconTint ?? $r('app.color.fg1'), extent: WebMetrics.icon })
       } else if (this.spec.icon.length > 0) {
         if (this.spec.mask) {
           // The rail runs behind result rows: the icon's own square hides it, as the web draws it icon to icon

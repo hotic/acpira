@@ -1,12 +1,13 @@
 import { Metrics, WebMetrics, WebType } from '../design/Tokens';
 import { Block, SubagentSummary } from '../wire/Blocks';
 import {
-  isWaiting, rootRows, secondLine, statusLabel, subagentElapsed, subagentMeta, subagentTitle
+  isSidekick, isWaiting, rootRows, secondLine, SidekickModels, statusLabel, subagentElapsed, subagentMeta, subagentTitle
 } from '../logic/Subagents';
 import { tp } from '../logic/Folding';
 import { Lucide } from './Glyphs';
 import { PermissionCard } from './Cards';
 import { AcpRow, Orb, RowSpec, ticker } from './Rows';
+import { SidekickRelay } from './SidekickRelay';
 
 // apps/ios Transcript/SubagentViews.swift (chat/subagents/SubagentGroup.tsx, the DelegatedSubagents / ChildPermissions
 // parts of Turns.tsx), after apps/android ui/subagents/SubagentViews.kt: the rows a turn shows for the children it
@@ -20,10 +21,12 @@ function statusInk(n: SubagentSummary): ResourceColor {
   return n.state === 'completed' ? $r('app.color.ok') : n.state === 'failed' ? $r('app.color.danger') : $r('app.color.fg3');
 }
 
-/** A node's identity for a ForEach key: what its row would show differently */
+/** A node's identity for a ForEach key: what its row (or a sidekick's relay) would show differently */
 function nodeSig(n: SubagentSummary): string {
+  const steps = (n.steps ?? []).map((b: Block) => `${b.id ?? ''}.${b.status ?? ''}.${b.endedAt ?? ''}`).join(',');
   return `${n.id}:${n.state}:${n.endedAt ?? ''}:${(n.activity ?? '').length}:${(n.result ?? '').length}:` +
-    `${(n.permissions ?? []).length}:${n.question !== undefined}`;
+    `${(n.permissions ?? []).length}:${n.question !== undefined}:${n.model ?? ''}:${(n.title ?? '').length}:` +
+    `${n.toolCount ?? 0}:${n.harness?.round ?? ''}:${steps}`;
 }
 
 /**
@@ -147,18 +150,24 @@ export struct SubagentRow {
 
 /**
  * SubagentGroup: the turn's top-level children in announce order, finished ones included (a workflow's rows are its
- * progress). No gap between rows: each carries its own padding
+ * progress). No gap between rows: each carries its own padding. The sidekick's round is a relay, never a subagent row
  */
 @ComponentV2
 export struct SubagentGroup {
   @Param nodes: SubagentSummary[] = [];
   @Param all: SubagentSummary[] = [];
   @Param now: () => number = () => Date.now();
+  /** The sidekick's model names and the session's CLI, from the view's controls */
+  @Param models: SidekickModels = new SidekickModels();
 
   build() {
     Column() {
       ForEach(rootRows(this.nodes), (n: SubagentSummary) => {
-        SubagentRow({ node: n, all: this.all, now: this.now })
+        if (isSidekick(n)) {
+          SidekickRelay({ node: n, models: this.models, now: this.now })
+        } else {
+          SubagentRow({ node: n, all: this.all, now: this.now })
+        }
       }, (n: SubagentSummary) => nodeSig(n))
     }
     .accessibilityText(tp('subagents.group', 'n', `${this.nodes.length}`))
@@ -187,8 +196,9 @@ class ChildCard {
 }
 
 /**
- * ChildPermissions: a child's pending approval under the rows, with a provenance line naming the path to it. The card
- * answers through the root session, which routes it to the child
+ * ChildPermissions: a child's pending approval under the rows. A summoned child's (a sidekick round's too) sits at the
+ * label column with nothing above it, since its row already names who asks; another child's gets a provenance line
+ * naming the path to it. The card answers through the root session, which routes it to the child
  */
 @ComponentV2
 export struct ChildPermissions {
@@ -226,8 +236,16 @@ export struct ChildPermissions {
     Column({ space: Metrics.gap }) {
       ForEach(this.cards(), (c: ChildCard) => {
         Column({ space: Metrics.s1 }) {
-          AcpRow({ spec: this.provenance(c) })
-          PermissionCard({ block: c.block, onPick: (optionId: string) => this.onPermission(c.block.id ?? '', optionId) })
+          if (c.node.harness !== undefined && c.block.planId === undefined) {
+            Column() {
+              PermissionCard({ block: c.block, onPick: (optionId: string) => this.onPermission(c.block.id ?? '', optionId) })
+            }
+            .padding({ left: WebMetrics.indent })
+            .width('100%')
+          } else {
+            AcpRow({ spec: this.provenance(c) })
+            PermissionCard({ block: c.block, onPick: (optionId: string) => this.onPermission(c.block.id ?? '', optionId) })
+          }
         }
         .width('100%')
       }, (c: ChildCard) => `${c.block.id ?? ''}:${(c.block.options ?? []).length}`)
@@ -243,6 +261,7 @@ export struct DelegatedSubagents {
   @Param delegations: Map<string, SubagentSummary[]> = new Map<string, SubagentSummary[]>();
   @Param all: SubagentSummary[] = [];
   @Param now: () => number = () => Date.now();
+  @Param models: SidekickModels = new SidekickModels();
   @Event onPermission: (blockId: string, optionId: string) => void = (blockId: string, optionId: string) => {};
 
   nodes(): SubagentSummary[] {
@@ -258,7 +277,7 @@ export struct DelegatedSubagents {
   build() {
     if (this.nodes().length > 0) {
       Column({ space: Metrics.gap }) {
-        SubagentGroup({ nodes: this.nodes(), all: this.all, now: this.now })
+        SubagentGroup({ nodes: this.nodes(), all: this.all, now: this.now, models: this.models })
         ChildPermissions({ nodes: this.nodes(), all: this.all, onPermission: this.onPermission })
       }
       .width('100%')

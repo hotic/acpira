@@ -1,6 +1,8 @@
 import { Block, SubagentSummary } from '../wire/Blocks';
+import { SessionControls } from '../wire/Wire';
 import { t } from '../store/L10n';
 import { commandDuration, tp } from './Folding';
+import { ComposerControls, vendorBrand } from './ModelCatalog';
 
 // Where a turn's subagent rows sit and what they say (apps/ios Logic/Subagents.swift, apps/android logic/Subagents.kt,
 // chat/subagents.ts): a placed delegation row stays in the turn's process and its node renders there; the others follow
@@ -76,6 +78,68 @@ export function descendantCount(id: string, all: SubagentSummary[]): number {
     }
   }
   return count;
+}
+
+/** The persona a session's sidekick goes by (subagents.ts SIDEKICK_ID) */
+const sidekickId: string = 'sidekick';
+
+/** isSidekick (SidekickRelay.tsx): a round of the session's sidekick, drawn as a relay rather than a subagent row */
+export function isSidekick(n: SubagentSummary): boolean {
+  return n.harness?.persona === sidekickId;
+}
+
+/** A model's mark: its vendor's brand key (Icons.ets MARKS; undefined: none known) and the name an unknown one shows the initial of */
+export class ModelMark {
+  brand: string | undefined = undefined;
+  name: string = '';
+}
+
+/** The sidekick's mark, leading the handoff, every step and the handback: the round's model id names the vendor best */
+export function sidekickMark(n: SubagentSummary, name: string): ModelMark {
+  const m = new ModelMark();
+  m.brand = (n.model !== undefined ? vendorBrand(n.model) : undefined) ?? vendorBrand(name);
+  m.name = name;
+  return m;
+}
+
+/**
+ * SidekickRelay.swift SidekickModels, less the lead model only the handoff's flip shows: the sidekick's display names
+ * from the session's sidekick select. A round carries only its model id: the select's value for the built-in agent, the
+ * id inside its CLI for the host's select, whose values are `<cli>/<model>`. `agent` is the session's CLI: a sidekick
+ * running in another one carries that CLI's mark
+ */
+export class SidekickModels {
+  names: Map<string, string> = new Map<string, string>();
+  agent: string = '';
+
+  /** The round's model as the select names it, else as the round reports it */
+  name(n: SubagentSummary): string | undefined {
+    const model = n.model;
+    if (model === undefined) {
+      return undefined;
+    }
+    const cli = n.harness?.agent ?? '';
+    return this.names.get(model) ?? (cli.length > 0 ? this.names.get(`${cli}/${model}`) : undefined) ?? model;
+  }
+
+  /** The CLI the round runs in, when it is not the session's own */
+  away(n: SubagentSummary): string | undefined {
+    const cli = n.harness?.agent ?? '';
+    return cli.length > 0 && this.agent.length > 0 && cli !== this.agent ? cli : undefined;
+  }
+}
+
+/** The view's controls (the thread reads them loosely) as the relay reads them */
+export function sidekickModels(controls: Object | undefined, agent: string): SidekickModels {
+  const out = new SidekickModels();
+  out.agent = agent;
+  const split = ComposerControls.split((controls as SessionControls | undefined)?.options ?? []);
+  for (const o of split.sidekick.length > 0 ? split.sidekick[0].options : []) {
+    if (!out.names.has(o.id)) {
+      out.names.set(o.id, o.name);
+    }
+  }
+  return out;
 }
 
 export function isWaiting(n: SubagentSummary): boolean {

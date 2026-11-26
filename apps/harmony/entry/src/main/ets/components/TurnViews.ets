@@ -5,7 +5,7 @@ import {
   clockStart, CodexSplit, elapsedLabel, FoldPart, groupProcess, LiveActivity, liveActivity, observed, PlanSection,
   processParts, splitCodexBlocks, splitPlanSections, turnOutcome, visibleSteps
 } from '../logic/Folding';
-import { delegatedIds, Placement, placeNodes } from '../logic/Subagents';
+import { delegatedIds, Placement, placeNodes, SidekickModels, sidekickModels } from '../logic/Subagents';
 import { t } from '../store/L10n';
 import { processLook } from '../store/Prefs';
 import { ThreadContext } from '../store/Thread';
@@ -129,6 +129,12 @@ export struct AgentMessage {
     return placeNodes(this.turnNodes(), delegatedIds(this.blocks(), this.turnNodes()));
   }
 
+  /** The sidekick's model names for its relays, from the view's controls */
+  @Computed
+  get sidekick(): SidekickModels {
+    return sidekickModels(this.thread.controls, this.thread.agent);
+  }
+
   @Computed
   get sections(): PlanSection[] {
     return splitPlanSections(this.blocks(), delegatedIds(this.blocks(), this.turnNodes()));
@@ -178,6 +184,7 @@ export struct AgentMessage {
               rest: i === this.sections.length - 1 ? this.placement.rest : [],
               delegations: this.placement.byId,
               all: this.subagents,
+              models: this.sidekick,
               onPermission: this.onPermission
             })
           }
@@ -226,6 +233,7 @@ struct CodexMessage {
   @Param rest: SubagentSummary[] = [];
   @Param delegations: Map<string, SubagentSummary[]> = new Map<string, SubagentSummary[]>();
   @Param all: SubagentSummary[] = [];
+  @Param models: SidekickModels = new SidekickModels();
   @Event onPermission: (blockId: string, optionId: string) => void = (blockId: string, optionId: string) => {};
 
   @Computed
@@ -247,13 +255,13 @@ struct CodexMessage {
       // The step kinds switched off leave the fold; the head still counts the whole turn
       CodexFold({
         turn: this.turn, blocks: visibleSteps(this.split.process, processLook.hidden), running: this.running, hasTools: this.hasTools(), scopeKey: this.scopeKey,
-        now: this.now, delegations: this.delegations, all: this.all, onPermission: this.onPermission
+        now: this.now, delegations: this.delegations, all: this.all, models: this.models, onPermission: this.onPermission
       })
       ForEach(this.split.notices, (b: Block) => {
         NoticeRow({ block: b, scope: this.scopeKey, now: this.now })
       }, (b: Block) => blockSig(b))
       if (this.rest.length > 0) {
-        SubagentGroup({ nodes: this.rest, all: this.all, now: this.now })
+        SubagentGroup({ nodes: this.rest, all: this.all, now: this.now, models: this.models })
         ChildPermissions({ nodes: this.rest, all: this.all, onPermission: this.onPermission })
       }
       ForEach(this.split.reply, (b: Block) => {
@@ -304,6 +312,7 @@ struct CodexFold {
   @Param now: () => number = () => Date.now();
   @Param delegations: Map<string, SubagentSummary[]> = new Map<string, SubagentSummary[]>();
   @Param all: SubagentSummary[] = [];
+  @Param models: SidekickModels = new SidekickModels();
   @Event onPermission: (blockId: string, optionId: string) => void = (blockId: string, optionId: string) => {};
 
   retired(): boolean {
@@ -391,7 +400,8 @@ struct CodexFold {
           } else if (part.kind === 'subagents') {
             Column() {
               DelegatedSubagents({
-                ids: part.ids, delegations: this.delegations, all: this.all, now: this.now, onPermission: this.onPermission
+                ids: part.ids, delegations: this.delegations, all: this.all, now: this.now, models: this.models,
+                onPermission: this.onPermission
               })
             }
             .padding({ top: WebMetrics.processProseGap })
