@@ -17,6 +17,7 @@ use crate::acp::session::relay::personas::{
   SIDEKICK_FAST_CONFIG as NATIVE_FAST_CONFIG,
 };
 use crate::acp::session::{AcpSession, Core};
+use crate::acp::vendors::antigravity;
 
 /// The host's selects: the built-in agent's categories, which every client draws the sidekick from, under ids of their
 /// own, so a CLI's own sidekick select is never taken for the host's
@@ -61,18 +62,24 @@ fn native(options: &[ConfigControl]) -> bool {
   options.iter().any(|o| o.category.as_deref() == Some(SIDEKICK_CATEGORY) && !ours(o))
 }
 
-/// The model in use (`held`: a pick in flight) is a Devin Fusion pair, a lead and a sidekick of the CLI's own: the host
-/// offers no second sidekick beside it, and keeps its pick for when the session leaves the pair
+/// The model in use (`held`: a pick in flight) is a pair of the CLI's own, a Devin Fusion pair or an Antigravity
+/// orchestrator (a lead and a sidekick): the host offers no second sidekick beside it, and keeps its pick for when the
+/// session leaves the pair
 fn fusion_pair(options: &[ConfigControl], held: impl Fn(&str) -> Option<String>) -> bool {
   let Some(model) = options.iter().find(|o| is_model_control(o)) else { return false };
   let Some(value) = held(&model.id).or_else(|| model.value.clone()) else { return false };
-  model.options.iter().find(|o| o.id == value).is_some_and(|o| parse_fusion_name(&o.name).is_some())
+  model.options.iter().find(|o| o.id == value).is_some_and(own_pair)
 }
 
-/// A model a sidekick can run on: not one that runs helpers of its own, a Devin Fusion pair (a lead and a sidekick) or
-/// one of Antigravity's orchestrators (a planner over its own workers)
+/// A model that runs a sidekick of its own: a Devin Fusion pair, or one of Antigravity's orchestrators (a planner over
+/// its own execution model). Orchestrator ids are Antigravity's alone (agy 1.5.16)
+fn own_pair(o: &SessionOption) -> bool {
+  parse_fusion_name(&o.name).is_some() || antigravity::is_orchestrator(&o.id)
+}
+
+/// A model a sidekick can run on: not one that runs a sidekick of its own
 fn candidate(agent: &str, o: &SessionOption) -> bool {
-  parse_fusion_name(&o.name).is_none() && !(agent == "antigravity" && o.id.contains("orchestrator"))
+  parse_fusion_name(&o.name).is_none() && !(agent == "antigravity" && antigravity::is_orchestrator(&o.id))
 }
 
 /// The CLI and the model id of a pick
@@ -559,6 +566,16 @@ mod tests {
     assert!(fusion_pair(&[ConfigControl { value: Some("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium".into()), ..model.clone() }], none));
     // A switch in flight counts before the agent answers it
     assert!(fusion_pair(&[model], |_| Some("fusion-claude-fable-5-2-medium-sidekick-swe-2-medium".into())));
+    // An Antigravity orchestrator runs its own execution model the same way
+    let agy = ConfigControl {
+      id: "model".into(),
+      category: Some("model".into()),
+      options: vec![option("gemini-4-neon", "Gemini 4 Neon"), option("gemini-pro-orchestrator-neon", "Orchestrator (Neon)")],
+      value: Some("gemini-pro-orchestrator-neon".into()),
+      ..Default::default()
+    };
+    assert!(fusion_pair(std::slice::from_ref(&agy), none));
+    assert!(!fusion_pair(&[ConfigControl { value: Some("gemini-4-neon".into()), ..agy }], none));
   }
 
   #[test]

@@ -240,6 +240,11 @@ impl AcpSession {
     if !antigravity::REPLAY_AGENT_KINDS.contains(&kind) {
       return true;
     }
+    // Antigravity child / swarm tool calls (`<child_uuid>:<inner_id>`) stream on the root session id even while the
+    // coordinator is idle: they belong to their child node, never to a detached turn of the root coordinator
+    if self.vendor == crate::acp::vendors::Vendor::Antigravity && antigravity::is_child_tool_call(u, c.acp_session_id.as_deref()) {
+      return true;
+    }
     if kind == "tool_call_update"
       && matches!(u.get("status").and_then(Value::as_str), Some("completed" | "failed" | "cancelled"))
       && let Some(id) = u.get("toolCallId").and_then(Value::as_str)

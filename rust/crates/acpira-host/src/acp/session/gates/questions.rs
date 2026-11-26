@@ -31,7 +31,8 @@ impl AcpSession {
     let message = req.get("message").and_then(Value::as_str).unwrap_or("").to_owned();
     let (rx, block_id) = {
       let mut c = self.core.lock();
-      let Some(target) = Self::target_for(&mut c, session_id.as_deref()) else {
+      let vendor = session_id.as_deref().and_then(|sid| self.relay_vendor(sid)).unwrap_or(self.vendor);
+      let Some(target) = self.target_for_call(&mut c, vendor, session_id.as_deref(), tool_call_id.as_deref()) else {
         drop(c);
         self.log(&format!("elicitation request for unknown session {}", session_id.as_deref().unwrap_or("(request scope)")));
         return json!({ "action": "cancel" });
@@ -114,7 +115,8 @@ impl AcpSession {
     let session_id = req.get("sessionId").and_then(Value::as_str).map(str::to_owned);
     let (rx, block_id) = {
       let mut c = self.core.lock();
-      let Some(target) = Self::target_for(&mut c, session_id.as_deref()) else {
+      let vendor = session_id.as_deref().and_then(|sid| self.relay_vendor(sid)).unwrap_or(self.vendor);
+      let Some(target) = self.target_for_call(&mut c, vendor, session_id.as_deref(), Some(&tool_call_id)) else {
         drop(c);
         self.log(&format!("question request for unknown session {}", session_id.as_deref().unwrap_or("undefined")));
         return cancelled_permission();

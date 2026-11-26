@@ -25,6 +25,8 @@ import { builtinAgent, builtinAgents, type BuiltinAgent } from '../lib/sidecarBi
 //   received after --wait (default 5000 here), showing whether the agent launches client-provided servers; no prompt is needed
 // --list-changed: --mcp, and the marker server sends notifications/tools/list_changed 2 s after the agent first lists its tools;
 //   the summary says whether the agent listed again before --wait ran out (default 10000 here); no prompt is needed
+// --set ID=VALUE: after session/new, call session/set_config_option for that config option (repeatable, in order), e.g.
+//   --set model=gemini-pro-orchestrator-neon to run the prompt on a model other than the default
 // --wait MS: keep the process alive that long after session/new (and after the prompt) before killing it, to catch notifications that arrive
 //   after the response — available_commands_update lands there for every CLI, and Kimi's usage_update is asynchronous too
 const argv = process.argv.slice(2);
@@ -43,7 +45,9 @@ const waitMs = Number(valued('--wait')?.value ?? (listChanged ? 10000 : withMcp 
 const cmdLine = valued('--cmd')?.value;
 const cwd = resolve(valued('--cwd')?.value ?? process.cwd());
 const logFile = valued('--log')?.value;
-const valueIdx = new Set([keyEnv, valued('--image'), valued('--link'), valued('--embed'), valued('--wait'), valued('--cmd'), valued('--cwd'), valued('--log')].flatMap(v => (v ? [v.idx] : [])));
+// Every `--set` pair, in the order given
+const sets = argv.flatMap((a, i) => (a === '--set' && argv[i + 1] !== undefined ? [{ idx: i + 1, value: argv[i + 1]! }] : []));
+const valueIdx = new Set([keyEnv, valued('--image'), valued('--link'), valued('--embed'), valued('--wait'), valued('--cmd'), valued('--cwd'), valued('--log'), ...sets].flatMap(v => (v ? [v.idx] : [])));
 const positional = argv.filter((a, i) => !a.startsWith('--') && !valueIdx.has(i));
 const [agentId = 'grok', ...rest] = positional;
 const promptText = rest.join(' ');
@@ -159,6 +163,14 @@ async function newSession(): Promise<Obj> {
 try {
   const s = await newSession();
   console.log(`session/new (${elapsed()}) →`, show(s));
+  for (const { value: pair } of sets) {
+    const eq = pair.indexOf('=');
+    const configId = pair.slice(0, eq);
+    const value = pair.slice(eq + 1);
+    if (eq <= 0) { console.error(`--set wants ID=VALUE, got ${pair}`); continue; }
+    const r = await agent.request<Obj>('session/set_config_option', { sessionId: s.sessionId, configId, value });
+    console.log(`session/set_config_option ${configId}=${value} (${elapsed()}) →`, JSON.stringify(r).slice(0, 600));
+  }
   // An attachment flag alone also sends a turn (text block omitted), to check how an agent takes a prompt with no text
   if (promptText || imagePath || linkPath || embedPath) {
     const prompt: Obj[] = promptText ? [{ type: 'text', text: promptText }] : [];

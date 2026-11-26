@@ -3,6 +3,7 @@
 //! launches one of these CLIs under another id gets none of them
 
 pub mod antigravity;
+pub mod antigravity_subagents;
 pub mod claude_auth;
 pub mod claude_autonomous;
 pub mod claude_retry;
@@ -139,9 +140,10 @@ impl Vendor {
   /// A native subagent still running when its parent's prompt returns keeps streaming under its own session id and ends
   /// with the adapter's own state update: the next prompt's hand-off settles a held turn early, and a child launched in
   /// an autonomous cycle holds nothing (`agent-quirks-claude.md`). A droid `Task` runs past the turn that launched it
-  /// and ends with its call's result (`load_child_sessions`)
+  /// and ends with its call's result (`load_child_sessions`). Antigravity `/swarm` workers and `invoke_subagent`
+  /// children also keep running after the parent turn settles (`session/antigravity_subagents.rs`)
   pub fn children_outlive_prompt(self) -> bool {
-    matches!(self, Vendor::Claude | Vendor::Droid)
+    matches!(self, Vendor::Claude | Vendor::Droid | Vendor::Antigravity)
   }
 
   /// A delegation names its child session on the call (`_meta.subagent_session_info`), and the child streams only after
@@ -166,7 +168,10 @@ impl Vendor {
   /// answers, all `allow_once` (antigravity-acp 1.2.1 source): it opens a question card instead of a permission card
   pub fn question_permission(self, tool_call: &serde_json::Value) -> bool {
     self == Vendor::Antigravity
-      && tool_call.get("toolCallId").and_then(serde_json::Value::as_str).is_some_and(|id| id.starts_with("interaction_"))
+      && tool_call
+        .get("toolCallId")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|id| id.starts_with("interaction_") || antigravity::split_child_tool_call_id(id, None).is_some_and(|(_, inner)| inner.starts_with("interaction_")))
       && tool_call.get("rawInput").is_none_or(|r| r.is_null() || r.as_object().is_some_and(|o| o.is_empty()))
   }
 

@@ -22,6 +22,9 @@ impl SubagentTree {
   }
 
   fn route_dialects(&mut self, u: &Value, ctx: &mut RouteCtx) -> Route {
+    if let Some(route) = self.route_orchestrator(u, ctx) {
+      return route;
+    }
     let meta = rec(u.get("_meta"));
     if let Some(started) = meta.and_then(|m| rec(m.get("cognition.ai/subagent_started"))) {
       let started = started.clone();

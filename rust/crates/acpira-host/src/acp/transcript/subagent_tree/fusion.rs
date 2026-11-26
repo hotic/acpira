@@ -84,15 +84,21 @@ impl SubagentTree {
 
   /// The next round of the sidekick's one thread, placed where the root turn stands now
   fn open_native_round(&mut self, ctx: &mut RouteCtx) -> String {
-    let prior = self.nodes.iter().rev().find(|n| Self::native_round(n)).and_then(|n| n.harness.as_ref()).map(|h| (h.thread.clone(), h.round));
-    let mut node = self.new_node(SubagentVisibility::Nested, SubagentPeer::default(), ctx.turn_index, false, Some(Dialect::Fusion));
-    let (thread, round) = prior.map_or_else(|| (node.id.clone(), 1), |(thread, round)| (thread, round + 1));
     let (model, effort) = self.native_sidekick.clone();
+    self.open_round_of(ctx, FUSION_AGENT, Dialect::Fusion, model, effort)
+  }
+
+  /// A round of a CLI's own sidekick, `agent`'s second model working inside its session: the thread goes on from the
+  /// last such round, a restored one included
+  pub(super) fn open_round_of(&mut self, ctx: &mut RouteCtx, agent: &str, dialect: Dialect, model: Option<String>, effort: Option<String>) -> String {
+    let prior = self.nodes.iter().rev().find(|n| Self::native_round(n)).and_then(|n| n.harness.as_ref()).map(|h| (h.thread.clone(), h.round));
+    let mut node = self.new_node(SubagentVisibility::Nested, SubagentPeer::default(), ctx.turn_index, false, Some(dialect));
+    let (thread, round) = prior.map_or_else(|| (node.id.clone(), 1), |(thread, round)| (thread, round + 1));
     node.model = model;
     // The name a summoned sidekick's persona carries (`host_sidekick.rs`): what an inspector titles a round with no brief
     node.role = Some("Sidekick".into());
     node.harness = Some(SubagentHarness {
-      agent: FUSION_AGENT.into(),
+      agent: agent.into(),
       persona: Some(SIDEKICK_ID.into()),
       mode: RelayMode::Work,
       thread,
@@ -109,14 +115,15 @@ impl SubagentTree {
   }
 
   /// What reached the root may be the lead taking over again: the running round is handed back unless a call of it is
-  /// still open, which means the two work side by side
+  /// still open, which means the two work side by side. An orchestrator's executor says its piece on the root itself and
+  /// hands back by name (`orchestrator.rs`)
   pub(super) fn native_handback(&mut self, u: &Value) {
     if !lead_acted(u) {
       return;
     }
     for i in 0..self.nodes.len() {
       let n = &self.nodes[i];
-      if Self::native_round(n) && n.status == SubagentState::Running && !has_open_call(&n.state.turns) {
+      if n.dialect == Some(Dialect::Fusion) && n.status == SubagentState::Running && !has_open_call(&n.state.turns) {
         self.end_native_round(i, SubagentState::Completed);
       }
     }
@@ -133,7 +140,7 @@ impl SubagentTree {
   }
 
   /// The end is the engine's reading, never the agent's word
-  fn end_native_round(&mut self, i: usize, state: SubagentState) {
+  pub(super) fn end_native_round(&mut self, i: usize, state: SubagentState) {
     let n = &mut self.nodes[i];
     n.status = state;
     n.state_source = StateSource::Local;

@@ -9,6 +9,7 @@
 
 pub mod access;
 pub mod account_switch;
+pub mod antigravity_subagents;
 pub mod attachments;
 pub mod child_sessions;
 pub mod compaction;
@@ -339,6 +340,8 @@ pub(crate) struct Core {
   pub access: crate::acp::session::access::AccessState,
   /// Claude workflow agents' sidechain logs being read into their nodes (`workflow_logs.rs`)
   pub workflow_logs: crate::acp::session::workflow_logs::WorkflowLogs,
+  /// Antigravity native `/swarm` and `invoke_subagent` metadata poller (`antigravity_subagents.rs`)
+  pub agy_subagents: crate::acp::session::antigravity_subagents::AntigravitySubagents,
   /// Child sessions already loaded, by process generation (`child_sessions.rs`)
   pub child_loads: HashSet<(u64, String)>,
   /// The project's workspace hooks: the running turn's snapshot, rejected edits and the gate's rounds (`hooks.rs`)
@@ -560,6 +563,7 @@ impl AcpSession {
           ultracode,
           sidekick,
           workflow_logs: Default::default(),
+          agy_subagents: Default::default(),
           child_loads: Default::default(),
           access: Default::default(),
           hooks: Default::default(),

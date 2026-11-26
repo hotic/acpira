@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use acpira_shared::model_shapes::is_model_control;
 use acpira_shared::models::fusion_sidekick;
 use acpira_shared::transcript::*;
 
@@ -266,6 +267,21 @@ impl AcpSession {
       apply_goal(&mut c.state, next, mark);
     }
     let turn_index = current_turn_index(&c);
+    // Antigravity child subagent / swarm worker tool calls (`<child_uuid>:<inner_id>`) arrive on the root stream:
+    // route them into their child node before root normalization so they never split root text or flood the timeline
+    if self.vendor == Vendor::Antigravity {
+      let root = c.acp_session_id.clone();
+      let consumed = {
+        let Core { tree, state, .. } = &mut *c;
+        tree.route_antigravity_child(&u, root.as_deref(), &mut RouteCtx { turn_index, root_turns: &mut state.turns })
+      };
+      if consumed {
+        self.drain_terminal(&mut c);
+        self.schedule_antigravity_subagents(&mut c, true);
+        self.touch(&mut c);
+        return;
+      }
+    }
     // The agent's own sidekick (Devin Fusion) never names its model: the picked pair's name does
     if native_sidekick_call(&u) {
       let pair = c.state.controls.options.iter().find(|o| o.category.as_deref() == Some("model")).and_then(|m| {
@@ -275,12 +291,21 @@ impl AcpSession {
       let (model, effort) = pair.unzip();
       c.tree.set_native_sidekick(model, effort.filter(|e| !e.is_empty()));
     }
+    // An Antigravity orchestrator hands its plan to its execution model inside the session (`orchestrator.rs`): the
+    // model the session runs decides whether a hand-off opens a sidekick round
+    if self.vendor == Vendor::Antigravity && antigravity::plan_relay_of(&u).is_some() {
+      let model = c.state.controls.options.iter().find(|o| is_model_control(o)).and_then(|m| m.value.clone());
+      let worker = model.filter(|id| antigravity::is_orchestrator(id)).map(|_| antigravity::worker_name(antigravity::ORCHESTRATOR_WORKER, &c.state.controls.options));
+      c.tree.set_orchestrator(worker);
+    }
     let routed = {
       let Core { tree, state, .. } = &mut *c;
       tree.route_root(&u, &mut RouteCtx { turn_index, root_turns: &mut state.turns })
     };
     self.drain_terminal(&mut c);
     if matches!(routed, Route::Consumed) {
+      // A round of the orchestrator's executor learns the model it runs on from the session's transcript
+      self.schedule_antigravity_subagents(&mut c, true);
       self.touch(&mut c);
       return;
     }
@@ -338,9 +363,14 @@ impl AcpSession {
       self.schedule_usage_poll(&mut c);
     }
     if matches!(kind.as_str(), "tool_call" | "tool_call_update") {
-      {
+      let agy_delegated = {
         let Core { tree, state, replaying, .. } = &mut *c;
         tree.annotate_root(&u, !*replaying, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
+        self.vendor == Vendor::Antigravity
+          && tree.annotate_antigravity_root(&u, &mut RouteCtx { turn_index, root_turns: &mut state.turns })
+      };
+      if agy_delegated {
+        self.schedule_antigravity_subagents(&mut c, true);
       }
       // A delegation that named its child session: the CLI streams the child once it is loaded (`child_sessions.rs`)
       self.load_child_sessions(&mut c);
@@ -475,10 +505,11 @@ mod tests {
   use parking_lot::Mutex;
   use serde_json::json;
 
-  use acpira_shared::transcript::SessionStatus;
+  use acpira_shared::transcript::{AgentBlock, AgentTurn, SessionStatus, ToolContent, Turn, TurnStop, UserTurn};
 
   use crate::acp::agents::registry::AgentRegistry;
   use crate::acp::session::{AcpSession, InertPolicy, SessionDeps};
+  use crate::acp::vendors::Vendor;
   use crate::store::transcript_store::TranscriptStore;
 
   fn codex_session() -> (Arc<AcpSession>, Arc<Mutex<Vec<String>>>, tempfile::TempDir) {
@@ -549,5 +580,116 @@ mod tests {
     }));
     assert!(s.core.lock().state.turns.is_empty());
     assert_eq!(notices.lock().as_slice(), ["MCP server `blockbench` failed to start: missing binary"]);
+  }
+
+  fn antigravity_session() -> (Arc<AcpSession>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let deps = SessionDeps {
+      registry: Arc::new(AgentRegistry::new(&json!({}))),
+      log: Arc::new(|_| {}),
+      on_change: Arc::new(|_, _| {}),
+      blobs: TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_| {}), None),
+      notify: None,
+      accounts: None,
+      policy: Arc::new(InertPolicy),
+      pool: None,
+      shared_mcp: None,
+      plugin_hooks: None,
+      plugin_prompts: None,
+      data_home: None,
+      plugin_runtime: None,
+      host_mcp: None,
+      remote: None,
+    };
+    let s = AcpSession::fresh("antigravity", &dir.path().to_string_lossy(), deps, None);
+    {
+      let mut c = s.core.lock();
+      c.acp_session_id = Some("10000000-0000-4000-8000-000000000001".into());
+      c.status = SessionStatus::Ready;
+    }
+    (s, dir)
+  }
+
+  #[tokio::test]
+  async fn antigravity_child_tool_calls_never_split_root_prose_or_open_root_late_reply() {
+    let (s, _dir) = antigravity_session();
+    let root = "10000000-0000-4000-8000-000000000001";
+    let child = "20000000-0000-4000-8000-000000000002";
+    {
+      let mut c = s.core.lock();
+      c.phase.running = true;
+      c.state.turns.push(Turn::User(UserTurn { text: "/swarm go".into(), ..Default::default() }));
+      c.state.turns.push(Turn::Agent(AgentTurn::default()));
+    }
+    // Coordinator streams Markdown link split across chunks while a swarm worker fires a tool call in between
+    s.on_update(json!({
+      "sessionId": root,
+      "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Review [example-app](file:///Users/dev/example-" } }
+    }));
+    s.on_update(json!({
+      "sessionId": root,
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": format!("{child}:call_1"),
+        "kind": "execute",
+        "title": "Run ls",
+        "status": "completed",
+        "rawInput": { "command": "ls -la example-app" },
+        "content": [{ "type": "content", "content": { "type": "text", "text": "Command exited with code 0.\n\nCommand output:\nREADME.md\n" } }]
+      }
+    }));
+    s.on_update(json!({
+      "sessionId": root,
+      "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "app) before editing." } }
+    }));
+    {
+      let mut c = s.core.lock();
+      let texts: Vec<&str> = c.state.turns[1]
+        .as_agent()
+        .unwrap()
+        .blocks
+        .iter()
+        .filter_map(|b| match b {
+          AgentBlock::Text(t) => Some(t.markdown.as_str()),
+          _ => None,
+        })
+        .collect();
+      assert_eq!(texts, ["Review [example-app](file:///Users/dev/example-app) before editing."]);
+      // Child tool call landed in its own node, with its command receipt tidied
+      let summaries = c.tree.summaries();
+      assert_eq!(summaries.len(), 1);
+      assert_eq!(summaries[0].core.tool_count, 1);
+      let (turns, _, _) = c.tree.transcript(&summaries[0].core.id).unwrap();
+      let child_tc = turns[0].as_agent().unwrap().blocks.iter().find_map(|b| match b {
+        AgentBlock::ToolCall(tc) => Some(tc),
+        _ => None,
+      }).unwrap();
+      assert_eq!(child_tc.content, Some(ToolContent::Text { text: "README.md".into() }));
+
+      // Settle the coordinator's turn (`end_turn`): worker outlives prompt
+      c.phase.running = false;
+      s.settle(&mut c, TurnStop::EndTurn, None);
+      assert!(c.tree.has_running_antigravity());
+    }
+    // Background worker fires another tool call after the coordinator's turn settled: must NOT open a root late reply
+    s.on_update(json!({
+      "sessionId": root,
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": format!("{child}:call_2"),
+        "kind": "read",
+        "title": "Read main.rs",
+        "status": "completed",
+        "locations": [{ "path": "/Users/dev/example-app/src/main.rs" }]
+      }
+    }));
+    let mut c = s.core.lock();
+    assert!(!c.late.open, "background child call must not open a root detached turn");
+    assert!(!c.peer.detached);
+    assert_eq!(c.tree.summaries()[0].core.tool_count, 2);
+
+    // Child permission targeting `<child>:call_3` resolves to Target::Node, not Target::Root
+    let target = s.target_for_call(&mut c, Vendor::Antigravity, Some(root), Some(&format!("{child}:call_3")));
+    assert_eq!(target, Some(crate::acp::session::gates::Target::Node(c.tree.summaries()[0].core.id.clone())));
   }
 }

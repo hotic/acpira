@@ -18,7 +18,8 @@
 use std::ffi::OsStr;
 use std::sync::LazyLock;
 
-use acpira_shared::transcript::AgentBlock;
+use acpira_shared::model_shapes::is_model_control;
+use acpira_shared::transcript::{AgentBlock, ConfigControl};
 use regex::Regex;
 use serde_json::Value;
 
@@ -144,6 +145,180 @@ fn command_output(text: &str) -> Option<String> {
 /// The task a background command's row carries, before the call's id
 pub const COMMAND_TASK: &str = "agy-command:";
 
+/// A child delegation launched by the root agent: either a native `/swarm` worker add or `invoke_subagent`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AntigravityDelegation {
+  /// `swarm { action: "add", name, brief, model?, n?, tasks? }`
+  SwarmAdd {
+    /// Expected worker roster name(s) (`<name>` for a single worker, `<name>-1..k` when `n > 1` or `tasks` is set)
+    names: Vec<String>,
+    brief: Option<String>,
+    model: Option<String>,
+  },
+  /// `invoke_subagent { TypeName, Role, Prompt, Model? }`
+  InvokeSubagent {
+    role: Option<String>,
+    type_name: Option<String>,
+    prompt: Option<String>,
+    model: Option<String>,
+  },
+}
+
+/// Canonical 36-byte hyphenated UUID (`8-4-4-4-12` ASCII hex), as `agy` mints conversation ids
+fn is_uuid(s: &str) -> bool {
+  let b = s.as_bytes();
+  if b.len() != 36 {
+    return false;
+  }
+  for (i, &c) in b.iter().enumerate() {
+    let hyphen = matches!(i, 8 | 13 | 18 | 23);
+    if hyphen {
+      if c != b'-' {
+        return false;
+      }
+    } else if !c.is_ascii_hexdigit() {
+      return false;
+    }
+  }
+  true
+}
+
+/// `agy acp` 1.5.16 forwards child subagent / swarm worker tool calls on the root stream with `toolCallId` prefixed by
+/// the child's conversation UUID (`<child_uuid>:<inner_call_id>`). Returns `(child_uuid, inner_call_id)` when `id`
+/// belongs to a child conversation other than `root_session_id`
+pub fn split_child_tool_call_id<'a>(id: &'a str, root_session_id: Option<&str>) -> Option<(&'a str, &'a str)> {
+  let (child, inner) = id.split_once(':')?;
+  if inner.is_empty() || !is_uuid(child) || root_session_id == Some(child) {
+    return None;
+  }
+  Some((child, inner))
+}
+
+/// Whether a root `session/update` is a tool call belonging to an Antigravity child conversation
+pub fn is_child_tool_call(u: &Value, root_session_id: Option<&str>) -> bool {
+  matches!(kind_of(u), "tool_call" | "tool_call_update")
+    && u.get("toolCallId").and_then(Value::as_str).and_then(|id| split_child_tool_call_id(id, root_session_id)).is_some()
+}
+
+fn non_empty_str(v: Option<&Value>) -> Option<String> {
+  v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned)
+}
+
+fn tool_name_of(u: &Value) -> Option<&str> {
+  if let Some(name) = u.get("name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+    return Some(name);
+  }
+  let title = u.get("title").and_then(Value::as_str)?.trim();
+  Some(title.strip_prefix("Run ").unwrap_or(title))
+}
+
+/// Recognizes a root Antigravity delegation call (`swarm` with `action: "add"`, or `invoke_subagent`) from its tool
+/// name / title and `rawInput`
+pub fn delegation_of(u: &Value) -> Option<AntigravityDelegation> {
+  let tool = tool_name_of(u)?;
+  let raw = u.get("rawInput").and_then(Value::as_object)?;
+  match tool {
+    "swarm" => {
+      if raw.get("action").and_then(Value::as_str) != Some("add") {
+        return None;
+      }
+      let base = non_empty_str(raw.get("name"))?;
+      let shard_count = raw
+        .get("tasks")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+        .map(Vec::len)
+        .or_else(|| raw.get("n").and_then(Value::as_u64).filter(|&n| n > 1).map(|n| n as usize));
+      let names = match shard_count {
+        Some(k) => (1..=k.min(32)).map(|i| format!("{base}-{i}")).collect(),
+        None => vec![base],
+      };
+      let brief = non_empty_str(raw.get("brief"));
+      let model = non_empty_str(raw.get("model"));
+      Some(AntigravityDelegation::SwarmAdd { names, brief, model })
+    }
+    "invoke_subagent" => {
+      let role = non_empty_str(raw.get("Role").or_else(|| raw.get("role")));
+      let type_name = non_empty_str(raw.get("TypeName").or_else(|| raw.get("typeName")));
+      let prompt = non_empty_str(raw.get("Prompt").or_else(|| raw.get("prompt")));
+      let model = non_empty_str(raw.get("Model").or_else(|| raw.get("model"))).filter(|m| m != "inherit");
+      if role.is_none() && type_name.is_none() && prompt.is_none() {
+        return None;
+      }
+      Some(AntigravityDelegation::InvokeSubagent { role, type_name, prompt, model })
+    }
+    _ => None,
+  }
+}
+
+/// Antigravity's orchestrator models (`gemini-pro-orchestrator[-<lead>]`, agy 1.5.16): a planning model and a faster
+/// execution model take turns inside the one conversation (`subagent_tree/orchestrator.rs`)
+pub fn is_orchestrator(model_id: &str) -> bool {
+  model_id.contains("orchestrator")
+}
+
+/// The execution model behind the Gemini orchestrators, as `transcript.jsonl` names its steps (agy 1.5.16). The menu
+/// offers it nowhere; it stands in until the session's own transcript names the model that ran
+pub const ORCHESTRATOR_WORKER: &str = "gemini-flash-worker-agy";
+
+/// One side of an orchestrator's relay on the root stream: the planner's `exit_plan_mode` carrying the plan, or the
+/// executor's `enter_plan_mode` carrying its report (both `tool_call`s of kind `other`, agy 1.5.16)
+#[derive(Debug, PartialEq, Eq)]
+pub enum PlanRelay {
+  Handoff { plan: Option<String> },
+  Handback { reason: Option<String> },
+}
+
+pub fn plan_relay_of(u: &Value) -> Option<PlanRelay> {
+  if !matches!(kind_of(u), "tool_call" | "tool_call_update") {
+    return None;
+  }
+  let raw = u.get("rawInput").or_else(|| u.get("args"));
+  let arg = |key: &str| non_empty_str(raw.and_then(|r| r.get(key)));
+  match tool_name_of(u)? {
+    "exit_plan_mode" => Some(PlanRelay::Handoff { plan: arg("plan") }),
+    "enter_plan_mode" => Some(PlanRelay::Handback { reason: arg("reason") }),
+    _ => None,
+  }
+}
+
+/// A plan's one-line title: its first line of prose, since a plan opens with a generic heading ("Plan", "实施计划")
+pub fn plan_title(plan: &str) -> Option<String> {
+  static NUMBERED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^\d+[.)]\s+"));
+  let lines = plan.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("```"));
+  let prose = lines.clone().find(|l| !l.starts_with('#')).or_else(|| lines.clone().next())?;
+  let line = prose.trim_start_matches(['#', '>', '-', '*', ' ']);
+  let line = NUMBERED.replace(line, "").replace("**", "").replace('`', "");
+  let line = line.trim();
+  (!line.is_empty()).then(|| {
+    let clipped: String = line.chars().take(PLAN_TITLE_MAX).collect();
+    if clipped.len() < line.len() { format!("{clipped}…") } else { clipped }
+  })
+}
+
+const PLAN_TITLE_MAX: usize = 80;
+
+/// What a relay round calls the execution model a transcript step names: the model select's own label for it (a level
+/// suffix aside), else the id spelled out (`gemini-flash-worker-agy` → `Gemini Flash Worker`)
+pub fn worker_name(id: &str, controls: &[ConfigControl]) -> String {
+  static LEVEL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"-(low|medium|high|xhigh)$"));
+  let options = controls.iter().filter(|c| is_model_control(c)).flat_map(|c| &c.options);
+  let family = LEVEL.replace(id, "");
+  if let Some(o) = options.clone().find(|o| o.id == id).or_else(|| options.clone().find(|o| o.id == family)) {
+    return o.name.clone();
+  }
+  let bare = family.strip_suffix("-agy").unwrap_or(&family);
+  bare
+    .split('-')
+    .filter(|w| !w.is_empty())
+    .map(|w| {
+      let mut c = w.chars();
+      c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default()
+    })
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
 /// The agent's own updates, never the prompts: what a replay may add to the transcript, and what a late reply streams
 pub const REPLAY_AGENT_KINDS: [&str; 5] = ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"];
 
@@ -208,6 +383,35 @@ static WRAPPED: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r#
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn orchestrator_hand_offs_titles_and_worker_names() {
+    use serde_json::json;
+    // agy 1.5.16 names the tool beside the ACP fields and titles the row `Run <tool>`
+    let exit = json!({ "sessionUpdate": "tool_call", "toolCallId": "c1", "name": "exit_plan_mode", "title": "Run exit_plan_mode", "kind": "other", "rawInput": { "plan": "### 实施计划\n\n1. **创建脚本文件**：用 `write_file` 写 fib.py" } });
+    assert_eq!(plan_relay_of(&exit), Some(PlanRelay::Handoff { plan: Some("### 实施计划\n\n1. **创建脚本文件**：用 `write_file` 写 fib.py".into()) }));
+    let enter = json!({ "sessionUpdate": "tool_call_update", "toolCallId": "c2", "title": "Run enter_plan_mode", "args": { "reason": "tests fail twice" } });
+    assert_eq!(plan_relay_of(&enter), Some(PlanRelay::Handback { reason: Some("tests fail twice".into()) }));
+    assert_eq!(plan_relay_of(&json!({ "sessionUpdate": "tool_call", "toolCallId": "c3", "name": "run_command", "title": "ls" })), None);
+    assert_eq!(plan_relay_of(&json!({ "sessionUpdate": "agent_message_chunk", "name": "exit_plan_mode" })), None);
+    // The title skips the plan's generic heading
+    assert_eq!(plan_title("### 实施计划\n\n1. **创建脚本文件**：用 `write_file` 写 fib.py").as_deref(), Some("创建脚本文件：用 write_file 写 fib.py"));
+    assert_eq!(plan_title("# Fix the parser").as_deref(), Some("Fix the parser"));
+    assert_eq!(plan_title("```\n```"), None);
+    assert!(is_orchestrator("gemini-pro-orchestrator") && is_orchestrator("gemini-pro-orchestrator-neon") && !is_orchestrator("gemini-4-neon"));
+    // The worker's name: the model select's label, a level suffix aside, else the id spelled out
+    let option = |id: &str, name: &str| acpira_shared::transcript::SessionOption { id: id.into(), name: name.into(), ..Default::default() };
+    let model = ConfigControl {
+      id: "model".into(),
+      category: Some("model".into()),
+      options: vec![option("gemini-4-hydrogen", "Gemini 4 Hydrogen"), option("claude-sonnet-5-5", "Claude Sonnet 5.5")],
+      ..Default::default()
+    };
+    let controls = [model];
+    assert_eq!(worker_name("claude-sonnet-5-5", &controls), "Claude Sonnet 5.5");
+    assert_eq!(worker_name("gemini-4-hydrogen-high", &controls), "Gemini 4 Hydrogen");
+    assert_eq!(worker_name(ORCHESTRATOR_WORKER, &controls), "Gemini Flash Worker");
+  }
 
   #[test]
   fn agy_acp_steers_by_prompt_from_1_5_0() {
@@ -346,5 +550,64 @@ mod tests {
     assert_eq!(cut.get(..cancel_note(&cut).unwrap()), Some("Half the answer\n"));
     assert!(cancel_note("Quoting it: \u{26a0} The stream was interrupted. Please continue").is_none());
     assert!(cancel_note(&format!("{note}And then more text")).is_none());
+  }
+
+  #[test]
+  fn child_tool_call_ids_split_only_on_foreign_uuids() {
+    let child = "40000000-0000-4000-8000-000000000004";
+    let root = "10000000-0000-4000-8000-000000000001";
+    assert_eq!(split_child_tool_call_id(&format!("{child}:call_123"), Some(root)), Some((child, "call_123")));
+    assert_eq!(split_child_tool_call_id(&format!("{root}:call_123"), Some(root)), None);
+    assert_eq!(split_child_tool_call_id("call_123", Some(root)), None);
+    assert_eq!(split_child_tool_call_id(&format!("{child}:"), Some(root)), None);
+    assert_eq!(split_child_tool_call_id("not-a-uuid:call_123", Some(root)), None);
+    assert_eq!(split_child_tool_call_id("sk::call_123", Some(root)), None);
+  }
+
+  #[test]
+  fn delegation_recognizes_swarm_add_and_invoke_subagent() {
+    use serde_json::json;
+    let add = json!({
+      "sessionUpdate": "tool_call",
+      "title": "Run swarm",
+      "rawInput": { "action": "add", "name": "core", "brief": "Add settings validation", "model": "gemini-4-neon-xhigh" }
+    });
+    assert_eq!(
+      delegation_of(&add),
+      Some(AntigravityDelegation::SwarmAdd {
+        names: vec!["core".into()],
+        brief: Some("Add settings validation".into()),
+        model: Some("gemini-4-neon-xhigh".into()),
+      })
+    );
+    let sharded = json!({
+      "sessionUpdate": "tool_call",
+      "title": "swarm",
+      "rawInput": { "action": "add", "name": "audit", "tasks": ["a", "b", "c"], "brief": "Audit shard" }
+    });
+    assert_eq!(
+      delegation_of(&sharded),
+      Some(AntigravityDelegation::SwarmAdd {
+        names: vec!["audit-1".into(), "audit-2".into(), "audit-3".into()],
+        brief: Some("Audit shard".into()),
+        model: None,
+      })
+    );
+    let title_only = json!({ "sessionUpdate": "tool_call", "title": "Run swarm", "rawInput": { "action": "title", "title": "Example project" } });
+    assert_eq!(delegation_of(&title_only), None);
+    let sub = json!({
+      "sessionUpdate": "tool_call",
+      "title": "Run invoke_subagent",
+      "rawInput": { "TypeName": "research", "Role": "Codebase Researcher", "Prompt": "Find callers", "Model": "inherit" }
+    });
+    assert_eq!(
+      delegation_of(&sub),
+      Some(AntigravityDelegation::InvokeSubagent {
+        role: Some("Codebase Researcher".into()),
+        type_name: Some("research".into()),
+        prompt: Some("Find callers".into()),
+        model: None,
+      })
+    );
   }
 }

@@ -1,6 +1,6 @@
 # Agent quirks
 
-How each external agent CLI behaves on the ACP wire, with the version observed. "Source" means read from the shipped package, not seen on the wire. Claude (with ultracode), Codex and Devin have their own `agent-quirks-*.md`; cross-agent rules are `protocol-gotchas.md`, the verified / source / unverified matrix `docs/acp-agents-compat.md`.
+How each external agent CLI behaves on the ACP wire, with the version observed. "Source" means read from the shipped package, not seen on the wire. Claude (with ultracode), Codex, Devin and Antigravity have their own `agent-quirks-*.md`; cross-agent rules are `protocol-gotchas.md`, the verified / source / unverified matrix `docs/acp-agents-compat.md`.
 
 ## Cross-agent
 
@@ -50,22 +50,6 @@ How each external agent CLI behaves on the ACP wire, with the version observed. 
 - The grouped `model` select's values are JSON tuple strings (`["gateway","composer-2.5-fast"]`): opaque, never parse. `reasoning_effort` has a `""` "Provider default" option beside off / low / medium / high.
 - Restore errors are bare `-32602`s told apart by message (`unknown session:` gone, `already active:` locked, `not resumable:` read-only, cwd / MCP mismatch retryable); an unrecognized `-32602` means gone, as for Grok and Kimi.
 - `session/list` items carry only `sessionId` + `cwd`; a new session appears only in the next process's list. `session/new` writes under `~/.dsh/sessions/`, so probes use a temp `DSH_HOME`. Global instructions: `$DSH_HOME/AGENTS.md`.
-
-## Antigravity
-
-- Runs `agy acp` (agy 1.5.9). The older `agy_acp_server` package (Registry `antigravity-acp`) offers Claude / GPT only to allowlisted `clientInfo.name`s.
-- Login: keychain item `gemini` / `antigravity`, or a file in the gemini dir under SSH; saved accounts: `accounts/antigravity.rs`.
-- A prompt comes back as `user_message_chunk` before the reply.
-- Failed turns are `end_turn` with the failure as its own chunk, `\n⚠ <text>\n`; `vendors/antigravity.rs` cuts it into the turn error. A `session/cancel` mid-stream (1.5.12) leaves the same shape, `⚠ The stream was interrupted. …`, a note for its model: dropped on a cancelled turn (`cancel_note`). Gemini models share one quota bucket, Claude has its own.
-- Restore: `session/resume` does not replay. An unknown id answers `-32603 Failed to read session <id>; …` while `session/load` succeeds empty, so that message counts as gone (`errors.rs`).
-- MCP calls: `name` `mcp_<server>_<tool>`, title `Run <name>`, kind `other`; the server ends at the first `_` (`tool_kind.rs`). A later session request of one process whose entry differs (the hub grant always does) registers `<server>_<8 hex>` (1.5.13), skipped by both name readers. `agy` injects `toolSummary` into every MCP tool schema, asks `request_permission` on every MCP call (read-only too), omits `toolUseId` in `tools/call` `_meta` and result `content` on `tool_call_update`.
-- Session instructions and hooks (1.5.9): `session/new`, `load` and `resume` accept `_meta.antigravity.systemPrompt` (`{ append }` or replacement string). `_meta.agy.disabledTools` does not disable built-in tools, whereas `<cwd>/.agents/hooks.json` `PreToolUse` exit 2 blocks them cleanly.
-- Background commands: a `run_command` still `in_progress` at `end_turn` runs on; its exit wakes the model for a whole agent run with no prompt running, and nothing on the wire says the run is over. 1.5.12 streams the exit (`tool_call_update`) and the run live. 1.5.9 sent neither: only `session/list` `updatedAt` moved, and `session/load` on the live process replayed both. A load restarts the stream, so replays read while a run streams show its text twice. `session/late_reply.rs` keeps the row as a background task and shows the run as one detached turn, ended when the stream and the time stand still, reading replays only for a process that has streamed nothing; nothing watches after a restore.
-- Steering (from 1.5.0, verified on 1.5.12): no `_session/steering`; a `session/prompt` sent mid-turn is the steer. The running prompt answers `end_turn` at once with its own usage, the new one owns the rest of the turn until it answers; the steer is never echoed. A prompt sent while a permission or question card waits is refused (`antigravity::steer_bounced`), so steers hold until the card is answered. A stopped steer stays in agy's conversation: it is never queued again.
-- `/compact` (1.5.13): nothing on the wire but a `usage_update` with the pre-compaction size and an empty `end_turn`; agy's transcript logs the checkpoint. `antigravity::compacted_silently` makes that a finished compaction with stale usage. Auto-compaction waits out an owed late reply (`after_prompt`).
-- Sandbox (1.5.9, macOS): `auto` never asks and runs commands in agy's own sandbox whatever `enableTerminalSandbox` says, with the `.git` of a folder that is a repository at session start read-only (`git pull` / `commit` fail); its monitors refuse a `BypassSandbox` retry without a permission request. `default` and `accept-edits` ask per command and run it unsandboxed, so full access rides on `accept-edits`.
-- Questions (1.5.12): `ask_question` goes over `elicitation/create` (`q<n>` + `q<n>_other` companion with no `_meta`, option-less questions as `q<n>_other` only, boilerplate `The agent has … question(s).` message). Unverified: MCP load failures, a prompt sent or `session/cancel` while a late reply is being written, the Windows install directory.
-- Background auto-update (1.5.14 binary): both `agy acp` and `agy -p` spawn a detached `--bg-updater` that runs `agy --version`, flashing a console window on Windows. `AGY_CLI_DISABLE_AUTO_UPDATE=true` (exact lowercase `true`) skips it; set on `/usage` everywhere and by default on `agy acp` on Windows (unverified live on Windows).
 
 ## Factory Droid
 

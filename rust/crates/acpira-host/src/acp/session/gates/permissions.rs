@@ -51,7 +51,7 @@ impl AcpSession {
     let judged = self.deps.plugin_runtime.as_ref().is_some_and(|rt| rt.has_hook("permission"));
     let (target, epoch, plan_file, last_agent, captured, edit, row) = {
       let mut c = self.core.lock();
-      let Some(target) = Self::target_for(&mut c, session_id.as_deref()) else {
+      let Some(target) = self.target_for_call(&mut c, vendor, session_id.as_deref(), Some(&tool_call_id)) else {
         drop(c);
         self.log(&format!("permission request for unknown session {}", session_id.as_deref().unwrap_or("undefined")));
         return Ok(cancelled_permission());
@@ -168,7 +168,7 @@ impl AcpSession {
         return Ok(cancelled_permission());
       }
       // The owner may have gone terminal while the plan file was being read
-      if Self::target_for(&mut c, session_id.as_deref()).is_none() {
+      if self.target_for_call(&mut c, vendor, session_id.as_deref(), Some(&tool_call_id)).is_none() {
         return Ok(cancelled_permission());
       }
       let options: Vec<Value> = req.get("options").and_then(Value::as_array).cloned().unwrap_or_default();

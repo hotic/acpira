@@ -26,8 +26,10 @@ use crate::i18n::t;
 use crate::store::record::{SubagentPart, turn_parts};
 use crate::util::{ms_of_iso, now_iso, now_ms, random_uuid};
 
+mod antigravity;
 mod child_stream;
 mod fusion;
+mod orchestrator;
 mod root_stream;
 mod summoned;
 mod workflow;
@@ -83,7 +85,7 @@ impl RouteCtx<'_> {
     }
     let Some(Turn::Agent(turn)) = self.root_turns.get_mut(self.turn_index) else { return };
     let now = now_ms();
-    turn.blocks.push(AgentBlock::ToolCall(ToolCallBlock {
+    let anchor = AgentBlock::ToolCall(ToolCallBlock {
       id: anchor_id(node),
       verb_key: Some("verb.delegate".into()),
       verb: t("verb.delegate"),
@@ -93,7 +95,14 @@ impl RouteCtx<'_> {
       ended_at: Some(now),
       subagent_id: Some(node.to_owned()),
       ..empty_tool(String::new())
-    }));
+    });
+    // Never splice a stand-in anchor after a still-streaming prose block: doing so splits the next chunk into a
+    // second TextBlock and can tear a Markdown link in half
+    if matches!(turn.blocks.last(), Some(AgentBlock::Text(tb)) if tb.streaming == Some(true)) {
+      turn.blocks.insert(turn.blocks.len() - 1, anchor);
+    } else {
+      turn.blocks.push(anchor);
+    }
   }
 
   /// The node's real launch row linked: its stand-in goes, so the delegation sits where the call was
@@ -119,6 +128,10 @@ enum Dialect {
   Fusion,
   /// A droid `Task` whose child runs as a session of its own, named on the call (`link_child_session`)
   Droid,
+  /// An Antigravity (`agy`) `/swarm` worker or `invoke_subagent` child (`antigravity.rs`)
+  Antigravity,
+  /// A round of an Antigravity orchestrator's execution model (`orchestrator.rs`)
+  Orchestrator,
 }
 
 struct PendingDelegation {
@@ -172,6 +185,12 @@ struct Node {
   /// A resumed run the adapter never announced (`open_unannounced_resume`): nothing on the wire ends it, so the end
   /// of its stretch of the sidechain log does (`log_run_ended`)
   log_ends: bool,
+  /// Antigravity match key (`swarm:<name>` or `role:<role>`) linking a root launch call to its disk conversation id
+  agy_key: Option<String>,
+  /// Antigravity swarm worker parked on the board (`wake_mode: "mentions" | "anything"`) while still alive
+  agy_waiting: bool,
+  /// Single-line preview of an Antigravity worker's latest board post, shown while parked with no open tool call
+  agy_note: Option<String>,
 }
 
 /// A root `SendMessage` call: an AIR client gets its first report without input and later ones without the tool name
@@ -253,6 +272,11 @@ pub struct SubagentTree {
   send_calls: Vec<SendCall>,
   /// The model and reasoning effort of the agent's own sidekick (`fusion.rs`), as the session's model pair names them
   native_sidekick: (Option<String>, Option<String>),
+  /// The execution model's name while the session runs an Antigravity orchestrator (`orchestrator.rs`)
+  orchestrator: Option<String>,
+  /// The orchestrator's hand-off calls (`exit_plan_mode` / `enter_plan_mode`) and the round each opened or ended: the
+  /// relay stands in for their rows
+  relay_calls: HashMap<String, String>,
   /// Child session ids a delegation named since the last drain, for the session to load (`take_child_loads`)
   child_loads: Vec<String>,
 }
@@ -313,6 +337,8 @@ impl SubagentTree {
       resumed_logs,
       send_calls: vec![],
       native_sidekick: (None, None),
+      orchestrator: None,
+      relay_calls: HashMap::new(),
       child_loads: vec![],
     };
     for r in records.unwrap_or_default() {
@@ -360,6 +386,9 @@ impl SubagentTree {
         resumed,
         log_fed: false,
         log_ends: false,
+        agy_key: None,
+        agy_waiting: false,
+        agy_note: None,
       });
     }
     tree.reindex();
@@ -529,6 +558,9 @@ impl SubagentTree {
       resumed: false,
       log_fed: false,
       log_ends: false,
+      agy_key: None,
+      agy_waiting: false,
+      agy_note: None,
     }
   }
 
@@ -557,11 +589,12 @@ impl SubagentTree {
         continue;
       }
       // Sealing it here would drop the rest of its stream and leave a late terminal word on a cut transcript. A droid
-      // `Task` runs past the turn that launched it and ends with its call's result
+      // `Task` and Antigravity subagents / swarm workers run past the turn that launched them
       if prompt_returned
         && native_outlive
-        && (n.visibility == SubagentVisibility::Session || n.dialect == Some(Dialect::Droid))
-        && n.peer.session_id.is_some()
+        && ((n.visibility == SubagentVisibility::Session && n.peer.session_id.is_some())
+          || (n.dialect == Some(Dialect::Droid) && n.peer.session_id.is_some())
+          || n.dialect == Some(Dialect::Antigravity))
       {
         continue;
       }
@@ -660,9 +693,13 @@ impl SubagentTree {
       let mut core = Self::core_of(n);
       if n.status == SubagentState::Running {
         // The row's second line is the only live view of a child. Read-only tools finish within a frame, so between
-        // steps it keeps the latest one instead of dropping back to "Working", which read as a flicker
+        // steps it keeps the latest one instead of dropping back to "Working", which read as a flicker. A parked
+        // Antigravity swarm worker shows its latest board post once its tools settle
         let turns = &n.state.turns;
-        core.activity = live_activity(turns).or_else(|| latest_step(turns)).or_else(|| activity_of(turns)).map(|a| a.label);
+        core.activity = live_activity(turns)
+          .map(|a| a.label)
+          .or_else(|| n.agy_waiting.then(|| n.agy_note.clone()).flatten())
+          .or_else(|| latest_step(turns).or_else(|| activity_of(turns)).map(|a| a.label));
       }
       let steps = Self::is_sidekick(n).then(|| Self::sidekick_steps(&n.state.turns));
       let summary = SubagentSummary { core, permissions: (!permissions.is_empty()).then_some(permissions), question, steps };
@@ -779,8 +816,8 @@ fn seal_node(n: &mut Node, state: SubagentState) {
   if n.ended_at.is_none() {
     n.ended_at = Some(now_ms());
   }
-  // A native child's result is what the child last said, and so is a droid child's when its call closed without text
-  if (n.visibility == SubagentVisibility::Session || n.dialect == Some(Dialect::Droid)) && n.result.is_none() {
+  // A native child's result is what the child last said, and so is a droid / Antigravity child's when its call closed without text
+  if (n.visibility == SubagentVisibility::Session || matches!(n.dialect, Some(Dialect::Droid | Dialect::Antigravity))) && n.result.is_none() {
     n.result = last_text(&n.state.turns);
   }
   if matches!(n.state.turns.last(), Some(Turn::Agent(a)) if a.stop.is_none()) {

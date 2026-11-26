@@ -8,8 +8,11 @@ use tokio::sync::oneshot;
 
 use acpira_shared::transcript::*;
 
-use crate::acp::transcript::normalize::{NormalizeState, activity_of};
+use crate::acp::session::updates::current_turn_index;
 use crate::acp::session::{AcpSession, Core};
+use crate::acp::transcript::normalize::{NormalizeState, activity_of};
+use crate::acp::transcript::subagent_tree::RouteCtx;
+use crate::acp::vendors::{Vendor, antigravity};
 
 mod permissions;
 mod questions;
@@ -96,6 +99,33 @@ impl AcpSession {
       Some(s) if c.acp_session_id.is_none() || c.acp_session_id.as_deref() == Some(s) => Some(Target::Root),
       Some(s) => c.tree.state_for_peer(s).map(|(_, id)| Target::Node(id)),
     }
+  }
+
+  /// Like `target_for`, additionally routing Antigravity child requests whose `toolCallId` carries `<child_uuid>:` on
+  /// the root session into that child's node
+  pub(crate) fn target_for_call(&self, c: &mut Core, vendor: Vendor, session_id: Option<&str>, tool_call_id: Option<&str>) -> Option<Target> {
+    let target = Self::target_for(c, session_id)?;
+    if target == Target::Root
+      && vendor == Vendor::Antigravity
+      && let Some(tid) = tool_call_id
+      && let Some((child_cid, _)) = antigravity::split_child_tool_call_id(tid, c.acp_session_id.as_deref())
+    {
+      let turn_index = current_turn_index(c);
+      let node_id = {
+        let Core { tree, state, .. } = &mut *c;
+        tree.ensure_antigravity_child(child_cid, &mut RouteCtx { turn_index, root_turns: &mut state.turns })
+      }?;
+      self.schedule_antigravity_subagents(c, true);
+      return Some(Target::Node(node_id));
+    }
+    // A call of an orchestrator's executor asks inside its round (`orchestrator.rs`)
+    if target == Target::Root
+      && vendor == Vendor::Antigravity
+      && let Some(node_id) = tool_call_id.and_then(|tid| c.tree.orchestrator_owner(tid))
+    {
+      return Some(Target::Node(node_id));
+    }
+    Some(target)
   }
 
   pub(crate) fn target_state<'a>(c: &'a mut Core, t: &Target) -> Option<&'a mut NormalizeState> {

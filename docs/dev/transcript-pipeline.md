@@ -45,14 +45,14 @@ ACP updates → transcript blocks, prompts out. Normalization: `rust/crates/acpi
 
 - Children are nodes, never mixed into the parent transcript (`subagent_tree.rs`).
 - Tiers (wire forms in `agent-quirks*.md`): `session` (claude-agent-acp native subagent sessions behind AIR `nativeSubagentSessions`); `nested` (Devin `cognition.ai/subagent_*`, never a root row; Claude without AIR via `parentToolUseId`); `receipt` (Kimi 0.41.0 `Agent` tool, result text; Claude workflow agents from the sidechain log, each run its own window; droid `Task`, its child session loaded by id, `child_sessions.rs`).
-- A child's usage must never reach the root. The legacy TS-SDK form in `session_info_update._meta['acpira/extension']` is decoded only for recorded fixtures.
+- A child's usage must never reach the root.
 - Lifecycle: a child still running when the prompt returns, the connection ends or the session closes becomes `disconnected`, never failed (exemptions: `SubagentTree::settle`). Nothing revives a terminal node; content after it drops (usage still applies). A terminal or cancelled node answers its pending permission / question requests `cancelled`.
 - Routing invariants: `toolOwner` indexes only nested / receipt children (a `session` child would hijack a same-named root call); Devin start / complete read before `subagent_context` routing; unannounced-owner updates buffer as orphans, never leak onto the root. Question cards pin to their transcript because block ids restart at `q-1` per reopen.
 - `SubagentRecord.rev` persists so a restore never lowers the revision the webview holds.
 - claude-agent-acp 0.93.0 never sends the `Agent` / `Task` call with native subagent sessions on, so a root child without a launch row gets a stand-in row `subagent:<node id>` at the live turn's tail (`place_anchor`), removed if a real row links.
 - A delegation row stays in place in the turn's single process (`processParts` cuts the fold around it); splitting the turn like a plan folded earlier work into Done mid-turn.
 - `SubagentSummary.activity` ignores an open call followed by later thought or reply: codex-acp 1.13.0 can leave a `tool_call` pending forever.
-- Devin Fusion's sidekick (`fusion.rs`) sends no handoff or handback: its `sk::` calls are cut into rounds of one thread, `nested` nodes on a stand-in row whose sidekick `harness` makes clients draw a relay; the relay code never takes them (`summoned`). Handed back when the lead speaks or calls a tool with no call of the round open, or the prompt returns. Unit-tested only.
+- A CLI's own sidekick is cut into rounds of one thread, `nested` nodes on a stand-in row whose sidekick `harness` makes clients draw a relay; the relay code never takes them (`summoned`). Devin Fusion (`fusion.rs`) sends no handoff or handback: a stretch of `sk::` calls ends when the lead speaks or calls a tool with no call of the round open, or the prompt returns (unit-tested only). Antigravity's orchestrators (`orchestrator.rs`) name both; the executor's text stays on the root.
 
 ## Cross-harness subagents
 
