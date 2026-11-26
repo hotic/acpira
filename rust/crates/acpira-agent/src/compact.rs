@@ -28,8 +28,7 @@ use crate::tools;
 pub const PRUNE_PROTECT: u64 = 40_000;
 /// A prune happens only when it frees this many tokens
 pub const PRUNE_MINIMUM: u64 = 20_000;
-/// What a cleared tool result reads as
-pub const PRUNED: &str = "[Old tool result content cleared]";
+pub use crate::compact_data::{Carry, PRUNED, Reason, RestoredFile, apply_prune, summary_item};
 /// Tools whose results a prune never clears: a skill's instructions are needed for the rest of the task
 const PRUNE_PROTECTED: &[&str] = &[tools::SKILL];
 /// Turns kept as they were after a summary
@@ -198,18 +197,6 @@ pub fn prune(session: &Session) -> usize {
   plan.len()
 }
 
-/// Apply a logged prune to a loaded history
-pub fn apply_prune(items: &mut [Item], calls: &[String]) {
-  for item in items {
-    if let Item::ToolResult { call_id, content, images, .. } = item
-      && calls.contains(call_id)
-    {
-      *content = PRUNED.to_owned();
-      images.clear();
-    }
-  }
-}
-
 /// Where the kept tail starts: the last `TAIL_TURNS` turns that fit the budget, the oldest of them split at a message
 /// boundary (never in front of a tool result, which must follow its call) when it does not fit whole. None when
 /// nothing fits, or when the tail would be the whole conversation: then everything is summarized. `first` is the index
@@ -237,106 +224,11 @@ pub fn tail_start(items: &[Item], first: usize, budget: u64) -> Option<usize> {
   keep.filter(|&s| s > first)
 }
 
-/// The summary as the model sees it from then on: a user message in front of the kept tail. `request` is the running
-/// turn's prompt when the summary took it in (a compaction inside a turn whose tail starts after it): its own words
-/// come back verbatim, as OpenCode replays the last user message after an overflow, so the task is not left to a
-/// paraphrase
-pub fn summary_item(summary: &str, carry: &Carry) -> Item {
-  let mut text = format!(
-    "<conversation-summary>\n{}\n</conversation-summary>\n\nThis session is being continued from a previous conversation that ran out of context. The summary above covers the earlier portion of the conversation. The messages after it, if any, are the most recent ones, kept as they were; the summary was written without seeing them, so something it says has not happened yet may already have happened in them.",
-    summary.trim()
-  );
-  if !carry.messages.is_empty() {
-    let omitted = match carry.omitted {
-      0 => String::new(),
-      n => format!(" ({n} earlier ones are left out; the summary covers them)"),
-    };
-    let list: Vec<String> = carry.messages.iter().map(|m| format!("<message>\n{}\n</message>", m.trim())).collect();
-    text.push_str(&format!("\n\nThe user's messages up to here, in their own words, oldest first{omitted}:\n<user-messages>\n{}\n</user-messages>", list.join("\n")));
-  }
-  if let Some(t) = &carry.todo {
-    text.push_str(&format!("\n\nThe to-do list as last written:\n<todo>\n{}\n</todo>", t.trim()));
-  }
-  if !carry.files.is_empty() {
-    let files: Vec<String> = carry.files.iter().map(|f| format!("<file path=\"{}\">\n{}\n</file>", f.path, f.text.trim_end())).collect();
-    text.push_str(&format!("\n\nThe files worked on most before this point, re-read from disk at the compaction (a long one is cut):\n{}", files.join("\n")));
-  }
-  if let Some(r) = &carry.request {
-    text.push_str(&format!("\n\nThe request being worked on, in the user's own words:\n<request>\n{}\n</request>", r.trim()));
-  }
-  text.push_str(
-    "\n\nIf work was in progress, continue it from where it left off without asking the user any further questions. Resume directly: do not acknowledge the summary, do not recap what was happening, do not preface with \"I'll continue\" or similar. Pick up the last task as if the break never happened.",
-  );
-  Item::User(vec![Part::Text(text)])
-}
-
-/// What a summary item carries verbatim beside the summary, so none of it depends on the model that wrote it. Logged
-/// with the `compaction` event, so a reopened session rebuilds the same item (and the provider's cache still matches)
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Carry {
-  /// The user's own messages up to the kept tail, oldest first, within `CARRIED_TOKENS`
-  pub messages: Vec<String>,
-  /// Earlier messages left out of `messages` for the budget, over every compaction so far
-  pub omitted: usize,
-  /// The last to-do list the summarized part wrote, when the tail does not write a later one
-  pub todo: Option<String>,
-  /// The files the summarized part worked on most (`restore_paths`), as they were on disk at the compaction
-  pub files: Vec<RestoredFile>,
-  /// The running turn's prompt, when the summary took it in (`request_text`)
-  pub request: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RestoredFile {
-  /// As tool titles show it (`tools::shown`)
-  pub path: String,
-  pub text: String,
-}
-
-impl Carry {
-  /// The event fields this is logged as (`compaction` beside `summary`)
-  fn log_into(&self, ev: &mut Value) {
-    if !self.messages.is_empty() {
-      ev["messages"] = json!(self.messages);
-    }
-    if self.omitted > 0 {
-      ev["omitted"] = json!(self.omitted);
-    }
-    if let Some(t) = &self.todo {
-      ev["todo"] = Value::String(t.clone());
-    }
-    if !self.files.is_empty() {
-      ev["files"] = Value::Array(self.files.iter().map(|f| json!({ "path": f.path, "text": f.text })).collect());
-    }
-    if let Some(r) = &self.request {
-      ev["request"] = Value::String(r.clone());
-    }
-  }
-
-  /// Read back from a `compaction` event; an event written before these fields existed carries only its request
-  pub fn from_event(ev: &Value) -> Carry {
-    let s = |k: &str| ev.get(k).and_then(Value::as_str).map(str::to_owned);
-    Carry {
-      messages: ev.get("messages").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect(),
-      omitted: ev.get("omitted").and_then(Value::as_u64).unwrap_or(0) as usize,
-      todo: s("todo"),
-      files: ev
-        .get("files")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|f| Some(RestoredFile { path: f.get("path")?.as_str()?.to_owned(), text: f.get("text")?.as_str()?.to_owned() }))
-        .collect(),
-      request: s("request"),
-    }
-  }
-}
-
 /// The user's messages carried past this compaction: the ones carried before, then the words of every user message in
 /// `items` (prompts and messages steered into a turn; notes the agent added left out), each cut to its start and end,
 /// the newest kept within `budget` tokens. Returns the list and how many earlier ones are left out in all
 fn carried_messages(before: &[String], omitted: usize, items: &[Item], budget: u64) -> (Vec<String>, usize) {
-  let all: Vec<String> = before.iter().cloned().chain(items.iter().filter_map(crate::chunk::user_words).map(|w| edges(&w, CARRIED_EDGE_CHARS))).collect();
+  let all: Vec<String> = before.iter().cloned().chain(items.iter().filter_map(crate::defs::user_words).map(|w| edges(&w, CARRIED_EDGE_CHARS))).collect();
   let mut left = budget;
   let mut keep = 0;
   for m in all.iter().rev() {
@@ -505,7 +397,7 @@ fn request_text(turn: &[Item]) -> Option<String> {
     })
     .collect::<Vec<_>>()
     .join("\n\n");
-  for added in turn[1..].iter().filter_map(crate::steer::text_of).filter(|t| !t.is_empty()) {
+  for added in turn[1..].iter().filter_map(crate::defs::steer_text_of).filter(|t| !t.is_empty()) {
     text.push_str(&format!("\n\n[Added while the work was in progress]\n{added}"));
   }
   let text = text.trim();
@@ -537,7 +429,7 @@ fn serialize(item: &Item, whole: bool) -> String {
     }
   };
   // A note steered in alone (the goal's budget note) reads as the message it is, below
-  if let Some(words) = crate::steer::text_of(item).filter(|w| !w.is_empty()) {
+  if let Some(words) = crate::defs::steer_text_of(item).filter(|w| !w.is_empty()) {
     return format!("[User, while the assistant was working]: {}", edges(&words, USER_EDGE_CHARS));
   }
   match item {
@@ -683,31 +575,11 @@ pub struct Call<'a> {
   pub limit: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reason {
-  /// `/compact`
-  Manual,
-  /// A call's usage reached the threshold
-  Threshold,
-  /// The provider refused the request as too long
-  Overflow,
-}
-
-impl Reason {
-  pub fn wire(self) -> &'static str {
-    match self {
-      Reason::Manual => "manual",
-      Reason::Threshold => "threshold",
-      Reason::Overflow => "overflow",
-    }
-  }
-}
-
 /// Summarize the history and replace it with the summary and the tail. The client sees `compaction_update`
 /// in_progress, then completed or failed. Ok(false) when there was nothing to compact; Err carries the failure already
 /// reported to the client
 pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Reason) -> Result<bool, String> {
-  let context = call.model.context.unwrap_or(crate::turn::DEFAULT_CONTEXT);
+  let context = call.model.context.unwrap_or(crate::defs::DEFAULT_CONTEXT);
   let usable = usable(context, call.model.output);
   let budget = (usable / 4).clamp(MIN_TAIL_TOKENS, MAX_TAIL_TOKENS);
   let (items, summarized, folded) = {
@@ -869,7 +741,7 @@ async fn plugin_summary(server: &Server, session: &Session, reason: Reason, head
 /// instructions, with the writer's thinking and up to `SUMMARY_OUTPUT` for its reasoning and the summary. The limit
 /// goes out only where the model's output limit is known, as on a turn, so a smaller real limit is never exceeded
 fn summary_request(writer: &Writer, head: &[Item], previous: Option<&str>, words: u64, prompts: &Library) -> (Request, bool) {
-  let context = writer.model.context.unwrap_or(crate::turn::DEFAULT_CONTEXT);
+  let context = writer.model.context.unwrap_or(crate::defs::DEFAULT_CONTEXT);
   // A small window keeps three quarters for what is summarized
   let output = writer.model.output.unwrap_or(SUMMARY_OUTPUT).min(SUMMARY_OUTPUT).min(context / 4);
   let fixed = estimate(&prompts.text("compact/instructions", &writer.family)) + estimate(&prompts.text("compact/previous", &writer.family)) + estimate(previous.unwrap_or("")) + 1000;
@@ -886,7 +758,7 @@ fn summary_request(writer: &Writer, head: &[Item], previous: Option<&str>, words
     thinking: writer.thinking,
     effort: writer.effort.clone(),
     cache_key: None,
-    fast: false,
+    fast: crate::llm::fast::SpeedTier::Standard,
   };
   (request, cut)
 }

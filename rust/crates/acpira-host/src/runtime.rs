@@ -30,8 +30,8 @@ use crate::i18n::{set_host_locale, set_wire_locale, tp};
 use acpira_shared::devices::{PushKind, PushNote};
 use crate::session_manager::{Attention, AttentionKind, ManagerDeps, SessionManager, ViewerShell};
 use crate::settings::{SettingsCenter, SettingsDeps};
-use crate::sidecar::platform::{Affects, SidecarPlatform};
-use crate::store::agent_config::AgentConfig;
+use crate::sidecar_platform::{Affects, SidecarPlatform};
+use crate::acp::agents::config::AgentConfig;
 use crate::store::transcript_store::{LogFn, TranscriptStore};
 
 pub struct HostRuntime {
@@ -177,7 +177,7 @@ impl HostRuntime {
       Some(Arc::new(move |_id: &str, error: &str| save_toast("error", &tp("host.saveFailed", &[("error", error)])))),
     );
     // The built-in agent runs with this root as its home: a session deleted for good takes the agent's log along
-    store.set_agent_home(root.clone());
+    store.set_purge_hook(builtin_purge_hook(root.clone(), log.clone()));
     // One session history per host: this engine's records in host folders get a copy in the host's own store
     let host_mirror = crate::remote::host_store::HostMirror::new(connections.clone(), store.clone(), &root, log.clone());
     // The model sources follow the user: a session a host runs reads the host's own providers.json
@@ -199,7 +199,7 @@ impl HostRuntime {
       h.set_plugins(Arc::downgrade(&plugins));
       // Computer use: this binary is also the driver (`acpira computer-use`)
       if let Some(exe) = bridge_exe.as_deref().filter(|_| acpira_computer::SUPPORTED) {
-        h.set_computer(crate::computer::ComputerHost::new(exe, root.clone(), log.clone()));
+        h.set_computer(crate::computer::ComputerHost::new(exe, log.clone()));
       }
     }
     let host_mcp = bridge_exe.as_deref().map(|exe| {
@@ -305,9 +305,9 @@ impl HostRuntime {
         m.builtin_settings_saved();
       }
     }));
-    // What a plugin's process may ask: sessions, page actions, toasts and one-off model calls (`plugins/host_api.rs`)
+    // What a plugin's process may ask: sessions, page actions, toasts and one-off model calls (`session_manager/plugin_api.rs`)
     let toast_p = platform.clone();
-    plugins.runtimes().enable(Some(crate::plugins::host_api::host_call(&manager, Arc::new(move |level: &str, text: &str| toast_p.toast(level, text)), root.clone())));
+    plugins.runtimes().enable(Some(crate::session_manager::plugin_api::host_call(&manager, Arc::new(move |level: &str, text: &str| toast_p.toast(level, text)), root.clone())));
     // A commit here tells the other engines at once; theirs reach this one the same way (the poll below otherwise)
     let bus = Arc::downgrade(&manager);
     plugins.set_touch(Arc::new(move || {
@@ -386,7 +386,12 @@ impl HostRuntime {
         m.host_copy_gone(alias, id);
       }
     }));
-    runtime.host_mirror.set_manager(Arc::downgrade(&runtime.manager));
+    let weak = Arc::downgrade(&runtime.manager);
+    runtime.host_mirror.set_retire_hook(Arc::new(move |id: String, host| {
+      weak.upgrade().map(|m| {
+        Box::pin(async move { m.retire_host_copy(&id, &host).await }) as crate::acp::transport::rpc::BoxFuture<Result<()>>
+      })
+    }));
     runtime.host_mirror.start();
     runtime.model_mirror.start();
     let ra = runtime.remote_access.clone();
@@ -684,6 +689,8 @@ fn session_scope(projects: bool, setting: Option<Value>) -> String {
     _ => "workspace".into(),
   }
 }
+pub use crate::acp::agents::builtin_purge_hook;
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -711,5 +718,45 @@ mod tests {
     assert_eq!(d.local_run, Some(crate::acp::local_run::LocalRun::Native));
     assert!(!d.subagents && !d.terminal_auth);
     assert!(registry_of(&serde_json::json!({}), None, &plugins).try_get("ledger").is_none());
+  }
+
+  #[tokio::test]
+  async fn builtin_purge_hook_removes_agent_log_and_scratch_only_with_last_record() {
+    let root = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let s = TranscriptStore::new(root.path().join("sessions"), Arc::new(|_| {}), None);
+    s.set_purge_hook(builtin_purge_hook(root.path().to_path_buf(), Arc::new(|_| {})));
+
+    let acp = "abcdef12-0000-0000-0000-000000000001";
+    let [file, dir] = acpira_agent::acp::session_paths(root.path(), acp);
+    std::fs::create_dir_all(dir.join("outputs")).unwrap();
+    std::fs::write(dir.join("plan.md"), b"plan").unwrap();
+    std::fs::write(&file, format!("{}\n", serde_json::json!({ "type": "session", "id": acp, "cwd": project.path() }))).unwrap();
+    let folder = project.path().join(".acpira/tmp/abcdef12");
+    acpira_agent::scratch::Scratch::new(Some(folder.clone()), acp, root.path()).ensure().unwrap();
+
+    let mk = |id: &str| {
+      let mut r: crate::store::record::SessionRecord = serde_json::from_value(serde_json::json!({
+        "id": id, "agent": acpira_shared::host_tools::SELF_AGENT_ID, "cwd": "/w", "title": id,
+        "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z",
+        "turns": [], "controls": { "modes": [], "options": [] }, "commands": []
+      }))
+      .unwrap();
+      r.acp_session_id = Some(acp.into());
+      Arc::new(r)
+    };
+    s.flush(mk("a")).await.unwrap();
+    s.flush(mk("b")).await.unwrap();
+    s.load_index().await.unwrap();
+    s.trash("a").await.unwrap();
+    s.load_index().await.unwrap();
+    s.remove("a").await;
+    assert!(file.exists() && dir.exists() && folder.exists(), "b still drives the session");
+
+    s.trash("b").await.unwrap();
+    s.load_index().await.unwrap();
+    s.remove("b").await;
+    assert!(!file.exists() && !dir.exists());
+    assert!(!project.path().join(".acpira").exists(), "no empty shell is left in the project");
   }
 }

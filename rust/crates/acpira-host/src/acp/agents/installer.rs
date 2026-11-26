@@ -662,7 +662,7 @@ impl Installs {
                 }
               }
             }
-            Err(err) if err.downcast_ref::<crate::remote::archive::DownloadCancelled>().is_some() || cancel.is_cancelled() => {
+            Err(err) if err.downcast_ref::<crate::http::archive::DownloadCancelled>().is_some() || cancel.is_cancelled() => {
               me.set(&agent, |e| {
                 e.progress.status = AgentInstallStatus::Cancelled;
                 e.cancel = None;

@@ -13,8 +13,8 @@ use acpira_shared::inventory::{AgentRuntimeInfo, McpCaps};
 use acpira_shared::num::Num;
 use acpira_shared::transcript::*;
 
-use crate::acp::session::failure::failure_of;
 use crate::acp::transcript::compaction_text;
+use crate::acp::transcript::failure::failure_of;
 use crate::acp::transcript::plan_snapshots::{last_plan_snapshot, same_plan_entries};
 use crate::acp::transcript::retry_text;
 use crate::i18n::{t, tp};

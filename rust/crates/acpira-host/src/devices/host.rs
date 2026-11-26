@@ -18,8 +18,15 @@ use acpira_shared::devices::{GatewayRequest, GatewayStatus};
 use tokio::sync::mpsc;
 
 use super::service::Service;
-use crate::sidecar::server::Engine;
 use crate::store::transcript_store::LogFn;
+
+/// Narrow engine surface consumed by the embedded remote-access gateway host
+pub trait GatewayEngine: Send + Sync {
+  fn draining(&self) -> bool;
+  fn set_hosting(&self, on: bool);
+  fn link(self: Arc<Self>) -> (mpsc::UnboundedSender<String>, mpsc::UnboundedReceiver<String>);
+  fn connections(&self) -> Option<Arc<crate::remote::connections::Connections>>;
+}
 
 /// How often the switch is looked at: remote access turned on or off from another engine shows up within this
 const RECHECK: Duration = Duration::from_secs(2);
@@ -30,7 +37,7 @@ const RETRY: Duration = Duration::from_millis(500);
 static HOST: std::sync::OnceLock<Weak<Host>> = std::sync::OnceLock::new();
 
 pub struct Host {
-  engine: Weak<Engine>,
+  engine: Weak<dyn GatewayEngine>,
   root: PathBuf,
   user_home: PathBuf,
   /// `serve --gateway`: runs the gateway whether or not remote access is on
@@ -48,11 +55,11 @@ pub struct Host {
 
 impl Host {
   /// Runs the gateway in `engine` for as long as remote access is on (`forced`: always)
-  pub fn start(engine: &Arc<Engine>, root: &Path, forced: bool, log: LogFn) -> Arc<Host> {
+  pub fn start(engine: Weak<dyn GatewayEngine>, root: &Path, forced: bool, log: LogFn) -> Arc<Host> {
     let user_home = crate::store::data_dir::home_dir();
     let on = Service::new(root, &user_home).installed();
     let host = Arc::new(Host {
-      engine: Arc::downgrade(engine),
+      engine,
       root: root.to_owned(),
       user_home,
       forced,
@@ -153,7 +160,7 @@ impl Host {
       None => (acpira_gateway::engine::none())(),
     });
     let engine = self.engine.clone();
-    let ssh = super::tunnel::SshHosts::new(move || engine.upgrade().and_then(|e| e.runtime()).map(|rt| rt.connections.clone()));
+    let ssh = super::tunnel::SshHosts::new(move || engine.upgrade().and_then(|e| e.connections()));
     let log = self.log.clone();
     let opts =
       Opts { home: self.root.clone(), engine: link, relays: None, bind: None, ssh: Some(ssh), log: Arc::new(move |l: &str| log(&format!("[gateway] {l}"))) };

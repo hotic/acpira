@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { cn } from '../ui/cn';
-import { rowRules } from './controls';
+import { rowRules } from '../chrome/controls';
 
 // Past this many pixels a press on a row becomes a drag; below it the press stays a click
 const DRAG_SLOP = 4;

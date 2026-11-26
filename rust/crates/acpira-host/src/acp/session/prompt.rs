@@ -36,6 +36,9 @@ pub struct Staged {
   pub edited: bool,
   /// The queued entry's id: the user turn keeps it, so the webview's pending bubble for that entry becomes the sent one in place
   pub id: Option<String>,
+  /// Dispatched by `edit_turn_now` right after `turns.truncate(idx)`: `edit_turn_now` already bumped the session, so
+  /// `claim` skips publishing the empty truncated gap before `open_turn` pushes the replacement turns
+  pub from_edit: bool,
 }
 
 /// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, the continue that
@@ -437,10 +440,12 @@ impl AcpSession {
       c.compaction.auto_eligible = false;
       c.phase.staging = true;
       c.phase.staging_aborted = false;
-      if origin == Origin::User {
-        self.bump(&mut c);
-      } else {
-        self.touch(&mut c);
+      if !staged.is_some_and(|s| s.from_edit) {
+        if origin == Origin::User {
+          self.bump(&mut c);
+        } else {
+          self.touch(&mut c);
+        }
       }
       // An Ultra pick made while the last turn or its background work ran: the earliest slot is ahead of this prompt
       let rebuild = self.reserve_ultracode_rebuild(&mut c, true);
@@ -1063,6 +1068,7 @@ impl AcpSession {
   async fn cancel_turn(self: &Arc<Self>, requeue: bool) {
     // Claude Code's project tools still running on an SSH host stop with the turn
     self.stop_remote_calls();
+    self.skip_gate_critique();
     let mut c = self.core.lock();
     // Summoned children outlive the tool call that started them, not the user's stop: each gets its own cancel, whatever
     // state the root turn is in
@@ -1190,13 +1196,7 @@ pub(crate) fn agent_turn_mut(c: &mut Core, idx: usize, started_at: i64) -> Optio
   }
 }
 
-/// Fields `u` reports replace the ones `into` holds; the rest stay
-pub(crate) fn merge_usage(into: &mut TurnUsage, u: TurnUsage) {
-  macro_rules! take {
-    ($($f:ident),*) => { $( if u.$f.is_some() { into.$f = u.$f; } )* };
-  }
-  take!(input, output, cached_read, cached_write, reasoning, total, model_calls, decode_ms, model, request_id, context);
-}
+pub(crate) use crate::acp::transcript::merge_usage;
 
 /// First line of the text, or what was attached when there is no text
 pub(crate) fn summarize_prompt(text: &str, attachments: &[Attachment]) -> String {

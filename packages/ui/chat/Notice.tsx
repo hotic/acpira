@@ -11,7 +11,7 @@ import { CopyDetail, DOCK_BUTTON, DockCard } from './Alert';
 import { t, tOr } from '../i18n';
 import { planName } from '../ui/AccountLabel';
 import { KeyBox } from '../ui/KeyBox';
-import { NODEJS_DOWNLOAD_URL, NodeInstallDialog } from '../settings/NodeInstallDialog';
+import { NODEJS_DOWNLOAD_URL, NodeInstallDialog } from '../chrome/NodeInstallDialog';
 
 // ACP sign-in methods that only read a key from the CLI's own environment (droid's FACTORY_API_KEY), with nowhere to
 // type one: where the account layer takes a pasted key (AgentInfo.accountKeys), that way stands in for them

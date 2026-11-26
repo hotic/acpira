@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use acpira_shared::subagents::{SIDEKICK_ID, SubagentDuty, SubagentHarness, SubagentPersona, SubagentState};
 
 use crate::acp::session::Core;
-use crate::relay::roster::Roster;
+use crate::relay_roster::Roster;
 
 /// The thread's display: persona name and CLI
 pub(super) fn who(persona: &SubagentPersona) -> String {

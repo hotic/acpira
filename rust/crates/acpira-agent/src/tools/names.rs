@@ -3,7 +3,7 @@
 //! `turn/calls.rs`), anything else gets an error that lists the real names, so a turn never ends silently on a misspelt call
 
 use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
-use crate::goal::{CREATE as CREATE_GOAL, GET as GET_GOAL, UPDATE as UPDATE_GOAL};
+use crate::defs::{GOAL_CREATE as CREATE_GOAL, GOAL_GET as GET_GOAL, GOAL_UPDATE as UPDATE_GOAL};
 
 pub const ALL: [&str; 19] =
   [READ, WRITE, EDIT, BASH, JOB, GREP, GLOB, LIST, TODO, SKILL, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, HISTORY_GREP, HISTORY_LIST, GET_GOAL, CREATE_GOAL, UPDATE_GOAL];
@@ -99,6 +99,26 @@ pub fn resolve<'a>(name: &str, tools: &[&'a str]) -> Resolved<'a> {
     [one] => Resolved::Corrected(one),
     [] => Resolved::Unknown(format!("Unknown tool \"{name}\". Available tools: {}.", available())),
     _ => Resolved::Unknown(format!("The tool name \"{name}\" is ambiguous (it could be {}). Call one of: {}.", hits.join(" or "), available())),
+  }
+}
+
+/// The tool a model-given name stands for, for display before the call is prepared
+pub(crate) fn shown_name<'a>(name: &'a str, tools: &[&'a str]) -> &'a str {
+  match resolve(name, tools) {
+    Resolved::Exact(n) | Resolved::Corrected(n) => n,
+    Resolved::Unknown(_) => name,
+  }
+}
+
+/// ACP ToolKind for a tool name, before its arguments are known
+pub(crate) fn kind_of(name: &str, tools: &[&str]) -> &'static str {
+  match shown_name(name, tools) {
+    READ | LIST | SKILL => "read",
+    WRITE | EDIT => "edit",
+    BASH | JOB => "execute",
+    GREP | GLOB => "search",
+    EXIT_PLAN => "switch_mode",
+    _ => "other",
   }
 }
 

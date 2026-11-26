@@ -9,7 +9,7 @@ use super::{
   Dialect, ORPHAN_MAX_IDS, ORPHAN_MAX_UPDATES, RouteCtx, SubagentTree, resumed_task, s, seal_launch_receipt, seal_node, state_name, terminal,
   tool_count,
 };
-use crate::acp::session::failure::failure_of;
+use crate::acp::transcript::failure::failure_of;
 use crate::acp::transcript::normalize::{apply_session_failure, apply_update};
 use crate::acp::transport::wire::SubagentLifecycle;
 

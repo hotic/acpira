@@ -4,9 +4,10 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use super::calls::{calls, changed_files, state};
-use super::history::{transcript_with_starts, user_words};
-use super::size::{one_line, preview, preview_lines, tokens};
 use super::{LONG_USER_TOKENS, Shown, Status};
+use crate::chunk_data::{one_line, preview, preview_lines, tokens};
+use crate::chunk_history::transcript_with_starts;
+use crate::defs::user_words;
 use crate::llm::Item;
 
 /// A completed chunk ends on a reply without tool calls

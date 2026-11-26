@@ -29,8 +29,7 @@ use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::process::{AgentProcess, ClientHandlers};
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::handoff::{Pack, PackFile, Recipe, Scope};
-use crate::relay::MAX_RUNNING;
-use crate::relay::wire::HubReply;
+use crate::relay_wire::{HubReply, MAX_RUNNING};
 
 mod calls;
 mod controls;
@@ -103,8 +102,10 @@ pub(crate) struct RelayProc {
   start_mode: Option<String>,
   /// The mode the previous round ran in (None = not confirmed: the next round applies it again)
   mode: Option<RelayMode>,
-  /// The persona's model / effort / Fast as last applied: a persona edited since gets them applied again
-  applied: (Option<String>, Option<String>, Option<bool>),
+  /// The persona's model / effort / speed tier as last applied: a persona edited since gets them applied again
+  applied: (Option<String>, Option<String>, Option<String>),
+  /// Whether this child process has started a prompt yet (false while `session/new` or `session/resume` flushes notices)
+  pub(super) turn_seen: bool,
 }
 
 /// Per-session relay state (in `Core`)
@@ -112,6 +113,8 @@ pub(crate) struct Relays {
   pub procs: HashMap<String, RelayProc>,
   /// Rounds in flight, by thread: the call waiting on one watches its end
   pub rounds: HashMap<String, watch::Receiver<RoundEnd>>,
+  /// Threads started internally by Turn-End Gate diagnosis: excluded from `relay_background` so the gate never defers itself
+  pub(crate) gate_internal_threads: HashSet<String>,
   /// Per-node cancellation signals for running rounds (aborts connect, snapshot, handoff build and waits immediately)
   pub cancels: HashMap<String, Cancel>,
   /// Root `ask_agent` rows seen before their round existed
@@ -157,6 +160,12 @@ impl Relays {
     if let Some(o) = self.owing(node).filter(|o| matches!(o.state, Owed::Running | Owed::Unread)) {
       o.state = Owed::Read;
     }
+  }
+
+  /// Mark a gate-consumed round as read in the ledger so `relay_wake` never delivers it a second time
+  #[allow(dead_code, reason = "defense-in-depth helper for future CLI-relay gate diagnosis")]
+  pub(crate) fn mark_gate_read(&mut self, node: &str) {
+    self.read(node);
   }
 
   /// Rounds whose results nobody will want: the user's stop, an edit removing their turn
@@ -218,6 +227,7 @@ impl Default for Relays {
     Relays {
       procs: HashMap::new(),
       rounds: HashMap::new(),
+      gate_internal_threads: HashSet::new(),
       cancels: HashMap::new(),
       calls: vec![],
       rows: HashSet::new(),
@@ -283,9 +293,7 @@ impl RelayHandlers {
     }
     v
   }
-}
 
-impl ClientHandlers for RelayHandlers {
   fn on_remote_tool(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
     let s = self.session.upgrade();
     let thread = self.thread.clone();
@@ -302,12 +310,31 @@ impl ClientHandlers for RelayHandlers {
     })
   }
 
+  fn on_grok_question(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    let s = self.session.upgrade();
+    let req = self.stamp(req);
+    Box::pin(async move {
+      match s {
+        Some(s) => Ok(s.on_grok_question(req, cancel).await),
+        None => Ok(json!({ "outcome": "skip_interview" })),
+      }
+    })
+  }
+}
+
+impl ClientHandlers for RelayHandlers {
   fn on_update(&self, params: Value) {
     if self.quiet.load(Ordering::Relaxed) {
       return;
     }
     if let Some(s) = self.session.upgrade() {
       s.on_update(self.stamp(params));
+    }
+  }
+
+  fn on_custom_notification(&self, method: &str, params: Value) {
+    if let Some(crate::acp::vendors::dispatch::CustomNotification::Update(update)) = crate::acp::vendors::dispatch::decode_notification(method, params) {
+      self.on_update(update);
     }
   }
 
@@ -333,15 +360,20 @@ impl ClientHandlers for RelayHandlers {
     })
   }
 
-  fn on_grok_question(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
-    let s = self.session.upgrade();
-    let req = self.stamp(req);
-    Box::pin(async move {
-      match s {
-        Some(s) => Ok(s.on_grok_question(req, cancel).await),
-        None => Ok(json!({ "outcome": "skip_interview" })),
+  fn on_custom_request(&self, method: String, params: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    use crate::acp::vendors::dispatch::{self, CustomRequest};
+    use crate::acp::vendors::grok;
+    match dispatch::decode_request(&method, params) {
+      Ok(CustomRequest::RemoteTool(req)) => self.on_remote_tool(req, cancel),
+      Ok(CustomRequest::PluginHooks) => Box::pin(async { Ok(json!({ "hooks": [] })) }),
+      Ok(CustomRequest::PluginHook(_)) => Box::pin(async { Err(RpcError::method_not_found(acpira_agent::plugin_hooks::HOOK)) }),
+      Ok(CustomRequest::GrokQuestion(req)) => self.on_grok_question(req, cancel),
+      Ok(CustomRequest::GrokExitPlan(req)) => {
+        let perm = grok::exit_plan_permission(&req);
+        Box::pin(grok::approve_plan_answer(self.on_permission(perm, cancel)))
       }
-    })
+      Err(e) => Box::pin(async move { Err(e) }),
+    }
   }
 
   fn on_stderr(&self, line: &str) {

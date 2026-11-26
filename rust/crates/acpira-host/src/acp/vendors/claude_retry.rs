@@ -16,9 +16,18 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::acp::transcript::normalize::{RetryReport, RetryText};
 use crate::acp::vendors::claude_workflow_log::project_dir_name;
 use crate::acp::vendors::logged_failure::read_tail;
+
+/// Self-contained parsed summary of a Claude `api_retry` SDK frame (converted to `RetryReport` by the session layer).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeRetryInfo {
+  pub attempt: Option<u32>,
+  pub max: Option<u32>,
+  pub text: String,
+  pub reconnect: bool,
+  pub wait_ms: Option<u64>,
+}
 
 /// The log line and the SDK frame are written independently: give the line a moment to land
 const POLL_ATTEMPTS: u32 = 10;
@@ -32,7 +41,7 @@ fn u32_of(v: &Value, k: &str) -> Option<u32> {
 
 /// A raw `api_retry` frame (`_claude/sdkMessage` params) → the attempt it reports. None for any other frame and for
 /// authentication retries: the first is the CLI's credential refresh, and `claude_auth.rs` ends the turn on the second
-pub fn report_of(params: &Value) -> Option<RetryReport> {
+pub fn report_of(params: &Value) -> Option<ClaudeRetryInfo> {
   let msg = params.get("message")?;
   if msg.get("type").and_then(Value::as_str) != Some("system") || msg.get("subtype").and_then(Value::as_str) != Some("api_retry") {
     return None;
@@ -50,11 +59,10 @@ pub fn report_of(params: &Value) -> Option<RetryReport> {
     let secs = |k: &str| n.get(k).and_then(Value::as_u64).map(|ms| ms.div_ceil(1000)).unwrap_or(0);
     text = format!("no response after {}s; waiting up to {}s", secs("waited_ms"), secs("retry_wait_ms"));
   }
-  Some(RetryReport {
+  Some(ClaudeRetryInfo {
     attempt: u32_of(msg, "attempt"),
     max: u32_of(msg, "max_retries"),
     text,
-    quality: RetryText::Summary,
     reconnect: status.is_none(),
     wait_ms: msg.get("retry_delay_ms").and_then(Value::as_u64),
   })

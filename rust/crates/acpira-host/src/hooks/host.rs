@@ -3,18 +3,19 @@
 //! same code there, so a hook script, its git snapshots and its context files are the host's own (docs/dev/remote.md)
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 
 use super::run::{PromptVerdict, Verdict, prompt_verdict_of, verdict_of};
 use super::snapshot::Snapshot;
 use super::{Hook, HooksConfig};
-use crate::remote::client::RemoteClient;
+use crate::remote_seam::RemoteClientPort;
 
 #[derive(Clone)]
 pub enum HookHost {
   Local,
-  Remote(RemoteClient),
+  Remote(Arc<dyn RemoteClientPort>),
 }
 
 impl HookHost {
@@ -22,7 +23,7 @@ impl HookHost {
   pub async fn load(&self, cwd: &str) -> Option<Result<HooksConfig, String>> {
     match self {
       HookHost::Local => super::load(cwd),
-      HookHost::Remote(client) => match client.call("hooksLoad", json!({ "cwd": cwd })).await {
+      HookHost::Remote(client) => match client.call("hooksLoad".into(), json!({ "cwd": cwd })).await {
         Err(e) => Some(Err(format!("the hooks file on the host could not be read: {e}"))),
         Ok(r) => {
           if let Some(e) = r.value.get("error").and_then(Value::as_str) {
@@ -40,7 +41,7 @@ impl HookHost {
   pub async fn run(&self, hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Verdict {
     match self {
       HookHost::Local => super::run::run(hook, root, payload, env).await,
-      HookHost::Remote(client) => match remote_output(client, hook, root, payload, env).await {
+      HookHost::Remote(client) => match remote_output(client.as_ref(), hook, root, payload, env).await {
         Ok((code, out, err)) => verdict_of(code, &out, &err),
         Err(e) => Verdict::Broken(e),
       },
@@ -50,7 +51,7 @@ impl HookHost {
   pub async fn run_prompt(&self, hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> PromptVerdict {
     match self {
       HookHost::Local => super::run::run_prompt(hook, root, payload, env).await,
-      HookHost::Remote(client) => match remote_output(client, hook, root, payload, env).await {
+      HookHost::Remote(client) => match remote_output(client.as_ref(), hook, root, payload, env).await {
         Ok((code, out, err)) => prompt_verdict_of(code, &out, &err),
         Err(e) => PromptVerdict::Broken(e),
       },
@@ -62,7 +63,7 @@ impl HookHost {
   pub async fn snapshot(&self, watch: &[PathBuf]) -> Snapshot {
     match self {
       HookHost::Local => Snapshot::take(watch).await,
-      HookHost::Remote(client) => match client.call("snapshot", json!({ "watch": watch })).await {
+      HookHost::Remote(client) => match client.call("snapshot".into(), json!({ "watch": watch })).await {
         Ok(r) => Snapshot::from_json(&r.value),
         Err(_) => Snapshot::default(),
       },
@@ -77,7 +78,7 @@ impl HookHost {
         let changed = after.changed_since(before).await;
         (after, changed)
       }
-      HookHost::Remote(client) => match client.call("snapshot", json!({ "watch": watch, "before": before.to_json() })).await {
+      HookHost::Remote(client) => match client.call("snapshot".into(), json!({ "watch": watch, "before": before.to_json() })).await {
         Ok(r) => {
           let changed = r.value.get("changed").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(PathBuf::from).collect();
           (Snapshot::from_json(&r.value), changed)
@@ -90,7 +91,7 @@ impl HookHost {
   pub async fn in_work_tree(&self, dir: &Path) -> bool {
     match self {
       HookHost::Local => super::snapshot::in_work_tree(dir).await,
-      HookHost::Remote(client) => client.call("snapshot", json!({ "probe": dir })).await.is_ok_and(|r| r.value.get("workTree").and_then(Value::as_bool) == Some(true)),
+      HookHost::Remote(client) => client.call("snapshot".into(), json!({ "probe": dir })).await.is_ok_and(|r| r.value.get("workTree").and_then(Value::as_bool) == Some(true)),
     }
   }
 
@@ -99,17 +100,17 @@ impl HookHost {
     match self {
       HookHost::Local => tokio::fs::read_to_string(path).await.ok(),
       HookHost::Remote(client) => {
-        let r = client.call("read", json!({ "path": path })).await.ok()?;
+        let r = client.call("read".into(), json!({ "path": path })).await.ok()?;
         String::from_utf8(r.data).ok()
       }
     }
   }
 }
 
-async fn remote_output(client: &RemoteClient, hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Result<(Option<i32>, String, String), String> {
+async fn remote_output(client: &dyn RemoteClientPort, hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Result<(Option<i32>, String, String), String> {
   let env: serde_json::Map<String, Value> = env.iter().map(|(k, v)| ((*k).to_owned(), json!(v))).collect();
   let a = json!({ "run": hook.run, "timeoutMs": hook.timeout.as_millis() as u64, "root": root, "payload": payload, "env": env });
-  let r = client.call("hook", a).await.map_err(|e| format!("`{}` could not run on the host: {e}", hook.run))?;
+  let r = client.call("hook".into(), a).await.map_err(|e| format!("`{}` could not run on the host: {e}", hook.run))?;
   if let Some(e) = r.value.get("broken").and_then(Value::as_str) {
     return Err(e.to_owned());
   }

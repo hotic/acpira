@@ -361,7 +361,7 @@ async fn a_plugin_reads_and_acts_on_sessions_through_the_engine_but_cannot_appro
   let m = Mgr::new(dir.path(), opts);
   let toasts = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
   let seen = toasts.clone();
-  rt.enable(Some(acpira_host::plugins::host_api::host_call(&m.m, Arc::new(move |level: &str, text: &str| seen.lock().unwrap().push(format!("{level}: {text}"))), dir.path().to_path_buf())));
+  rt.enable(Some(acpira_host::session_manager::plugin_api::host_call(&m.m, Arc::new(move |level: &str, text: &str| seen.lock().unwrap().push(format!("{level}: {text}"))), dir.path().to_path_buf())));
   m.init().await;
   m.new_session(None).await;
   m.handle(json!({ "type": "send", "text": "hello" })).await;

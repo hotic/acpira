@@ -266,7 +266,7 @@ async fn health_distinguishes_auth_required_from_a_failed_handshake() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_binary_that_cannot_exec_is_spawn_failed_and_a_failed_probe_keeps_the_last_controls() {
-  use acpira_host::acp::agents::probe_controls::probe_agent_controls;
+  use acpira_host::acp::probe::probe_controls::probe_agent_controls;
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
   // A path that resolves (execute bit, regular file) but cannot exec — no interpreter behind the shebang

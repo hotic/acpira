@@ -191,6 +191,41 @@ impl Engine {
   pub fn runtime(&self) -> Option<Arc<HostRuntime>> {
     self.inner.lock().runtime.clone()
   }
+}
+
+impl crate::machine_engine::launcher::EngineWatch for Engine {
+  fn draining(&self) -> bool {
+    Engine::draining(self)
+  }
+
+  fn busy_or_in_flight(&self) -> bool {
+    self.busy() || self.runtime().is_some_and(|rt| rt.manager.in_flight())
+  }
+
+  fn retire(&self, reason: &str) {
+    Engine::retire(self, reason);
+  }
+}
+
+impl crate::devices::host::GatewayEngine for Engine {
+  fn draining(&self) -> bool {
+    Engine::draining(self)
+  }
+
+  fn set_hosting(&self, on: bool) {
+    Engine::set_hosting(self, on);
+  }
+
+  fn link(self: Arc<Self>) -> (mpsc::UnboundedSender<String>, mpsc::UnboundedReceiver<String>) {
+    Engine::link(&self)
+  }
+
+  fn connections(&self) -> Option<Arc<crate::remote::connections::Connections>> {
+    self.runtime().map(|rt| rt.connections.clone())
+  }
+}
+
+impl Engine {
 
   /// A persistent engine that wedges logs what is stuck and exits, so the next connection of a phone or window starts a
   /// fresh engine and the leases it held come free. A thread of its own: a wedged engine's tasks may never run again,
@@ -530,7 +565,7 @@ impl Engine {
       return false;
     }
     let another_session = if hello.client.is_peer() {
-      self.ssh_connection.is_some() && crate::devices::launch_agent::can_use_gui(&self.opts.home).await
+      self.ssh_connection.is_some() && crate::platform::launchd::can_use_gui(&self.opts.home).await
     } else {
       other_login(self.ssh_connection.as_deref(), hello.client.ssh_connection.as_deref())
     };

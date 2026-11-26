@@ -14,8 +14,8 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 
 use crate::acp::agents::installer::{Cancel, Log};
+use crate::http::archive::{DownloadCancelled, download_cancellable, extract_zip, safe_entry_path};
 use crate::platform::command::Os;
-use crate::remote::archive::{DownloadCancelled, download_cancellable, extract_zip, safe_entry_path};
 
 /// Default base URL for official Node.js release archives; overridable via `ACPIRA_NODE_DIST_URL`
 const DEFAULT_DIST_URL: &str = "https://nodejs.org/dist";
@@ -60,66 +60,7 @@ impl PlatformTarget {
   }
 }
 
-/// Where Acpira keeps its private portable Node.js runtime (`<ACPIRA_HOME>/runtime/node`)
-pub fn managed_root() -> PathBuf {
-  crate::store::data_dir::acpira_home().join("runtime").join("node")
-}
-
-/// The directory inside `root` holding `node` and `npm`
-pub fn bin_dir_in(root: &Path, os: Os) -> PathBuf {
-  match os {
-    Os::Windows => root.to_path_buf(),
-    Os::Posix => root.join("bin"),
-  }
-}
-
-pub fn node_exe_in(root: &Path, os: Os) -> PathBuf {
-  let bin = bin_dir_in(root, os);
-  match os {
-    Os::Windows => bin.join("node.exe"),
-    Os::Posix => bin.join("node"),
-  }
-}
-
-pub fn npm_exe_in(root: &Path, os: Os) -> PathBuf {
-  let bin = bin_dir_in(root, os);
-  match os {
-    Os::Windows => bin.join("npm.cmd"),
-    Os::Posix => bin.join("npm"),
-  }
-}
-
-/// The private Node.js bin directory when installed and valid on disk; None otherwise
-pub fn managed_bin_dir() -> Option<PathBuf> {
-  let root = managed_root();
-  let os = Os::current();
-  node_exe_in(&root, os).is_file().then(|| bin_dir_in(&root, os))
-}
-
-/// Append `managed` at the end of `path` (lowest priority, deduplicated) so system Node.js always wins when present
-pub fn append_managed_bin(path: Option<String>, managed: Option<&Path>, os: Os) -> Option<String> {
-  let Some(dir) = managed else { return path };
-  let dir_str = dir.to_string_lossy();
-  let sep = if os == Os::Windows { ';' } else { ':' };
-  let same = |a: &str, b: &str| {
-    if os == Os::Windows {
-      let norm = |s: &str| s.trim_matches('"').replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase();
-      norm(a) == norm(b)
-    } else {
-      a.trim_end_matches('/') == b.trim_end_matches('/')
-    }
-  };
-  match path {
-    Some(existing) if !existing.is_empty() => {
-      if existing.split(sep).any(|entry| same(entry, &dir_str)) {
-        Some(existing)
-      } else {
-        Some(format!("{existing}{sep}{dir_str}"))
-      }
-    }
-    _ => Some(dir_str.into_owned()),
-  }
-}
+pub use crate::acp::login_path::{append_managed_bin, bin_dir_in, managed_bin_dir, managed_root, node_exe_in, npm_exe_in};
 
 #[derive(Deserialize)]
 struct DistRelease {

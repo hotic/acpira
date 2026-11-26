@@ -2,7 +2,7 @@ import { CODE_FONT_SIZE, DESKTOP_LAYOUTS, DIFF_MARKERS, PANEL_SCOPES, SESSION_LI
 import type { Appearance } from '../appearance';
 import { t } from '../i18n';
 import { useDesktop } from '../desktop';
-import { Field, MultiSelect, NumberField, Section, Select, Switch } from './controls';
+import { Field, MultiSelect, NumberField, Section, Select, Switch } from '../chrome/controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The appearance axes surfaced as user settings: motion (an accessibility preference), the folded projects' agent marks

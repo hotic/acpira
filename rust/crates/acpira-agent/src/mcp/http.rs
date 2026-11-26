@@ -50,7 +50,7 @@ impl Http {
       // A tool call may stream for as long as it runs; the caller bounds the whole call
       .timeout_recv_body(None)
       .user_agent(format!("acpira/{}", acpira_shared::version::VERSION));
-    if crate::tools::web::private_name(url) {
+    if crate::defs::private_name(url) {
       config = config.proxy(None);
     }
     Http {

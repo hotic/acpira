@@ -1,6 +1,6 @@
 // First-class subagent nodes shared by host and webview: one summary per delegated child, whatever the wire dialect
 
-import type { AgentId, PermissionBlock, QuestionBlock, ToolCallBlock, Turn } from './transcript';
+import type { AgentId, PermissionBlock, QuestionBlock, ToolCallBlock, Turn } from './transcriptCore';
 
 export type SubagentState = 'running' | 'completed' | 'failed' | 'cancelled' | 'disconnected';
 

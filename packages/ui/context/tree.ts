@@ -1,7 +1,7 @@
 import type { ContextCategory, ContextNode, ContextReport } from '@acpira/shared/context';
 import type { MsgKey } from '@acpira/shared/i18n/core';
 import { t } from '../i18n';
-import { shortPath } from '../settings/paths';
+import { shortPath } from '../chrome/paths';
 import { categoryLabel } from './categories';
 
 // The report's tree (ContextReport.tsx): the root, the categories, then the agent's nodes (a turn's parts, a server's

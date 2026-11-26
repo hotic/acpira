@@ -10,7 +10,7 @@ import { App, bootReady } from './App';
 import { BrowserPanel } from './browser/BrowserPanel';
 import { fixSpacedPinyinCommits } from './ui/ime';
 import { fixStaleSelection } from './ui/selection';
-import { watchWindowFocus } from './plugins/motion';
+import { watchWindowFocus } from './chrome/motion';
 
 // Register custom properties before any stylesheet transition runs (avoids Chromium < 138 CVE-2025-6555 UAF)
 registerCssProperties();

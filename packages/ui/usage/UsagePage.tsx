@@ -8,7 +8,7 @@ import { Collapsible } from '../ui/Collapsible';
 import { cn } from '../ui/cn';
 import { ModelMark } from '../chat/ModelMark';
 import { AgentMark } from '../chat/AgentMark';
-import { ListHead, rowRules, Segmented } from '../settings/controls';
+import { ListHead, rowRules, Segmented } from '../chrome/controls';
 import { projectName } from '../chat/SessionList';
 import { parseRemoteFolder } from '@acpira/shared/remote';
 import { RemoteFolderIcon } from '../remote/RemoteFolderIcon';

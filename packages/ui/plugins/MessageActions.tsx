@@ -4,7 +4,7 @@ import type { PluginSlot } from '@acpira/shared/plugins';
 import { pushShellToast } from '../desktop';
 import { t } from '../i18n';
 import { callPluginMethod, usePluginPieces } from '../pluginSlots';
-import { Prose } from '../chat/Prose';
+import { Prose } from '../markdown/Prose';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { Shimmer } from '../ui/Shimmer';

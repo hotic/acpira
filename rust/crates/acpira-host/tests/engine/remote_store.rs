@@ -143,7 +143,7 @@ async fn built_in_logs_sync_and_taken_over_histories_preserve_diverged_local_wor
   connections.ensure("example-host", Duration::from_secs(30)).await.unwrap();
   let root = lab.path().join("continuity");
   let store = TranscriptStore::new(root.join("sessions"), Arc::new(|_: &str| {}), None);
-  store.set_agent_home(root.clone());
+  store.set_purge_hook(acpira_host::runtime::builtin_purge_hook(root.clone(), Arc::new(|_: &str| {})));
   let mirror = HostMirror::with_batch(connections.clone(), store.clone(), &root, Arc::new(|_: &str| {}), Duration::from_millis(50));
   mirror.start();
   let host = TranscriptStore::new(host_sessions(&lab), Arc::new(|_: &str| {}), None);

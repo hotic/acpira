@@ -4,8 +4,8 @@ import type { ToolCallBlock } from '@acpira/shared/transcript';
 import { useScrollFade } from '../ui/useScrollFade';
 import { scrollbarRoom } from '../ui/scrollbarRoom';
 import { cn } from '../ui/cn';
-import { OutputCopy } from './OutputCopy';
-import { Prose } from './Prose';
+import { OutputCopy } from '../markdown/OutputCopy';
+import { Prose } from '../markdown/Prose';
 import { looksLikeMarkdown } from './markdownGuess';
 import { t } from '../i18n';
 

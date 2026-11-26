@@ -199,58 +199,7 @@ pub fn slot_box(slot: &str) -> (bool, bool) {
 /// Largest interface document; it travels to every page
 pub const UI_HTML_MAX_BYTES: u64 = 256 * 1024;
 
-/// `contributes.commands[]`: `/name` in the composer of every session. `prompt` is sent in its place with `$ARGUMENTS`
-/// replaced by what follows the name (appended when the template has no `$ARGUMENTS`); without one the runtime's
-/// `command` hook answers. With `button` it is also a button of that label in the composer's toolbar, run with the draft
-/// as its arguments: sent like `/name <draft>`, or with `draft` its text put in place of the draft for the user to send
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CommandDef {
-  pub name: String,
-  #[serde(default)]
-  pub description: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub hint: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub prompt: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub button: Option<String>,
-  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-  pub draft: bool,
-  /// The button's glyph, one of `BUTTON_ICONS`; absent: a bolt, or a wand for a `draft` command
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub icon: Option<String>,
-  /// The button's look, one of `BUTTON_LOOKS`; absent: `brand`
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub look: Option<String>,
-  /// Whether the button takes the draft as its arguments: `draft` or `none`. Absent: it does when `draft` is set or the
-  /// template has `$ARGUMENTS`, so a fixed prompt never sweeps up what the user is still writing
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub input: Option<String>,
-  /// The button opens a menu of these instead of running the command, like the mode chip: picks are kept per session
-  /// by the engine and handed to the plugin's hooks as `menus`; the chip shows the first group's pick
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub menu: Vec<MenuItemDef>,
-}
-
-/// One row of a command button's menu (`MENU_KINDS`): `radio` is one choice of its `group`, `toggle` a switch of its
-/// own, `action` calls the runtime's `menu` hook and keeps nothing, `separator` a rule
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MenuItemDef {
-  #[serde(default)]
-  pub id: String,
-  pub kind: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub group: Option<String>,
-  #[serde(default)]
-  pub label: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub description: Option<String>,
-  /// The group's choice, or a toggle that starts on, until the user picks otherwise
-  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-  pub default: bool,
-}
+pub use crate::acp::session::ext::{CommandDef, MenuItemDef};
 
 pub const MENU_KINDS: &[&str] = &["radio", "toggle", "action", "separator"];
 /// Most rows a menu may have, separators included
@@ -258,57 +207,6 @@ pub const MENU_MAX_ITEMS: usize = 16;
 /// Longest row label and description, in characters
 pub const MENU_LABEL_MAX_CHARS: usize = 24;
 pub const MENU_DESCRIPTION_MAX_CHARS: usize = 48;
-
-impl CommandDef {
-  /// `input` as it applies (see there)
-  pub fn takes_draft(&self) -> bool {
-    match self.input.as_deref() {
-      Some(i) => i == "draft",
-      None => self.draft || self.prompt.as_deref().is_some_and(|p| p.contains("$ARGUMENTS")),
-    }
-  }
-
-  /// The menu's state in a session: each group's choice (by its name) and each toggle (by its id), from what the user
-  /// picked there where the manifest still has it, else the defaults. A group without a default starts at its first
-  pub fn menu_picks(&self, stored: Option<&Map<String, Value>>) -> Map<String, Value> {
-    let mut out = Map::new();
-    for item in &self.menu {
-      match (item.kind.as_str(), item.group.as_deref()) {
-        ("radio", Some(group)) => {
-          let kept = stored.and_then(|s| s.get(group)).and_then(Value::as_str).filter(|id| self.menu.iter().any(|i| i.kind == "radio" && i.group.as_deref() == Some(group) && i.id == *id));
-          match kept {
-            Some(id) => {
-              out.insert(group.to_owned(), Value::from(id));
-            }
-            None if item.default || !out.contains_key(group) => {
-              out.insert(group.to_owned(), Value::from(item.id.as_str()));
-            }
-            None => {}
-          }
-        }
-        ("toggle", _) => {
-          let on = stored.and_then(|s| s.get(&item.id)).and_then(Value::as_bool).unwrap_or(item.default);
-          out.insert(item.id.clone(), Value::from(on));
-        }
-        _ => {}
-      }
-    }
-    out
-  }
-
-  /// The picks after the user chose `id`: a radio becomes its group's choice, a toggle flips; None for an action or an
-  /// id the menu lacks
-  pub fn menu_pick(&self, current: &Map<String, Value>, id: &str) -> Option<Map<String, Value>> {
-    let item = self.menu.iter().find(|i| i.id == id && i.kind != "separator")?;
-    let mut next = current.clone();
-    match (item.kind.as_str(), item.group.as_deref()) {
-      ("radio", Some(group)) => next.insert(group.to_owned(), Value::from(id)),
-      ("toggle", _) => next.insert(id.to_owned(), Value::from(!current.get(id).and_then(Value::as_bool).unwrap_or(item.default))),
-      _ => return None,
-    };
-    Some(next)
-  }
-}
 
 /// Largest stylesheet a theme's `css` or a `style` may be: a longer one is refused by the check and cut where served
 pub const CSS_MAX_BYTES: u64 = 64 * 1024;

@@ -14,7 +14,7 @@
 //! picks which free one leads, `PARALLEL_API_KEY` is sent when set. Queries leave the machine, results come back as
 //! markdown
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
@@ -22,6 +22,8 @@ use serde_json::{Value, json};
 use super::html;
 use super::{Action, Ctx, Output, budgeted, num_arg, str_arg, text_content};
 use crate::budget::Keep;
+use crate::defs::{host_of, private_ip, split_url as split};
+pub use crate::defs::{DeepSeekSearch, SearchSetup, private_name, tools_search_url};
 use crate::llm::ToolSpec;
 
 /// The largest body read (OpenCode's limit)
@@ -44,7 +46,6 @@ const JINA_URL: &str = "https://s.jina.ai/";
 /// Jina answers in 1.5 to 2.5 s; a stuck call gives way to the free services rather than taking the whole budget
 const JINA_TIMEOUT: Duration = Duration::from_secs(10);
 const EXA_URL: &str = "https://mcp.exa.ai/mcp";
-const DEEPSEEK_URL: &str = "https://api.deepseek.com";
 /// DeepSeek answers in under a second; a gateway merging it with Jina in about two
 const DEEPSEEK_TIMEOUT: Duration = Duration::from_secs(10);
 /// Characters of a DeepSeek result's summary kept (its summaries run to several thousand)
@@ -127,31 +128,6 @@ pub fn prepare_search(args: &Value) -> Result<Action, String> {
 
 // URLs
 
-/// `scheme://authority` and the rest (path, query, fragment); None without `://` or a host
-fn split(url: &str) -> Option<(&str, &str, &str)> {
-  let (scheme, after) = url.split_once("://")?;
-  if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c)) {
-    return None;
-  }
-  let end = after.find(['/', '?', '#']).unwrap_or(after.len());
-  let (authority, rest) = after.split_at_checked(end)?;
-  (!host_of(authority).is_empty()).then_some((scheme, authority, rest))
-}
-
-/// The host of an authority, lowercase, without user info, port or IPv6 brackets
-fn host_of(authority: &str) -> String {
-  let a = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-  let host = if let Some(v6) = a.strip_prefix('[') {
-    v6.split(']').next().unwrap_or("")
-  } else {
-    match a.rsplit_once(':') {
-      Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
-      _ => a,
-    }
-  };
-  host.trim_end_matches('.').to_ascii_lowercase()
-}
-
 /// The port an authority names, else the scheme's
 fn port_of(scheme: &str, authority: &str) -> u16 {
   let a = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
@@ -225,52 +201,6 @@ fn remove_dots(reference: &str) -> String {
 }
 
 // Private addresses
-
-/// Whether the URL names this machine or a private network by itself: `localhost`, a single-label or `.local` /
-/// `.internal` / `.lan` name, or an address in a private, loopback, link-local or shared range. A name that only
-/// resolves to one is caught when the call runs (`resolves_private`)
-pub fn private_name(url: &str) -> bool {
-  let Some((_, authority, _)) = split(url) else { return false };
-  let host = host_of(authority);
-  if let Ok(ip) = host.parse::<IpAddr>() {
-    return private_ip(ip);
-  }
-  // Numeric forms getaddrinfo also takes (`2130706433`, `0x7f.1`): never treated as public
-  if host.split('.').next_back().is_some_and(|l| l.chars().all(|c| c.is_ascii_digit()) || l.starts_with("0x")) {
-    return true;
-  }
-  !host.contains('.')
-    || ["localhost", "local", "internal", "lan", "home", "corp", "intranet", "home.arpa"].iter().any(|s| host.ends_with(&format!(".{s}")))
-}
-
-fn private_ip(ip: IpAddr) -> bool {
-  match ip {
-    IpAddr::V4(v4) => private_v4(v4),
-    IpAddr::V6(v6) => {
-      if let Some(v4) = v6.to_ipv4_mapped() {
-        return private_v4(v4);
-      }
-      let first = v6.segments()[0];
-      v6.is_loopback()
-        || v6.is_unspecified()
-        // Unique local fc00::/7 and link-local fe80::/10
-        || (first & 0xfe00) == 0xfc00
-        || (first & 0xffc0) == 0xfe80
-        || v6 == Ipv6Addr::LOCALHOST
-    }
-  }
-}
-
-fn private_v4(v4: Ipv4Addr) -> bool {
-  let [a, b, ..] = v4.octets();
-  v4.is_loopback()
-    || v4.is_private()
-    || v4.is_link_local()
-    || v4.is_unspecified()
-    || v4.is_broadcast()
-    // Shared address space 100.64.0.0/10 (carrier NAT, Tailscale)
-    || (a == 100 && (64..128).contains(&b))
-}
 
 /// The first private address the URL's host resolves to (no lookup for a literal address)
 fn resolves_private(url: &str) -> Option<IpAddr> {
@@ -456,42 +386,6 @@ fn extension(mime: &str, url: &str) -> String {
 }
 
 // Search
-
-/// What the settings page set up for `websearch` (`Config::web_search`): the keyed backends, all absent when the
-/// default (free) backend is picked
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct SearchSetup {
-  pub jina_key: Option<String>,
-  pub deepseek: Option<DeepSeekSearch>,
-  /// DeepSeek was the pick, so it goes before Jina
-  pub deepseek_first: bool,
-}
-
-/// Where DeepSeek-shaped search goes: DeepSeek's own API, or a model source's address and key
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeepSeekSearch {
-  /// The full `…/v1/tools/search` endpoint
-  pub url: String,
-  pub key: String,
-}
-
-impl DeepSeekSearch {
-  /// DeepSeek's own API with the search key
-  pub fn official(key: String) -> Self {
-    DeepSeekSearch { url: tools_search_url(DEEPSEEK_URL), key }
-  }
-}
-
-/// The `/v1/tools/search` endpoint under an API root: `https://host/v1` and `https://host` both end up at
-/// `https://host/v1/tools/search`, and a full endpoint (`…/v1/chat/completions`) keeps its root
-pub fn tools_search_url(base: &str) -> String {
-  let base = base.trim().trim_end_matches('/');
-  let root = match base.find("/v1/") {
-    Some(i) => base.get(..i + 3).unwrap_or(base),
-    None => base,
-  };
-  if root.ends_with("/v1") { format!("{root}/tools/search") } else { format!("{root}/v1/tools/search") }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Provider {

@@ -14,6 +14,7 @@ pub mod claude_workflow;
 pub mod claude_workflow_log;
 pub mod claude_window;
 pub(crate) mod codex_notices;
+pub mod dispatch;
 pub(crate) mod droid_core;
 pub(crate) mod droid_retry;
 pub(crate) mod droid_usage;
@@ -34,6 +35,7 @@ pub enum Vendor {
   Antigravity,
   Claude,
   Codex,
+  Devin,
   Droid,
   Grok,
   Hermes,
@@ -74,6 +76,7 @@ impl Vendor {
       "antigravity" => Vendor::Antigravity,
       "claude" => Vendor::Claude,
       "codex" => Vendor::Codex,
+      "devin" => Vendor::Devin,
       "droid" => Vendor::Droid,
       "grok" => Vendor::Grok,
       "hermes" => Vendor::Hermes,
@@ -248,6 +251,28 @@ impl Vendor {
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
   pub fn plan_exit_in_tool_output(self) -> bool {
     self == Vendor::Kimi
+  }
+
+  /// `/compact` finishes in the background and reports completion as prose rather than structured `compaction_update` events.
+  pub fn manual_prose_compaction(self) -> bool {
+    matches!(self, Vendor::Devin | Vendor::Kimi)
+  }
+
+  /// Whether accumulated prose output from a background `/compact` indicates completion for this vendor.
+  pub fn compaction_prose_done(self, text: &str) -> bool {
+    use std::sync::LazyLock;
+    use regex::Regex;
+    static DEVIN_DONE: LazyLock<Regex> = LazyLock::new(|| {
+      acpira_shared::re::compile(r"Context compacted|Nothing to compact\.|(?:Force compaction|Compaction) failed:|Compaction cancel(?:ed|led)\.")
+    });
+    static KIMI_DONE: LazyLock<Regex> = LazyLock::new(|| {
+      acpira_shared::re::compile(r"Compaction completed\.|Compaction cancelled\.|Compaction is blocked by the current turn;|/compact failed:")
+    });
+    match self {
+      Vendor::Devin => DEVIN_DONE.is_match(text),
+      Vendor::Kimi => KIMI_DONE.is_match(text),
+      _ => false,
+    }
   }
 
   /// Tidy Claude's session controls at every boundary (probes, startup previews, live sessions, reopened records):

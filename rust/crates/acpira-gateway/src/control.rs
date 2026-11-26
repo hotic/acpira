@@ -38,7 +38,7 @@ impl std::error::Error for AlreadyRunning {}
 /// Bind the control channel. One that answers belongs to a running gateway: this one must not start
 pub async fn bind(endpoint: &Path) -> Result<Listener> {
   if let Some(dir) = endpoint.parent().filter(|_| cfg!(unix)) {
-    acpira_desktop::engine::private_dir(dir)?;
+    acpira_host_base::private_dir::private_dir_io(dir)?;
   }
   match Listener::bind(endpoint).await {
     Ok(l) => Ok(l),

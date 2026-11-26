@@ -9,11 +9,11 @@ import { QuietEntranceContext, Row } from '../../ui/Row';
 import { Shimmer } from '../../ui/Shimmer';
 import { AgentMessage, UserMessage } from '../Turns';
 import { Questions, type OnAnswer } from '../Questions';
-import { Prose } from '../Prose';
+import { Prose } from '../../markdown/Prose';
 import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
 import { FollowContext, useBottomFollow } from '../useBottomFollow';
-import { CommandStopContext, DiffSourceContext } from '../fileLinks';
+import { CommandStopContext, DiffSourceContext } from '../../markdown/fileLinks';
 import { receiptOnly, resumedAgent, subagentTitle } from './subagentState';
 import { macOS, useDesktop } from '../../desktop';
 
@@ -166,7 +166,6 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
                         turnIndex={ti}
                         last={ti === transcript.turns.length - 1}
                         settings={previousSettings(transcript.turns, ti)}
-                        lead="static"
                       />
                     )
                     : turn.auto ? null : (

@@ -1,7 +1,7 @@
 import { memo, useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { useAppearance } from '../appearance';
 import { advanceGlyphs, EMPTY_GLYPHS } from './streamGlyphs';
-import { STREAM_BACKLOG_MS, STREAM_DURATION_MS, STREAM_STAGGER_MS } from './streamMotion';
+import { STREAM_BACKLOG_MS, STREAM_DURATION_MS, STREAM_STAGGER_MS } from '../markdown/streamMotion';
 
 const whitespace = /^\s+$/u;
 

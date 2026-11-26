@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use acpira_desktop::json_file::{read_json, write_json_strict};
+use acpira_host_base::json_file::{read_json, write_json_strict};
 use acpira_shared::devices::Relays;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

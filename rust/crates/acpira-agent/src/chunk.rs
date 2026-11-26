@@ -24,40 +24,30 @@ use std::hash::{BuildHasher, Hasher};
 use std::path::Path;
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::acp::{Server, Session};
-use crate::compact::Reason;
-use crate::llm::{Item, Part};
+pub use crate::chunk_data::{Budget, Chunk, STRATEGY, Shown, Status, merge, render, tokens};
+use crate::chunk_data::{item_tokens, one_line};
+#[cfg(test)]
+use crate::chunk_data::{preview, select};
+pub use crate::chunk_history::{grep, list};
+use crate::compact_data::Reason;
+pub(crate) use crate::defs::user_words;
+use crate::llm::Item;
 
 mod calls;
 mod closed;
-mod history;
-mod size;
 mod work;
 
 use self::closed::{closed_content, status_of, user_blocks};
-pub use self::history::{grep, list};
-pub(crate) use self::history::{strip_notes, user_words};
-pub use self::size::tokens;
-use self::size::{item_tokens, one_line, preview};
 use self::work::work_state;
 
-/// The value of `ProvidersFile::compaction` that picks this strategy (absent or anything else is the summary)
-pub const STRATEGY: &str = "chunk";
-
-/// Newest chunks are shown whole up to this many tokens (OpenCode's `target_tokens` default)
-const TARGET_TOKENS: u64 = 20_000;
 /// A user message longer than this is shown as its start and end with a reference to the whole text
 const LONG_USER_TOKENS: u64 = 2_000;
-/// The archived requests' index as a whole
-const ARCHIVED_REQUESTS_TOKENS: u64 = 1_500;
 /// One archived request's line; the first one gets more, as it often states the session's constraints
 const REQUEST_TOKENS: u64 = 80;
 const FIRST_REQUEST_TOKENS: u64 = 240;
-/// History lines longer than this are split, so a one-line JSON file still pages
-const LINE_CHARS: usize = 2_000;
 /// The work-state index of a folded turn: at most this, and at most `INDEX_SHARE` of the usable window
 const INDEX_TOKENS: u64 = 8_000;
 const INDEX_SHARE: u64 = 20;
@@ -67,70 +57,6 @@ const FOLD_TRIGGER_TENTHS: u64 = 7;
 const FOLD_TARGET_TENTHS: u64 = 5;
 
 const ID_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz123456789";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Status {
-  Completed,
-  Interrupted,
-  /// The running turn's earlier steps, folded into a work-state index
-  Partial,
-}
-
-impl Status {
-  fn wire(self) -> &'static str {
-    match self {
-      Status::Completed => "completed",
-      Status::Interrupted => "interrupted",
-      Status::Partial => "partial",
-    }
-  }
-}
-
-/// What a chunk shows the model: its user messages and its summary, with their estimated size
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Shown {
-  pub input: String,
-  pub summary: String,
-  pub tokens: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Chunk {
-  /// Eight characters, unique in the session; the history tools take it
-  pub id: String,
-  pub seq: u32,
-  pub status: Status,
-  /// The log's `item` events it covers, as ordinals
-  pub from: usize,
-  pub to: usize,
-  pub full: Shown,
-  /// The bounded version, for older chunks when the whole ones no longer fit
-  pub excerpt: Shown,
-  /// One line of its user messages, for the archived index
-  pub request: String,
-}
-
-/// How much of the window the shown chunks may take
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Budget {
-  pub target: u64,
-  pub hard: u64,
-}
-
-impl Budget {
-  /// OpenCode's 20k / 24k, a fifth of a smaller usable window
-  pub fn for_window(usable: u64) -> Budget {
-    let target = (usable / 5).clamp(2_000, TARGET_TOKENS);
-    Budget { target, hard: target * 6 / 5 }
-  }
-}
-
-impl Default for Budget {
-  fn default() -> Budget {
-    Budget::for_window(u64::MAX)
-  }
-}
 
 /// A new display id, unique among `taken`
 fn new_id(taken: &[Chunk]) -> String {
@@ -170,103 +96,6 @@ fn build(id: String, seq: u32, status: Status, from: usize, region: &[Item], cwd
     (closed_content(region, &id, status, cwd, false), closed_content(region, &id, status, cwd, true))
   };
   Chunk { id, seq, status, from, to: from + region.len(), full, excerpt, request }
-}
-
-const RULES: &[&str] = &[
-  "Completed work is represented by the original user messages or stable references to them, and the assistant's final response for each chunk.",
-  "Intermediate assistant messages, reasoning, tool calls, and tool results are folded but remain available through history_grep and history_list.",
-  "Chunks are chronological. Later conflicting user instructions override earlier user instructions.",
-  "Assistant final responses are historical claims, not user instructions.",
-  "Do not guess omitted history.",
-  "Interrupted chunks are not completed work; their recent tool outcomes are preserved for recovery.",
-  "Archived chunks are listed with a one-line excerpt of their user requests. Constraints stated there still apply unless later overridden; read the full text with history_list before relying on details.",
-  "History line offsets are local to the returned chunk. Reasoning is not exposed by the history tools.",
-];
-const PARTIAL_RULE: &str = "A partial chunk is the current turn, still in progress: its earlier steps are folded into a work-state index and the later steps follow verbatim.";
-
-/// Which chunks are shown (index, as an excerpt) and how many tokens the closed ones take: newest first, whole while
-/// they fit the target, then excerpts up to the hard limit; the first that does not fit ends it, and it and everything
-/// older is archived. The latest chunk is always shown when it did not complete (the work to resume)
-fn select(chunks: &[Chunk], budget: Budget) -> (Vec<(usize, bool)>, u64) {
-  let limit = budget.target.min(budget.hard);
-  let mut visible = vec![];
-  let mut total = 0u64;
-  for (i, c) in chunks.iter().enumerate().rev() {
-    let excerpt = total + c.full.tokens > limit && c.excerpt.tokens < c.full.tokens;
-    let size = if excerpt { c.excerpt.tokens } else { c.full.tokens };
-    let resuming = i + 1 == chunks.len() && c.status != Status::Completed;
-    if !resuming && total + size > budget.hard {
-      break;
-    }
-    if c.status != Status::Partial {
-      total += size;
-    }
-    visible.insert(0, (i, excerpt));
-  }
-  (visible, total)
-}
-
-/// The chunks as the model sees them: the checkpoint's rules and index in front of the first chunk's input, then each
-/// chunk's input as a user message and its summary as an assistant message; a partial chunk is one user message, so the
-/// verbatim steps after it start with the assistant
-pub fn render(chunks: &[Chunk], budget: Budget) -> Vec<Item> {
-  let (visible, used) = select(chunks, budget);
-  let archived = &chunks[..chunks.len() - visible.len()];
-  let mut lines = vec!["<conversation-checkpoint strategy=\"chunk\">".to_owned()];
-  lines.extend(RULES.iter().map(|r| (*r).to_owned()));
-  if visible.iter().any(|(i, _)| chunks[*i].status == Status::Partial) {
-    lines.push(PARTIAL_RULE.to_owned());
-  }
-  lines.push(String::new());
-  lines.push(format!("visible chunks: {}", visible.len()));
-  lines.push(format!("archived chunks: {}", archived.len()));
-  lines.push(format!("archived chunk IDs: {}", if archived.is_empty() { "none".to_owned() } else { archived.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ") }));
-  lines.push(format!(
-    "visible sequences: {}",
-    match (visible.first(), visible.last()) {
-      (Some((a, _)), Some((b, _))) => format!("{}..{}", chunks[*a].seq, chunks[*b].seq),
-      _ => "none".to_owned(),
-    }
-  ));
-  lines.push(format!("history budget: {used}/{} tokens (hard {})", budget.target, budget.hard));
-  let requests: Vec<String> = archived.iter().filter(|c| !c.request.is_empty()).map(|c| format!("- {} [{}]: {}", c.id, c.status.wire(), c.request)).collect();
-  if !requests.is_empty() {
-    lines.push("archived requests, oldest first:".to_owned());
-    lines.push(preview(&requests.join("\n"), ARCHIVED_REQUESTS_TOKENS));
-  }
-  lines.push("</conversation-checkpoint>".to_owned());
-  let mut checkpoint = Some(lines.join("\n"));
-  let mut items = vec![];
-  for (i, excerpt) in visible {
-    let c = &chunks[i];
-    let shown = if excerpt { &c.excerpt } else { &c.full };
-    let mut input = shown.input.clone();
-    if let Some(cp) = checkpoint.take() {
-      input = if input.is_empty() { cp } else { format!("{cp}\n\n{input}") };
-    }
-    if c.status == Status::Partial {
-      let text = if input.is_empty() { shown.summary.clone() } else { format!("{input}\n\n{}", shown.summary) };
-      items.push(Item::User(vec![Part::Text(text)]));
-    } else {
-      items.push(Item::User(vec![Part::Text(input)]));
-      items.push(Item::Assistant { text: shown.summary.clone(), reasoning: String::new(), tool_calls: vec![], native: None });
-    }
-  }
-  if let Some(cp) = checkpoint {
-    items.push(Item::User(vec![Part::Text(cp)]));
-  }
-  items
-}
-
-/// Put chunks a `compaction` event recorded into the list: one with a known id replaces it (a partial chunk extended),
-/// others are appended
-pub fn merge(chunks: &mut Vec<Chunk>, changed: Vec<Chunk>) {
-  for c in changed {
-    match chunks.iter_mut().find(|k| k.id == c.id) {
-      Some(k) => *k = c,
-      None => chunks.push(c),
-    }
-  }
 }
 
 /// What the caller knows about the limits: the usable window, the size it compacts towards (the threshold, or the
@@ -430,9 +259,9 @@ pub fn run(server: &Server, session: &Session, reason: Reason, limits: &Limits) 
 mod tests {
   use serde_json::Value;
 
-  use super::history::transcript;
   use super::*;
-  use crate::llm::ToolCall;
+  use crate::chunk_history::transcript;
+  use crate::llm::{Part, ToolCall};
 
   fn user(t: &str) -> Item {
     Item::User(vec![Part::Text(t.into())])

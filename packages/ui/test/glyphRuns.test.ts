@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyGlyphRuns, createGlyphRuns, seedGlyphRuns, GLYPH_CLASS } from '../chat/glyphRuns';
+import { applyGlyphRuns, createGlyphRuns, seedGlyphRuns, GLYPH_CLASS } from '../markdown/glyphRuns';
 
 type Node = { type: string; value?: string; tagName?: string; properties?: Record<string, unknown>; children?: Node[] };
 const text = (value: string): Node => ({ type: 'text', value });

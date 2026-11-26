@@ -14,39 +14,19 @@ use acpira_shared::plugins::PluginCardOp;
 use acpira_shared::transcript::{AgentBlock, AgentTurn, PluginCard, Turn};
 
 use crate::acp::session::AcpSession;
+use crate::acp::session::ext::{PluginCardPort, PluginOfferOutcome, Provenance};
 use crate::acp::session::gates::{PendingQuestion, QuestionReply, Target};
 use crate::i18n::tp;
-use crate::plugins::host::PluginHost;
-use crate::plugins::store::Provenance;
-use crate::relay::wire::HubReply;
+use crate::relay_wire::HubReply;
 
 impl AcpSession {
-  pub async fn plugin_activate(self: &Arc<Self>, host: Arc<PluginHost>, id: String) -> HubReply {
-    let prepared = {
-      let (host, id) = (host.clone(), id.clone());
-      tokio::task::spawn_blocking(move || host.prepare(&id)).await
+  pub async fn plugin_activate(self: &Arc<Self>, host: Arc<dyn PluginCardPort>, id: String) -> HubReply {
+    let card_id = format!("plugin-{}", crate::util::random_hex(6));
+    let card = match host.clone().prepare_offer(id.clone(), card_id.clone()).await {
+      PluginOfferOutcome::Error(e) => return HubReply::Error(e),
+      PluginOfferOutcome::AlreadyActive(msg) => return HubReply::Done(msg),
+      PluginOfferOutcome::Offer(card) => *card,
     };
-    let frozen = match prepared {
-      Ok(Ok(f)) => f,
-      Ok(Err(e)) => return HubReply::Error(format!("{e:#}")),
-      Err(e) => return HubReply::Error(format!("the check did not finish: {e}")),
-    };
-    if !frozen.findings.ok() {
-      return HubReply::Error(format!(
-        "The plugin was not offered to the user. Fix these in {} and call plugin_activate again:\n{}",
-        host.store().source(&id).display(),
-        frozen.findings.text()
-      ));
-    }
-    // In effect already: enabled at this version, and the skin when it is a theme
-    let loaded = host.loaded();
-    let enabled = loaded.state.plugins.get(&id).is_some_and(|e| e.enabled && e.snapshot == frozen.hash);
-    let skinned = frozen.manifest.contributes.theme.is_none() || loaded.skin().is_some_and(|a| a.id == id);
-    if enabled && skinned {
-      return HubReply::Done(format!("This version of {id} is in effect already."));
-    }
-    let card = host.card(&frozen, format!("plugin-{}", crate::util::random_hex(6)));
-    let card_id = card.id.clone();
     {
       let mut c = self.core.lock();
       let Some(turn) = c.state.turns.iter_mut().rev().find_map(Turn::as_agent_mut) else {
@@ -72,7 +52,7 @@ impl AcpSession {
   /// A card's button: apply the version it offers, or undo what applying it changed. A failure is a toast; the
   /// card's state follows the plugins' state either way
   pub async fn plugin_card(self: &Arc<Self>, card_id: &str, op: PluginCardOp) {
-    let own = self.deps.host_mcp.as_ref().and_then(|m| m.hub.as_ref()).and_then(|h| h.plugin_host());
+    let own = self.deps.host_mcp.as_ref().and_then(|m| m.plugin_cards());
     let Some(host) = own.or_else(|| self.plugin_offers.lock().get(card_id).cloned()) else {
       self.notify("Plugins are not available in this host.");
       return;

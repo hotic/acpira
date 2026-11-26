@@ -140,7 +140,7 @@ impl HostFiles {
     for dir in places.prompt_dirs() {
       paths.extend(places.md_files(&dir, library::MAX_DEPTH).into_iter().map(|(_, p)| p));
     }
-    for root in crate::skills::roots(&places) {
+    for root in places.skill_roots() {
       paths.extend(places.entries(&root, true).into_iter().map(|d| d.join("SKILL.md")));
     }
     let files = paths
@@ -153,7 +153,7 @@ impl HostFiles {
       root: places.root,
       os: std::env::consts::OS.to_owned(),
       arch: std::env::consts::ARCH.to_owned(),
-      shell: crate::tools::bash::shell().0,
+      shell: crate::defs::shell().0,
       files,
     }
   }
@@ -282,6 +282,23 @@ impl Places {
     library::names_in(dir, files, depth)
   }
 
+  /// The skill folders, the later winning: the user's, the plugins', then the project's
+  pub(crate) fn skill_roots(&self) -> Vec<PathBuf> {
+    if let Some(p) = &self.profile {
+      return p.skills.clone().filter(|_| p.allows(crate::defs::SKILL)).into_iter().collect();
+    }
+    let mut roots = vec![];
+    if let Some(h) = &self.home {
+      roots.push(h.join(".agents").join("skills"));
+    }
+    roots.extend(self.skill_layers.iter().cloned());
+    if let Some(r) = self.root.as_ref().or(Some(&self.cwd)) {
+      roots.push(r.join(".agents").join("skills"));
+    }
+    roots.dedup();
+    roots
+  }
+
   /// AGENTS.md files in reading order: the user's, the project's, then the session folder's own when it is deeper
   fn instructions(&self) -> Vec<PathBuf> {
     let mut out = vec![];
@@ -297,15 +314,7 @@ impl Places {
   }
 }
 
-/// The project a folder belongs to: the nearest ancestor with `.git`; the home folder is never one
-pub fn project_root(cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
-  cwd.ancestors().find(|d| d.join(".git").exists()).filter(|r| Some(*r) != home).map(Path::to_path_buf)
-}
-
-/// The project's override folder, at its root
-pub fn project_prompts(root: &Path) -> PathBuf {
-  root.join(".acpira").join("prompts")
-}
+pub use crate::defs::{project_prompts, project_root};
 
 /// The keys a family's `match` patterns are tried against, lowercase
 fn keys(provider: &Provider, model: &ProviderModel) -> Vec<String> {
@@ -411,7 +420,7 @@ fn environment(places: &Places) -> String {
   // A folder on an SSH host: the host's platform and shell, where the tools run
   let (os, arch, shell) = match &places.host {
     Some(h) => (h.os.clone(), h.arch.clone(), h.shell.clone()),
-    None => (std::env::consts::OS.to_owned(), std::env::consts::ARCH.to_owned(), crate::tools::bash::shell().0),
+    None => (std::env::consts::OS.to_owned(), std::env::consts::ARCH.to_owned(), crate::defs::shell().0),
   };
   let shell = Path::new(&shell).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or(shell);
   let mut text = format!(

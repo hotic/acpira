@@ -11,10 +11,21 @@ use tokio::io::AsyncReadExt;
 
 use acpira_shared::transcript::StrMap;
 
-use crate::acp::agents::{launch, registry::AgentDef};
+use crate::acp::launch;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: u64 = 64 * 1024;
+
+/// Host-level Anthropic credentials scrubbed when a saved Claude account provides its own environment.
+pub const ACCOUNT_SCRUB_ENV: [&str; 7] = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+];
 
 /// A first 401 can be the CLI refreshing OAuth. A second rejected attempt is a failed credential, not useful progress.
 /// claude-agent-acp suppresses its normal retry notice for these frames, leaving the host's Working row otherwise empty.
@@ -28,12 +39,12 @@ pub fn repeated_auth_retry(params: &Value) -> bool {
 }
 
 /// None means the CLI did not establish a status, not that the user is signed out. Only a definite false blocks ACP.
-pub async fn authenticated(def: &AgentDef, binary: &str, cwd: &str, account_env: Option<&StrMap>) -> Result<Option<bool>> {
-  let mut args = def.args.clone();
+pub async fn authenticated(base_args: &[String], def_env: Option<&StrMap>, binary: &str, cwd: &str, account_env: Option<&StrMap>) -> Result<Option<bool>> {
+  let mut args = base_args.to_vec();
   args.extend(["--cli", "auth", "status", "--json"].map(str::to_owned));
   let mut cmd = launch::command(binary, &args);
   cmd.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
-  for (k, v) in def.env.iter().flatten().chain(account_env.into_iter().flatten()) {
+  for (k, v) in def_env.into_iter().flatten().chain(account_env.into_iter().flatten()) {
     cmd.env(k, v);
   }
   #[cfg(unix)]

@@ -84,9 +84,37 @@ fn is_loopback(url: &str) -> bool {
 }
 
 /// The vault key holding the key of the host's own source a carried one stood in for (written by older helpers)
-pub fn kept_secret_key(id: &str) -> String {
-  // A source id holds no `/`, so this never meets another source's key
-  format!("{}/kept", provider_secret_key(id))
+pub use acpira_shared::providers::kept_secret_key;
+
+/// The sources that go to this machine's SSH hosts, with their keys.
+pub async fn carried_of(store: &ProviderStore) -> Result<Carried, String> {
+  let providers: Vec<Provider> = store.read().await?.providers.into_iter().filter(travels).collect();
+  let mut keys = BTreeMap::new();
+  for p in &providers {
+    if let Some(k) = store.vault().get(&provider_secret_key(&p.id)).await.ok().flatten().filter(|k| !k.is_empty()) {
+      keys.insert(p.id.clone(), k);
+    }
+  }
+  Ok(Carried { providers, keys })
+}
+
+/// This machine's whole built-in agent settings for sessions it drives on an SSH host keeping them apart.
+pub async fn client_set_of(store: &ProviderStore) -> Result<ClientSet, String> {
+  let mut file = store.read().await?;
+  file.providers.retain(travels);
+  let wanted: Vec<String> = file
+    .providers
+    .iter()
+    .map(|p| provider_secret_key(&p.id))
+    .chain(acpira_shared::providers::WEB_SEARCH_BACKENDS.into_iter().skip(1).map(acpira_shared::providers::web_secret_key))
+    .collect();
+  let mut keys = BTreeMap::new();
+  for key in wanted {
+    if let Some(k) = store.vault().get(&key).await.ok().flatten().filter(|k| !k.is_empty()) {
+      keys.insert(key, k);
+    }
+  }
+  Ok(ClientSet { file, keys })
 }
 
 /// The machine that brought a source, and the host's own entry it stands in for
@@ -393,7 +421,7 @@ impl ModelMirror {
     let a = json!({ "machine": machine, "name": name });
     if sent.apart {
       let set = if sent.on {
-        match self.providers.client_set().await {
+        match client_set_of(&self.providers).await {
           Ok(s) => Some(s),
           // A file that cannot be read says nothing about what the host should hold
           Err(e) => return (self.log)(&format!("host models: {alias}: not sent: {e}")),
@@ -416,7 +444,7 @@ impl ModelMirror {
       }
     }
     let carried = if sent.on {
-      match self.providers.carried().await {
+      match carried_of(&self.providers).await {
         Ok(c) => c,
         Err(e) => return (self.log)(&format!("host models: {alias}: not sent: {e}")),
       }

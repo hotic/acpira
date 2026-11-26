@@ -3,7 +3,7 @@ import { CodeXml, Download, Globe, MessagesSquare, RefreshCw, RotateCcw, Tag } f
 import type { UpdateState } from '@acpira/shared/protocol';
 import { t } from '../i18n';
 import { Shimmer } from '../ui/Shimmer';
-import { Field, ItemRow, Section, SectionAction, Switch } from './controls';
+import { Field, ItemRow, Section, SectionAction, Switch } from '../chrome/controls';
 import { TourSection } from './TourSection';
 
 export interface UpdateHandlers {

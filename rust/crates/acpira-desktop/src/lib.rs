@@ -12,7 +12,7 @@ pub mod editors;
 pub mod engine;
 pub mod first_run;
 pub mod freedesktop;
-pub mod json_file;
+pub use acpira_host_base::json_file;
 pub mod locator;
 pub mod login_env;
 pub mod menu;

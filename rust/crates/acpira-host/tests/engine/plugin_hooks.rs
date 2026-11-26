@@ -179,7 +179,7 @@ async fn a_plugin_changes_and_refuses_calls_to_acpiras_own_tools() {
   let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "hooker", HOOKER, &[], &["tool.before", "tool.after"]).await;
   let mut h = Harness::new(&fake, json!({}));
   let hub = RelayHub::start(Arc::new(Roster::new(h.dir.path())), Arc::new(|_: &str| {})).await.unwrap();
-  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+  h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub)));
   h.deps.plugin_runtime = Some(rt.clone());
   let s = Disposing(h.session("/tmp"));
   s.start().await;

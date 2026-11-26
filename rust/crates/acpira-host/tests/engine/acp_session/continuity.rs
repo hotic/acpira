@@ -140,7 +140,7 @@ async fn editing_immediately_after_rebinding_hands_over_only_the_prefix_for_regu
 async fn a_trimmed_rebound_history_points_at_self_read_and_reclaims_an_empty_first_failure() {
   let fake = fake_or_skip!();
   let mut h = Harness::new(&fake, json!({}));
-  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira")));
   let mut record = interrupted(&h, false, false);
   record.turns = turns(json!([
     { "role": "user", "text": "old question" },

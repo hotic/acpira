@@ -26,8 +26,9 @@ use crate::session_library::{LibraryCaller, SessionLibrary};
 use crate::store::transcript_store::LogFn;
 use crate::util::random_uuid;
 
-/// A request line larger than this is refused (prompts are short; the child reads files itself)
-const MAX_REQUEST: usize = 256 * 1024;
+/// A request line larger than this is refused (covers large `RemoteTool` writes / edits and `ToolHook` payloads,
+/// matching `mcp_http::MAX_BODY`)
+const MAX_REQUEST: usize = 16 * 1024 * 1024;
 /// How long a connection may take to send its request line
 const REQUEST_WITHIN: Duration = Duration::from_secs(10);
 /// Connections that have not sent their request line yet; more are closed at once
@@ -57,27 +58,6 @@ pub trait HostBrowser: Send + Sync {
     _wires: &'a [u64],
   ) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
     self.open(url, folder, session)
-  }
-}
-
-impl HostBrowser for crate::sidecar::platform::SidecarPlatform {
-  fn available(&self) -> bool {
-    self.can_open_browser()
-  }
-  fn available_for(&self, wires: &[u64]) -> bool {
-    self.can_open_browser_for(wires)
-  }
-  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>, session: Option<(&'a str, &'a str)>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
-    Box::pin(self.open_browser(url, folder, session))
-  }
-  fn open_for<'a>(
-    &'a self,
-    url: &'a str,
-    folder: Option<&'a str>,
-    session: Option<(&'a str, &'a str)>,
-    wires: &'a [u64],
-  ) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
-    Box::pin(self.open_browser_for(url, folder, session, wires))
   }
 }
 
@@ -186,17 +166,25 @@ impl RelayHub {
     }
     let slot = PendingSlot(&self.pending);
     let (read, mut write) = sock.into_split();
-    let mut line = String::new();
-    let mut reader = BufReader::new(read).take(MAX_REQUEST as u64);
-    if !matches!(tokio::time::timeout(REQUEST_WITHIN, reader.read_line(&mut line)).await, Ok(Ok(_))) {
-      return;
-    }
-    drop(slot);
     let reply = |r: HubReply| {
       let mut s = serde_json::to_string(&r).unwrap_or_default();
       s.push('\n');
       s
     };
+    // Read up to `MAX_REQUEST + 1` bytes so an oversized line without a newline can be distinguished from EOF
+    let mut reader = BufReader::new(read).take((MAX_REQUEST + 1) as u64);
+    let line = match tokio::time::timeout(REQUEST_WITHIN, read_request_line(&mut reader, MAX_REQUEST)).await {
+      Ok(Ok(Some(line))) => line,
+      Ok(Ok(None)) => {
+        drop(slot);
+        let msg = format!("request exceeds {} MiB limit", MAX_REQUEST / (1024 * 1024));
+        let _ = write.write_all(reply(HubReply::Error(msg)).as_bytes()).await;
+        let _ = write.shutdown().await;
+        return;
+      }
+      _ => return,
+    };
+    drop(slot);
     let req: HubRequest = match serde_json::from_str(line.trim()) {
       Ok(r) => r,
       Err(e) => {
@@ -231,7 +219,7 @@ impl RelayHub {
         let plugins_root = self.plugin_host().map(|p| p.store().root().display().to_string());
         let computer = acpira_computer::SUPPORTED && self.computer.read().is_some();
         let mut features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools, computer, plugins_root, instructions: None };
-        features.instructions = session.as_ref().map(|s| crate::host_mcp::instructions(&s.prompts(), &features));
+        features.instructions = session.as_ref().map(|s| crate::relay_wire::instructions(&s.prompts(), &features));
         let _ = write.write_all(reply(HubReply::Features(features)).as_bytes()).await;
       }
       HubOp::HostHooks { cwd } => {
@@ -335,7 +323,7 @@ impl RelayHub {
         let computer = self.computer.read().clone();
         let r = match (computer, session.upgrade()) {
           _ if !on => HubReply::Error("Computer use is switched off on Acpira's plugin page.".into()),
-          (Some(c), Some(s)) => c.call(&s, &name, arguments).await,
+          (Some(c), Some(_)) => c.call(&name, arguments).await,
           (None, _) => HubReply::Error("Computer use is not available in this host.".into()),
           (_, None) => HubReply::Error("The Acpira session that started this agent is gone.".into()),
         };
@@ -357,7 +345,7 @@ impl RelayHub {
       }
       HubOp::PluginActivate { id } => {
         let r = match (self.plugin_host(), session.upgrade()) {
-          (Some(p), Some(s)) => s.plugin_activate(p, id).await,
+          (Some(p), Some(s)) => s.plugin_activate(p as Arc<dyn crate::acp::session::ext::PluginCardPort>, id).await,
           _ => HubReply::Error("Plugins are not available in this host.".into()),
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
@@ -494,23 +482,23 @@ pub fn frame(tag: Frame, bytes: &[u8]) -> Vec<u8> {
 /// A project MCP server on the host, joined to its shim: the shim's bytes to the server's stdin (their end closes it),
 /// the server's output back as frames. A shim that goes away drops the call, which stops the server there
 async fn pump_host_stdio(
-  mut call: crate::remote::client::Call,
+  mut call: Box<dyn crate::remote_seam::RemoteStream>,
   mut reader: tokio::io::Take<BufReader<tokio::net::tcp::OwnedReadHalf>>,
   mut write: tokio::net::tcp::OwnedWriteHalf,
 ) {
-  use crate::remote::client::Event;
+  use crate::remote_seam::RemoteEvent as Event;
   let mut buf = vec![0u8; 16 * 1024];
   let mut reading = true;
   let end = loop {
     tokio::select! {
       n = reader.read(&mut buf), if reading => match n {
         Ok(0) | Err(_) => {
-          call.stdin_eof();
+          call.close_stdin();
           reading = false;
         }
-        Ok(n) => call.stdin(&buf[..n]),
+        Ok(n) => call.send_stdin(&buf[..n]),
       },
-      ev = call.next() => match ev {
+      ev = call.next_event() => match ev {
         Some(Event::Chunk { stream, bytes }) => {
           let tag = if stream == "err" { Frame::Err } else { Frame::Out };
           if write.write_all(&frame(tag, &bytes)).await.is_err() {
@@ -518,7 +506,7 @@ async fn pump_host_stdio(
           }
         }
         Some(Event::Done(Ok(r))) => break r.get("code").and_then(Value::as_i64).unwrap_or(1).to_string(),
-        Some(Event::Done(Err(e))) => break e.to_string(),
+        Some(Event::Done(Err(e))) => break e,
         None => break "the connection to the host ended".to_owned(),
       },
     }
@@ -527,39 +515,16 @@ async fn pump_host_stdio(
   let _ = write.shutdown().await;
 }
 
-/// Host and port of an http(s) URL whose host is this machine's loopback (or the any-address a dev server prints);
-/// None for anything else, which the agent's machine cannot vouch for
-pub fn loopback_target(url: &str) -> Option<(String, u16)> {
-  let (scheme, rest) = url.split_once("://")?;
-  let default_port = match scheme.to_ascii_lowercase().as_str() {
-    "http" => 80,
-    "https" => 443,
-    _ => return None,
-  };
-  let authority = rest.split(['/', '?', '#']).next()?;
-  let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
-  let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
-    let (host, after) = v6.split_once(']')?;
-    (host.to_owned(), after.strip_prefix(':'))
-  } else {
-    match authority.split_once(':') {
-      Some((h, p)) => (h.to_owned(), Some(p)),
-      None => (authority.to_owned(), None),
-    }
-  };
-  let port = match port {
-    Some(p) => p.parse().ok()?,
-    None => default_port,
-  };
-  let host = host.to_ascii_lowercase();
-  // The any-address is not connectable everywhere; a server bound to it answers on the loopback
-  let connect = match host.as_str() {
-    "localhost" | "127.0.0.1" | "::1" => host,
-    "0.0.0.0" => "127.0.0.1".into(),
-    "::" => "::1".into(),
-    _ => return None,
-  };
-  Some((connect, port))
+pub use crate::relay_wire::loopback_target;
+
+/// Reads one newline-terminated request line up to `max` bytes; returns `Ok(None)` when the line exceeds `max`
+async fn read_request_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut tokio::io::Take<BufReader<R>>, max: usize) -> std::io::Result<Option<String>> {
+  let mut line = String::new();
+  reader.read_line(&mut line).await?;
+  if line.len() > max || (line.len() == max && !line.ends_with('\n')) {
+    return Ok(None);
+  }
+  Ok(Some(line))
 }
 
 /// The MCP server's side of one request (blocking: `acpira mcp` is synchronous); `on_line` sees every reply line
@@ -585,18 +550,40 @@ pub fn call(addr: &str, req: &HubRequest, mut on_line: impl FnMut(HubReply) -> b
 
 #[cfg(test)]
 mod tests {
-  use super::loopback_target;
+  use super::*;
+  use tokio::io::AsyncWriteExt;
 
-  #[test]
-  fn loopback_targets_are_found_with_their_ports_and_other_hosts_are_left_alone() {
-    assert_eq!(loopback_target("http://localhost:3317/"), Some(("localhost".into(), 3317)));
-    assert_eq!(loopback_target("http://127.0.0.1:5173/#/x"), Some(("127.0.0.1".into(), 5173)));
-    assert_eq!(loopback_target("https://LOCALHOST"), Some(("localhost".into(), 443)));
-    assert_eq!(loopback_target("http://0.0.0.0:8080?q=1"), Some(("127.0.0.1".into(), 8080)));
-    assert_eq!(loopback_target("http://[::1]:9000/a"), Some(("::1".into(), 9000)));
-    assert_eq!(loopback_target("http://user@localhost:81"), Some(("localhost".into(), 81)));
-    assert_eq!(loopback_target("https://example.com:8443/"), None);
-    assert_eq!(loopback_target("file:///tmp/x.html"), None);
-    assert_eq!(loopback_target("http://localhost:notaport/"), None);
+  #[tokio::test]
+  async fn request_lines_over_256_kib_are_accepted_and_oversized_lines_are_rejected_cleanly() {
+    let dir = tempfile::tempdir().unwrap();
+    let logged = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+    let sink = logged.clone();
+    let hub = RelayHub::start(Arc::new(Roster::new(dir.path())), Arc::new(move |msg: &str| sink.lock().push(msg.to_owned()))).await.unwrap();
+
+    // A 400 KiB valid JSON request reaches token validation instead of being truncated at the old 256 KiB cap
+    let req = HubRequest {
+      token: "missing-grant".into(),
+      op: HubOp::RemoteTool {
+        name: "Write".into(),
+        arguments: json!({ "file_path": "big.txt", "content": "x".repeat(400 * 1024) }),
+        tool_use_id: None,
+      },
+    };
+    let mut sock = TcpStream::connect(hub.addr()).await.unwrap();
+    let mut body = serde_json::to_string(&req).unwrap();
+    body.push('\n');
+    sock.write_all(body.as_bytes()).await.unwrap();
+    let mut resp = String::new();
+    let _ = BufReader::new(sock).read_line(&mut resp).await.unwrap();
+    assert!(resp.is_empty(), "valid JSON over 256 KiB should reach token check, not fail JSON parse: {resp}");
+    assert!(logged.lock().iter().any(|l| l.contains("unknown token")), "{:?}", *logged.lock());
+
+    // Bounded reader distinguishes an oversized line from a valid line cleanly
+    let under = b"{\"ok\":true}\n";
+    let mut r_ok = BufReader::new(&under[..]).take(17);
+    assert_eq!(read_request_line(&mut r_ok, 16).await.unwrap().as_deref(), Some("{\"ok\":true}\n"));
+    let over = b"0123456789abcdef0\n";
+    let mut r_over = BufReader::new(&over[..]).take(17);
+    assert_eq!(read_request_line(&mut r_over, 16).await.unwrap(), None);
   }
 }

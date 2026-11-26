@@ -17,7 +17,7 @@ fn request(system: &str, items: Vec<Item>, tools: Vec<ToolSpec>) -> Request {
     thinking: Default::default(),
     effort: None,
     cache_key: None,
-    fast: false,
+    fast: crate::llm::fast::SpeedTier::Standard,
   }
 }
 
@@ -42,19 +42,16 @@ fn result(id: &str, content: &str) -> Item {
 #[test]
 fn calls_name_their_rows() {
   // The model gave "a" to calls in two rounds, and the last reply's call has no row yet (it is being run)
-  let st = SessionState {
-    items: vec![
-      user("go"),
-      assistant("", "", &[("a", "read", "{}")]),
-      result("a", "x"),
-      assistant("", "", &[("a", "read", "{}"), ("b", "read", "{}")]),
-      result("a", "y"),
-      result("b", "z"),
-      assistant("", "", &[("c", "read", "{}")]),
-    ],
-    ..Default::default()
-  };
-  let snap = Snapshot::estimate("sys".into(), vec![], Setting { system: "sys", sections: &[], mcp: &[] }, 1_000, &st);
+  let items = vec![
+    user("go"),
+    assistant("", "", &[("a", "read", "{}")]),
+    result("a", "x"),
+    assistant("", "", &[("a", "read", "{}"), ("b", "read", "{}")]),
+    result("a", "y"),
+    result("b", "z"),
+    assistant("", "", &[("c", "read", "{}")]),
+  ];
+  let snap = Snapshot::estimate("sys".into(), vec![], Setting { system: "sys", sections: &[], mcp: &[] }, 1_000, items, false, 0);
   // An older "a" went into a compaction before these: the visible ones take the latest rows
   let rows = [("a", "call-1"), ("a", "call-4"), ("a", "call-5"), ("b", "call-6")].map(|(i, r)| (i.to_owned(), r.to_owned()));
   fn calls(n: &ContextNode, out: &mut Vec<Option<String>>) {
@@ -84,7 +81,7 @@ fn sections(system: &str, base: usize, doc: usize) -> Vec<Section> {
   ]
 }
 
-fn snapshot(format: ApiFormat, usage: llm::Usage, st: &SessionState) -> Snapshot {
+fn snapshot(format: ApiFormat, usage: llm::Usage, summarized: bool, folded: usize) -> Snapshot {
   let system = format!("{}{}{}", "base ".repeat(40), "\n<instructions path=\"/repo/AGENTS.md\">\n## Rules\nbe terse\n</instructions>\n", "\n\n## Environment\n- here\n");
   let secs = sections(&system, 200, "\n<instructions path=\"/repo/AGENTS.md\">\n## Rules\nbe terse\n</instructions>\n".len());
   let tools = vec![
@@ -110,7 +107,7 @@ fn snapshot(format: ApiFormat, usage: llm::Usage, st: &SessionState) -> Snapshot
   ];
   let reply = assistant("done", "", &[]);
   let req = request(&system, items, tools);
-  Snapshot::of_call(req, reply, wire(format), Setting { system: &system, sections: &secs, mcp: &mcp }, usage, false, st)
+  Snapshot::of_call(req, reply, wire(format), Setting { system: &system, sections: &secs, mcp: &mcp }, usage, false, summarized, folded)
 }
 
 fn leaves(n: &ContextNode, out: &mut Vec<ContextNode>) {
@@ -130,9 +127,8 @@ fn all(r: &ContextReport) -> Vec<ContextNode> {
 
 #[test]
 fn parts_add_up_to_the_providers_count_and_split_by_what_was_sent() {
-  let st = SessionState::default();
   let usage = llm::Usage { input: 9_000, output: 700, cache_read: 1_000, ..Default::default() };
-  let snap = snapshot(ApiFormat::Anthropic, usage, &st);
+  let snap = snapshot(ApiFormat::Anthropic, usage, false, 0);
   let r = snap.report(200_000, true, &[]);
   assert_eq!(r.used, 9_700);
   assert_eq!(r.categories.iter().map(|c| c.tokens).sum::<u64>(), 9_700);
@@ -161,8 +157,7 @@ fn parts_add_up_to_the_providers_count_and_split_by_what_was_sent() {
 
 #[test]
 fn leaves_open_what_was_sent() {
-  let st = SessionState::default();
-  let snap = snapshot(ApiFormat::Anthropic, llm::Usage { input: 5_000, output: 10, ..Default::default() }, &st);
+  let snap = snapshot(ApiFormat::Anthropic, llm::Usage { input: 5_000, output: 10, ..Default::default() }, false, 0);
   let rev = snap.report(1, false, &[]).rev;
   let Some(ContextContent::Text { text, .. }) = snap.content(&rev, "doc:0") else { panic!() };
   // A heading inside AGENTS.md stays in its section
@@ -184,8 +179,7 @@ fn leaves_open_what_was_sent() {
 
 #[test]
 fn raw_requests_carry_no_images_signatures_or_keys() {
-  let st = SessionState::default();
-  let mut snap = snapshot(ApiFormat::Anthropic, llm::Usage { input: 5_000, output: 10, ..Default::default() }, &st);
+  let mut snap = snapshot(ApiFormat::Anthropic, llm::Usage { input: 5_000, output: 10, ..Default::default() }, false, 0);
   snap.request.items.push(Item::Assistant {
     text: String::new(),
     reasoning: String::new(),
@@ -198,17 +192,15 @@ fn raw_requests_carry_no_images_signatures_or_keys() {
   assert_eq!(raw.url.as_deref(), Some("https://api.example/v1/messages"));
   assert_eq!(raw.format, "anthropic");
   for format in [ApiFormat::OpenaiChat, ApiFormat::OpenaiResponses] {
-    let snap = snapshot(format, llm::Usage { input: 5_000, ..Default::default() }, &st);
+    let snap = snapshot(format, llm::Usage { input: 5_000, ..Default::default() }, false, 0);
     assert!(!snap.raw().unwrap().body.to_string().contains("AAAAAAAA"));
   }
 }
 
 #[test]
 fn a_compacted_history_is_one_summary_with_unnumbered_turns() {
-  let st = SessionState { summarized: true, ..Default::default() };
   let items = vec![user("<summary>earlier work</summary>"), assistant("", "", &[("c9", "bash", "{\"command\":\"ls\"}")]), result("c9", "a b"), user("next")];
-  let st = SessionState { items, ..st };
-  let snap = Snapshot::estimate("sys".into(), vec![], Setting { system: "other", sections: &[], mcp: &[] }, 3_000, &st);
+  let snap = Snapshot::estimate("sys".into(), vec![], Setting { system: "other", sections: &[], mcp: &[] }, 3_000, items, true, 0);
   let r = snap.report(10_000, true, &[]);
   assert!(r.estimated);
   assert_eq!(r.used, 3_000);
@@ -227,8 +219,7 @@ fn a_compacted_history_is_one_summary_with_unnumbered_turns() {
 #[test]
 fn a_budget_note_behind_tool_results_stays_in_its_turn() {
   let items = vec![user("go"), assistant("", "", &[("c1", "read", "{}")]), result("c1", "x"), user("<goal>\nbudget spent\n</goal>")];
-  let st = SessionState { items, ..Default::default() };
-  let snap = Snapshot::estimate(String::new(), vec![], Setting { system: "", sections: &[], mcp: &[] }, 100, &st);
+  let snap = Snapshot::estimate(String::new(), vec![], Setting { system: "", sections: &[], mcp: &[] }, 100, items, false, 0);
   let r = snap.report(1_000, true, &[]);
   let chat = r.categories.iter().find(|c| c.id == ContextCategory::Chat).unwrap().nodes.clone().unwrap();
   assert_eq!(chat.len(), 1);

@@ -9,8 +9,8 @@ import { warmPixelMosaic } from '../effects/mosaicGL';
 import { dissolveIn, readImageGenColors } from '../effects/imageGen';
 import { hasWebGL2 } from '../effects/webgl';
 import { cn } from '../ui/cn';
-import { AgentImage } from './AgentImage';
-import { BlobUrlContext } from './fileLinks';
+import { AgentImage } from '../markdown/AgentImage';
+import { BlobUrlContext } from '../markdown/fileLinks';
 
 // A reveal that never finishes (a stalled decode, a canvas that never gets a frame) still ends in the static image
 const REVEAL_TIMEOUT_MS = 6000;

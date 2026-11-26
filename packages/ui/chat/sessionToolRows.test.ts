@@ -5,7 +5,7 @@ import type { ToolCallBlock } from '@acpira/shared/transcript';
 import { sessionRead, splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { setLocale } from '../i18n';
 import { ToolCall } from './ToolCall';
-import { SessionTitleContext } from './fileLinks';
+import { SessionTitleContext } from '../markdown/fileLinks';
 import { foldActivity, sessionReadLabel } from './folding';
 import { ToolGroup } from './ToolGroup';
 import { groupProcess } from './processGroups';

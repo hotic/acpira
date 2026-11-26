@@ -28,9 +28,8 @@ use crate::acp::session::updates::current_turn_index;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::subagent_tree::{RelayOpen, RelayRound, RouteCtx};
 use crate::handoff;
-use crate::relay::roster::Roster;
-use crate::relay::wire::{AskArgs, AskCallerArgs, HubReply};
-use crate::relay::{MAX_DEPTH, MAX_RUNNING};
+use crate::relay_roster::Roster;
+use crate::relay_wire::{AskArgs, AskCallerArgs, HubReply, MAX_DEPTH, MAX_RUNNING};
 
 impl AcpSession {
   /// The sidekick picked for this session, as the executor the hub lists first for the root: following the caller's
@@ -49,8 +48,12 @@ impl AcpSession {
       (
         value(SIDEKICK_CONFIG, SIDEKICK_CATEGORY),
         value(SIDEKICK_EFFORT_CONFIG, SIDEKICK_EFFORT_CATEGORY),
-        // A boolean option or the Standard / Fast (or Ultrafast) select, both read as their value
-        value(SIDEKICK_FAST_CONFIG, SIDEKICK_FAST_CATEGORY).map(|v| matches!(v.as_str(), "true" | "fast" | "ultrafast")),
+        // A boolean option or a Standard / Fast / Ultrafast select, normalized to its canonical tier
+        value(SIDEKICK_FAST_CONFIG, SIDEKICK_FAST_CATEGORY).map(|v| match v.as_str() {
+          "ultrafast" => "ultrafast".to_owned(),
+          "true" | "fast" | "priority" => "fast".to_owned(),
+          _ => "standard".to_owned(),
+        }),
       )
     };
     let pick = pick?;
@@ -62,7 +65,7 @@ impl AcpSession {
 
   /// The sidekick persona on `model` of the CLI `agent`. What the lead is told of it and its standing instructions are
   /// the prompts `sidekick/lead` and `sidekick/brief`
-  fn sidekick_in(&self, agent: String, model: String, effort: Option<String>, fast: Option<bool>) -> SubagentPersona {
+  fn sidekick_in(&self, agent: String, model: String, effort: Option<String>, fast: Option<String>) -> SubagentPersona {
     let prompts = self.prompts();
     SubagentPersona {
       id: SIDEKICK_ID.into(),

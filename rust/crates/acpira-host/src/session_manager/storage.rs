@@ -2,7 +2,7 @@
 //! engine), and the cleanups that touch sessions. Deleting goes through `delete_session` one by one, so the leases,
 //! the 30 s undo window, the index sync and the viewers moving on all stay the history list's
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
@@ -11,12 +11,49 @@ use anyhow::Result;
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 
-use acpira_shared::storage::{StorageAction, StorageBlock, StorageDetail, StorageOutcome, StorageSession, StorageSkip, StorageView};
+use acpira_shared::storage::{StorageAction, StorageBlock, StorageDetail, StorageOutcome, StorageResidueKind, StorageSession, StorageSkip, StorageView};
 
 use super::SessionManager;
 use crate::i18n::t;
-use crate::store::storage::{Residue, Scan, ScanInput, clean, clean_plugins, scan};
+use crate::store::storage::{ExtraDirResidue, FRESH, Residue, Scan, ScanInput, clean, clean_with, scan};
 use crate::store::transcript_store::TranscriptStore;
+
+/// A plugin version or build output a freeze may be about to name.
+fn plugin_fresh(p: &Path, now: SystemTime) -> bool {
+  std::fs::symlink_metadata(p).and_then(|m| m.modified()).ok().and_then(|m| now.duration_since(m).ok()).is_none_or(|a| a < FRESH)
+}
+
+/// Plugin directory leftovers contributed to storage scans.
+fn plugin_extra_dir(root: &Path, now: SystemTime) -> ExtraDirResidue {
+  let plugins = root.join(crate::plugins::DIR);
+  let items = crate::plugins::store::leftovers(&plugins, &|p| plugin_fresh(p, now))
+    .into_iter()
+    .map(|l| {
+      let (kind, shown) = if l.data {
+        (StorageResidueKind::PluginData, plugins.join(crate::plugins::store::DATA).join(&l.id))
+      } else {
+        (StorageResidueKind::PluginFiles, plugins.join(&l.id))
+      };
+      (kind, shown, l.targets)
+    })
+    .collect();
+  ExtraDirResidue { dir_name: crate::plugins::DIR.to_owned(), items }
+}
+
+/// Re-check plugin leftovers under the plugin state lock before removal so newly enabled versions are preserved.
+fn clean_plugins(root: &Path, residue: &[&Residue]) -> (u64, Vec<(String, String)>, Vec<String>) {
+  let now = SystemTime::now();
+  let still: HashSet<PathBuf> =
+    crate::plugins::store::leftovers(&root.join(crate::plugins::DIR), &|p| plugin_fresh(p, now)).into_iter().flat_map(|l| l.targets).collect();
+  let (go, kept): (Vec<&Residue>, Vec<&Residue>) = residue.iter().copied().partition(|r| r.targets.iter().all(|t| still.contains(t)));
+  let (freed, failed) = clean_with(root, &go, |r, target| {
+    // Frozen plugin versions are read-only.
+    if matches!(r.item.kind, StorageResidueKind::PluginFiles) {
+      let _ = crate::plugins::store::make_removable(target);
+    }
+  });
+  (freed, failed, kept.into_iter().map(|r| r.item.id.clone()).collect())
+}
 
 /// What the Storage tab's reply carries back
 pub struct StorageReply {
@@ -103,11 +140,29 @@ impl SessionManager {
     let body: crate::store::storage::BodyText = Arc::new(move |id| store.body_text(id, false));
     let body_sizes = self.deps.store.body_sizes().await;
     let trashed = self.deps.store.trashed_summaries().await;
-    let input = ScanInput { root: self.data_root(), sessions_dir: self.deps.store.dir().to_path_buf(), sessions, body: Some(body), body_sizes, trashed, now: SystemTime::now() };
-    let fallback = (input.root.clone(), input.sessions_dir.clone());
-    tokio::task::spawn_blocking(move || scan(&input))
-      .await
-      .unwrap_or_else(|_| scan(&ScanInput { root: fallback.0, sessions_dir: fallback.1, sessions: vec![], body: None, body_sizes: HashMap::new(), trashed: vec![], now: SystemTime::now() }))
+    let root = self.data_root();
+    let sessions_dir = self.deps.store.dir().to_path_buf();
+    let agent_sessions_root = Some(acpira_agent::acp::sessions_root(&root));
+    let fallback = (root.clone(), sessions_dir.clone(), agent_sessions_root.clone());
+    tokio::task::spawn_blocking(move || {
+      let now = SystemTime::now();
+      let extra_dirs = vec![plugin_extra_dir(&root, now)];
+      scan(&ScanInput { root, sessions_dir, agent_sessions_root, sessions, body: Some(body), body_sizes, trashed, extra_dirs, now })
+    })
+    .await
+    .unwrap_or_else(|_| {
+      scan(&ScanInput {
+        root: fallback.0,
+        sessions_dir: fallback.1,
+        agent_sessions_root: fallback.2,
+        sessions: vec![],
+        body: None,
+        body_sizes: HashMap::new(),
+        trashed: vec![],
+        extra_dirs: vec![],
+        now: SystemTime::now(),
+      })
+    })
   }
 
   /// Why this session cannot be picked right now

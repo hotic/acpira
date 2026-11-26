@@ -1,5 +1,5 @@
 import { ORB_SIZE, type OrbKind } from './presets';
-import { isWindowFocused, subscribeWindowFocused } from '../plugins/motion';
+import { isWindowFocused, subscribeWindowFocused } from '../chrome/motion';
 
 // Own canvas 2D port of the two thinking-orbs states the UI uses, at the 20px preset only:
 // 'think' = a face-on ring of dot lanes whose radius undulates, 'fetch' = a slowly turning constellation

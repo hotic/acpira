@@ -8,27 +8,21 @@ use serde_json::{Value, json};
 
 use super::MAX_CORRECTIONS;
 use super::approval::{Answer, ask};
+use super::critique_hook::TurnCritique;
 use super::riders::{Riders, ride_command, ride_todo, todo_row_allowed};
 use super::setup::Setup;
 use crate::acp::{Server, Session};
+use acpira_rpc::cancel::Cancel;
 use crate::goal;
 use crate::llm::{Item, ToolCall};
 use crate::modes;
 use crate::permission::{Decision, Rule};
-use crate::tools::names::{self, Resolved};
+use crate::tools::names::{self, Resolved, kind_of, shown_name};
 use crate::tools::{self, Action, Ctx, Output};
 
 /// A call of a goal tool, which shows no row: the goal's own rows stand for it (`goal.rs`)
 pub(super) fn hidden(name: &str, tools: &[&str]) -> bool {
   goal::is_tool(shown_name(name, tools))
-}
-
-/// The tool a model-given name stands for, for display before the call is prepared
-fn shown_name<'a>(name: &'a str, tools: &[&'a str]) -> &'a str {
-  match names::resolve(name, tools) {
-    Resolved::Exact(n) | Resolved::Corrected(n) => n,
-    Resolved::Unknown(_) => name,
-  }
 }
 
 /// The engine's `acpira/mcp` note for a call of an MCP tool (by the name the model wrote, corrected like any other)
@@ -50,18 +44,6 @@ pub(super) fn call_title<'a>(name: &'a str, tools: &[&'a str]) -> &'a str {
 }
 
 const EXIT_PLAN_TITLE: &str = "Exit plan mode";
-
-/// ACP ToolKind for a tool name, before its arguments are known
-pub(crate) fn kind_of(name: &str, tools: &[&str]) -> &'static str {
-  match shown_name(name, tools) {
-    tools::READ | tools::LIST | tools::SKILL => "read",
-    tools::WRITE | tools::EDIT => "edit",
-    tools::BASH | tools::JOB => "execute",
-    tools::GREP | tools::GLOB => "search",
-    tools::EXIT_PLAN => "switch_mode",
-    _ => "other",
-  }
-}
 
 /// A tool call after parsing and preparation
 pub(super) struct Prepared {
@@ -91,6 +73,7 @@ pub(super) enum Flow {
 }
 
 /// Run one round of tool calls
+#[allow(clippy::too_many_arguments, reason = "turn loop state passed explicitly across tool rounds")]
 pub(super) async fn run_tools(
   server: &Arc<Server>,
   session: &Arc<Session>,
@@ -98,6 +81,8 @@ pub(super) async fn run_tools(
   calls: &[ToolCall],
   ids: &mut HashMap<String, String>,
   corrections: &mut u32,
+  critique: &mut TurnCritique,
+  cancel: &Cancel,
 ) -> Flow {
   let (rules, tool_names) = (&setup.rules, setup.names());
   let tool_names = &tool_names[..];
@@ -260,14 +245,20 @@ pub(super) async fn run_tools(
       finish(server, session, p, goal::run_tool(server, session, call), todo, None).await;
       continue;
     }
-    // The plan approval card is this call's permission
+    // The plan approval card is this call's permission (held by pre-card Plan Critique if a grounded defect is found)
     if let Action::ExitPlan { plan } = &action {
       server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
-      let (out, approved) = exit_plan(server, session, p, plan.as_deref()).await;
+      let (out, approved) = exit_plan(server, session, setup, p, plan.as_deref(), critique, cancel).await;
       finish(server, session, p, out, todo, p.riders.refused()).await;
       match approved {
-        Some(true) => switched = true,
-        Some(false) => rejected = true,
+        Some(true) => {
+          critique.record_plan_decision(true);
+          switched = true;
+        }
+        Some(false) => {
+          critique.record_plan_decision(false);
+          rejected = true;
+        }
         None => {}
       }
       continue;
@@ -276,6 +267,9 @@ pub(super) async fn run_tools(
     if let Action::Question { questions, images } = &action {
       server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
       let (out, pictures, dismissed) = question(server, session, p, questions, *images).await;
+      if !dismissed && !out.is_error {
+        critique.record_question(questions, &out.model);
+      }
       finish_with(server, session, p, out, todo, p.riders.refused(), pictures).await;
       rejected |= dismissed;
       continue;
@@ -313,7 +307,8 @@ pub(super) async fn run_tools(
     server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
     // A write of what the file already holds is no change to check
     let unchanged = matches!(&action, Action::Write { files } if files.iter().all(tools::edit::Change::unchanged));
-    let out = run_action(server, session, action, ctx_for(server, session, &p.acp)).await;
+    let out = run_action(server, session, action.clone(), ctx_for(server, session, &p.acp)).await;
+    critique.record_tool_outcome(&action, &out);
     let (command, line) = match &p.riders.then_run {
       Some(Ok(command @ Action::Bash { command: line, .. })) => (command, line),
       _ => {
@@ -356,7 +351,15 @@ pub(super) async fn run_tools(
 /// Plan mode's exit: the plan file goes to the user on the host's plan approval card (`acpira/planApproval`, and the
 /// `switch_mode` + `rawInput.plan` shape with `planFilePath`, which `transcript/plans.rs` takes as the whole document).
 /// Some(true) when approved, Some(false) when not, None when there was nothing to ask about
-async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, plan: Option<&str>) -> (Output, Option<bool>) {
+async fn exit_plan(
+  server: &Arc<Server>,
+  session: &Arc<Session>,
+  setup: &Setup,
+  p: &Prepared,
+  plan: Option<&str>,
+  critique: &mut TurnCritique,
+  cancel: &Cancel,
+) -> (Output, Option<bool>) {
   if session.state.lock().mode != modes::PLAN {
     return (Output::error("The session is not in Plan mode, so there is no plan to submit."), None);
   }
@@ -371,8 +374,16 @@ async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, p
   if text.trim().is_empty() {
     return (Output::error(format!("There is no plan yet. Write it to {}, then call exit_plan again.", path.display())), None);
   }
+  // Staged terminal hold: run zero-tool cross-family Plan Critique once before exposing the plan card to the user
+  if let Some(handoff) = critique.review_plan(server, session, setup, &text, cancel).await {
+    return (Output { model: handoff, is_error: false, content: vec![], raw_output: None }, None);
+  }
   let raw_input = json!({ "plan": text, "planFilePath": path });
-  let meta = json!({ "acpira/planApproval": true });
+  let meta = if critique.plan_reviewed {
+    json!({ "acpira/planApproval": true, "acpira/planReviewed": true })
+  } else {
+    json!({ "acpira/planApproval": true })
+  };
   let title = EXIT_PLAN_TITLE;
   server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "title": title, "kind": "switch_mode", "rawInput": raw_input, "_meta": meta }));
   let request = json!({
@@ -548,10 +559,15 @@ async fn finish_with(
 
 /// The model's result of a call, into the history
 pub(super) fn record(session: &Arc<Session>, p: &Prepared, model: String, is_error: bool, images: Vec<crate::llm::Image>) {
-  let content = match &p.note {
+  let mut content = match &p.note {
     Some(note) => format!("{note}\n{model}"),
     None => model,
   };
+  // Piggyback newly completed background jobs onto the incoming real ToolResult (never via steer)
+  if let Some(done) = session.jobs.drain_completed() {
+    content.push_str("\n\n");
+    content.push_str(&done);
+  }
   let item = Item::ToolResult { call_id: p.call.id.clone(), name: p.call.name.clone(), content, is_error, images };
   session.store.item(&item);
   session.state.lock().items.push(item);

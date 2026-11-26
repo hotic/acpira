@@ -55,7 +55,7 @@ Cross-agent ACP behaviour the host depends on and its invariants; trust it over 
 - A steer during a Claude autonomous cycle goes out as a plain `session/prompt` that takes the session over (no cancel): the adapter has no turn to steer into. Gated on `claude_autonomous::prompt_joins_cycle`; older adapters keep it queued — their prompt never settles.
 - codex-acp answers an idle steer `startedNewTurn`, so the race reads off `_meta.codex.threadStatus`: after `idle` no steer goes out; a `startedNewTurn` that slips through marks the session `detached` until the next `idle`.
 - **Stop and steers**: claude-agent-acp ≥ 0.86.0 drops unanswered steers on cancel, so cancel requeues them first (gated on `Vendor::requeues_steers_on_cancel` + agentInfo version). A handover cancel leaves them — the queue does not travel.
-- UI siblings of a session use role-prefixed React keys (`plan:` / `queue:` / `composer:…`, `chat/Shell.tsx`): a session-only key orphans and duplicates queue rows.
+- UI siblings of a session use role-prefixed React keys (`plan:` / `queue:` / `composer:…`, `shell/Shell.tsx`): a session-only key orphans and duplicates queue rows.
 
 ## Workspace hooks
 

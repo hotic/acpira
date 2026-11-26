@@ -20,14 +20,14 @@ import { FileTree, ancestors, fileTabMenuItems } from './FileTree';
 import { RowContextMenu } from '../chat/SessionMenu';
 import { FileViewer, ReviewView, preferMarkdownPreview } from './FileViewer';
 import { NewTab, type TabPick } from './NewTab';
-import { PluginFrame } from './PluginFrame';
+import { PluginFrame } from '../plugins/PluginFrame';
 import { ContextTab, type ContextTabInfo } from '../context/ContextTab';
 import { pieceKey, pluginPiece, usePluginPieces } from '../pluginSlots';
 import { takeArrival } from '../plugins/arrivals';
 import { flyStandIn } from '../plugins/Pieces';
 import { motionOff } from '../effects/magic';
 import { playWhoosh } from '../effects/whoosh';
-import { useDocumentHidden, useWindowFocused } from '../plugins/motion';
+import { useDocumentHidden, useWindowFocused } from '../chrome/motion';
 import { FILES_TAB, allLiveTabs, anyTab, panel, panelState, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
 import { TerminalFrame } from './TerminalFrame';
 
@@ -467,7 +467,7 @@ function ToolPanel(p: ToolPanelProps) {
             return <NewTab key={tab.id} onPick={choice => pickNewTab(tab.id, choice, p.root)} />;
           }
           if (tab.kind === 'context') {
-            return <ContextTab key={tab.id} sessionId={p.sessionId} root={p.root} running={p.running} shown={p.panelShown && s.tab === tab.id} info={p.context ?? NO_INFO} />;
+            return <ContextTab key={tab.id} sessionId={p.sessionId} root={p.root} running={p.running} shown={p.panelShown && s.tab === tab.id} info={p.context ?? NO_INFO} onOpenProjectFile={(r, rel) => panel.openFile(r, rel)} />;
           }
           return null;
         })}

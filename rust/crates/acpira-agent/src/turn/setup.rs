@@ -29,8 +29,8 @@ pub(super) struct Setup {
   /// List prices from the catalogue, when it knows the model
   pub(super) cost: Option<Cost>,
   pub(super) effort: Option<String>,
-  /// The session's Fast switch, where the model offers a fast tier (`llm::fast`)
-  pub(super) fast: bool,
+  /// The session's effective speed tier (`llm::fast`)
+  pub(super) fast: llm::fast::SpeedTier,
   /// The model's sampling over its prompt variant's defaults
   pub(super) sampling: Sampling,
   pub(super) thinking: Thinking,
@@ -99,7 +99,7 @@ pub(super) fn setup(server: &Server, session: &Session, params: &Value, mcp: &[c
   };
   let pick = pick.ok_or("No model is configured. Add a model source in Acpira's settings (Agents → Acpira).")?;
   let (provider, model) = config.find(&pick).ok_or_else(|| format!("The model {pick} is no longer configured; pick another one."))?;
-  let fast = fast && llm::fast::offered(provider, model);
+  let fast = llm::fast::offered_tiers(provider, model).effective(fast);
   let endpoint = Endpoint::of(provider, model, config.api_key(&provider.id))
     .ok_or_else(|| format!("{}: the API format \"{}\" is not supported", provider.display_name(), provider.format))?;
   let raw = mode.id == modes::RAW;
@@ -253,7 +253,7 @@ pub(super) fn report_usage(server: &Server, session: &Session, s: &Setup) {
     let used = approx(&s.system, &st.items, &s.specs);
     // The context report describes what the ring shows: the compacted history, estimated the same way
     let setting = crate::context::Setting { system: &s.system, sections: &s.sections, mcp: &s.mcp };
-    st.context = Some(Arc::new(crate::context::Snapshot::estimate(s.system.clone(), s.specs.clone(), setting, used, &st)));
+    st.context = Some(Arc::new(crate::context::Snapshot::estimate(s.system.clone(), s.specs.clone(), setting, used, st.items.clone(), st.summarized, st.folded)));
     used
   };
   send_usage(server, session, used, s.model.context.unwrap_or(DEFAULT_CONTEXT));
@@ -277,7 +277,7 @@ pub(crate) async fn opened_context(server: &Server, session: &Session) -> Option
   }
   let used = st.reported.map(|r| r.0).unwrap_or_else(|| approx(&s.system, &st.items, &s.specs));
   let setting = crate::context::Setting { system: &s.system, sections: &s.sections, mcp: &s.mcp };
-  let snap = Arc::new(crate::context::Snapshot::estimate(s.system.clone(), s.specs.clone(), setting, used, &st));
+  let snap = Arc::new(crate::context::Snapshot::estimate(s.system.clone(), s.specs.clone(), setting, used, st.items.clone(), st.summarized, st.folded));
   st.context = Some(snap.clone());
   Some(snap)
 }
@@ -290,19 +290,11 @@ pub(super) fn send_usage(server: &Server, session: &Session, used: u64, size: u6
   server.update(&session.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": size }));
 }
 
-/// A configured model with the limits the configuration leaves open filled from the catalogue (marked estimated)
-pub fn limits(config: &crate::config::Config, catalog: &acpira_shared::model_catalog::Catalog, pick: &str) -> Option<ProviderModel> {
-  let (_, m) = config.find(pick)?;
-  let mut model = m.clone();
-  crate::catalog::complete(&mut model, catalog);
-  Some(model)
-}
-
 /// Take the model's window and output limit as configured now. The rest of the setup stays frozen for the turn (the
 /// prompt cache keys on it), but a limit edited in the settings mid-turn applies from the next model call, where
 /// before it waited for the next turn and a window corrected from a 128k guess still compacted at the old threshold
 pub(super) fn refresh_limits(server: &Server, session: &Session, s: &mut Setup) {
-  if let Some(m) = limits(&session.config(), &server.catalog.get(), &s.pick) {
+  if let Some(m) = crate::config::limits(&session.config(), &server.catalog.get(), &s.pick) {
     s.model.context = m.context;
     s.model.output = m.output;
     s.model.estimated = m.estimated;

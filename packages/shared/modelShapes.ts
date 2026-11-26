@@ -1,4 +1,4 @@
-import type { ConfigControl, SessionControls } from './transcript';
+import type { ConfigControl, SessionControls } from './transcriptCore';
 import { groupModels } from './models';
 
 // Per-agent memory of the dependent controls (effort, Fast, other model parameters) each model came with, keyed by the

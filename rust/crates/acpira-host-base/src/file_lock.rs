@@ -1,0 +1,355 @@
+//! Cross-process mutex around a shared file (mirror of apps/vscode/src/store/fileLock.ts, same on-disk protocol so the VS Code shell's
+//! migration and Rust sidecars arbitrate with each other): `<file>.lock` is created with O_EXCL and carries `pid\ntoken`; a sibling
+//! `<file>.lock.<token>` is the generation stale waiters rename, so a check made against a dead holder can never move a
+//! lock a live host just created. Callers in this process queue per path, so the lock file only arbitrates between processes
+
+use std::collections::HashMap;
+use std::future::Future;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant, SystemTime};
+
+use anyhow::{Result, anyhow};
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
+
+use crate::util::random_hex;
+
+// A holder that died leaves its lock behind; past this age another host takes it over
+const STALE: Duration = Duration::from_secs(10);
+// Give up on a lock that stays held this long
+const WAIT: Duration = Duration::from_secs(5);
+/// A temp file this old whose writer has exited is left over from an interrupted write
+pub const STALE_TEMP_AGE: Duration = Duration::from_secs(3600);
+
+static CHAINS: LazyLock<parking_lot::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> = LazyLock::new(Default::default);
+
+pub async fn with_file_lock<T, F, Fut>(file: &Path, f: F) -> Result<T>
+where
+  F: FnOnce() -> Fut,
+  Fut: Future<Output = Result<T>>,
+{
+  let chain = CHAINS.lock().entry(file.to_path_buf()).or_default().clone();
+  let guard = chain.lock().await;
+  let out = locked(file, f).await;
+  drop(guard);
+  // Drop the per-path entry once nobody else holds a reference to it
+  let mut chains = CHAINS.lock();
+  if chains.get(file).is_some_and(|c| Arc::strong_count(c) <= 2) {
+    chains.remove(file);
+  }
+  drop(chain);
+  out
+}
+
+fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
+  let mut s = p.as_os_str().to_owned();
+  s.push(suffix);
+  PathBuf::from(s)
+}
+
+async fn locked<T, F, Fut>(file: &Path, f: F) -> Result<T>
+where
+  F: FnOnce() -> Fut,
+  Fut: Future<Output = Result<T>>,
+{
+  let lock = with_suffix(file, ".lock");
+  let deadline = Instant::now() + WAIT;
+  let token = random_hex(16);
+  let gen_path = with_suffix(&lock, &format!(".{token}"));
+  let body = format!("{}\n{token}", std::process::id());
+  let acquired: Result<()> = async {
+    loop {
+      fs::write(&gen_path, &body).await?;
+      match fs::OpenOptions::new().write(true).create_new(true).open(&lock).await {
+        Ok(mut h) => {
+          h.write_all(body.as_bytes()).await?;
+          h.flush().await?;
+          return Ok(());
+        }
+        Err(e) => {
+          let _ = fs::remove_file(&gen_path).await;
+          if e.kind() != ErrorKind::AlreadyExists {
+            return Err(e.into());
+          }
+          if claim_stale(&lock).await {
+            continue;
+          }
+          if Instant::now() > deadline {
+            return Err(anyhow!("{} is locked by another host ({})", file.display(), lock.display()));
+          }
+          if age(&lock).await.is_some() {
+            let jitter = 5 + (random_hex(1).as_bytes()[0] as u64 % 20);
+            tokio::time::sleep(Duration::from_millis(jitter)).await;
+          }
+        }
+      }
+    }
+  }
+  .await;
+  if let Err(e) = acquired {
+    release(&lock, &token).await;
+    return Err(e);
+  }
+  let out = f().await;
+  release(&lock, &token).await;
+  out
+}
+
+async fn release(lock: &Path, token: &str) {
+  let body = fs::read_to_string(lock).await.unwrap_or_default();
+  if parse_lock(&body).1.as_deref() == Some(token) {
+    let _ = fs::remove_file(lock).await;
+  }
+  let _ = fs::remove_file(with_suffix(lock, &format!(".{token}"))).await;
+}
+
+fn parse_lock(body: &str) -> (Option<i64>, Option<String>) {
+  let mut lines = body.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l));
+  let pid = lines.next().and_then(|l| l.trim().parse::<i64>().ok());
+  let token = lines.next().map(str::trim).filter(|t| t.len() >= 16 && t.chars().all(|c| c.is_ascii_hexdigit())).map(str::to_owned);
+  (pid, token)
+}
+
+async fn age(p: &Path) -> Option<Duration> {
+  let m = fs::metadata(p).await.ok()?.modified().ok()?;
+  Some(SystemTime::now().duration_since(m).unwrap_or_default())
+}
+
+async fn claim_stale(lock: &Path) -> bool {
+  let body = fs::read_to_string(lock).await.unwrap_or_default();
+  if body.is_empty() {
+    return false;
+  }
+  let (pid, token) = parse_lock(&body);
+  match age(lock).await {
+    Some(a) if a > STALE => {}
+    _ => return false,
+  }
+  if pid_alive(pid) {
+    return false;
+  }
+  let tag = format!("{}-{}", std::process::id(), random_hex(4));
+  if let Some(token) = token {
+    let gen_path = with_suffix(lock, &format!(".{token}"));
+    let dead = with_suffix(&gen_path, &format!(".dead-{tag}"));
+    // Unique source: a second waiter renaming the same generation loses
+    if fs::rename(&gen_path, &dead).await.is_err() {
+      return false;
+    }
+    let still = fs::read_to_string(lock).await.unwrap_or_default();
+    if parse_lock(&still).1.as_deref() == Some(token.as_str()) {
+      let _ = fs::remove_file(lock).await;
+    }
+    let _ = fs::remove_file(&dead).await;
+    return true;
+  }
+  // Legacy lock (pid only): keep the moved bytes only when they are still the observation we checked
+  let claim = with_suffix(lock, &format!(".stale-{tag}"));
+  if fs::rename(lock, &claim).await.is_err() {
+    return false;
+  }
+  let moved = fs::read_to_string(&claim).await.unwrap_or_default();
+  if moved == body {
+    let _ = fs::remove_file(&claim).await;
+    return true;
+  }
+  let _ = fs::rename(&claim, lock).await;
+  false
+}
+
+#[cfg(unix)]
+pub fn pid_alive(pid: Option<i64>) -> bool {
+  let Some(pid) = pid.filter(|p| *p > 0 && *p <= i32::MAX as i64) else { return false };
+  // SAFETY: signal 0 only checks for existence and permission
+  let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
+  r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(windows)]
+pub fn pid_alive(pid: Option<i64>) -> bool {
+  use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+  use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+  let Some(pid) = pid.filter(|p| *p > 0).and_then(|p| u32::try_from(p).ok()) else { return false };
+  // SAFETY: a non-inheritable query-only handle is closed on every successful open. No signal is sent.
+  unsafe {
+    let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+    if handle.is_null() {
+      // Access denied (another user / elevated process) is not evidence that the lock holder died.
+      return std::io::Error::last_os_error().raw_os_error() != Some(ERROR_INVALID_PARAMETER as i32);
+    }
+    let status = WaitForSingleObject(handle, 0);
+    CloseHandle(handle);
+    status != WAIT_OBJECT_0
+  }
+}
+
+/// tmp + fsync + rename so a reader in another host never sees a half-written file and a crash does not leave a
+/// zeroed target; mode applies to the temp file and travels with the rename
+pub async fn write_atomic(path: &Path, data: &[u8], mode: Option<u32>) -> Result<()> {
+  let tmp = with_suffix(path, &format!(".{}.tmp", std::process::id()));
+  let mut opts = fs::OpenOptions::new();
+  opts.write(true).create(true).truncate(true);
+  #[cfg(unix)]
+  if let Some(m) = mode {
+    opts.mode(m);
+  }
+  #[cfg(not(unix))]
+  let _ = mode;
+  let mut f = opts.open(&tmp).await?;
+  f.write_all(data).await?;
+  f.flush().await?;
+  f.sync_all().await?;
+  drop(f);
+  fs::rename(&tmp, path).await?;
+  Ok(())
+}
+
+/// The writer's pid when `name` is a temp file `write_atomic` (or the shell's `fileLock.ts`) names `<file>.<pid>.tmp`
+pub fn temp_writer_pid(name: &str) -> Option<i64> {
+  let (base, pid) = name.strip_suffix(".tmp")?.rsplit_once('.')?;
+  if base.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+    return None;
+  }
+  pid.parse().ok()
+}
+
+/// A temp file an interrupted write left behind: older than `older_than` and its writer is no longer running. A live
+/// writer may still be about to rename it, and a pid that was reused only keeps the file longer
+pub async fn is_stale_temp(path: &Path, older_than: Duration) -> bool {
+  let Some(pid) = path.file_name().and_then(|n| temp_writer_pid(&n.to_string_lossy())) else { return false };
+  let Ok(meta) = fs::symlink_metadata(path).await else { return false };
+  let old = meta.modified().ok().and_then(|m| SystemTime::now().duration_since(m).ok()).is_some_and(|age| age >= older_than);
+  meta.is_file() && old && !pid_alive(Some(pid))
+}
+
+/// Remove the stale temp files directly inside each of `dirs` (not below them); returns how many went
+pub async fn sweep_temp_files(dirs: &[PathBuf], older_than: Duration) -> usize {
+  let mut removed = 0;
+  for dir in dirs {
+    let Ok(mut rd) = fs::read_dir(dir).await else { continue };
+    while let Ok(Some(e)) = rd.next_entry().await {
+      let path = e.path();
+      if is_stale_temp(&path, older_than).await && fs::remove_file(&path).await.is_ok() {
+        removed += 1;
+      }
+    }
+  }
+  removed
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  /// The pid of a child that has exited, spawned once for the whole test binary: a child shares this process's
+  /// descriptors between fork and exec, so every spawn briefly keeps the file locks other tests just let go
+  fn exited_pid() -> u32 {
+    static PID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *PID.get_or_init(|| {
+      let mut child =
+        std::process::Command::new(std::env::current_exe().unwrap()).arg("--list").stdout(std::process::Stdio::null()).spawn().unwrap();
+      let pid = child.id();
+      child.wait().unwrap();
+      pid
+    })
+  }
+
+  #[test]
+  fn process_liveness_distinguishes_a_running_holder_from_an_exited_child() {
+    assert!(pid_alive(Some(std::process::id() as i64)));
+    assert!(!pid_alive(None));
+    assert!(!pid_alive(Some(-1)));
+    assert!(!pid_alive(Some(exited_pid() as i64)));
+  }
+
+  #[tokio::test]
+  async fn an_old_lock_held_by_a_live_process_is_not_stolen() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock = dir.path().join("live.lock");
+    let body = format!("{}\n0123456789abcdef", std::process::id());
+    std::fs::write(&lock, &body).unwrap();
+    std::fs::write(with_suffix(&lock, ".0123456789abcdef"), &body).unwrap();
+    std::fs::File::options().write(true).open(&lock).unwrap().set_modified(SystemTime::now() - STALE * 2).unwrap();
+    assert!(!claim_stale(&lock).await);
+    assert_eq!(std::fs::read_to_string(&lock).unwrap(), body);
+  }
+
+  #[tokio::test]
+  async fn only_old_temp_files_of_exited_writers_are_swept() {
+    let dir = tempfile::tempdir().unwrap();
+    let dead = exited_pid();
+    let me = std::process::id();
+    let hour_ago = SystemTime::now() - Duration::from_secs(2 * 3600);
+    let make = |name: &str, old: bool| {
+      let p = dir.path().join(name);
+      std::fs::write(&p, b"half").unwrap();
+      if old {
+        std::fs::File::options().write(true).open(&p).unwrap().set_modified(hour_ago).unwrap();
+      }
+      p
+    };
+    let stale = make(&format!("a.json.{dead}.tmp"), true);
+    let fresh = make(&format!("b.json.{dead}.tmp"), false);
+    let live = make(&format!("c.json.{me}.tmp"), true);
+    let other = make("notes.tmp", true);
+    assert_eq!(temp_writer_pid("a.json.42.tmp"), Some(42));
+    assert_eq!(temp_writer_pid(".42.tmp"), None);
+    assert_eq!(temp_writer_pid("a.json.x42.tmp"), None);
+    assert_eq!(sweep_temp_files(&[dir.path().to_path_buf()], Duration::from_secs(3600)).await, 1);
+    assert!(!stale.exists());
+    assert!(fresh.exists() && live.exists() && other.exists());
+  }
+
+  #[tokio::test]
+  async fn atomic_write_replaces_existing_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("用户 prefs.json");
+    write_atomic(&path, b"old", None).await.unwrap();
+    write_atomic(&path, b"new", None).await.unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+  }
+
+  #[tokio::test]
+  async fn serializes_callers_and_cleans_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("x.json");
+    let inside = Arc::new(AtomicUsize::new(0));
+    let mut tasks = vec![];
+    for _ in 0..8 {
+      let (file, inside) = (file.clone(), inside.clone());
+      tasks.push(tokio::spawn(async move {
+        with_file_lock(&file, || async {
+          assert_eq!(inside.fetch_add(1, Ordering::SeqCst), 0);
+          tokio::time::sleep(Duration::from_millis(2)).await;
+          inside.fetch_sub(1, Ordering::SeqCst);
+          Ok(())
+        })
+        .await
+        .unwrap();
+      }));
+    }
+    for t in tasks {
+      t.await.unwrap();
+    }
+    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+    assert!(left.is_empty(), "lock files left behind");
+  }
+
+  #[tokio::test]
+  async fn takes_over_a_dead_holders_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("y.json");
+    let lock = with_suffix(&file, ".lock");
+    std::fs::write(&lock, "999999\n0123456789abcdef0123456789abcdef").unwrap();
+    std::fs::write(with_suffix(&lock, ".0123456789abcdef0123456789abcdef"), "999999").unwrap();
+    let old = SystemTime::now() - Duration::from_secs(60);
+    std::fs::File::options().write(true).open(&lock).unwrap().set_modified(old).unwrap();
+    let v = with_file_lock(&file, || async { Ok(7) }).await.unwrap();
+    assert_eq!(v, 7);
+    assert!(!lock.exists());
+  }
+}

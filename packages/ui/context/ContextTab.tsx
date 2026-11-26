@@ -5,7 +5,6 @@ import { isRemoteFolder } from '@acpira/shared/remote';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { vscodeApi } from '../vscodeApi';
-import { panel } from '../panel/store';
 import { contextApi, lastSplit } from './api';
 import { ContextReportView } from './ContextReport';
 import { CopyButton } from './Parts';
@@ -59,8 +58,9 @@ function useReport(sessionId: string, shown: boolean, running: boolean, used: nu
   return report;
 }
 
-export function ContextTab({ sessionId, root, running, shown, info }: {
+export function ContextTab({ sessionId, root, running, shown, info, onOpenProjectFile }: {
   sessionId: string; root: string; running: boolean; shown: boolean; info: ContextTabInfo;
+  onOpenProjectFile?: (root: string, rel: string) => void;
 }) {
   const locale = useLocale();
   const report = useReport(sessionId, shown, running, info.used);
@@ -87,7 +87,7 @@ export function ContextTab({ sessionId, root, running, shown, info }: {
   const openFile = (path: string) => {
     const rel = path.startsWith(`${root.replace(/[\\/]+$/, '')}/`) || path.startsWith(`${root.replace(/[\\/]+$/, '')}\\`)
       ? path.slice(root.replace(/[\\/]+$/, '').length + 1) : undefined;
-    if (rel) panel.openFile(root, rel.replace(/\\/g, '/'));
+    if (rel && onOpenProjectFile) onOpenProjectFile(root, rel.replace(/\\/g, '/'));
     else vscodeApi().postMessage({ type: 'openPath', path });
   };
   const rawText = raw?.raw ? JSON.stringify(raw.raw.body, null, 2) : undefined;

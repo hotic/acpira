@@ -9,8 +9,8 @@ use serde_json::Value;
 use acpira_shared::num::Num;
 use acpira_shared::transcript::*;
 
-use crate::acp::session::failure::SessionFailure;
 use crate::acp::transcript::compaction_text;
+use crate::acp::transcript::failure::SessionFailure;
 use crate::acp::transcript::retry_text;
 use crate::i18n::{t, tp};
 use crate::json::{str_of, text_of};

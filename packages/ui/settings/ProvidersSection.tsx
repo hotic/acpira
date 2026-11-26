@@ -11,7 +11,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { blockItem, blockList, DangerAction, DialogBody, Dot, Field, FooterNote, FormField, FormGrid, FormRows, Group, inputBox, ItemRow, Note, PickContent, SearchRow, Section, SectionAction, Select, SettingsDialog, Switch } from './controls';
+import { blockItem, blockList, DangerAction, DialogBody, Dot, Field, FooterNote, FormField, FormGrid, FormRows, Group, inputBox, ItemRow, Note, PickContent, SearchRow, Section, SectionAction, Select, SettingsDialog, Switch } from '../chrome/controls';
 import { modelDesc, ModelRow } from './ProviderModel';
 import { dropSlot, SortableRows } from './SortableRows';
 import type { SettingsHandlers } from './SettingsShell';

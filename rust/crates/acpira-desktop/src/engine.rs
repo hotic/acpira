@@ -125,19 +125,7 @@ fn binary_identity(binary: &Path) -> String {
 /// The socket directory must belong to this user and admit no one else: anyone who could create the socket there could
 /// pose as the engine. A directory of this user's that is too open (created by something else first) is tightened
 pub fn private_dir(dir: &Path) -> std::io::Result<()> {
-  std::fs::create_dir_all(dir)?;
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let st = std::fs::symlink_metadata(dir)?;
-    if !st.is_dir() || st.uid() != current_uid() {
-      return Err(std::io::Error::other(format!("{} must be a directory owned by this user", dir.display())));
-    }
-    if st.mode() & 0o077 != 0 {
-      std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-    }
-  }
-  Ok(())
+  acpira_host_base::private_dir::private_dir_io(dir)
 }
 
 #[cfg(any(unix, windows))]

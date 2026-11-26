@@ -13,7 +13,7 @@ describe('rust workspace', () => {
     expect((JSON.parse(read('apps/vscode/package.json')) as { version: string }).version).toBe(version);
     expect(read('rust/Cargo.toml').match(/\[workspace\.package\]\nversion = "([^"]+)"/)?.[1]).toBe(version);
     const lock = read('rust/Cargo.lock');
-    for (const name of ['acpira-agent', 'acpira-desktop', 'acpira-host', 'acpira-rpc', 'acpira-shared']) expect(lock.match(new RegExp(`name = "${name}"\\nversion = "([^"]+)"`))?.[1]).toBe(version);
+    for (const name of ['acpira-agent', 'acpira-desktop', 'acpira-host', 'acpira-host-base', 'acpira-plugin-build', 'acpira-rpc', 'acpira-shared', 'acpira-store']) expect(lock.match(new RegExp(`name = "${name}"\\nversion = "([^"]+)"`))?.[1]).toBe(version);
     // The desktop app (its own Cargo workspace) and its bundle
     expect(read('apps/desktop/Cargo.toml').match(/\[package\]\n(?:.*\n)*?version = "([^"]+)"/)?.[1]).toBe(version);
     expect((JSON.parse(read('apps/desktop/tauri.conf.json')) as { version: string }).version).toBe(version);

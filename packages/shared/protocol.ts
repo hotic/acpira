@@ -1,7 +1,9 @@
 import type { ContextContent, ContextRaw, ContextReport } from './context';
 import type { RemoteAccessOp, RemoteAccessView } from './devices';
 import type { ConnectionOp, ConnectionView, RemoteDirEntry, SshHost } from './remote';
-import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, SlashCommand, Turn, TurnSettings } from './transcript';
+import type { AccountAction, AccountActionVia, AccountInfo, AddAccountVia, AgentId, AgentInfo, AgentInstallProgress, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SlashCommand, Turn, TurnSettings } from './transcriptCore';
+import type { SessionView } from './transcript';
+export type { AddAccountVia, AccountActionVia, AccountAction, AgentInstallProgress } from './transcriptCore';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
@@ -405,37 +407,7 @@ export interface NativeSessionsState {
   error?: string;
 }
 
-// How an account comes in: import reads the CLI's own local login; login runs an isolated login in the terminal that leaves the local login untouched;
-// auto is the "+" in the menu: import the local login if it hasn't been imported yet, otherwise log in a new one in the terminal
-export type AddAccountVia = 'import' | 'login' | 'auto';
-// unlock: the credential store holding the agent's logins (macOS keychain) is unlocked in a terminal, no account is added;
-// key: a pasted API key is checked with the vendor and stored as an account (addAccountKey)
-export type AccountActionVia = AddAccountVia | 'unlock' | 'key';
-
-// Host-owned progress survives webview remounts and prevents duplicate imports across panels.
-export interface AccountAction {
-  agent: AgentId;
-  via: AccountActionVia;
-  status: 'pending' | 'success' | 'missing' | 'cancelled' | 'error';
-  error?: string;
-}
-
-// One agent's in-app install: the registry's install line run by the engine itself on its own machine (no terminal).
-// Host-owned like AccountAction, so a remounted page or a second panel shows the same run
-export interface AgentInstallProgress {
-  agent: AgentId;
-  status: 'running' | 'success' | 'failed' | 'cancelled';
-  // The last lines of the installer's output, ANSI removed, carriage-return progress collapsed
-  log: string[];
-  // The proxy the installer went through; absent when it used the inherited environment
-  proxy?: string;
-  // npm's global prefix was not writable, so packages went to this user directory
-  prefix?: string;
-  // Why it failed, already localized
-  error?: string;
-  // Failed because Node.js / npm was not found: the page offers downloading a private portable Node.js LTS and retrying
-  missingNode?: boolean;
-}
+// AccountAction and AgentInstallProgress live in transcriptCore.ts and are re-exported above.
 
 // Session actions carry the id of the session the view was showing; the host refuses to apply one to a different
 // session — a late message must never land on whatever happens to be active. Absent (tests / scripts): the viewer's current
@@ -593,8 +565,9 @@ export type WebviewMsg =
   | { type: 'removeAccount'; sessionId?: string; id: string }
   // AgentInfo.credentialsLocked: unlock the credential store in a terminal, then reconnect the agent's sessions stuck on sign-in
   | { type: 'unlockCredentials'; sessionId?: string; agent: AgentId }
-  // An account list came into view: refresh the quotas of that agent's accounts (recent ones are served from memory)
-  | { type: 'refreshQuota'; sessionId?: string; agent: AgentId }
+  // An account list came into view: refresh the quotas of that agent's accounts (recent ones are served from memory).
+  // `manual`: explicit user click, required for providers whose quota is read only on demand (AgentInfo.manualQuota)
+  | { type: 'refreshQuota'; sessionId?: string; agent: AgentId; manual?: boolean }
   | { type: 'compact'; sessionId?: string }
   | { type: 'login'; sessionId?: string; methodId?: string }
   // Run the agent's install line (AgentInfo.install) in the background on the session's or local engine's machine.

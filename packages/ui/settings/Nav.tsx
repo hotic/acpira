@@ -1,22 +1,16 @@
 import { useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { ArrowLeft, Blocks, BrainCircuit, HardDrive, Info, Keyboard, Layers, Network, Palette, SlidersHorizontal, Workflow } from 'lucide-react';
-import type { AgentInfo } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
 import { UpdateDot } from '../ui/UpdateDot';
-import { TitleSpace } from '../chat/DesktopFrame';
+import type { SettingsPage } from '../chrome/settingsPage';
+import { TitleSpace } from '../shell/DesktopFrame';
 import { NavDivider, NavEmpty, NavSearch } from '../chat/NavRows';
 import { shortcutLabel } from '../desktop';
 import { scrollToAnchor, searchHits, type SearchEntry } from './search';
 import { UsageGlyph } from '../usage/UsageGlyph';
 import { t } from '../i18n';
 
-// Orchestration carries the persona or group opened from its lists, and an agent's page is the Models page with that
-// agent's dialog open, so an opened dialog is a step of its own in the
-// back / forward trail and the chat can open the settings straight at one. Plugins carries its open filter, so the
-// rail's search can land on one
-export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'shortcuts' } | { kind: 'models' } | { kind: 'plugins'; tab?: string } | { kind: 'shared' } | { kind: 'connections' }
-  | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'usage' } | { kind: 'storage' } | { kind: 'about' }
-  | { kind: 'agent'; id: AgentInfo['id']; tab?: 'models' | 'sources' };
+export type { SettingsPage };
 
 // Two pages are the same place (a click on the page already shown adds nothing to the trail)
 export const samePage = (a: SettingsPage, b: SettingsPage) => JSON.stringify(a) === JSON.stringify(b);

@@ -1,4 +1,4 @@
-import type { SessionOption } from './transcript';
+import type { SessionOption } from './transcriptCore';
 
 // Reconstructing the model list: Devin flattens the cartesian product of "model × reasoning effort × Fast × 1M" into 210 flat options
 // (no grouping, and no separate thought_level configOption; _meta only has supportsImages), so the structure can only be recovered

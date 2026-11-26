@@ -6,8 +6,8 @@ import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
 import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
-import { BlobUrlContext, OpenToolFileContext, WidgetPromptContext, parseFileLink } from './fileLinks';
-import { useShownBlob } from './stagedBlob';
+import { BlobUrlContext, OpenToolFileContext, WidgetPromptContext, parseFileLink } from '../markdown/fileLinks';
+import { useShownBlob } from '../markdown/stagedBlob';
 import { WIDGET_MESSAGE, WIDGET_PROMPT_MAX, buildWidgetDoc, pageNonce, readWidgetTheme, type WidgetPageMsg } from './widgetDoc';
 
 // An HTML widget an agent showed with Acpira's `show_widget`: its page runs in a sandboxed srcdoc frame (see

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { codeLanguage, tokenizeCode } from '../packages/ui/chat/codeSyntax';
-import { diffCopyText } from '../packages/ui/chat/codeDiff';
-import { highlightDiff } from '../packages/ui/chat/codeDiffHighlight';
+import { codeLanguage, tokenizeCode } from '../packages/ui/markdown/codeSyntax';
+import { diffCopyText } from '../packages/ui/markdown/codeDiff';
+import { highlightDiff } from '../packages/ui/markdown/codeDiffHighlight';
 import { agentTurn, diffCase } from './fixtures/engine';
 
 describe('production code details', () => {

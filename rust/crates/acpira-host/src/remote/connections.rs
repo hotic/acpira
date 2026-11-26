@@ -718,7 +718,7 @@ impl Connections {
     let released = env!("CARGO_PKG_VERSION");
     let (binary, version) = match (self.opts.binary)(&probe.platform).or_else(|| super::fetch::installed(&self.builds, &version, &probe.platform)) {
       Some(b) => (b, version),
-      None if crate::machine_engine::policy::is_local_package(&version) => {
+      None if crate::platform::engine_layout::is_local_package(&version) => {
         match super::fetch::installed(&self.builds, released, &probe.platform) {
           Some(b) => (b, released.to_owned()),
           None => (self.fetch_build(alias, generation, released, &probe.platform).await?, released.to_owned()),
@@ -882,6 +882,44 @@ fn progress_text(sent: u64, total: u64) -> String {
 fn is_env_name(name: &str) -> bool {
   !name.is_empty()
     && name.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && b.is_ascii_digit()))
+}
+
+impl crate::remote_seam::RemoteConnector for Connections {
+  fn ensure(&self, alias: String, wait: Duration) -> crate::acp::transport::rpc::BoxFuture<Result<Arc<dyn crate::remote_seam::RemoteClientPort>>> {
+    let me = self.me.clone();
+    Box::pin(async move {
+      let Some(c) = me.upgrade() else { bail!("SSH connections manager is gone") };
+      let client = Connections::ensure(&c, &alias, wait).await?;
+      Ok(Arc::new(client) as Arc<dyn crate::remote_seam::RemoteClientPort>)
+    })
+  }
+
+  fn client(&self, alias: &str) -> Option<Arc<dyn crate::remote_seam::RemoteClientPort>> {
+    Connections::client(self, alias).map(|c| Arc::new(c) as Arc<dyn crate::remote_seam::RemoteClientPort>)
+  }
+
+  fn open_codex_exec(
+    &self,
+    alias: String,
+    binary: String,
+    def: crate::acp::agents::registry::AgentDef,
+  ) -> crate::acp::transport::rpc::BoxFuture<Result<crate::remote_seam::CodexExecOpened>> {
+    let me = self.me.clone();
+    Box::pin(async move {
+      let Some(c) = me.upgrade() else { bail!("SSH connections manager is gone") };
+      let codex = super::codex_exec::local_codex(&binary, &def).await?;
+      let tunnel = c.codex.open(&c, &alias, &codex).await?;
+      let url = tunnel.url();
+      let redacted_url = super::codex_exec::redact(&url).to_string();
+      Ok(crate::remote_seam::CodexExecOpened {
+        version: codex.version,
+        env_key: super::codex_exec::ENV,
+        url,
+        redacted_url,
+        tunnel: Box::new(tunnel),
+      })
+    })
+  }
 }
 
 #[cfg(test)]

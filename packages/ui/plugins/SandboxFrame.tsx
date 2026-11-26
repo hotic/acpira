@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { cn } from '../ui/cn';
 import { registerPluginFrame, usePluginPiece } from '../pluginSlots';
-import { digest, tokensOf } from '../panel/PluginFrame';
+import { digest, tokensOf } from './PluginFrame';
 
 // What a frame hears of the session on screen (acpira.onState in /plugin-frame.html): whether it works or waits for the
 // user, nothing of its content

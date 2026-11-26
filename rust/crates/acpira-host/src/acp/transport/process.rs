@@ -1,6 +1,7 @@
 //! One agent subprocess = one long-lived ACP connection. Handlers are
-//! rebindable so a warm (initialize-only) process can be handed to a session without a second spawn
+//! rebindable so a warm (initialize-only) process can be handed to a session without a second spawn.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -11,13 +12,10 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::watch;
 
-use crate::acp::agents::launch;
-use crate::acp::agents::registry::AgentDef;
+use crate::acp::launch;
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::legacy_models::LegacyModels;
 use crate::acp::transport::rpc::{BoxFuture, Connection, Inbound, RpcError};
-use crate::acp::vendors::grok::{GROK_ASK_QUESTION, GROK_EXIT_PLAN};
-use crate::acp::vendors::{Vendor, antigravity, claude_auth, claude_workflow, droid_usage};
 use crate::i18n::tp;
 
 pub const CLIENT_NAME: &str = "acpira";
@@ -30,27 +28,35 @@ pub fn client_version() -> &'static str {
   acpira_shared::version::VERSION
 }
 
-/// What the client side accepts from the agent. Every handler here is advertised; the session and the idle stubs both
-/// implement all of them
+/// Pure launch specification for spawning an ACP subprocess without vendor or registry coupling.
+#[derive(Debug, Clone)]
+pub struct SpawnSpec {
+  pub command: String,
+  pub binary: String,
+  pub args: Vec<String>,
+  pub cwd: String,
+  pub env_remove: Vec<String>,
+  pub env_set: BTreeMap<String, String>,
+  pub initialize_params: Value,
+  pub init_timeout: Option<Duration>,
+  /// Optional Droid session store derived from the final child environment.
+  pub droid_sessions: Option<PathBuf>,
+  /// Optional CLI-owned directories derived from the final child environment.
+  pub own_dirs: Vec<PathBuf>,
+}
+
+/// What the client side accepts from the agent. Standard ACP methods are routed directly;
+/// vendor and host extensions flow through `on_custom_notification` (synchronous on the reader task)
+/// and `on_custom_request`.
 pub trait ClientHandlers: Send + Sync + 'static {
   fn on_update(&self, params: Value);
-  fn on_auth_retry(&self, _params: Value) {}
-  /// Any other raw Claude `api_retry` frame: the attempt's status, error kind and wait (`vendors/claude_retry.rs`)
-  fn on_api_retry(&self, _params: Value) {}
   fn on_permission(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
   fn on_elicitation(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
-  fn on_grok_question(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
-  /// The built-in agent's tool call for a folder on an SSH host (`acp/session/remote.rs`)
-  fn on_remote_tool(&self, _req: Value, _cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
-    Box::pin(async { Err(RpcError::method_not_found(crate::acp::session::remote::TOOL)) })
-  }
-  /// The built-in agent asks which of its loop's hooks the plugins declare (`acpira_agent::plugin_hooks::HOOKS`)
-  fn on_plugin_hooks(&self) -> BoxFuture<Result<Value, RpcError>> {
-    Box::pin(async { Ok(serde_json::json!({ "hooks": [] })) })
-  }
-  /// One of those hooks (`acpira_agent::plugin_hooks::HOOK`): the payload as the plugins left it
-  fn on_plugin_hook(&self, _req: Value) -> BoxFuture<Result<Value, RpcError>> {
-    Box::pin(async { Err(RpcError::method_not_found(acpira_agent::plugin_hooks::HOOK)) })
+  /// Non-standard notification invoked synchronously on the reader loop to preserve ordering with `session/update`.
+  fn on_custom_notification(&self, _method: &str, _params: Value) {}
+  /// Non-standard server-to-client RPC request (vendor protocols, host tools, plugin hooks).
+  fn on_custom_request(&self, method: String, _params: Value, _cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    Box::pin(async move { Err(RpcError::method_not_found(&method)) })
   }
   fn on_stderr(&self, _line: &str) {}
   fn on_exit(&self, _code: Option<i32>, _signal: Option<String>) {}
@@ -98,17 +104,11 @@ struct Router {
 
 impl Inbound for Router {
   fn notification(&self, method: &str, params: Value) {
+    let h = self.box_.read().clone();
     if method == "session/update" {
-      self.box_.read().clone().on_update(params);
-    } else if method == claude_workflow::SDK_MESSAGE {
-      let handler = self.box_.read().clone();
-      if let Some(update) = claude_workflow::workflow_update(&params) {
-        handler.on_update(update);
-      } else if claude_auth::repeated_auth_retry(&params) {
-        handler.on_auth_retry(params);
-      } else {
-        handler.on_api_retry(params);
-      }
+      h.on_update(params);
+    } else {
+      h.on_custom_notification(method, params);
     }
   }
 
@@ -117,18 +117,7 @@ impl Inbound for Router {
     match method.as_str() {
       "session/request_permission" => h.on_permission(params, cancel),
       "elicitation/create" => h.on_elicitation(params, cancel),
-      crate::acp::session::remote::TOOL => h.on_remote_tool(params, cancel),
-      acpira_agent::plugin_hooks::HOOKS => h.on_plugin_hooks(),
-      acpira_agent::plugin_hooks::HOOK => h.on_plugin_hook(params),
-      GROK_ASK_QUESTION => match crate::acp::vendors::grok::parse_question(&params) {
-        Ok(req) => h.on_grok_question(req, cancel),
-        Err(e) => Box::pin(async move { Err(e) }),
-      },
-      GROK_EXIT_PLAN => match crate::acp::vendors::grok::parse_exit_plan(&params) {
-        Ok(req) => Box::pin(crate::acp::vendors::grok::approve_plan(req, cancel, h)),
-        Err(e) => Box::pin(async move { Err(e) }),
-      },
-      _ => Box::pin(async move { Err(RpcError::method_not_found(&method)) }),
+      _ => h.on_custom_request(method, params, cancel),
     }
   }
 }
@@ -140,15 +129,13 @@ enum Life {
 }
 
 pub struct AgentProcess {
-  pub def: AgentDef,
   pub conn: Connection,
   /// The initialize response as the agent sent it
   pub init: Value,
   pub pid: Option<u32>,
   /// Droid's actual session store, after the launch env and account overrides have been applied.
   pub(crate) droid_sessions: Option<PathBuf>,
-  /// The folders this child was told to keep the CLI's own files in: its local-run profile's `OwnFiles::env_dirs` as
-  /// the account or the definition set them. The engine's own environment does not carry an account's
+  /// The folders this child was told to keep the CLI's own files in (`OwnFiles::env_dirs`).
   pub(crate) own_dirs: Vec<PathBuf>,
   signals: Option<Signals>,
   box_: HandlerBox,
@@ -156,13 +143,6 @@ pub struct AgentProcess {
   killed: parking_lot::Mutex<bool>,
   /// The unstable `models` field shown as a model select (`legacy_models.rs`)
   legacy: LegacyModels,
-}
-
-/// `AgentProcess::own_dirs`: the account's value wins over the definition's, as in the child's environment
-fn own_dirs(def: &AgentDef, extra_env: Option<&acpira_shared::transcript::StrMap>) -> Vec<PathBuf> {
-  let Some(profile) = crate::acp::local_run::builtin(&def.id).and_then(|l| l.stand().cloned()) else { return Vec::new() };
-  let named = |k: &String| extra_env.and_then(|e| e.get(k)).or_else(|| def.env.as_ref()?.get(k)).filter(|d| !d.is_empty());
-  profile.own.env_dirs.iter().filter_map(named).map(PathBuf::from).collect()
 }
 
 /// A session start's requested sessionId, kept for `LegacyModels::adopt` without cloning every request's params
@@ -206,71 +186,21 @@ impl AgentProcess {
     self.init.get("agentCapabilities").unwrap_or(&Value::Null)
   }
 
-  /// `extra_env`: variables the account layer injects per identity, on top of the definition's env
-  pub async fn spawn(
-    def: &AgentDef,
-    binary: &str,
-    cwd: &str,
-    h: Arc<dyn ClientHandlers>,
-    extra_env: Option<&acpira_shared::transcript::StrMap>,
-    init_timeout: Option<Duration>,
-  ) -> Result<Arc<AgentProcess>> {
+  /// Spawn an agent subprocess from a fully resolved `SpawnSpec` and run the ACP `initialize` handshake.
+  pub async fn spawn_spec(spec: SpawnSpec, h: Arc<dyn ClientHandlers>) -> Result<Arc<AgentProcess>> {
     let box_: HandlerBox = Arc::new(parking_lot::RwLock::new(h));
-    // A saved Antigravity account names its store in the account env; `agy` takes it only as a flag
-    let mut args = def.args.clone();
-    args.extend(crate::accounts::antigravity::spawn_args(&def.id, extra_env));
-    let mut cmd = launch::command(binary, &args);
-    cmd.current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(false);
-    // Claude Code keeps dynamic workflows off for SDK hosts by default (no Workflow tool, ultracode ignored); the terminal
-    // CLI has them on. The variable only moves that default, the user's own settings still decide (`claude_workflow`)
-    if Vendor::of(&def.id).workflows() && std::env::var_os(claude_workflow::WORKFLOWS_ENV).is_none() {
-      cmd.env(claude_workflow::WORKFLOWS_ENV, "1");
+    let mut cmd = launch::command(&spec.binary, &spec.args);
+    cmd.current_dir(&spec.cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(false);
+    for key in &spec.env_remove {
+      cmd.env_remove(key);
     }
-    // On Windows `agy`'s background auto-updater detaches and runs `agy --version` without `CREATE_NO_WINDOW`, flashing
-    // a console window; leave an explicit host or agent setting alone (`vendors/antigravity.rs`)
-    if Vendor::of(&def.id) == Vendor::Antigravity
-      && antigravity::suppress_acp_auto_update(
-        crate::platform::command::Os::current(),
-        std::env::var_os(antigravity::DISABLE_AUTO_UPDATE_ENV).as_deref(),
-      )
-    {
-      cmd.env(antigravity::DISABLE_AUTO_UPDATE_ENV, "true");
-    }
-    // A saved Claude account carries its OAuth store through the account env. Do not let a
-    // stale host-level API credential or gateway override that account at request time.
-    if def.id == "claude" && extra_env.is_some() {
-      for key in [
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_DEFAULT_FABLE_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-      ] {
-        cmd.env_remove(key);
-      }
-    }
-    // A saved or plugin Antigravity account names its own store: a host-level Google credential or endpoint would sign
-    // the request in as someone else
-    if def.id == "antigravity" && extra_env.is_some_and(|e| e.contains_key(crate::accounts::antigravity::STORE_ENV)) {
-      for key in ["AGY_ADC_AUTH", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_CLOUD_QUOTA_PROJECT"] {
-        cmd.env_remove(key);
-      }
-    }
-    // The definition and account may override the refreshed environment for this child only.
-    for (k, v) in def.env.iter().flatten() {
+    for (k, v) in &spec.env_set {
       cmd.env(k, v);
     }
-    for (k, v) in extra_env.into_iter().flatten() {
-      cmd.env(k, v);
-    }
-    let droid_sessions = (Vendor::of(&def.id) == Vendor::Droid).then(|| droid_usage::sessions_dir(cmd.as_std(), cwd));
-    let own_dirs = own_dirs(def, extra_env);
     #[cfg(windows)]
-    let (mut child, job) = crate::platform::windows_process::spawn(&mut cmd).await.map_err(|e| anyhow::Error::new(AgentSpawnError::new(e, cwd)))?;
+    let (mut child, job) = crate::platform::windows_process::spawn(&mut cmd).await.map_err(|e| anyhow::Error::new(AgentSpawnError::new(e, &spec.cwd)))?;
     #[cfg(not(windows))]
-    let mut child = cmd.spawn().map_err(|e| anyhow::Error::new(AgentSpawnError::new(e, cwd)))?;
+    let mut child = cmd.spawn().map_err(|e| anyhow::Error::new(AgentSpawnError::new(e, &spec.cwd)))?;
     let pid = child.id();
     let signals = pid.map(|_pid| Signals {
       #[cfg(unix)]
@@ -330,26 +260,24 @@ impl AgentProcess {
       exit_box.read().clone().on_exit(code, signal);
     });
 
-    let init_req = initialize_request(def);
-    let timeout = init_timeout.unwrap_or(INIT_TIMEOUT);
+    let timeout = spec.init_timeout.unwrap_or(INIT_TIMEOUT);
     let mut exit_rx = exit_info_rx;
     let outcome = tokio::select! {
-      r = conn.request("initialize", init_req) => r.map_err(anyhow::Error::new),
+      r = conn.request("initialize", spec.initialize_params) => r.map_err(anyhow::Error::new),
       seen = exit_rx.wait_for(|v| v.is_some()) => {
         let (code, signal) = seen.ok().and_then(|v| v.clone()).unwrap_or((None, None));
         let code = code.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
-        Err(anyhow!(tp("host.spawnExited", &[("command", &def.command), ("code", &code), ("signal", signal.as_deref().unwrap_or("-"))])))
+        Err(anyhow!(tp("host.spawnExited", &[("command", &spec.command), ("code", &code), ("signal", signal.as_deref().unwrap_or("-"))])))
       }
-      _ = tokio::time::sleep(timeout) => Err(anyhow!(tp("host.initTimeout", &[("command", &def.command), ("seconds", &timeout.as_secs().to_string())]))),
+      _ = tokio::time::sleep(timeout) => Err(anyhow!(tp("host.initTimeout", &[("command", &spec.command), ("seconds", &timeout.as_secs().to_string())]))),
     };
     match outcome {
       Ok(init) => Ok(Arc::new(AgentProcess {
-        def: def.clone(),
         conn,
         init,
         pid,
-        droid_sessions,
-        own_dirs,
+        droid_sessions: spec.droid_sessions,
+        own_dirs: spec.own_dirs,
         signals,
         box_,
         life: life_rx,
@@ -473,53 +401,29 @@ fn signal_name(_: &std::process::ExitStatus) -> Option<String> {
   None
 }
 
-/// The initialize request, capability by capability as the TS host advertises it
-pub fn initialize_request(def: &AgentDef) -> Value {
+/// Build the ACP initialize request from capability flags without depending on `AgentDef`.
+pub fn initialize_request_caps(terminal_auth: bool, subagents: bool) -> Value {
   let mut caps = json!({
     "fs": { "readTextFile": false, "writeTextFile": false },
     "terminal": false,
   });
-  // The host can reproduce the agent's invocation in an interactive terminal; an agent whose ACP process ignores the local login opts out
-  if def.terminal_auth {
+  if terminal_auth {
     caps["auth"] = json!({ "terminal": true });
   }
   caps["elicitation"] = json!({ "form": {} });
-  // ACP boolean session config options (RFD boolean-config-option). `compaction` opts into structured
-  // compaction_update: without it claude-agent-acp 0.81.0 reports compaction as a `think` tool call. `notices` opts into
-  // the `notice` update (RFD session-notices): without it claude-agent-acp 0.93.0 writes its notices (a stopped background
-  // task, a model fallback) as bold-label agent text, which reads as the model talking and reopens a settled Claude turn
   caps["session"] = json!({ "configOptions": { "boolean": {} }, "compaction": {}, "notices": {} });
-  if def.subagents {
+  if subagents {
     caps["subagents"] = json!({});
   }
   let mut air = vec![];
-  if def.subagents {
+  if subagents {
     air.push("nativeSubagentSessions");
   }
   air.extend(["sessionFailure", "asyncTasks", "recommendedValue"]);
-  // `acpira/sidekick`: the built-in agent offers its `sidekick` select only to a client that runs the pick as the
-  // executor its ask_agent lists first (`acp/session/relay.rs`); every other agent ignores the key
   caps["_meta"] = json!({
     "terminal_output_delta": true,
     "jetbrains": { "air": { "version": 1, "capabilities": air } },
     "acpira/sidekick": true,
   });
   json!({ "protocolVersion": PROTOCOL_VERSION, "clientInfo": { "name": CLIENT_NAME, "version": client_version() }, "clientCapabilities": caps })
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn initialize_advertises_structured_compaction() {
-    let req = initialize_request(&AgentDef::default());
-    assert!(req["clientCapabilities"]["session"]["compaction"].is_object());
-  }
-
-  #[test]
-  fn initialize_advertises_session_notices() {
-    let req = initialize_request(&AgentDef::default());
-    assert!(req["clientCapabilities"]["session"]["notices"].is_object());
-  }
 }

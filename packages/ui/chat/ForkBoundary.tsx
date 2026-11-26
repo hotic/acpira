@@ -4,7 +4,7 @@ import type { AgentId, AgentInfo, ForkOrigin } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { Row, RowLabel, RowTarget } from '../ui/Row';
 import { AgentMark } from './AgentMark';
-import { OpenSessionContext, SessionTitleContext } from './fileLinks';
+import { OpenSessionContext, SessionTitleContext } from '../markdown/fileLinks';
 
 // The row under a fork's copied turns, between two exchanges: the session they were copied from (a click opens it) and,
 // for a fork onto another agent, the agent that wrote them and the one that continues

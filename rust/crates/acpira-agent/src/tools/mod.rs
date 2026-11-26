@@ -106,7 +106,7 @@ pub enum Action {
   HistoryList { chunk: String, offset: usize, limit: usize },
   /// A goal tool's call (`goal.rs`); the turn runs it itself, without a row or a permission
   #[serde(skip)]
-  Goal(crate::goal::Call),
+  Goal(crate::goal_data::Call),
 }
 
 /// How a call reads on the tool card and in the permission request
@@ -168,22 +168,9 @@ pub fn diff_content(path: &Path, before: Option<&str>, after: &str) -> Value {
   json!({ "type": "diff", "path": path, "oldText": before, "newText": after })
 }
 
-pub const READ: &str = "read";
-pub const WRITE: &str = "write";
-pub const EDIT: &str = "edit";
-pub const BASH: &str = "bash";
-pub const JOB: &str = "job";
-pub const GREP: &str = "grep";
-pub const GLOB: &str = "glob";
-pub const LIST: &str = "list";
-pub const TODO: &str = "todo";
-pub const SKILL: &str = "skill";
-pub const EXIT_PLAN: &str = "exit_plan";
-pub const WEBFETCH: &str = "webfetch";
-pub const WEBSEARCH: &str = "websearch";
-pub const QUESTION: &str = "question";
-pub const HISTORY_GREP: &str = "history_grep";
-pub const HISTORY_LIST: &str = "history_list";
+pub use crate::defs::{
+  BASH, EDIT, EXIT_PLAN, GLOB, GREP, HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE,
+};
 
 /// The tools whose calls take the to-do list as `todos` (`todo::rider`): the ones the model mostly calls right after
 /// moving the list on (edits, writes and commands, then reads, in the 2026-10-18 count)
@@ -216,7 +203,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
     QUESTION => Some(question::spec()),
     HISTORY_GREP => Some(history::grep_spec()),
     HISTORY_LIST => Some(history::list_spec()),
-    crate::goal::GET | crate::goal::CREATE | crate::goal::UPDATE => crate::goal::spec(name),
+    crate::defs::GOAL_GET | crate::defs::GOAL_CREATE | crate::defs::GOAL_UPDATE => crate::goal_data::spec(name),
     _ => None,
   }
 }
@@ -234,14 +221,14 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path, images: bool) -> Result<Act
     GLOB => search::prepare_glob(args, cwd),
     LIST => search::prepare_list(args, cwd),
     TODO => todo::prepare(args),
-    SKILL => skill::prepare(args, &crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref())),
+    SKILL => skill::prepare(args, &crate::prompt::Places::new(cwd, crate::defs::user_home().as_deref())),
     EXIT_PLAN => plan::prepare(args),
     WEBFETCH => web::prepare_fetch(args),
     WEBSEARCH => web::prepare_search(args),
     QUESTION => question::prepare(args, images),
     HISTORY_GREP => history::prepare_grep(args),
     HISTORY_LIST => history::prepare_list(args),
-    crate::goal::GET | crate::goal::CREATE | crate::goal::UPDATE => crate::goal::prepare(name, args),
+    crate::defs::GOAL_GET | crate::defs::GOAL_CREATE | crate::defs::GOAL_UPDATE => crate::goal_data::prepare_call(name, args).map(Action::Goal),
     other => Err(format!("Unknown tool \"{other}\". Available tools: {}.", names::ALL.join(", "))),
   }
 }

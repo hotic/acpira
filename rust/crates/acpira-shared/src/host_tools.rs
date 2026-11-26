@@ -59,7 +59,52 @@ pub fn group_of(tool: &str) -> Option<&'static str> {
 /// (`acpira-host/src/acp/vendors/claude_remote.rs`). Offered only to such a session, so not in `ALL`
 pub const REMOTE: &[&str] = &["Read", "Write", "Edit", "MultiEdit", "Bash", "BashOutput", "KillShell", "Grep", "Glob", "LS"];
 
+/// Built-in agent identifier (`acpira agent`).
+pub const SELF_AGENT_ID: &str = "acpira";
+
 /// Whether `tool` is one the engine serves itself
 pub fn is_engine_tool(tool: &str) -> bool {
   ALL.contains(&tool) || REMOTE.contains(&tool) || COMPUTER.contains(&tool)
+}
+
+pub fn video_mime_of(path: &str) -> Option<&'static str> {
+  match std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase().as_str() {
+    "mp4" => Some("video/mp4"),
+    "webm" => Some("video/webm"),
+    _ => None,
+  }
+}
+
+pub fn widget_mime_of(path: &str) -> Option<&'static str> {
+  let tail = path.rsplit(['/', '\\']).next().unwrap_or(path);
+  let ext = tail.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase())?;
+  matches!(ext.as_str(), "html" | "htm").then_some("text/html")
+}
+
+/// Add the host's entry to a session's `mcpServers`, dropping any user/project entry with the same reserved server name.
+pub fn push_entry(servers: &mut Vec<serde_json::Value>, entry: Option<serde_json::Value>) -> bool {
+  let Some(entry) = entry else { return false };
+  let before = servers.len();
+  servers.retain(|s| s.get("name").and_then(serde_json::Value::as_str) != Some(SERVER));
+  let shadowed = servers.len() < before;
+  servers.push(entry);
+  shadowed
+}
+
+/// True when a session request's `mcpServers` carries the host's own entry.
+pub fn has_server(req: &serde_json::Value) -> bool {
+  req.get("mcpServers").and_then(serde_json::Value::as_array).is_some_and(|l| l.iter().any(is_host_entry))
+}
+
+/// The same request without the host's entry (for an agent that refuses it).
+pub fn without_server(mut req: serde_json::Value) -> serde_json::Value {
+  if let Some(list) = req.get_mut("mcpServers").and_then(serde_json::Value::as_array_mut) {
+    list.retain(|s| !is_host_entry(s));
+  }
+  req
+}
+
+pub fn is_host_entry(s: &serde_json::Value) -> bool {
+  s.get("name").and_then(serde_json::Value::as_str) == Some(SERVER)
+    && s.get("args").and_then(serde_json::Value::as_array).is_some_and(|a| a.first().and_then(serde_json::Value::as_str) == Some("mcp"))
 }

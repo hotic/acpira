@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use super::size::one_line;
+use crate::chunk_data::one_line;
 use crate::llm::Item;
 
 /// The calls of a region with their results, in order

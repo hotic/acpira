@@ -1,6 +1,6 @@
 import { cn } from '../ui/cn';
 import { SandboxFrame } from './SandboxFrame';
-import { useReducedMotion, useWindowFocused } from './motion';
+import { useReducedMotion, useWindowFocused } from '../chrome/motion';
 import { backdropDrawn, backdropsShown, skinKey, useSkin } from './skin';
 
 // The skin's backdrop, a fixed layer behind the whole page (styles/skin.css), mounted by App beside whichever shell is up

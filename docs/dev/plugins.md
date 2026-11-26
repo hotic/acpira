@@ -88,7 +88,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Session API
 
-- `plugins/host_api.rs`: a pending `ui/ask` holds no other request.
+- `session_manager/plugin_api.rs`: a pending `ui/ask` holds no other request.
 - `session/act` uses the plugin's own viewer, never moving a window's selection. Permission answers, plugin / account / settings messages and full-access modes are refused: a plugin never approves. `answer` reaches any open question card; a settled one errors.
 - `ui/ask` cards are headed with the plugin's name and never seen by the agent.
 

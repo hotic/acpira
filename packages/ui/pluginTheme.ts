@@ -1,4 +1,4 @@
-import { setStyleClockNeeded } from './chat/styleClock';
+import { setStyleClockNeeded } from './chrome/styleClock';
 
 // The plugins' theme layer (HostMsg pluginTheme, docs/dev/plugins.md): one style element after the page's own sheets,
 // replaced on every push and removed when the engine sends none (no theme, or safe mode)

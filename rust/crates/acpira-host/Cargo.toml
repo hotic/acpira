@@ -11,10 +11,12 @@ name = "acpira"
 path = "src/bin/acpira.rs"
 
 [dependencies]
-blake3.workspace = true
 trash.workspace = true
 acpira-shared = { workspace = true, features = ["local-ipc"] }
 acpira-rpc.workspace = true
+acpira-host-base.workspace = true
+acpira-store.workspace = true
+acpira-plugin-build.workspace = true
 acpira-agent.workspace = true
 # Computer use: the driver this binary runs as `acpira computer-use` (computer.rs)
 acpira-computer.workspace = true
@@ -28,21 +30,9 @@ base64.workspace = true
 flate2.workspace = true
 tar.workspace = true
 libc.workspace = true
-oxc_allocator.workspace = true
-oxc_ast.workspace = true
-oxc_ast_visit.workspace = true
-oxc_codegen.workspace = true
-oxc_diagnostics.workspace = true
-oxc_parser.workspace = true
-oxc_resolver.workspace = true
-oxc_semantic.workspace = true
-oxc_span.workspace = true
-oxc_transformer.workspace = true
-oxc_transformer_plugins.workspace = true
 parking_lot.workspace = true
 portable-pty.workspace = true
 regex.workspace = true
-rusqlite.workspace = true
 same-file.workspace = true
 semver.workspace = true
 chrono.workspace = true
@@ -56,7 +46,6 @@ tokio.workspace = true
 toml.workspace = true
 ureq.workspace = true
 uuid.workspace = true
-# Diff texts kept out of records and cold records packed (store/diff_texts.rs, store/pack.rs)
 zstd.workspace = true
 
 [target.'cfg(windows)'.dependencies]
@@ -68,6 +57,7 @@ windows-sys.workspace = true
 acpira-agent = { workspace = true, features = ["mock"] }
 # tests/pdf_child.rs builds its PDFs with the lopdf that pdf-extract re-exports
 pdf-extract.workspace = true
+rusqlite.workspace = true
 tempfile.workspace = true
 
 [lints]

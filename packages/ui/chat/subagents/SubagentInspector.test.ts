@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import { SubagentInspector } from './SubagentInspector';
-import { CommandStopContext } from '../fileLinks';
+import { CommandStopContext } from '../../markdown/fileLinks';
 import { t } from '../../i18n';
 
 // These browser-only stores have no server snapshot; keep their default state for the static render.

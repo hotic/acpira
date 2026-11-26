@@ -2,20 +2,22 @@
 //! `turn::run`
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use serde_json::{Value, json};
 
 use acpira_rpc::cancel::Cancel;
-use acpira_rpc::rpc::{BoxFuture, Connection, Inbound, RpcError};
+use acpira_rpc::rpc::{Connection, RpcError};
 use acpira_shared::providers::split_pick;
 
 use crate::config::{Config, ConfigCache};
-use crate::llm::Item;
+use crate::llm::{Item, ToolCall};
 use crate::permission::{Approval, Rule};
 use crate::store::Store;
+
+pub use crate::defs::{session_paths, sessions_root};
 
 mod options;
 mod sessions;
@@ -39,17 +41,18 @@ pub struct SessionState {
   /// `<provider>/<model>`; None until a model exists
   pub model: Option<String>,
   pub effort: Option<String>,
-  /// The Fast switch. Kept across model switches and applied only while the model offers it (`llm::fast::offered`)
-  pub fast: bool,
+  /// The speed tier (`standard` / `fast` / `ultrafast`). Kept across model switches and clamped to what the current
+  /// model offers (`llm::fast::offered_tiers`)
+  pub fast: crate::llm::fast::SpeedTier,
   /// The sidekick's `<provider>/<model>` (the `sidekick` select): the executor the engine's ask_agent lists first. Kept
   /// while its model is not configured, when the select shows none (`sidekick_of`)
   pub sidekick: Option<String>,
   /// The sidekick's reasoning effort (the `sidekick_effort` select). None, or a level its model does not offer, shows and
   /// runs as that model's default (`sidekick_effort_of`)
   pub sidekick_effort: Option<String>,
-  /// The sidekick's Fast switch (the `sidekick_fast` option). Kept across sidekick switches and applied only while the
-  /// sidekick's model offers it (`sidekick_fast_of`)
-  pub sidekick_fast: bool,
+  /// The sidekick's speed tier (the `sidekick_fast` option). Kept across sidekick switches and clamped to what the
+  /// sidekick's model offers (`sidekick_fast_of`)
+  pub sidekick_fast: crate::llm::fast::SpeedTier,
   /// The sidekick the model last learned of, from acpira's tool list or a note: one picked since is told with the next
   /// message (`turn.rs`), so the tool table stays as it was listed
   pub sidekick_told: Option<String>,
@@ -74,6 +77,8 @@ pub struct SessionState {
   pub allowed: Vec<Rule>,
   /// What the last model request's prefix was built from (`turn/request.rs` logs a `view` event when it changes)
   pub last_view: Option<Value>,
+  /// Model pick and finish instant of the previous model call, for inter-request cache TTL gap telemetry
+  pub last_request_at: Option<(String, std::time::Instant)>,
   /// The config options the client last got for this session (`Server::push_controls` sends a change)
   pub sent_options: Option<Vec<Value>>,
   /// The mode list last sent to the client; settings changes update it on already open sessions
@@ -90,9 +95,9 @@ pub struct SessionState {
   pub summarized: bool,
   /// What that summary item carries beside the summary (the user's messages, ...); the next compaction carries the
   /// messages on
-  pub carry: crate::compact::Carry,
-  /// The chunks the view shows (`chunk.rs`), and how many items they render to behind the summary item
-  pub chunks: Vec<crate::chunk::Chunk>,
+  pub carry: crate::compact_data::Carry,
+  /// The chunks the view shows (`chunk_data.rs`), and how many items they render to behind the summary item
+  pub chunks: Vec<crate::chunk_data::Chunk>,
   pub folded: usize,
   /// The MCP note (servers' instructions, the ones that failed) the model was last told, in a user message like the mode
   pub mcp_note: Option<String>,
@@ -104,7 +109,7 @@ pub struct SessionState {
   /// Both sides switch it under this lock, so a steer either joins the turn or is handed back
   pub steerable: bool,
   /// The session's goal (`goal.rs`), recorded in the log at every change
-  pub goal: Option<crate::goal::Goal>,
+  pub goal: Option<crate::goal_data::Goal>,
   /// While a turn runs: when its time last counted toward the goal (`goal::tick`)
   pub goal_clock: Option<std::time::Instant>,
   /// The budget note waiting for the running turn's next call (`goal::take_note`)
@@ -212,8 +217,8 @@ impl Session {
   /// session has a file: changing a control alone does not make one)
   pub fn save_state(&self, st: &SessionState) {
     self.store.prelude(json!({
-      "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "fast": st.fast,
-      "sidekick": st.sidekick, "sidekick_effort": st.sidekick_effort, "sidekick_fast": st.sidekick_fast, "approval": st.approval.id(),
+      "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "fast": st.fast.to_state(),
+      "sidekick": st.sidekick, "sidekick_effort": st.sidekick_effort, "sidekick_fast": st.sidekick_fast.to_state(), "approval": st.approval.id(),
     }));
   }
 
@@ -320,7 +325,7 @@ impl Server {
         Some(files) => crate::prompt::Places::on_host(cwd, files.clone()),
         None => crate::prompt::Places::on_host(cwd, Default::default()),
       },
-      None => crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref()),
+      None => crate::prompt::Places::new(cwd, crate::defs::user_home().as_deref()),
     };
     places.with_data(Some(self.config.home())).with_layers(layers.prompts).with_skill_layers(layers.skills).with_profile(self.profile.clone())
   }
@@ -334,7 +339,7 @@ impl Server {
   /// A session's scratch folder: none on an SSH host or with the setting off (`scratch.rs`)
   fn scratch_of(&self, cwd: &std::path::Path, id: &str, remote: bool, config: &Config) -> crate::scratch::Scratch {
     let home = self.config.home();
-    let place = config.scratch_place().filter(|_| !remote).and_then(|at| crate::scratch::place(cwd, id, crate::turn::user_home().as_deref(), home, at));
+    let place = config.scratch_place().filter(|_| !remote).and_then(|at| crate::scratch::place(cwd, id, crate::defs::user_home().as_deref(), home, at));
     crate::scratch::Scratch::new(place, id, home).sweeping(cwd)
   }
 
@@ -369,7 +374,13 @@ impl Server {
     self.sessions.lock().get(id).cloned().ok_or_else(|| RpcError::new(-32602, format!("Unknown session: {id}")))
   }
 
-  fn initialize(&self, params: &Value) -> Value {
+  /// Publish a goal snapshot to the client (not recorded for replay)
+  pub(crate) fn publish_goal(&self, session_id: &str, goal: Option<&crate::goal_data::Goal>) {
+    let update = json!({ "sessionUpdate": "session_info_update", "_meta": { "goal": goal.map(crate::goal_data::Goal::snapshot) } });
+    self.conn().notify("session/update", json!({ "sessionId": session_id, "update": update }));
+  }
+
+  pub(crate) fn initialize(&self, params: &Value) -> Value {
     let booleans = params.pointer("/clientCapabilities/session/configOptions/boolean").is_some_and(|b| !b.is_null());
     self.booleans.store(booleans, Ordering::Relaxed);
     let forms = params.pointer("/clientCapabilities/elicitation/form").is_some_and(|f| !f.is_null());
@@ -392,7 +403,7 @@ impl Server {
       // codex-acp's goal extension (`goal.rs`), Acpira's own history rewind (`_session/rewind`) and context report
       // (`context.rs`)
       "_meta": {
-        "steering": { "supported": true }, "goal": crate::goal::capability(), "acpira/rewind": { "supported": true },
+        "steering": { "supported": true }, "goal": crate::defs::goal_capability(), "acpira/rewind": { "supported": true },
         "acpira/context": crate::context::capability(),
       },
     })
@@ -417,7 +428,7 @@ impl Server {
     }
   }
 
-  fn cancel(&self, params: &Value) {
+  pub(crate) fn cancel(&self, params: &Value) {
     let Some(id) = params.get("sessionId").and_then(Value::as_str) else { return };
     if let Ok(session) = self.session(id)
       && let Some(c) = session.state.lock().turn.clone()
@@ -427,16 +438,32 @@ impl Server {
   }
 }
 
-/// Where a data root keeps this agent's sessions: one `<id>.jsonl` log each, with an `<id>/` folder beside it (spilled
-/// tool output, the plan). The engine reads it to delete both together with the Acpira session that drove them
-pub fn sessions_root(home: &Path) -> PathBuf {
-  home.join("agent").join("sessions")
-}
-
-/// The files one session owns under `sessions_root`: its log and its folder
-pub fn session_paths(home: &Path, id: &str) -> [PathBuf; 2] {
-  let root = sessions_root(home);
-  [root.join(format!("{id}.jsonl")), root.join(id)]
+/// Close the history after a turn ended any way: cut-off text becomes an assistant message, and every tool call
+/// without a result gets one
+pub(crate) fn settle(st: &mut SessionState) {
+  let text = std::mem::take(&mut st.partial_text);
+  let reasoning = std::mem::take(&mut st.partial_reasoning);
+  if !text.is_empty() {
+    st.items.push(Item::Assistant { text, reasoning, tool_calls: vec![], native: None });
+  }
+  let Some(last_call) = st.items.iter().rposition(|i| matches!(i, Item::Assistant { tool_calls, .. } if !tool_calls.is_empty())) else { return };
+  let answered: std::collections::HashSet<&str> = st.items[last_call + 1..]
+    .iter()
+    .filter_map(|i| match i {
+      Item::ToolResult { call_id, .. } => Some(call_id.as_str()),
+      _ => None,
+    })
+    .collect();
+  let Item::Assistant { tool_calls, .. } = &st.items[last_call] else { return };
+  let missing: Vec<ToolCall> = tool_calls.iter().filter(|c| !answered.contains(c.id.as_str())).cloned().collect();
+  let landed = std::mem::take(&mut st.landed);
+  for c in missing {
+    let item = match landed.iter().find(|(id, _)| *id == c.id) {
+      Some((_, text)) => Item::ToolResult { call_id: c.id, name: c.name, content: text.clone(), is_error: false, images: vec![] },
+      None => Item::ToolResult { call_id: c.id, name: c.name, content: "Cancelled by the user before it finished.".into(), is_error: true, images: vec![] },
+    };
+    st.items.push(item);
+  }
 }
 
 fn str_param<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {
@@ -446,44 +473,4 @@ fn str_param<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {
 /// The provider part of a pick, for messages
 pub fn provider_of(pick: &str) -> &str {
   split_pick(pick).map(|(p, _)| p).unwrap_or(pick)
-}
-
-pub struct Handler(pub Arc<Server>);
-
-impl Inbound for Handler {
-  fn notification(&self, method: &str, params: Value) {
-    if method == "session/cancel" {
-      self.0.cancel(&params);
-    } else if method == SETTINGS_CHANGED {
-      self.0.push_controls();
-    } else if method == crate::remote::PROGRESS {
-      let session = params.get("sessionId").and_then(Value::as_str).and_then(|id| self.0.sessions.lock().get(id).cloned());
-      if let Some(remote) = session.and_then(|s| s.remote.clone()) {
-        remote.progress(&params);
-      }
-    }
-  }
-
-  fn request(&self, method: String, params: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
-    let server = self.0.clone();
-    Box::pin(async move {
-      match method.as_str() {
-        "initialize" => Ok(server.initialize(&params)),
-        "session/new" => server.new_session(&params),
-        "session/load" => server.restore(&params, true),
-        "session/resume" => server.restore(&params, false),
-        "session/list" => Ok(server.list(&params)),
-        "session/set_mode" => server.set_mode(&params),
-        "session/set_config_option" => server.set_config_option(&params),
-        "session/prompt" => crate::turn::run(server, params, cancel).await,
-        "_session/steering" => server.steer(&params),
-        "_session/rewind" => server.rewind(&params),
-        crate::goal::METHOD => crate::goal::control(&server, &params),
-        crate::context::METHOD_REPORT => crate::context::report_of(&server, &params).await,
-        crate::context::METHOD_ITEM => crate::context::item_of(&server, &params),
-        crate::context::METHOD_RAW => crate::context::raw_of(&server, &params),
-        _ => Err(RpcError::method_not_found(&method)),
-      }
-    })
-  }
 }

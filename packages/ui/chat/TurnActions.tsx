@@ -1,25 +1,20 @@
-import { createContext, Fragment, useContext, useState, type ReactNode } from 'react';
+import { Fragment, useContext, useState, type ReactNode } from 'react';
 import { ChartNoAxesColumn, Check, Copy, GitBranch, ImageIcon } from 'lucide-react';
-import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings } from '@acpira/shared/transcript';
+import type { AgentTurn, TurnSettings } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Popover } from '../ui/Popover';
 import { OptionContent, PanelFooter } from '../ui/Panel';
 import { useCopied } from '../ui/useCopied';
+import { TurnActionsContext } from '../chrome/turnActions';
 import { AgentMark } from './AgentMark';
 import { elapsedDuration } from './folding';
 import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from './turnActionHelpers';
 import { hasTurnContent, hasTurnStats } from './turnOutcome';
 import { PluginActions } from '../plugins/MessageActions';
 
-// What the turn action row needs from the shell: the session it belongs to, the control list for resolving the model
-// name, and the fork action with the agents it can continue on — absent in hosts that do not wire it (LAB)
-export const TurnActionsContext = createContext<{
-  sessionId: string; controls: SessionControls;
-  fork?: (turnIndex: number, agent: AgentId) => void; agents?: AgentInfo[]; agentId?: AgentId;
-  share?: (turnIndex: number, messageEl: HTMLElement) => void;
-} | undefined>(undefined);
+export { TurnActionsContext };
 
 // The row under a finished agent reply (Cursor's trio): copy the reply · fork the session from this turn onto an agent
 // picked from a menu (the session's own first) · open the response statistics card. Hidden until the turn is hovered / focused (the last reply included), always shown without hover (touch).

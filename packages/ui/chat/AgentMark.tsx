@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
-import { MarkSvg } from './marks';
+import { MarkSvg } from '../chrome/marks';
 
 // The marks agents bring themselves (AgentInfo.mark: an agents.json entry or a plugin's agent), kept outside React so
 // every AgentMark finds its agent's without the agent list being passed down; replaced, never mutated, so a change

@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-acpira-desktop = { path = "../acpira-desktop" }
+acpira-host-base.workspace = true
 acpira-net = { path = "../acpira-net" }
 acpira-shared = { workspace = true, features = ["local-ipc"] }
 anyhow.workspace = true

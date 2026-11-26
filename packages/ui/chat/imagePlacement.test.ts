@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentTurn, ToolCallBlock } from '../../shared/transcript';
 import { AppearanceContext, BASE_APPEARANCE } from '../appearance';
 import { AgentMessage } from './Turns';
-import { BlobUrlContext } from './fileLinks';
+import { BlobUrlContext } from '../markdown/fileLinks';
 import { rememberFold, resetFoldMemory } from './foldMemory';
 
 // The webview stores run only in the browser. Read their current snapshot during this DOM-free render check.
@@ -28,7 +28,7 @@ function render(blocks: AgentTurn['blocks'], running = true, fold: 'codex' | 'cu
   return renderToStaticMarkup(createElement(AppearanceContext.Provider, { value: { ...BASE_APPEARANCE, fold, motion: 'none' } },
     createElement(BlobUrlContext.Provider, { value: blob => `/test-images/${blob}` },
       createElement(AgentMessage, { turn: { role: 'agent', blocks }, running, index: 0, turnIndex: 1, last: true,
-        memoryKey, actions: false, lead: 'static', onPermission: () => {} }))));
+        memoryKey, actions: false, onPermission: () => {} }))));
 }
 
 describe('image results in the shared process fold', () => {

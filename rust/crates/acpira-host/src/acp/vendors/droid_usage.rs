@@ -12,14 +12,17 @@ use crate::store::data_dir::home_dir;
 
 const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 
-/// The launched CLI's home, including an account or agent definition's override. Relative overrides are relative to
-/// the child, not the engine.
-pub(crate) fn sessions_dir(cmd: &std::process::Command, cwd: &str) -> PathBuf {
+/// The launched CLI's home, derived from the child env diff without requiring a spawned `Command`.
+pub(crate) fn sessions_dir_from_env(env_remove: &[String], env_set: &std::collections::BTreeMap<String, String>, cwd: &str) -> PathBuf {
+  let eq = |a: &str, b: &str| if cfg!(windows) { a.eq_ignore_ascii_case(b) } else { a == b };
   let env = |key: &str| {
-    cmd.get_envs()
-      .find(|(k, _)| if cfg!(windows) { k.eq_ignore_ascii_case(key) } else { *k == key })
-      .map_or_else(|| std::env::var_os(key), |(_, v)| v.map(std::ffi::OsStr::to_os_string))
-      .filter(|v| !v.is_empty())
+    if let Some((_, v)) = env_set.iter().find(|(k, _)| eq(k, key)) {
+      return (!v.is_empty()).then(|| std::ffi::OsString::from(v));
+    }
+    if env_remove.iter().any(|k| eq(k, key)) {
+      return None;
+    }
+    std::env::var_os(key).filter(|v| !v.is_empty())
   };
   let home = env("FACTORY_HOME_OVERRIDE")
     .or_else(|| env(if cfg!(windows) { "USERPROFILE" } else { "HOME" }))

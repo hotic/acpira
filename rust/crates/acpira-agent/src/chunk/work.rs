@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use super::calls::{arg, calls, exit_code, failed, file_changes, own_result, rel, then_run_output};
-use super::size::{one_line, preview, preview_lines, tokens};
+use crate::chunk_data::{one_line, preview, preview_lines, tokens};
 use crate::llm::Item;
 
 /// A changed file in the work-state index

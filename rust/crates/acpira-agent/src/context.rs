@@ -11,14 +11,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use acpira_rpc::rpc::RpcError;
 use serde_json::{Value, json};
 
 use acpira_shared::context::{ContextCategory, ContextCategorySplit, ContextContent, ContextNode, ContextNodeKind, ContextRaw, ContextReport};
 use acpira_shared::providers::ApiFormat;
 
-use crate::acp::{Server, SessionState};
-use crate::chunk::{strip_notes, tokens};
+use crate::chunk_data::tokens;
+use crate::defs::{STEER_CLOSE, now_ms, strip_notes, user_words};
 use crate::llm::family::Family;
 use crate::llm::{self, Item, Part, Request};
 use crate::prompt::{Section, SectionKind};
@@ -38,8 +37,6 @@ const IMAGE_TOKENS: u64 = 1000;
 const MAX_CONTENT: usize = 256 * 1024;
 /// A string in the raw request is cut here
 const MAX_RAW_STRING: usize = 64 * 1024;
-/// What a steered message's note closes with (`steer.rs`)
-const STEER_CLOSE: &str = "\n</steer>";
 /// A turn's or a call's title is cut here
 const MAX_TITLE: usize = 160;
 
@@ -93,26 +90,23 @@ pub struct Setting<'a> {
 
 static REVS: AtomicU64 = AtomicU64::new(0);
 
-fn now_ms() -> u64 {
-  std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
-}
-
 impl Snapshot {
   /// A call that went out and was counted: `request` as sent (after the plugins' `context` hook), `reply` the item it
-  /// added to the history, `st` the history it went out with
-  pub fn of_call(request: Request, reply: Item, wire: Wire, setting: Setting, usage: llm::Usage, estimated: bool, st: &SessionState) -> Snapshot {
+  /// added to the history, `summarized` / `folded` describing the compacted prefix it went out with
+  #[expect(clippy::too_many_arguments, reason = "one call snapshot's parts")]
+  pub fn of_call(request: Request, reply: Item, wire: Wire, setting: Setting, usage: llm::Usage, estimated: bool, summarized: bool, folded: usize) -> Snapshot {
     let sections = if request.system == setting.system { setting.sections.to_vec() } else { vec![] };
-    let mut s = Snapshot::new(request, Some(reply), Some(wire), sections, setting.mcp, st);
+    let mut s = Snapshot::new(request, Some(reply), Some(wire), sections, setting.mcp, summarized, folded);
     (s.input, s.output, s.cached, s.estimated) = (usage.input, usage.output, usage.cache_read.min(usage.input), estimated);
     s
   }
 
   /// The history right after a compaction, at the estimate the ring shows (`turn::setup::report_usage`)
-  pub fn estimate(system: String, tools: Vec<llm::ToolSpec>, setting: Setting, used: u64, st: &SessionState) -> Snapshot {
+  pub fn estimate(system: String, tools: Vec<llm::ToolSpec>, setting: Setting, used: u64, items: Vec<Item>, summarized: bool, folded: usize) -> Snapshot {
     let request = Request {
       model: String::new(),
       system,
-      items: st.items.clone(),
+      items,
       tools,
       max_tokens: None,
       output_limit: None,
@@ -120,18 +114,18 @@ impl Snapshot {
       thinking: Default::default(),
       effort: None,
       cache_key: None,
-      fast: false,
+      fast: crate::llm::fast::SpeedTier::Standard,
     };
     let sections = if request.system == setting.system { setting.sections.to_vec() } else { vec![] };
-    let mut s = Snapshot::new(request, None, None, sections, setting.mcp, st);
+    let mut s = Snapshot::new(request, None, None, sections, setting.mcp, summarized, folded);
     (s.input, s.estimated) = (used, true);
     s
   }
 
-  fn new(request: Request, reply: Option<Item>, wire: Option<Wire>, sections: Vec<Section>, mcp: &[crate::mcp::Tool], st: &SessionState) -> Snapshot {
+  fn new(request: Request, reply: Option<Item>, wire: Option<Wire>, sections: Vec<Section>, mcp: &[crate::mcp::Tool], summarized: bool, folded: usize) -> Snapshot {
     let at = now_ms();
     let n = REVS.fetch_add(1, Ordering::Relaxed);
-    let body = (usize::from(st.summarized) + st.folded).min(request.items.len());
+    let body = (usize::from(summarized) + folded).min(request.items.len());
     Snapshot {
       rev: format!("{at:x}.{n:x}"),
       at,
@@ -310,7 +304,7 @@ impl Snapshot {
       let out = i >= sent;
       let starts = match item {
         // A note alone behind a round's tool results (the goal's budget) stays in the turn
-        Item::User(_) if !item.is_steer() => !(crate::chunk::user_words(item).is_none() && matches!(prev, Some(Item::ToolResult { .. }))),
+        Item::User(_) if !item.is_steer() => !(user_words(item).is_none() && matches!(prev, Some(Item::ToolResult { .. }))),
         _ => false,
       };
       if starts || turns.is_empty() {
@@ -326,7 +320,7 @@ impl Snapshot {
                 // The notes the agent stacked in front: a prompt's, and a steered message's own note
                 let note_len = if steer {
                   if p == 0 { t.find(STEER_CLOSE).map_or(t.len(), |k| k + STEER_CLOSE.len()) } else { 0 }
-                } else if !starts && crate::chunk::user_words(item).is_none() {
+                } else if !starts && user_words(item).is_none() {
                   t.len()
                 } else {
                   t.len() - strip_notes(t).len()
@@ -378,7 +372,7 @@ impl Snapshot {
     let id = format!("t:{n}");
     let mut g = Node::group(&id, ContextNodeKind::Turn, Pos::new(Seg::Chat, t.first, 0));
     g.index = self.numbered.then_some(n as u64 + 1);
-    g.title = t.prompt.and_then(|i| self.item(i)).and_then(crate::chunk::user_words).map(|w| title_of(&w));
+    g.title = t.prompt.and_then(|i| self.item(i)).and_then(user_words).map(|w| title_of(&w));
     for (key, kind, piece, sub) in [("note", ContextNodeKind::Note, t.note, 0), ("msg", ContextNodeKind::Message, t.msg, 1), ("think", ContextNodeKind::Thinking, t.think, 2), ("reply", ContextNodeKind::Reply, t.reply, 3)] {
       if let Some(first) = piece.frags.first().map(|f| f.0) {
         let mut leaf = Node::leaf(&format!("{id}:{key}"), kind, 0, Pos::new(Seg::Chat, first, sub), Some(Src::Piece(piece.frags)));
@@ -390,7 +384,7 @@ impl Snapshot {
       let first = c.item.or(c.result).unwrap_or(t.first);
       let mut leaf = Node::leaf(&format!("{id}:c:{k}"), ContextNodeKind::Call, 0, Pos::new(Seg::Chat, first, 4 + c.call), Some(Src::Call { item: c.item, call: c.call, result: c.result }));
       (leaf.inp, leaf.out) = (c.inp, c.out);
-      leaf.tool_kind = Some(crate::turn::kind_of(&c.name, names).to_owned());
+      leaf.tool_kind = Some(crate::tools::names::kind_of(&c.name, names).to_owned());
       leaf.title = c.item.and_then(|i| match self.item(i) {
         Some(Item::Assistant { tool_calls, .. }) => tool_calls.get(c.call).and_then(|tc| call_title(&tc.arguments)),
         _ => None,
@@ -834,51 +828,6 @@ fn link_rows(cats: &mut [Cat], rows: &[(String, String)]) {
     n.row = list.get(skip + *k).map(|r| (*r).to_owned());
     *k += 1;
   }
-}
-
-fn session_of(server: &Server, params: &Value) -> Result<std::sync::Arc<crate::acp::Session>, RpcError> {
-  let id = params.get("sessionId").and_then(Value::as_str).ok_or_else(|| RpcError::new(-32602, "sessionId is required"))?;
-  server.session(id)
-}
-
-/// `_acpira/context`: `{ report }`; a session opened without a call since gets its restored history, estimated
-/// (`turn::opened_context`), none before the first call of a new one
-pub async fn report_of(server: &Server, params: &Value) -> Result<Value, RpcError> {
-  let session = session_of(server, params)?;
-  let detail = params.get("detail").and_then(Value::as_bool) == Some(true);
-  let (snap, size) = {
-    let st = session.state.lock();
-    (st.context.clone(), st.reported.map(|r| r.1))
-  };
-  let snap = match snap {
-    Some(s) => Some(s),
-    None => crate::turn::opened_context(server, &session).await,
-  };
-  let Some(snap) = snap else { return Ok(json!({})) };
-  let rows = session.state.lock().rows.clone();
-  let report = snap.report(size.unwrap_or(0), detail, &rows);
-  Ok(json!({ "report": report }))
-}
-
-/// `_acpira/contextItem`: `{ content }` of a leaf of the report named by `rev`
-pub fn item_of(server: &Server, params: &Value) -> Result<Value, RpcError> {
-  let session = session_of(server, params)?;
-  let (rev, id) = (params.get("rev").and_then(Value::as_str).unwrap_or_default(), params.get("id").and_then(Value::as_str).unwrap_or_default());
-  let snap = session.state.lock().context.clone();
-  Ok(match snap.and_then(|s| s.content(rev, id)) {
-    Some(c) => json!({ "content": c }),
-    None => json!({}),
-  })
-}
-
-/// `_acpira/contextRaw`: `{ raw }`, the last request as it went out
-pub fn raw_of(server: &Server, params: &Value) -> Result<Value, RpcError> {
-  let session = session_of(server, params)?;
-  let snap = session.state.lock().context.clone();
-  Ok(match snap.and_then(|s| s.raw()) {
-    Some(r) => json!({ "raw": r }),
-    None => json!({}),
-  })
 }
 
 #[cfg(test)]

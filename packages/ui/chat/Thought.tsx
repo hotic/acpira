@@ -7,7 +7,7 @@ import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
 import { useScrollFade } from '../ui/useScrollFade';
-import { Prose } from './Prose';
+import { Prose } from '../markdown/Prose';
 import { useAutoFold } from './autoFold';
 
 // ACP thought chunks have no end boundary: the next event can arrive only after

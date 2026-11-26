@@ -21,11 +21,7 @@ pub fn is_dev(version: &str) -> bool {
   Version::parse(version).is_ok_and(|v| !v.pre.is_empty())
 }
 
-/// A local package (`X.Y.Z-dev.<stamp>`, `scripts/release/local-version.mjs`): never published, so nothing can be
-/// downloaded for it
-pub fn is_local_package(version: &str) -> bool {
-  Version::parse(version).is_ok_and(|v| v.pre.as_str().starts_with("dev."))
-}
+pub use crate::platform::engine_layout::is_local_package;
 
 #[cfg(test)]
 mod tests {

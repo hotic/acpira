@@ -14,7 +14,7 @@ use super::NOTE_FILES;
 use super::personas::{node_persona, who};
 use crate::acp::session::hooks::{Reach, edit_paths, row_reach};
 use crate::acp::session::{AcpSession, Core};
-use crate::relay::wire::HubReply;
+use crate::relay_wire::HubReply;
 
 pub(super) fn short(id: &str) -> String {
   id.chars().take(8).collect()

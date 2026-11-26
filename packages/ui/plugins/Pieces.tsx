@@ -3,7 +3,7 @@ import type { PluginSlot, PluginUiSlot } from '@acpira/shared/plugins';
 import { flyInto, motionOff } from '../effects/magic';
 import { usePluginPieces } from '../pluginSlots';
 import { cn } from '../ui/cn';
-import { digest } from '../panel/PluginFrame';
+import { digest } from './PluginFrame';
 import { SandboxFrame, type FrameState } from './SandboxFrame';
 import { takeArrival } from './arrivals';
 import { playWhoosh } from '../effects/whoosh';

@@ -8,9 +8,10 @@ use std::time::Instant;
 use serde_json::{Value, json};
 
 use acpira_host::acp::agents::pool::AgentPool;
-use acpira_host::acp::transport::process::{AgentProcess, client_version};
 use acpira_host::acp::agents::registry::{AgentDef, AgentRegistry};
+use acpira_host::acp::agents::spawn::spawn_agent;
 use acpira_host::acp::session::AcpSession;
+use acpira_host::acp::transport::process::client_version;
 use acpira_shared::transcript::StrMap;
 
 use crate::acp_session::{claimed, last_turn, prompt, turn_at, turn_count, view};
@@ -41,7 +42,7 @@ async fn a_failed_initialize_kills_the_child_instead_of_leaving_an_orphan() {
   let fake = fake_or_skip!();
   let (def, _) = fake_def(&fake);
   let rec = Recorder::default();
-  let Err(err) = AgentProcess::spawn(&def, &node(&fake).await, "/tmp", Arc::new(rec.clone()), Some(&env(&[("FAKE_INIT_FAIL", "1"), ("FAKE_STUBBORN", "1")])), None).await else {
+  let Err(err) = spawn_agent(&def, &node(&fake).await, "/tmp", Arc::new(rec.clone()), Some(&env(&[("FAKE_INIT_FAIL", "1"), ("FAKE_STUBBORN", "1")])), None).await else {
     panic!("initialize must fail");
   };
   assert!(err.to_string().contains("initialize refused"), "{err}");
@@ -54,7 +55,7 @@ async fn an_initialize_the_agent_never_answers_times_out_and_the_child_is_killed
   let fake = fake_or_skip!();
   let (def, _) = fake_def(&fake);
   let rec = Recorder::default();
-  let Err(err) = AgentProcess::spawn(&def, &node(&fake).await, "/tmp", Arc::new(rec.clone()), Some(&env(&[("FAKE_INIT_HANG", "1")])), Some(Duration::from_millis(300))).await else {
+  let Err(err) = spawn_agent(&def, &node(&fake).await, "/tmp", Arc::new(rec.clone()), Some(&env(&[("FAKE_INIT_HANG", "1")])), Some(Duration::from_millis(300))).await else {
     panic!("initialize must time out");
   };
   assert!(err.to_string().contains("initialize"), "{err}");
@@ -68,7 +69,7 @@ async fn kill_escalates_to_sigkill_when_the_cli_ignores_the_polite_signal() {
   let fake = fake_or_skip!();
   let (def, _) = fake_def(&fake);
   let rec = Recorder::default();
-  let proc = AgentProcess::spawn(&def, &node(&fake).await, "/tmp", Arc::new(rec.clone()), Some(&env(&[("FAKE_STUBBORN", "1")])), None).await.unwrap();
+  let proc = spawn_agent(&def, &node(&fake).await, "/tmp", Arc::new(rec.clone()), Some(&env(&[("FAKE_STUBBORN", "1")])), None).await.unwrap();
   assert!(proc.alive());
   let t0 = Instant::now();
   proc.kill().await;
@@ -89,11 +90,11 @@ async fn the_air_capabilities_are_advertised_and_native_subagent_sessions_can_be
   let (mut def, _) = fake_def(&fake);
   let bin = node(&fake).await;
   let extra = env(&[("FAKE_INIT_LOG", log.to_str().unwrap())]);
-  let proc = AgentProcess::spawn(&def, &bin, "/tmp", Arc::new(Recorder::default()), Some(&extra), None).await.unwrap();
+  let proc = spawn_agent(&def, &bin, "/tmp", Arc::new(Recorder::default()), Some(&extra), None).await.unwrap();
   expect_eq(air(), json!({ "version": 1, "capabilities": ["nativeSubagentSessions", "sessionFailure", "asyncTasks", "recommendedValue"] }));
   proc.kill().await;
   def.subagents = false;
-  let proc2 = AgentProcess::spawn(&def, &bin, "/tmp", Arc::new(Recorder::default()), Some(&extra), None).await.unwrap();
+  let proc2 = spawn_agent(&def, &bin, "/tmp", Arc::new(Recorder::default()), Some(&extra), None).await.unwrap();
   expect_eq(&air()["capabilities"], json!(["sessionFailure", "asyncTasks", "recommendedValue"]));
   proc2.kill().await;
 }
@@ -102,7 +103,7 @@ async fn the_air_capabilities_are_advertised_and_native_subagent_sessions_can_be
 async fn the_client_info_carries_the_extension_version() {
   let fake = fake_or_skip!();
   let (def, _) = fake_def(&fake);
-  let proc = AgentProcess::spawn(&def, &node(&fake).await, "/tmp", Arc::new(Recorder::default()), None, None).await.unwrap();
+  let proc = spawn_agent(&def, &node(&fake).await, "/tmp", Arc::new(Recorder::default()), None, None).await.unwrap();
   let package: Value = serde_json::from_str(&std::fs::read_to_string(fake.root.join("package.json")).unwrap()).unwrap();
   assert_eq!(client_version(), package["version"].as_str().unwrap());
   assert_eq!(proc.init["agentInfo"]["name"], "fake");

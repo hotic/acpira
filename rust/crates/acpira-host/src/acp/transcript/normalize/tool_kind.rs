@@ -261,7 +261,7 @@ pub(super) fn mcp_identity(u: &Value, meta: Option<&Map<String, Value>>, title: 
     let tool = s(raw.and_then(|r| r.get("tool"))).unwrap_or_else(|| c[2].to_owned());
     McpCall { server, tool, title: None }
   };
-  (!(call.server == crate::host_mcp::SERVER_NAME && call.tool == crate::host_mcp::ASK_TOOL)).then_some(call)
+  (!(call.server == acpira_shared::host_tools::SERVER && call.tool == acpira_shared::host_tools::ASK_AGENT)).then_some(call)
 }
 
 /// A server name as the row shows it: the configured name unchanged (`chrome-devtools`, `acpira`), as Claude Code and

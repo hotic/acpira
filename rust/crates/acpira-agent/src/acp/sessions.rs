@@ -26,7 +26,7 @@ impl Server {
   /// again from it, so compactions and prunes made since are undone too. `dryRun` only answers whether the turn can be
   /// rewound to. Refused while a turn runs, and for a turn this session never marked (one sent before marks existed,
   /// or in another native session)
-  pub(super) fn rewind(&self, params: &Value) -> Result<Value, RpcError> {
+  pub(crate) fn rewind(&self, params: &Value) -> Result<Value, RpcError> {
     let session = self.session(str_param(params, "sessionId")?)?;
     let turn = str_param(params, "turnId")?;
     let dry = params.get("dryRun").and_then(Value::as_bool) == Some(true);
@@ -40,6 +40,7 @@ impl Server {
       return Ok(json!({}));
     }
     let loaded = store::load(session.store.path(), false).map_err(io)?;
+    session.jobs.discard_pending_deliveries();
     session.store.set_items_logged(loaded.logged);
     st.items = loaded.items;
     st.summarized = loaded.summarized;
@@ -67,15 +68,15 @@ impl Server {
     let mut answer = json!({});
     if let Some(then) = mark.get("goal") {
       let then = serde_json::from_value(then.clone()).ok().flatten();
-      let goal = crate::goal::rewound(then, st.goal.as_ref());
+      let goal = crate::goal_data::rewound(then, st.goal.as_ref());
       if goal != st.goal {
-        crate::goal::save(&session.store, goal.as_ref());
+        session.store.save_goal(goal.as_ref());
       }
       st.goal = goal;
       st.goal_note = None;
       st.goal_unsaved = false;
       st.goal_wrapping = false;
-      answer["_meta"] = json!({ "goal": st.goal.as_ref().map(crate::goal::Goal::snapshot) });
+      answer["_meta"] = json!({ "goal": st.goal.as_ref().map(crate::goal_data::Goal::snapshot) });
     }
     Ok(answer)
   }
@@ -85,7 +86,7 @@ impl Server {
   /// (`steer::take`). With no turn running, or one that has already decided to end, the message is handed back
   /// for a `session/prompt` when the client opted into that (`idleBehavior: promptRequired`, as the engine always
   /// does) and refused otherwise: this agent never starts a turn no `session/prompt` owns
-  pub(super) fn steer(&self, params: &Value) -> Result<Value, RpcError> {
+  pub(crate) fn steer(&self, params: &Value) -> Result<Value, RpcError> {
     let session = self.session(str_param(params, "sessionId")?)?;
     let prompt = params.get("prompt").and_then(Value::as_array).filter(|p| !p.is_empty()).ok_or_else(|| RpcError::new(-32602, "prompt is required"))?;
     {
@@ -101,7 +102,7 @@ impl Server {
     Err(RpcError::new(-32603, "No turn is taking messages in this session; send it as a prompt"))
   }
 
-  pub(super) fn new_session(&self, params: &Value) -> Result<Value, RpcError> {
+  pub(crate) fn new_session(&self, params: &Value) -> Result<Value, RpcError> {
     let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).ok_or_else(|| RpcError::new(-32602, "cwd is required"))?;
     let settings = self.settings_for(client_of(params));
     let config = settings.get();
@@ -162,7 +163,7 @@ impl Server {
 
   /// `session/load` (replay = true) and `session/resume`: a session open in this process continues as it is, another
   /// one is read back from its file. The replay sends the recorded updates before the answer
-  pub(super) fn restore(&self, params: &Value, replay: bool) -> Result<Value, RpcError> {
+  pub(crate) fn restore(&self, params: &Value, replay: bool) -> Result<Value, RpcError> {
     let id = str_param(params, "sessionId")?;
     let gone = || RpcError::new(-32002, format!("Session not found: {id}"));
     let path = self.session_file(id);
@@ -216,8 +217,8 @@ impl Server {
     self.announce_commands(id, &session.cwd, session.remote.as_deref(), session.layers.clone());
     // An unfinished goal, straight to the client like the commands: the replay carries none (`goal::publish`)
     let goal = session.state.lock().goal.clone();
-    if let Some(g) = crate::goal::published(goal.as_ref()) {
-      crate::goal::publish(self, id, Some(g));
+    if let Some(g) = crate::goal_data::published(goal.as_ref()) {
+      self.publish_goal(id, Some(g));
     }
     let config = session.config();
     let catalog = self.catalog.get();
@@ -259,15 +260,15 @@ impl Server {
       ..Default::default()
     };
     st.effort = s("effort").or_else(|| default_effort(&config, &catalog, st.model.as_deref()));
-    st.fast = loaded.state.get("fast").and_then(Value::as_bool).unwrap_or(false);
+    st.fast = crate::llm::fast::SpeedTier::from_state(loaded.state.get("fast"));
     st.sidekick = s("sidekick");
     st.sidekick_effort = s("sidekick_effort");
-    st.sidekick_fast = loaded.state.get("sidekick_fast").and_then(Value::as_bool).unwrap_or(false);
+    st.sidekick_fast = crate::llm::fast::SpeedTier::from_state(loaded.state.get("sidekick_fast"));
     // A record from before the level was the session's starts on the settings file's
     st.approval = s("approval").and_then(|a| Approval::parse(&a)).unwrap_or_else(|| config.approval());
-    // An active goal comes back paused: its run ended with the process that ran it (`goal::revive`)
+    // An active goal comes back paused: its run ended with the process that ran it (`goal_data::revive`)
     st.goal = loaded.goal.clone();
-    let paused = crate::goal::revive(&mut st.goal);
+    let paused = crate::goal_data::revive(&mut st.goal);
     // The servers list their tools as the session reopens, with the sidekick the engine holds for it: this one
     st.sidekick_told = sidekick_of(&config, &st);
     if let Some(p) = &loaded.prompt {
@@ -288,7 +289,7 @@ impl Server {
     }
     // A turn cut off by a crash leaves calls without results; the next request must be well formed
     let before = st.items.len();
-    crate::turn::settle(&mut st);
+    super::settle(&mut st);
     let store = Store::new(path, id, &cwd);
     store.set_items_logged(loaded.logged);
     if loaded.cwd != cwd {
@@ -298,7 +299,7 @@ impl Server {
       store.item(item);
     }
     if paused {
-      crate::goal::save(&store, st.goal.as_ref());
+      store.save_goal(st.goal.as_ref());
     }
     // Tool call ids continue after the ones the replay holds
     let seq = loaded
@@ -328,7 +329,7 @@ impl Server {
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given
-  pub(super) fn list(&self, params: &Value) -> Value {
+  pub(crate) fn list(&self, params: &Value) -> Value {
     const PAGE: usize = 50;
     let dir = sessions_root(self.config.home());
     let want = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).map(PathBuf::from);

@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, type SettingsView } from '@acpira/shared/settings';
 import type { Locale } from '@acpira/shared/i18n/core';
 import type { SessionControls } from '@acpira/shared/transcript';
 import type { Appearance } from '../appearance';
-import { Shell, type ShellHandlers } from '../chat/Shell';
+import { Shell, type ShellHandlers } from '../shell/Shell';
 import { lookFromSettings, type Theme } from '../look';
 import { sampleSession } from './sample';
 

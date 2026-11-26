@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseLinkTarget, parseWrappedLink, resolveSessionPath, rewriteFileHrefs, sameImageSource, toFileHref } from '../chat/fileLinks';
+import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseLinkTarget, parseWrappedLink, resolveSessionPath, rewriteFileHrefs, sameImageSource, toFileHref } from '../markdown/fileLinks';
 import { rowImage } from '../chat/toolDetails';
 
 describe('parseFileLink', () => {

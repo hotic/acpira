@@ -8,13 +8,13 @@ import { StableText } from '../ui/StableText';
 import { cn } from '../ui/cn';
 import { t, useLocale } from '../i18n';
 import { vscodeApi } from '../vscodeApi';
-import { TurnActionsContext } from '../chat/TurnActions';
+import { TurnActionsContext } from '../chrome/turnActions';
 import { SandboxFrame } from './SandboxFrame';
 import { expectArrival } from './arrivals';
 import { captureReturns, flyBack, flyHome, restylePart, restylePiece, type Return } from './landings';
 import { chargeCard } from './charge';
 import { pressIn } from '../effects/magic';
-import { useInView, useReducedMotion, useWindowFocused } from './motion';
+import { useInView, useReducedMotion, useWindowFocused } from '../chrome/motion';
 import { useAppearance } from '../appearance';
 import { askPluginsView, backdropsShown, expectReveal, usePluginBackdrop, usePluginsView } from './skin';
 

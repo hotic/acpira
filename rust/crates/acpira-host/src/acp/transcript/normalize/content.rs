@@ -112,7 +112,7 @@ pub(super) fn attach_shown_video(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) {
   let Some(save) = ctx.and_then(|c| c.save_image_file.as_ref()) else { return };
   let Some(video) = b.locations.iter().flatten().find_map(|l| {
     let path = shown_path_of(&l.path)?;
-    let mime = crate::host_mcp::video_mime_of(&path)?;
+    let mime = acpira_shared::host_tools::video_mime_of(&path)?;
     Some(ToolContent::Image(ImageRef { blob: save(&path), mime_type: mime.to_owned(), uri: Some(l.path.clone()) }))
   }) else { return };
   let mut list = vec![video];
@@ -133,7 +133,7 @@ pub(super) fn attach_shown_widget(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) 
   let Some(save) = ctx.and_then(|c| c.save_image_file.as_ref()) else { return };
   let Some(widget) = b.locations.iter().flatten().find_map(|l| {
     let path = shown_path_of(&l.path)?;
-    crate::host_mcp::widget_mime_of(&path)?;
+    acpira_shared::host_tools::widget_mime_of(&path)?;
     Some(ToolContent::Image(ImageRef { blob: save(&path), mime_type: WIDGET_MIME.to_owned(), uri: Some(l.path.clone()) }))
   }) else {
     return;

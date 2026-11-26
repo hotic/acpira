@@ -81,9 +81,9 @@ fn output(result: Result<String, String>, ctx: &Ctx) -> Output {
 }
 
 pub fn grep(pattern: &str, chunk: Option<&str>, case_sensitive: bool, limit: usize, ctx: &Ctx) -> Output {
-  output(crate::chunk::grep(&ctx.history, pattern, chunk, case_sensitive, limit), ctx)
+  output(crate::chunk_history::grep(&ctx.history, pattern, chunk, case_sensitive, limit), ctx)
 }
 
 pub fn list(chunk: &str, offset: usize, limit: usize, ctx: &Ctx) -> Output {
-  output(crate::chunk::list(&ctx.history, chunk, offset, limit), ctx)
+  output(crate::chunk_history::list(&ctx.history, chunk, offset, limit), ctx)
 }

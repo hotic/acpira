@@ -271,7 +271,7 @@ async fn a_fork_whose_agent_can_read_its_own_session_is_told_how_and_pi_is_not()
   // Pi takes the handed-over servers and starts none of them, so the pointer would send it to a tool it does not have
   for (id, readable) in [("fake", true), ("pi", false)] {
     let mut h = Harness::for_agent(&fake, id, json!({ "env": { "FAKE_PROMPT_CAPS": "strict" } }));
-    h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+    h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira")));
     let record = fork_record(&h, two_pairs(), |r| {
       r.forked_from = serde_json::from_value(json!({ "sessionId": "source-session-id", "turnIndex": 3 })).unwrap();
     });

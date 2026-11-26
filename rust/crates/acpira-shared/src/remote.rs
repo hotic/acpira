@@ -8,6 +8,12 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 pub const REMOTE_SCHEME: &str = "ssh://";
+/// Agent -> host request for remote project tool execution (`acpira_agent::remote::TOOL`)
+pub const TOOL: &str = "_acpira/remoteTool";
+/// Host -> agent progress notification for remote project tools (`acpira_agent::remote::PROGRESS`)
+pub const PROGRESS: &str = "_acpira/remoteProgress";
+/// Session request `_meta` key naming the SSH host (`acpira_agent::remote::META`)
+pub const META: &str = "acpira/remote";
 
 /// A folder on an SSH host, normalized: `path` is absolute, without empty, `.` or trailing segments
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -1,12 +1,8 @@
 //! Grok's private requests, verified on the wire with Grok 1.0.18
 
-use std::sync::Arc;
-
 use serde_json::{Value, json};
 
-use crate::acp::transport::process::ClientHandlers;
-use crate::acp::transport::cancel::Cancel;
-use crate::acp::transport::rpc::RpcError;
+use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::i18n::t;
 
 pub const GROK_EXIT_PLAN: &str = "_x.ai/exit_plan_mode";
@@ -32,21 +28,25 @@ pub fn parse_exit_plan(v: &Value) -> Result<Value, RpcError> {
   Ok(out)
 }
 
-/// Grok's plan approval goes through the permission gate as a two-option card; its answer is `{ outcome }`
-pub async fn approve_plan(req: Value, cancel: Cancel, h: Arc<dyn ClientHandlers>) -> Result<Value, RpcError> {
+/// Build the two-option permission card request representing Grok's plan approval.
+pub fn exit_plan_permission(req: &Value) -> Value {
   let mut raw_input = json!({});
   if let Some(p) = req.get("planContent") {
     raw_input["planContent"] = p.clone();
   }
-  let permission = json!({
+  json!({
     "sessionId": req["sessionId"],
     "toolCall": { "toolCallId": req["toolCallId"], "title": "exit_plan_mode", "rawInput": raw_input, "_meta": { "acpira/planApproval": true } },
     "options": [
       { "optionId": "approved", "name": "Build", "kind": "allow_once" },
       { "optionId": "rejected", "name": t("plan.revise"), "kind": "reject_once" },
     ],
-  });
-  let r = h.on_permission(permission, cancel).await?;
+  })
+}
+
+/// Convert the permission card outcome back to Grok's `{ outcome }` reply.
+pub async fn approve_plan_answer(perm: BoxFuture<Result<Value, RpcError>>) -> Result<Value, RpcError> {
+  let r = perm.await?;
   let outcome = &r["outcome"];
   let picked =
     if outcome["outcome"] == "selected" { outcome["optionId"].as_str().unwrap_or("rejected").to_owned() } else { "rejected".into() };

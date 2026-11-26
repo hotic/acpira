@@ -333,7 +333,7 @@ async fn session_new_hands_the_agent_the_host_mcp_server_and_drops_it_for_an_age
   let lines = |log: &std::path::Path| std::fs::read_to_string(log).unwrap_or_default().lines().map(str::to_owned).collect::<Vec<_>>();
 
   let mut h = Harness::new(&fake, json!({ "env": { "FAKE_MCP_LOG": log } }));
-  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira")));
   let s = started(&h, "/tmp").await;
   expect_match(view(&s), json!({ "status": "ready" }));
   assert_eq!(lines(&log), [r#"["acpira"]"#]);
@@ -341,7 +341,7 @@ async fn session_new_hands_the_agent_the_host_mcp_server_and_drops_it_for_an_age
   // An agent that fails session/new with the server still gets a session, and later sessions leave the server out
   let rejecting = dir.path().join("reject.log");
   let mut h = Harness::new(&fake, json!({ "env": { "FAKE_MCP_LOG": rejecting, "FAKE_MCP_REJECT": "1" } }));
-  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira")));
   let first = started(&h, "/tmp").await;
   expect_match(view(&first), json!({ "status": "ready" }));
   let second = started(&h, "/tmp").await;
@@ -368,12 +368,12 @@ async fn a_restore_after_a_sidecar_restart_drops_the_host_mcp_server_for_an_agen
   };
   let env = json!({ "env": { "FAKE_MCP_TRACE": trace, "FAKE_MCP_REJECT": "1", "FAKE_SESSION_DIR": native } });
   let mut h = Harness::new(&fake, env.clone());
-  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira")));
   let record = ran_once(&h, "/tmp").await;
 
   // A new sidecar has not seen the refusal: the restore carries the server, fails, and retries without it
   let mut h2 = Harness::new(&fake, env);
-  h2.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  h2.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira")));
   let s = reopened(&h2, record).await;
   prompt(&s, "again").await;
   expect_match(view(&s), json!({ "status": "ready" }));

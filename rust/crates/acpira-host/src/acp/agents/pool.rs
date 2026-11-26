@@ -7,10 +7,13 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::acp::transport::process::{AgentProcess, ClientHandlers};
 use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::agents::spawn::spawn_agent;
 use crate::acp::transport::cancel::Cancel;
+use crate::acp::transport::process::{AgentProcess, ClientHandlers};
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
+use crate::acp::vendors::dispatch::{self, CustomRequest};
+use crate::acp::vendors::grok;
 use crate::store::transcript_store::LogFn;
 
 const WARM_TTL: Duration = Duration::from_secs(5 * 60);
@@ -35,8 +38,18 @@ impl ClientHandlers for IdleHandlers {
   fn on_elicitation(&self, _: Value, _: Cancel) -> BoxFuture<Result<Value, RpcError>> {
     Box::pin(async { Ok(json!({ "action": "cancel" })) })
   }
-  fn on_grok_question(&self, _: Value, _: Cancel) -> BoxFuture<Result<Value, RpcError>> {
-    Box::pin(async { Ok(json!({ "outcome": "skip_interview" })) })
+  fn on_custom_request(&self, method: String, params: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    match dispatch::decode_request(&method, params) {
+      Ok(CustomRequest::PluginHooks) => Box::pin(async { Ok(json!({ "hooks": [] })) }),
+      Ok(CustomRequest::GrokQuestion(_)) => Box::pin(async { Ok(json!({ "outcome": "skip_interview" })) }),
+      Ok(CustomRequest::GrokExitPlan(req)) => {
+        let perm = grok::exit_plan_permission(&req);
+        Box::pin(grok::approve_plan_answer(self.on_permission(perm, cancel)))
+      }
+      Ok(CustomRequest::RemoteTool(_)) => Box::pin(async { Err(RpcError::method_not_found(acpira_shared::remote::TOOL)) }),
+      Ok(CustomRequest::PluginHook(_)) => Box::pin(async { Err(RpcError::method_not_found(acpira_agent::plugin_hooks::HOOK)) }),
+      Err(e) => Box::pin(async move { Err(e) }),
+    }
   }
   fn on_stderr(&self, line: &str) {
     (self.log)(line);
@@ -109,7 +122,7 @@ impl AgentPool {
         (Some(a), Some(f)) => f(agent.to_owned(), a.to_owned()).await.map_err(anyhow::Error::msg)?,
         _ => None,
       };
-      AgentProcess::spawn(&def, &bin, cwd, self.warm_handlers(key, gen_id), env.as_ref(), None).await
+      spawn_agent(&def, &bin, cwd, self.warm_handlers(key, gen_id), env.as_ref(), None).await
     }
     .await;
     match result {

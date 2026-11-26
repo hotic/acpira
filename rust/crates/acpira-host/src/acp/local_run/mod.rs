@@ -7,6 +7,7 @@
 //! writes or runs a command (`stand::blocked_native`): the last line when a CLI update slips past its gate
 
 pub mod brief;
+pub mod mcp_http;
 pub mod stand;
 pub mod tools;
 
@@ -155,18 +156,15 @@ impl StandProfile {
     })
   }
 
-  /// The CLI's definition with the stand-in's arguments and environment added. A variable holding a JSON object
-  /// (OpenCode's inline configuration) goes over the one the definition or this process already sets, key by key, so
-  /// the user's own models and providers there survive the gate
-  pub fn launch(&self, def: &crate::acp::agents::registry::AgentDef) -> crate::acp::agents::registry::AgentDef {
-    let mut def = def.clone();
-    def.args.extend(self.args().map(str::to_owned));
+  /// Apply the stand-in's arguments and environment onto a command's args and env map.
+  /// A variable holding a JSON object (OpenCode's inline configuration) merges over prior keys.
+  pub fn apply_launch(&self, args: &mut Vec<String>, env_slot: &mut Option<acpira_shared::transcript::StrMap>) {
+    args.extend(self.args().map(str::to_owned));
     for (key, value) in self.envs() {
-      let env = def.env.get_or_insert_with(Default::default);
+      let env = env_slot.get_or_insert_with(Default::default);
       let prior = env.get(key).cloned().or_else(|| std::env::var(key).ok());
       env.insert(key.clone(), over_json(prior.as_deref(), value));
     }
-    def
   }
 }
 
@@ -242,7 +240,7 @@ fn antigravity() -> StandProfile {
     // A saved or plugin account keeps its own gemini dir, named to the CLI's process (and so to its hooks)
     own: OwnFiles {
       dirs: strs(&[".gemini"]),
-      env_dirs: strs(&[crate::accounts::antigravity::STORE_ENV]),
+      env_dirs: strs(&[crate::acp::vendors::antigravity::STORE_ENV]),
       temp_prefixes: vec![],
       quiet_writes: strs(&["antigravity-cli/brain", "antigravity/brain"]),
     },
@@ -387,7 +385,7 @@ pub fn generic(agent: &str, label: &str) -> StandProfile {
 /// it asks before a write or a command
 pub fn builtin(agent: &str) -> Option<LocalRun> {
   match agent {
-    crate::acp::agents::registry::SELF_AGENT_ID => Some(LocalRun::Native),
+    acpira_shared::host_tools::SELF_AGENT_ID => Some(LocalRun::Native),
     "codex" => Some(LocalRun::Exec),
     "claude" => Some(LocalRun::Stand(Arc::new(claude()))),
     "antigravity" => Some(LocalRun::Stand(Arc::new(antigravity()))),
@@ -466,7 +464,11 @@ mod tests {
       assert_eq!(from_setting(id, id, None, None), None, "{id}");
     }
     // A gate in the environment or the arguments means a start of its own
-    let launched = |id: &str| builtin(id).and_then(|l| l.stand().cloned()).unwrap().launch(&crate::acp::agents::registry::AgentDef::default());
+    let launched = |id: &str| {
+      let mut def = crate::acp::agents::registry::AgentDef::default();
+      builtin(id).and_then(|l| l.stand().cloned()).unwrap().apply_launch(&mut def.args, &mut def.env);
+      def
+    };
     assert!(launched("opencode").env.unwrap()["OPENCODE_CONFIG_CONTENT"].contains(r#""bash":"deny""#));
     assert_eq!(launched("grok").env.unwrap()["GROK_FOLDER_TRUST"], "0");
     assert_eq!(launched("dsh").args, ["--patch", ".acpira/dsh.patch.yml"]);
@@ -505,8 +507,8 @@ mod tests {
     assert!(!p.launches());
     p.gates.push(Gate::Disable(strs(&["--remove-tools", "Execute"])));
     p.env.push(("X".into(), "1".into()));
-    let def = crate::acp::agents::registry::AgentDef { args: strs(&["acp"]), ..Default::default() };
-    let out = p.launch(&def);
+    let mut out = crate::acp::agents::registry::AgentDef { args: strs(&["acp"]), ..Default::default() };
+    p.apply_launch(&mut out.args, &mut out.env);
     assert!(p.launches());
     assert_eq!(out.args, strs(&["acp", "--remove-tools", "Execute"]));
     assert_eq!(out.env.unwrap().get("X").map(String::as_str), Some("1"));
@@ -515,11 +517,11 @@ mod tests {
   #[test]
   fn the_gates_inline_configuration_keeps_the_users_own() {
     let own = json!({ "model": "mine/m1", "provider": { "mine": { "npm": "x" } }, "permission": { "bash": { "git *": "allow" }, "webfetch": "ask" } });
-    let def = crate::acp::agents::registry::AgentDef {
+    let mut out = crate::acp::agents::registry::AgentDef {
       env: Some([("OPENCODE_CONFIG_CONTENT".to_owned(), own.to_string())].into_iter().collect()),
       ..Default::default()
     };
-    let out = builtin("opencode").and_then(|l| l.stand().cloned()).unwrap().launch(&def);
+    builtin("opencode").and_then(|l| l.stand().cloned()).unwrap().apply_launch(&mut out.args, &mut out.env);
     let v: Value = serde_json::from_str(&out.env.unwrap()["OPENCODE_CONFIG_CONTENT"]).unwrap();
     assert_eq!((&v["model"], &v["provider"]["mine"]["npm"]), (&json!("mine/m1"), &json!("x")));
     assert_eq!((&v["permission"]["bash"], &v["permission"]["edit"], &v["permission"]["webfetch"]), (&json!("deny"), &json!("deny"), &json!("ask")));

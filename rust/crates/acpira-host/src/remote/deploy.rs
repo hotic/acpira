@@ -50,7 +50,7 @@ impl Probe {
 
 /// The folder, relative to the host's home, a build lives in
 pub fn build_dir(version: &str, digest: &str) -> String {
-  format!(".acpira/{}/{version}-{}", crate::machine_engine::stage::DIR, digest.get(..DIGEST_DIR).unwrap_or(digest))
+  format!(".acpira/{}/{version}-{}", crate::platform::engine_layout::DIR, digest.get(..DIGEST_DIR).unwrap_or(digest))
 }
 
 /// The probe script (POSIX sh). It cannot know the digest to look for before it knows the platform, so it lists this
@@ -164,7 +164,7 @@ pub fn local_binary(platform: &str) -> Option<PathBuf> {
     return Some(beside);
   }
   // rust/target/<profile>/acpira → <checkout>/dist/sidecar, also for an engine landed from there (`machine_engine::stage`)
-  let source = crate::machine_engine::stage::source_of(dir);
+  let source = crate::platform::engine_layout::source_of(dir);
   for from in std::iter::once(dir.to_path_buf()).chain(source.as_deref().and_then(Path::parent).map(Path::to_path_buf)) {
     if let Some(checkout) = from.parent().and_then(Path::parent).and_then(Path::parent) {
       let dist = checkout.join("dist").join("sidecar").join(platform).join("acpira");

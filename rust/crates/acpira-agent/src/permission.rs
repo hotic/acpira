@@ -223,13 +223,13 @@ impl Guard {
     let mut dirs = vec![
       home.join("agent").join("config"),
       home.join("prompts"),
-      crate::prompt::project_prompts(cwd),
+      crate::defs::project_prompts(cwd),
       home.join("plugins").join(".versions"),
       home.join("remote").join("clients"),
     ];
-    // The project's own files when the session folder is below its root (`prompt::project_root`)
-    if let Some(root) = crate::prompt::project_root(cwd, user_home).filter(|r| r != cwd) {
-      dirs.push(crate::prompt::project_prompts(&root));
+    // The project's own files when the session folder is below its root (`defs::project_root`)
+    if let Some(root) = crate::defs::project_root(cwd, user_home).filter(|r| r != cwd) {
+      dirs.push(crate::defs::project_prompts(&root));
       files.push(root.join(".agents").join("hooks.json"));
     }
     if let Some(u) = user_home {

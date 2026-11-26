@@ -1,6 +1,6 @@
 // Writes the iOS app's syntax highlighter: `pnpm exec tsx scripts/export/ios-shiki.ts`.
 // shiki's core and its JavaScript regex engine become one script JavaScriptCore evaluates (`shiki.js`), and the grammars
-// and themes the webview loads (packages/ui/chat/codeSyntax.ts) become JSON beside it, read when a language first shows.
+// and themes the webview loads (packages/ui/markdown/codeSyntax.ts) become JSON beside it, read when a language first shows.
 // The engine options follow the webview's JavaScriptCore branch (ES2018 regexes, which JSC compiles at once), so a line
 // gets the same tokens and colours on the phone as in the desktop's webview.
 import { build } from 'esbuild';
@@ -13,7 +13,7 @@ export const IOS_SHIKI_DIR = join(root, 'apps/ios/Packages/AcpiraKit/Sources/Acp
 // The webview's grammar choice (codeLanguage.ts), read from its source: the root workspace does not depend on
 // @acpira/ui. The list names the grammars to ship; the maps become `languages.json`, which the app reads instead of a
 // copy of its own
-const LANGUAGE_SOURCE = readFileSync(join(root, 'packages/ui/chat/codeLanguage.ts'), 'utf8');
+const LANGUAGE_SOURCE = readFileSync(join(root, 'packages/ui/markdown/codeLanguage.ts'), 'utf8');
 const LANGUAGES = [...LANGUAGE_SOURCE.match(/export const LANGUAGES = \[([^\]]+)\]/)![1]!.matchAll(/'([a-z]+)'/g)].map(m => m[1]!);
 /** A `const name: Record<string, Language> = { key: 'grammar', … }` table of codeLanguage.ts */
 function languageTable(name: string): Record<string, string> {

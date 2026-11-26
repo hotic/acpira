@@ -34,7 +34,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use serde_json::{Map, Value, json};
 
@@ -42,9 +42,7 @@ use crate::llm::{Image, Item, Native, Part, ToolCall};
 
 pub const FORMAT: u32 = 1;
 
-pub fn now_ms() -> u64 {
-  SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
+pub use crate::defs::now_ms;
 
 pub struct Store {
   path: PathBuf,
@@ -169,6 +167,11 @@ impl Store {
   pub fn item(&self, item: &Item) {
     self.append(json!({ "type": "item", "item": item_json(item) }));
     self.items.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+  }
+
+  /// Record the goal in the session log, where a reopen reads the last one back (`Loaded::goal`)
+  pub fn save_goal(&self, goal: Option<&crate::goal_data::Goal>) {
+    self.prelude(json!({ "type": "goal", "goal": goal }));
   }
 
   /// Cut the file back to just before the latest `mark` of `turn`, returning that mark; None when the file holds no such
@@ -403,22 +406,22 @@ pub struct Loaded {
   pub updated_ms: u64,
   /// The first item is a compaction's summary
   pub summarized: bool,
-  /// What that summary item carries (`compact::Carry`), off its `compaction` event
-  pub carry: crate::compact::Carry,
-  /// The chunks shown in the view (`chunk.rs`), and how many items they render to after the summary
-  pub chunks: Vec<crate::chunk::Chunk>,
+  /// What that summary item carries (`compact_data::Carry`), off its `compaction` event
+  pub carry: crate::compact_data::Carry,
+  /// The chunks shown in the view (`chunk_data.rs`), and how many items they render to after the summary
+  pub chunks: Vec<crate::chunk_data::Chunk>,
   pub folded: usize,
   /// How many `item` events the file holds
   pub logged: usize,
   /// The latest `goal` event's goal
-  pub goal: Option<crate::goal::Goal>,
+  pub goal: Option<crate::goal_data::Goal>,
   /// The `call` events: each model tool call's id and its row's, in order
   pub rows: Vec<(String, String)>,
 }
 
 /// Every item the log holds, as first written (a prune does not touch them), and every chunk it recorded, the latest
 /// version of each: what the history tools read and chunk compaction folds from
-pub fn history(path: &Path) -> std::io::Result<(Vec<Item>, Vec<crate::chunk::Chunk>)> {
+pub fn history(path: &Path) -> std::io::Result<(Vec<Item>, Vec<crate::chunk_data::Chunk>)> {
   let (mut items, mut chunks) = (vec![], vec![]);
   for line in BufReader::new(File::open(path)?).lines() {
     let Ok(line) = line else { break };
@@ -429,14 +432,14 @@ pub fn history(path: &Path) -> std::io::Result<(Vec<Item>, Vec<crate::chunk::Chu
     let Ok(ev) = serde_json::from_str::<Value>(&line) else { continue };
     match ev.get("type").and_then(Value::as_str) {
       Some("item") => items.extend(ev.get("item").and_then(item_from)),
-      Some("compaction") if ev.get("strategy").and_then(Value::as_str) == Some(crate::chunk::STRATEGY) => crate::chunk::merge(&mut chunks, chunk_list(&ev)),
+      Some("compaction") if ev.get("strategy").and_then(Value::as_str) == Some(crate::chunk_data::STRATEGY) => crate::chunk_data::merge(&mut chunks, chunk_list(&ev)),
       _ => {}
     }
   }
   Ok((items, chunks))
 }
 
-fn chunk_list(ev: &Value) -> Vec<crate::chunk::Chunk> {
+fn chunk_list(ev: &Value) -> Vec<crate::chunk_data::Chunk> {
   ev.get("chunks").and_then(Value::as_array).into_iter().flatten().filter_map(|c| serde_json::from_value(c.clone()).ok()).collect()
 }
 
@@ -483,14 +486,14 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
       _ if only_summary => {}
       Some("update") => out.updates.extend(ev.get("update").cloned()),
       // Chunks: the earlier summary, the chunks rendered as they were, the items the tail kept
-      Some("compaction") if ev.get("strategy").and_then(Value::as_str) == Some(crate::chunk::STRATEGY) => {
+      Some("compaction") if ev.get("strategy").and_then(Value::as_str) == Some(crate::chunk_data::STRATEGY) => {
         let tail = ev.get("tail").and_then(Value::as_u64).unwrap_or(0) as usize;
         let budget = ev.get("budget").cloned().and_then(|b| serde_json::from_value(b).ok()).unwrap_or_default();
-        crate::chunk::merge(&mut out.chunks, chunk_list(&ev));
+        crate::chunk_data::merge(&mut out.chunks, chunk_list(&ev));
         // The summary item comes off first, so a `tail` from the file that reaches past it keeps it in front
         let summary = (out.summarized && !out.items.is_empty()).then(|| out.items.remove(0));
         let rest = out.items.split_off(out.items.len().saturating_sub(tail));
-        let projection = crate::chunk::render(&out.chunks, budget);
+        let projection = crate::chunk_data::render(&out.chunks, budget);
         out.folded = projection.len();
         out.items = summary.into_iter().chain(projection).chain(rest).collect();
       }
@@ -502,14 +505,14 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
         out.folded = 0;
         let tail = ev.get("tail").and_then(Value::as_u64).unwrap_or(0) as usize;
         let rest = out.items.split_off(out.items.len().saturating_sub(tail));
-        out.carry = crate::compact::Carry::from_event(&ev);
-        out.items = vec![crate::compact::summary_item(summary, &out.carry)];
+        out.carry = crate::compact_data::Carry::from_event(&ev);
+        out.items = vec![crate::compact_data::summary_item(summary, &out.carry)];
         out.items.extend(rest);
         out.summarized = true;
       }
       Some("prune") => {
         let calls: Vec<String> = ev.get("calls").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-        crate::compact::apply_prune(&mut out.items, &calls);
+        crate::compact_data::apply_prune(&mut out.items, &calls);
       }
       Some("state") => {
         for (k, v) in ev.as_object().into_iter().flatten() {
@@ -539,7 +542,7 @@ const TITLE_MARK: &str = r#"{"type":"title""#;
 
 /// A list title: the first line of the first message, without the notes the agent put in front (`chunk::strip_notes`)
 fn title_of(text: &str) -> String {
-  let line = crate::chunk::strip_notes(text).trim().lines().next().unwrap_or("").trim();
+  let line = crate::defs::strip_notes(text).trim().lines().next().unwrap_or("").trim();
   let mut out: String = line.chars().take(80).collect();
   if line.chars().count() > 80 {
     out.push('…');

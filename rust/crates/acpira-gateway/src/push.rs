@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use acpira_desktop::json_file::{read_json, write_json_strict};
+use acpira_host_base::json_file::{read_json, write_json_strict};
 use acpira_shared::devices::{PushKind, PushNote, PushTarget};
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine as _;

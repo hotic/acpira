@@ -1,6 +1,6 @@
 import type { AgentBlock, SteerBlock, ToolCallBlock } from '@acpira/shared/transcript';
 import { displayFileName, toolFiles, visibleToolContents } from './toolDetails';
-import { parseFileLink, type FileLink } from './fileLinks';
+import { parseFileLink, type FileLink } from '../markdown/fileLinks';
 import { sessionRead, splitSessionTarget, type SessionRead } from '@acpira/shared/sessionLinks';
 import { isImageGenTool, isImageResultBlock, isShowVideoTool, isShowWidgetTool, toolImages, toolVideos, toolWidget } from '@acpira/shared/imageTools';
 

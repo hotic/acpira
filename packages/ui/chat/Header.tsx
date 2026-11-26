@@ -17,7 +17,7 @@ import { SessionList, projectName } from './SessionList';
 import { shortcutLabel, useDesktop } from '../desktop';
 import { cn } from '../ui/cn';
 import { SessionMenu, Submenu } from './SessionMenu';
-import type { ShellHandlers } from './Shell';
+import type { ShellHandlers } from './shellHandlers';
 import { SlotPieces } from '../plugins/Pieces';
 import { usePluginPieces } from '../pluginSlots';
 

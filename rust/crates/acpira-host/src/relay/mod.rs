@@ -7,18 +7,6 @@
 //! token and the op; `list` answers the enabled personas, `ask` answers progress lines and then one final line
 
 pub mod hub;
-pub mod roster;
-pub mod wire;
-
-/// How deep summoned children may summon in turn (the root session's own call is depth 0)
-pub const MAX_DEPTH: u32 = 2;
-/// Summoned rounds running at once in one session, nested ones included (each is a CLI process of its own)
-pub const MAX_RUNNING: usize = 6;
-
-/// Environment variables of the MCP server entry that lead back to the hub. The token is a grant minted for that one
-/// entry: the hub knows from it which session, which summoned thread and which depth the caller is, so none of these
-/// travel in a request where a caller could forge them
-pub const ENV_ADDR: &str = "ACPIRA_RELAY";
-pub const ENV_TOKEN: &str = "ACPIRA_RELAY_TOKEN";
-/// The project MCP server on an SSH host an `acpira mcp-host` shim stands for (`host_mcp::run_host_stdio`)
-pub const ENV_HOST_SERVER: &str = "ACPIRA_HOST_MCP";
+pub use crate::relay_roster as roster;
+pub use crate::relay_wire as wire;
+pub use crate::relay_wire::{ENV_ADDR, ENV_HOST_SERVER, ENV_TOKEN, MAX_DEPTH, MAX_RUNNING};

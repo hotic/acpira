@@ -16,7 +16,7 @@ import { macOS, useDesktop } from '../desktop';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { imeKey } from '../ui/ime';
-import { ItemRow, Note, SearchBox, Section } from './controls';
+import { ItemRow, Note, SearchBox, Section } from '../chrome/controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 export const SHORTCUT_LABEL: Record<ShortcutId, MsgKey> = {

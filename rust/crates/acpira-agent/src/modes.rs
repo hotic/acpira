@@ -10,17 +10,13 @@
 
 use std::path::Path;
 
+use crate::defs::{
+  BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GOAL_CREATE as CREATE_GOAL, GOAL_GET as GET_GOAL, GOAL_UPDATE as UPDATE_GOAL, GREP,
+  HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE,
+};
 use crate::permission::{Approval, BASH, Decision, EDIT, ENGINE_MCP, MCP, Rule, path_target};
-use crate::goal::{CREATE as CREATE_GOAL, GET as GET_GOAL, UPDATE as UPDATE_GOAL};
-use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 
-pub const AGENT: &str = "agent";
-pub const PLAN: &str = "plan";
-pub const TEAM: &str = "team";
-pub const RAW: &str = "raw";
-/// The mode a summoned agent runs a consult in (`acp::SUMMONED_META`): Plan's limits without its plan and approval,
-/// since the engine picks a CLI's read-only mode for a consult and a plan there would ask the user to approve it
-pub const READ_ONLY: &str = "read-only";
+pub use crate::defs::{MODE_AGENT as AGENT, MODE_PLAN as PLAN, MODE_RAW as RAW, MODE_READ_ONLY as READ_ONLY, MODE_TEAM as TEAM};
 
 pub struct Mode {
   pub id: &'static str,

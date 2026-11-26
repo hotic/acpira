@@ -276,3 +276,28 @@ async fn push_deduplicates_unchanged_copies_and_sends_only_log_deltas_over_the_w
 
   client.close();
 }
+
+#[tokio::test]
+async fn store_remove_purges_synced_builtin_agent_log() {
+  let dir = tempfile::tempdir().unwrap();
+  let host_root = dir.path().join("host");
+  let store = TranscriptStore::new(host_root.join("sessions"), Arc::new(|_| {}), None);
+  let rec: SessionRecord = serde_json::from_value(json!({
+    "id": "s-purge", "agent": "acpira", "acpSessionId": "native-purge", "cwd": "/work/proj",
+    "title": "purge", "createdAt": "2026-10-01T00:00:00.000Z", "updatedAt": "2026-10-01T00:00:00.000Z",
+    "copyOf": { "machine": "src-machine", "updatedAt": "2026-10-01T00:00:00.000Z" },
+    "turns": [], "controls": { "modes": [], "options": [] }, "commands": []
+  }))
+  .unwrap();
+  store.flush(Arc::new(rec)).await.unwrap();
+  let agent_dir = host_root.join("agent/sessions");
+  std::fs::create_dir_all(agent_dir.join("native-purge")).unwrap();
+  let log_file = agent_dir.join("native-purge.jsonl");
+  std::fs::write(&log_file, "{\"type\":\"session\",\"id\":\"native-purge\"}\n").unwrap();
+  std::fs::write(agent_dir.join("native-purge/extra.txt"), "x").unwrap();
+
+  let res = serve("storeRemove", &json!({ "home": host_root, "id": "s-purge" }), None).await.unwrap();
+  assert_eq!(res, json!({}));
+  assert!(!log_file.exists(), "storeRemove must purge the synced built-in agent log");
+  assert!(!agent_dir.join("native-purge").exists(), "storeRemove must purge the built-in agent session dir");
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { previewParts } from '../panel/previewParts';
+import { previewParts } from '../markdown/previewParts';
 
 // Every boundary taken, so a case shows where a part may start; each part is named by its first line
 const heads = (markdown: string) => {

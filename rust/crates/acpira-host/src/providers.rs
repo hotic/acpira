@@ -39,36 +39,13 @@ impl ProviderStore {
     self.on_change.write().push(hook);
   }
 
-  /// The sources that go to this machine's SSH hosts, with their keys (`remote/host_models.rs`)
-  pub async fn carried(&self) -> Result<crate::remote::host_models::Carried, String> {
-    let providers: Vec<Provider> = self.read().await?.providers.into_iter().filter(crate::remote::host_models::travels).collect();
-    let mut keys = std::collections::BTreeMap::new();
-    for p in &providers {
-      if let Some(k) = self.vault.get(&provider_secret_key(&p.id)).await.ok().flatten().filter(|k| !k.is_empty()) {
-        keys.insert(p.id.clone(), k);
-      }
-    }
-    Ok(crate::remote::host_models::Carried { providers, keys })
-  }
-
-  /// This machine's whole built-in agent settings for the sessions it drives on an SSH host whose engine keeps them apart
-  /// (`remote/host_models.rs`): the file with only the sources that travel, and the keys those sources and the search
-  /// backends use. A setting naming a source that stays here falls back on the host as it does here when one goes
-  pub async fn client_set(&self) -> Result<crate::remote::host_models::ClientSet, String> {
-    let mut file = self.read().await?;
-    file.providers.retain(crate::remote::host_models::travels);
-    let wanted: Vec<String> = file.providers.iter().map(|p| provider_secret_key(&p.id)).chain(WEB_SEARCH_BACKENDS.into_iter().skip(1).map(web_secret_key)).collect();
-    let mut keys = std::collections::BTreeMap::new();
-    for key in wanted {
-      if let Some(k) = self.vault.get(&key).await.ok().flatten().filter(|k| !k.is_empty()) {
-        keys.insert(key, k);
-      }
-    }
-    Ok(crate::remote::host_models::ClientSet { file, keys })
+  /// Expose the vault for remote model mirroring (`remote/host_models.rs`).
+  pub(crate) fn vault(&self) -> &Arc<FileVault> {
+    &self.vault
   }
 
   /// An absent file reads as no sources; Err carries why an existing one cannot be used
-  async fn read(&self) -> Result<ProvidersFile, String> {
+  pub(crate) async fn read(&self) -> Result<ProvidersFile, String> {
     match fs::read_to_string(&self.file).await {
       Ok(text) => ProvidersFile::parse(&text).map_err(|e| format!("{} cannot be read: {e}", self.file.display())),
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ProvidersFile::default()),
@@ -185,7 +162,7 @@ impl ProviderStore {
       ProviderAction::Save { provider, key } => {
         let id = self.edit(|file| save(file, provider)).await?;
         // The host's own entry an older helper kept aside is replaced by this save, and its key with it
-        let kept = crate::remote::host_models::kept_secret_key(&id);
+        let kept = acpira_shared::providers::kept_secret_key(&id);
         if self.vault.get(&kept).await?.is_some() {
           self.vault.delete(&kept).await?;
         }

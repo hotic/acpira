@@ -12,7 +12,7 @@ import { RadioGroup } from '../ui/RadioGroup';
 import { useScrollFade } from '../ui/useScrollFade';
 import { ModelOptions } from './ModelPicker';
 import { ModelMark } from './ModelMark';
-import { Prose } from './Prose';
+import { Prose } from '../markdown/Prose';
 import { permissionOption } from './permissionOptions';
 import { reviseOption } from './planReview';
 

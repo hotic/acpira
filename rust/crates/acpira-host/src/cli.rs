@@ -145,7 +145,7 @@ pub fn run(args: Vec<String>) -> i32 {
     return acpira_computer::run(args.get(1..).unwrap_or_default());
   }
   if args.first().map(String::as_str) == Some("remote") {
-    return crate::remote::helper::main(&args[1..], VERSION);
+    return crate::remote_helper::main(&args[1..], VERSION);
   }
   if args.first().map(String::as_str) == Some("gateway") {
     return acpira_gateway::cli::main(args[1..].to_vec());
@@ -534,9 +534,13 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
   engine.watch_for_wedge();
   // The machine's engine under the app's launcher: an update swapping the bundle away takes its privacy grants along
   if socket == crate::machine_engine::ensure::socket_path(&home) {
-    crate::machine_engine::launcher::watch(&engine);
+    let watch_engine: std::sync::Weak<dyn crate::machine_engine::launcher::EngineWatch> = Arc::downgrade(&engine) as _;
+    crate::machine_engine::launcher::watch(watch_engine);
   }
-  let host = hosts.then(|| crate::devices::host::Host::start(&engine, &home, forced, Arc::new(stderr)));
+  let host = hosts.then(|| {
+    let gw_engine: std::sync::Weak<dyn crate::devices::host::GatewayEngine> = Arc::downgrade(&engine) as _;
+    crate::devices::host::Host::start(gw_engine, &home, forced, Arc::new(stderr))
+  });
   let accept_engine = engine.clone();
   let accept = tokio::spawn(async move {
     loop {
@@ -660,7 +664,10 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
   let engine =
     Engine::persistent(ServerOpts { version: VERSION.into(), home: home.clone(), log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe });
   engine.watch_for_wedge();
-  let host = hosts.then(|| crate::devices::host::Host::start(&engine, &home, forced, Arc::new(stderr)));
+  let host = hosts.then(|| {
+    let gw_engine: std::sync::Weak<dyn crate::devices::host::GatewayEngine> = Arc::downgrade(&engine) as _;
+    crate::devices::host::Host::start(gw_engine, &home, forced, Arc::new(stderr))
+  });
   let accept_engine = engine.clone();
   let accept = tokio::spawn(async move {
     loop {
@@ -797,9 +804,7 @@ fn redirect_output(log: &std::path::Path) {
 }
 
 /// Whether this engine runs inside an SSH login (sshd sets these; VS Code Server and its extension host inherit them)
-pub(crate) fn over_ssh() -> bool {
-  ["SSH_CONNECTION", "SSH_CLIENT"].iter().any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
-}
+pub(crate) use crate::platform::engine_layout::over_ssh;
 
 /// `--idle-grace SECONDS` when given and valid, otherwise the default for a local or a remote (SSH) engine
 fn idle_grace(flag: Option<&str>, remote: bool) -> std::time::Duration {
@@ -808,23 +813,8 @@ fn idle_grace(flag: Option<&str>, remote: bool) -> std::time::Duration {
     .unwrap_or(if remote { REMOTE_IDLE_GRACE } else { IDLE_GRACE })
 }
 
-/// The socket's directory must be this user's and closed to everyone else: whoever can create files there could pose as
-/// the engine, or put a socket of theirs where the shell looks. A directory of this user's that is too open is tightened
 #[cfg(unix)]
-pub(crate) fn private_dir(dir: &std::path::Path) -> Result<(), String> {
-  use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-  std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-  let meta = std::fs::symlink_metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-  // SAFETY: geteuid has no preconditions and cannot fail
-  let me = unsafe { libc::geteuid() };
-  if !meta.is_dir() || meta.uid() != me {
-    return Err(format!("{} must be a directory owned by this user", dir.display()));
-  }
-  if meta.mode() & 0o077 != 0 {
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| format!("{}: {e}", dir.display()))?;
-  }
-  Ok(())
-}
+pub(crate) use acpira_host_base::private_dir::private_dir_strict as private_dir;
 
 #[cfg(not(any(unix, windows)))]
 async fn serve(_args: &[String], _home: PathBuf, _exe: Option<String>) -> i32 {

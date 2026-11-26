@@ -7,20 +7,27 @@ pub mod acp;
 pub mod budget;
 pub mod catalog;
 pub mod chunk;
+pub mod chunk_data;
+pub mod chunk_history;
 pub mod compact;
-pub mod context;
+pub mod compact_data;
 pub mod config;
+pub mod context;
+pub mod critique;
+pub mod defs;
+pub mod dispatch;
 pub mod frames;
 pub mod generate;
-pub mod plugin_hooks;
-pub mod profile;
 pub mod goal;
+pub mod goal_data;
 pub mod llm;
 pub mod mcp;
 #[cfg(feature = "mock")]
 pub mod mock;
 pub mod modes;
 pub mod permission;
+pub mod plugin_hooks;
+pub mod profile;
 pub mod prompt;
 pub mod remote;
 pub mod scratch;
@@ -66,7 +73,7 @@ where
   W: AsyncWrite + Unpin + Send + 'static,
 {
   let server = acp::Server::with_profile(home, version, profile);
-  let handler: Arc<dyn Inbound> = Arc::new(acp::Handler(server.clone()));
+  let handler: Arc<dyn Inbound> = Arc::new(dispatch::Handler(server.clone()));
   let conn = Connection::start(reader, writer, Arc::new(move || handler.clone()), Arc::new(|line: &str| eprintln!("[acpira agent] {line}")));
   server.attach(conn.clone());
   let watcher = tokio::spawn(server.clone().watch_controls());

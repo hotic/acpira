@@ -16,14 +16,9 @@ use serde_json::{Value, json};
 use crate::acp::session::AcpSession;
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::rpc::RpcError;
-use crate::remote::client::Event;
+use crate::remote_seam::{RemoteEvent as Event, RemoteStream};
 
-/// The agent's request (`acpira_agent::remote::TOOL`)
-pub const TOOL: &str = "_acpira/remoteTool";
-/// The progress notification back to the agent (`acpira_agent::remote::PROGRESS`)
-pub const PROGRESS: &str = "_acpira/remoteProgress";
-/// The `_meta` key of session requests naming the host (`acpira_agent::remote::META`)
-pub const META: &str = "acpira/remote";
+pub use acpira_shared::remote::{META, PROGRESS, TOOL};
 /// How long a tool call waits for the host's connection to come (back) up
 const CONNECT_WAIT: Duration = Duration::from_secs(60);
 /// How long opening a session waits for the host to read its prompt files
@@ -54,10 +49,10 @@ impl AcpSession {
     // 0.0.0.0, which a dev server prints, is reached on the host's loopback
     let host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
     let check = async {
-      let client = connections.ensure(&f.alias, CONNECT_WAIT).await.ok()?;
-      let mut call = client.request("tcp", json!({ "host": host, "port": port }));
+      let client = connections.ensure(f.alias.clone(), CONNECT_WAIT).await.ok()?;
+      let mut call = client.request("tcp".into(), json!({ "host": host, "port": port }));
       // Connected: the call is dropped, which closes the connection there
-      Some(matches!(call.next().await, Some(Event::Chunk { stream, .. }) if stream == "open"))
+      Some(matches!(call.next_event().await, Some(Event::Chunk { stream, .. }) if stream == "open"))
     };
     tokio::time::timeout(wait, check).await.ok().flatten().unwrap_or(false)
   }
@@ -127,7 +122,7 @@ impl AcpSession {
     let Some(client) = connections.client(&f.alias) else { return (vec![], vec![], vec![]) };
     let read = |rel: &'static str| {
       let (client, path) = (client.clone(), format!("{}/{rel}", root.trim_end_matches('/')));
-      async move { client.call("read", json!({ "path": path })).await.ok().map(|r| String::from_utf8_lossy(&r.data).into_owned()) }
+      async move { client.call("read".into(), json!({ "path": path })).await.ok().map(|r| String::from_utf8_lossy(&r.data).into_owned()) }
     };
     let (current, legacy) = tokio::join!(read(".mcp.json"), read(".agents/mcp.json"));
     let servers = mcp::project_servers(
@@ -145,7 +140,7 @@ impl AcpSession {
       let str_of = |k: &str| s.spec.get(k).and_then(Value::as_str).filter(|x| !x.is_empty()).map(mcp::expand_vars);
       if s.transport != McpTransport::Stdio {
         let url = str_of("url").or_else(|| str_of("serverUrl")).or_else(|| str_of("httpUrl")).unwrap_or_default();
-        if crate::relay::hub::loopback_target(&url).is_some() {
+        if crate::relay_wire::loopback_target(&url).is_some() {
           skipped.push(format!("{} (on the host's loopback)", s.name));
         } else if let Ok(v) = mcp::to_acp(&s, None).await {
           out.push(v);
@@ -172,29 +167,26 @@ impl AcpSession {
   }
 
   /// Start a registered project MCP server on the host (`HubOp::HostStdio`): the call carries its stdin and output
-  pub(crate) async fn open_host_stdio(&self, name: &str) -> Result<crate::remote::client::Call, String> {
+  pub(crate) async fn open_host_stdio(&self, name: &str) -> Result<Box<dyn RemoteStream>, String> {
     let spec = self.host_stdio.lock().get(name).cloned().ok_or_else(|| format!("no MCP server named {name} on the host for this session"))?;
     let f = self.remote_folder().ok_or("the session's folder is not on an SSH host")?;
     let connections = self.deps.remote.clone().ok_or("this engine has no SSH connections")?;
-    let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
+    let client = connections.ensure(f.alias.clone(), CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
     let argv: Vec<String> = std::iter::once(spec.command).chain(spec.args).collect();
-    Ok(client.request("exec", json!({ "argv": argv, "cwd": spec.cwd, "env": spec.env, "stdin": true })))
+    Ok(client.request("exec".into(), json!({ "argv": argv, "cwd": spec.cwd, "env": spec.env, "stdin": true })))
   }
 
   /// Codex in a folder on an SSH host: the variable that makes the host's exec-server the only place its tools run
   /// (`remote::codex_exec`), for the codex build the adapter at `binary` runs. The build is put on the host first when
   /// it is missing, which the session's start waits for. None for any other session
   pub(crate) async fn remote_exec_env(&self, def: &crate::acp::agents::registry::AgentDef, binary: &str) -> anyhow::Result<Option<acpira_shared::transcript::StrMap>> {
-    use crate::remote::codex_exec;
     let Some(f) = self.remote_folder().filter(|_| self.local_run() == Some(crate::acp::local_run::LocalRun::Exec)) else { return Ok(None) };
     let connections = self.deps.remote.clone().ok_or_else(|| anyhow::anyhow!("this engine has no SSH connections"))?;
-    let codex = codex_exec::local_codex(binary, def).await?;
-    let tunnel = connections.codex.open(&connections, &f.alias, &codex).await?;
-    let url = tunnel.url();
-    self.log(&format!("remote: {} {} runs its tools on {} through {}", def.name, codex.version, f.alias, codex_exec::redact(&url)));
+    let opened = connections.open_codex_exec(f.alias.clone(), binary.to_owned(), def.clone()).await?;
+    self.log(&format!("remote: {} {} runs its tools on {} through {}", def.name, opened.version, f.alias, opened.redacted_url));
     // The CLI before this one is gone: its tunnel and server go here
-    *self.exec_tunnel.lock() = Some(tunnel);
-    Ok(Some([(codex_exec::ENV.to_owned(), url)].into_iter().collect()))
+    *self.exec_tunnel.lock() = Some(opened.tunnel);
+    Ok(Some([(opened.env_key.to_owned(), opened.url)].into_iter().collect()))
   }
 
   /// The user's stop ends what Codex still runs on the host, which its own cancel leaves running
@@ -207,8 +199,8 @@ impl AcpSession {
 
   async fn host_places(&self, f: &RemoteFolder) -> anyhow::Result<Value> {
     let connections = self.deps.remote.clone().ok_or_else(|| anyhow::anyhow!("this engine has no SSH connections"))?;
-    let client = connections.ensure(&f.alias, PLACES_WAIT).await?;
-    Ok(client.call("places", json!({ "cwd": f.path })).await?.value)
+    let client = connections.ensure(f.alias.clone(), PLACES_WAIT).await?;
+    Ok(client.call("places".into(), json!({ "cwd": f.path })).await.map_err(anyhow::Error::msg)?.value)
   }
 
   /// Stop the background jobs the agent's sessions (`sids`: the session's own and its summoned children's) left on the
@@ -217,10 +209,10 @@ impl AcpSession {
     let (Some(f), Some(connections)) = (self.remote_folder(), self.deps.remote.as_ref()) else { return };
     let Some(client) = connections.client(&f.alias) else { return };
     for sid in sids {
-      let call = client.call("tool", json!({ "phase": "close", "sessionId": sid }));
+      let call = client.call("tool".into(), json!({ "phase": "close", "sessionId": sid }));
       let failed = match tokio::time::timeout(super::lifecycle::CLOSE_GRACE, call).await {
         Ok(Ok(_)) => continue,
-        Ok(Err(e)) => e.to_string(),
+        Ok(Err(e)) => e,
         Err(_) => "timed out".to_owned(),
       };
       self.log(&format!("remote: the jobs of {sid} on {} could not be stopped: {failed}", f.alias));
@@ -257,17 +249,17 @@ impl AcpSession {
 
   async fn host_handoff(&self, f: &RemoteFolder, mut a: Value) -> anyhow::Result<Value> {
     let connections = self.deps.remote.clone().ok_or_else(|| anyhow::anyhow!("this engine has no SSH connections"))?;
-    let client = connections.ensure(&f.alias, CONNECT_WAIT).await?;
+    let client = connections.ensure(f.alias.clone(), CONNECT_WAIT).await?;
     a["cwd"] = json!(f.path);
-    Ok(client.call("handoff", a).await?.value)
+    Ok(client.call("handoff".into(), a).await.map_err(anyhow::Error::msg)?.value)
   }
 
   /// `workspace_hooks`' check of a project on the session's host (`hooks::describe`, run there)
   pub(crate) async fn describe_host_hooks(&self, cwd: &str) -> Result<String, String> {
     let f = self.remote_folder().ok_or("this session's folder is not on an SSH host")?;
     let connections = self.deps.remote.clone().ok_or("this engine has no SSH connections")?;
-    let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
-    let r = client.call("hooksDescribe", json!({ "cwd": cwd })).await.map_err(|e| format!("{} could not check it: {e}", f.alias))?;
+    let client = connections.ensure(f.alias.clone(), CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
+    let r = client.call("hooksDescribe".into(), json!({ "cwd": cwd })).await.map_err(|e| format!("{} could not check it: {e}", f.alias))?;
     Ok(r.value.get("text").and_then(Value::as_str).unwrap_or("").to_owned())
   }
 
@@ -277,17 +269,17 @@ impl AcpSession {
     use acpira_shared::attachments::image_mime_of;
     let f = self.remote_folder().ok_or("this session's folder is not on an SSH host")?;
     let connections = self.deps.remote.clone().ok_or("this engine has no SSH connections")?;
-    let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
+    let client = connections.ensure(f.alias.clone(), CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
     let limit = if widget { crate::limits::MAX_WIDGET_BYTES } else if video { crate::limits::MAX_OUT_VIDEO_BYTES } else { crate::limits::MAX_OUT_IMAGE_BYTES };
     let mut problems = vec![];
     for path in paths {
-      let kind_ok = if widget { crate::host_mcp::widget_mime_of(path).is_some() } else if video { crate::host_mcp::video_mime_of(path).is_some() } else { image_mime_of(path).is_some() };
+      let kind_ok = if widget { acpira_shared::host_tools::widget_mime_of(path).is_some() } else if video { acpira_shared::host_tools::video_mime_of(path).is_some() } else { image_mime_of(path).is_some() };
       let problem = if !path.starts_with('/') {
         Some(format!("{path}: not an absolute path"))
       } else if !kind_ok {
         Some(format!("{path}: {}", if widget { "not an .html file" } else if video { "not an MP4 or WebM file" } else { "not a PNG, JPEG, GIF or WebP file" }))
       } else {
-        match client.call("stat", json!({ "path": path })).await {
+        match client.call("stat".into(), json!({ "path": path })).await {
           Err(e) => Some(format!("{path}: {e}")),
           Ok(st) if st.value.get("kind").and_then(Value::as_str) != Some("file") => Some(format!("{path}: not a file")),
           Ok(st) if st.value.get("size").and_then(Value::as_u64).unwrap_or(0) > limit => Some(format!("{path}: larger than {} KB", limit / 1024)),
@@ -323,7 +315,7 @@ impl AcpSession {
     let folder = self.remote_folder().ok_or_else(|| RpcError::new(-32602, "this session's folder is not on an SSH host"))?;
     let connections = self.deps.remote.clone().ok_or_else(|| RpcError::new(-32603, "this engine has no SSH connections"))?;
     let client = tokio::select! {
-      c = connections.ensure(&folder.alias, CONNECT_WAIT) => c.map_err(|e| RpcError::new(-32603, format!("{e:#}")))?,
+      c = connections.ensure(folder.alias.clone(), CONNECT_WAIT) => c.map_err(|e| RpcError::new(-32603, format!("{e:#}")))?,
       () = cancel.cancelled() => return Err(RpcError::cancelled()),
     };
     if let Some(blocked) = self.remote_write_gate(&req).await {
@@ -337,12 +329,12 @@ impl AcpSession {
     // The host's folder is the session's, whatever the agent sent
     a["cwd"] = json!(folder.path);
     let (sid, call_id) = (req.get("sessionId").cloned().unwrap_or(Value::Null), req.get("callId").cloned().unwrap_or(Value::Null));
-    let mut call = client.request("tool", a);
+    let mut call = client.request("tool".into(), a);
     let mut progress: Vec<u8> = vec![];
     let mut spills: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     loop {
       let ev = tokio::select! {
-        ev = call.next() => ev,
+        ev = call.next_event() => ev,
         // Dropping the call cancels it on the host
         () = cancel.cancelled() => return Err(RpcError::cancelled()),
       };

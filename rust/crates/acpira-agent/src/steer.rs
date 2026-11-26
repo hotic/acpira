@@ -8,41 +8,23 @@
 use serde_json::{Value, json};
 
 use crate::acp::{Server, Session};
+use crate::defs::{STEER_CLOSE as CLOSE, merge_text, prompt_parts, prompt_text};
+pub use crate::defs::steer_text_of as text_of;
 use crate::llm::{Item, Part, STEER_OPEN as OPEN};
 use crate::skills::{self, Skill};
-
-const CLOSE: &str = "\n</steer>";
 
 /// The messages as one user message: the note (the prompt `steer/note`), then each message's parts the way a prompt's are made (attachments, and
 /// images when the model takes them), with the skills it mentions expanded behind it like a prompt's
 pub fn item(note: &str, prompts: &[Value], images: bool, skills: &[Skill]) -> Item {
   let mut parts = vec![Part::Text(format!("{OPEN}{note}{CLOSE}"))];
   for prompt in prompts {
-    parts.extend(crate::turn::prompt_parts(prompt, images).into_iter().filter(|p| !matches!(p, Part::Text(t) if t.is_empty())));
-    let expansion = skills::expansion(&skills::mentioned(&crate::turn::prompt_text(prompt), skills));
+    parts.extend(prompt_parts(prompt, images).into_iter().filter(|p| !matches!(p, Part::Text(t) if t.is_empty())));
+    let expansion = skills::expansion(&skills::mentioned(&prompt_text(prompt), skills));
     if !expansion.is_empty() {
       parts.push(Part::Text(expansion.trim_start().to_owned()));
     }
   }
-  Item::User(crate::turn::merge_text(parts))
-}
-
-/// The user's own words in a steered message (`Item::is_steer`): its text without the note (images left out)
-pub fn text_of(item: &Item) -> Option<String> {
-  let Item::User(parts) = item else { return None };
-  if !item.is_steer() {
-    return None;
-  }
-  let text = parts
-    .iter()
-    .filter_map(|p| match p {
-      Part::Text(t) => Some(t.as_str()),
-      Part::Image { .. } => None,
-    })
-    .collect::<Vec<_>>()
-    .join("\n\n");
-  let words = text.split_once(CLOSE).map_or(text.as_str(), |(_, rest)| rest);
-  Some(words.trim().to_owned())
+  Item::User(merge_text(parts))
 }
 
 /// Take the messages steered in since the last call into the history, in front of the next call
@@ -82,7 +64,7 @@ pub fn close(server: &Server, session: &Session) -> Option<(Item, Vec<Value>)> {
   if prompts.is_empty() {
     return None;
   }
-  let images = pick.and_then(|p| crate::turn::limits(&session.config(), &server.catalog.get(), &p)).is_some_and(|m| m.takes_images());
+  let images = pick.and_then(|p| crate::config::limits(&session.config(), &server.catalog.get(), &p)).is_some_and(|m| m.takes_images());
   let places = server.places_of(&session.cwd, session.remote.as_deref(), session.layers.clone());
   Some((item(&session.prompts.text("steer/note", &family), &prompts, images, &skills::scan(&places)), prompts))
 }

@@ -14,16 +14,16 @@ import { IconButton } from '../ui/Button';
 import { t, useLocale } from '../i18n';
 import { toolIcon } from './icons';
 import { PlanDetails } from './Plan';
-import { CodeSurface, DiffBlock } from './CodeBlock';
-import { AgentImage } from './AgentImage';
-import { FileMenu } from './ImageMenu';
+import { CodeSurface, DiffBlock } from '../markdown/CodeBlock';
+import { AgentImage } from '../markdown/AgentImage';
+import { FileMenu } from '../markdown/ImageMenu';
 import { GeneratedImages } from './GeneratedImage';
 import { ShownWidget } from './AgentWidget';
 import { ShownVideos } from './AgentVideo';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { isSkillTool, isWorkflowRun, toolTarget } from './folding';
 import { ToolLabel } from './ToolLabel';
-import { AsyncTaskStopContext, CommandStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from './fileLinks';
+import { AsyncTaskStopContext, CommandStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from '../markdown/fileLinks';
 import { isSessionTool, splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { compactTokens } from './goalText';
 import { diffIndex, fileReference, rowImage, splitHit, toolFiles, visibleToolContents } from './toolDetails';
@@ -33,7 +33,7 @@ import { commandDuration } from './commandDuration';
 import { useAutoFold } from './autoFold';
 import { editReference, editSpan } from './processGroups';
 
-export { OpenToolFileContext } from './fileLinks';
+export { OpenToolFileContext } from '../markdown/fileLinks';
 
 // One tool call = one expandable row, command execution included (the row names the program, the card below holds the full command and its output).
 // Three modes: text only / with icon / icon + meta. No Orb while running: icon mode uses the same static icon as the completed state, with the verb shimmering.

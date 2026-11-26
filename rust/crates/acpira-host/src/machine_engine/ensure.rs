@@ -145,7 +145,7 @@ async fn ensure_with(home: &Path, allow_dev: bool, serve_args: &[String], log: &
   let socket = socket_path(home);
   #[cfg(unix)]
   if let Some(dir) = socket.parent() {
-    crate::cli::private_dir(dir).map_err(|e| anyhow!(e))?;
+    acpira_host_base::private_dir::private_dir_strict(dir).map_err(|e| anyhow!(e))?;
   }
   let deadline = tokio::time::Instant::now() + ENSURE_WAIT;
   let mut started: Option<Started> = None;
@@ -323,7 +323,7 @@ impl Started {
   async fn ended(&mut self) -> bool {
     match &mut self.how {
       How::Child(Detached(c)) => c.as_mut().is_none_or(Spawned::exited),
-      How::Job(label) => !crate::devices::launch_agent::running(label).await,
+      How::Job(label) => !crate::platform::launchd::running(label).await,
     }
   }
 }
@@ -340,9 +340,9 @@ async fn start(exe: &Path, socket: &Path, home: &Path, serve_args: &[String]) ->
     let _ = std::fs::rename(&log, log.with_extension("log.1"));
   }
   let pinned = stage::pin(exe);
-  if serve_args.is_empty() && crate::cli::over_ssh() && crate::devices::launch_agent::can_use_gui(home).await {
+  if serve_args.is_empty() && crate::platform::engine_layout::over_ssh() && crate::platform::launchd::can_use_gui(home).await {
     let build = exe.parent().and_then(Path::file_name).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    match crate::devices::launch_agent::start_machine_engine(&build, exe, socket, home, &log).await {
+    match super::launchd::start_machine_engine(&build, exe, socket, home, &log).await {
       Ok(label) => return Ok(Started { how: How::Job(label), _pinned: pinned }),
       Err(e) => append(&log, &format!("launchd start fell back to a detached process: {e:#}")),
     }

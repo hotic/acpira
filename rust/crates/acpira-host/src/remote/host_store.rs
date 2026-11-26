@@ -33,12 +33,12 @@ use crate::store::transcript_store::{ChangeHook, CopyStamp, LogFn, RecordChange,
 /// Changes are gathered this long before they go to the host: a streaming turn rewrites its record every few seconds
 const BATCH: Duration = Duration::from_secs(5);
 
-/// This machine as copies name it: its id (`helper::machine_id`) and its name, read once
+/// This machine as copies name it: its id (`remote::machine_id`) and its name, read once
 pub fn this_machine() -> &'static (String, String) {
   static ME: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
   ME.get_or_init(|| {
     let name = crate::accounts::local::hostname();
-    (super::helper::machine_id(), name.strip_suffix(".local").unwrap_or(&name).to_owned())
+    (super::machine_id(), name.strip_suffix(".local").unwrap_or(&name).to_owned())
   })
 }
 
@@ -217,6 +217,7 @@ async fn write_agent_log(dir: PathBuf, id: String, bytes: Vec<u8>, base: Option<
 pub(crate) async fn serve(op: &str, a: &Value, stdin: Option<mpsc::UnboundedReceiver<Option<Vec<u8>>>>) -> Result<Value, WireError> {
   let root = a.get("home").and_then(Value::as_str).map(PathBuf::from).unwrap_or_else(crate::store::data_dir::acpira_home);
   let store = TranscriptStore::new(root.join("sessions"), Arc::new(|_: &str| {}), None);
+  store.set_purge_hook(crate::acp::agents::builtin_purge_hook(root.clone(), Arc::new(|_: &str| {})));
   let id_arg = || {
     let id = a.get("id").and_then(Value::as_str).unwrap_or("");
     if is_session_id(id) { Ok(id.to_owned()) } else { Err(WireError::new("invalid", format!("\"{id}\" is not a session id"))) }
@@ -428,11 +429,14 @@ struct State {
   sub: Option<u64>,
 }
 
+/// Retires a local copy in favor of the host's authoritative record; returns None when the manager is absent or dropped
+pub type RetireHook = Arc<dyn Fn(String, SessionRecord) -> Option<crate::acp::transport::rpc::BoxFuture<Result<()>>> + Send + Sync>;
+
 pub struct HostMirror {
   connections: Arc<Connections>,
   store: Arc<TranscriptStore>,
   root: PathBuf,
-  manager: parking_lot::RwLock<Weak<crate::session_manager::SessionManager>>,
+  retire: parking_lot::RwLock<Option<RetireHook>>,
   retiring: parking_lot::Mutex<HashSet<String>>,
   sync_lock: tokio::sync::Mutex<()>,
   reconcile_lock: tokio::sync::Mutex<()>,
@@ -454,7 +458,7 @@ impl HostMirror {
   /// `new` gathering changes for `batch` (tests)
   pub fn with_batch(connections: Arc<Connections>, store: Arc<TranscriptStore>, root: &Path, log: LogFn, batch: Duration) -> Arc<HostMirror> {
     let gone_file = root.join("run").join("remote").join("gone.json");
-    Arc::new_cyclic(|me| HostMirror { connections, store, root: root.to_path_buf(), manager: Default::default(), retiring: Default::default(), sync_lock: Default::default(), reconcile_lock: Default::default(), gone_file, log, batch, state: Default::default(), on_gone: Default::default(), me: me.clone() })
+    Arc::new_cyclic(|me| HostMirror { connections, store, root: root.to_path_buf(), retire: Default::default(), retiring: Default::default(), sync_lock: Default::default(), reconcile_lock: Default::default(), gone_file, log, batch, state: Default::default(), on_gone: Default::default(), me: me.clone() })
   }
 
   /// Follow the store's changes and the hosts' connections
@@ -507,8 +511,8 @@ impl HostMirror {
     }
   }
 
-  pub fn set_manager(&self, manager: Weak<crate::session_manager::SessionManager>) {
-    *self.manager.write() = manager;
+  pub fn set_retire_hook(&self, hook: RetireHook) {
+    *self.retire.write() = Some(hook);
   }
 
   pub fn set_gone_hook(&self, hook: GoneHook) {
@@ -747,10 +751,11 @@ impl HostMirror {
     if host.id != id || host.copy_of.as_ref().is_some_and(|c| c.machine == this_machine().0) {
       return Err(anyhow!("host ownership changed while reconciling"));
     }
-    let manager = self.manager.read().upgrade();
+    let retire = self.retire.read().clone();
     self.retiring.lock().insert(id.to_owned());
-    let result = match manager {
-      Some(manager) => manager.retire_host_copy(id, &host).await,
+    let fut = retire.and_then(|hook| hook(id.to_owned(), host.clone()));
+    let result = match fut {
+      Some(fut) => fut.await,
       None => async {
         let leases = crate::store::session_lease::SessionLeases::new(&self.root, self.log.clone());
         if !matches!(leases.claim(id), crate::store::session_lease::Claim::Held(_)) {

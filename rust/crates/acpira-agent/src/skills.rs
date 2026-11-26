@@ -91,25 +91,12 @@ pub fn path_with(dirs: &[PathBuf]) -> Option<std::ffi::OsString> {
 
 /// The skill folders, the later winning: the user's, the plugins', then the project's
 pub(crate) fn roots(places: &Places) -> Vec<PathBuf> {
-  // A specialised agent sees its plugin's skills alone, and none when its tools leave `skill` out
-  if let Some(p) = &places.profile {
-    return p.skills.clone().filter(|_| p.allows(crate::tools::SKILL)).into_iter().collect();
-  }
-  let mut roots = vec![];
-  if let Some(h) = &places.home {
-    roots.push(h.join(".agents").join("skills"));
-  }
-  roots.extend(places.skill_layers.iter().cloned());
-  if let Some(r) = places.root.as_ref().or(Some(&places.cwd)) {
-    roots.push(r.join(".agents").join("skills"));
-  }
-  roots.dedup();
-  roots
+  places.skill_roots()
 }
 
 /// The `availableCommands` of a session: `/compact` and `/goal` (`goal.rs`), then the skills
 pub fn commands(skills: &[Skill]) -> Vec<Value> {
-  let mut out = vec![json!({ "name": COMPACT, "description": COMPACT_DESCRIPTION }), crate::goal::slash_command()];
+  let mut out = vec![json!({ "name": COMPACT, "description": COMPACT_DESCRIPTION }), crate::defs::goal_slash_command()];
   for s in skills {
     let mut c = json!({ "name": s.name, "description": s.description });
     if let Some(h) = &s.hint {

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use regex::Regex;
 
-use crate::acp::session::errors::rpc_of;
+use crate::acp::transport::errors::rpc_of;
 #[cfg(unix)]
 use crate::acp::transport::process::KILL_GRACE;
 use crate::store::file_lock::pid_alive;

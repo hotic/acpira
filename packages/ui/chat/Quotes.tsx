@@ -6,7 +6,7 @@ import { cn } from '../ui/cn';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { imeKey } from '../ui/ime';
-import { Removable } from './Attachments';
+import { Removable } from '../ui/Removable';
 import { collectDrafts, collectImageSources, hiddenText, imageSources, pastedText, typeInto } from './drafts';
 
 type ImageDraft = Extract<Draft, { kind: 'image' }>;

@@ -9,7 +9,7 @@
 // button variant's crop of a 140 x 40 baseline at shader scale 1.6, its 15 fps cadence, and the GL blend that leaves
 // the ring at colour x opacity with alpha opacity squared. The simplex noise is the public-domain Ashima / McEwan one.
 
-import { isWindowFocused, subscribeWindowFocused } from '../plugins/motion';
+import { isWindowFocused, subscribeWindowFocused } from '../chrome/motion';
 
 export type MetalTheme = 'dark' | 'light';
 

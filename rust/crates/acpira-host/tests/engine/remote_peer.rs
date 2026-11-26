@@ -908,7 +908,11 @@ async fn source_reconciliation_reselects_the_host_peer_without_tombstoning_its_s
   record.turns = serde_json::from_value(json!([{ "role": "user", "text": "shared question" }])).unwrap();
   m.store.flush(Arc::new(record.clone())).await.unwrap();
   let mirror = HostMirror::with_batch(connections.clone(), m.store.clone(), &lab.path().join("source"), Arc::new(|_: &str| {}), Duration::from_millis(50));
-  mirror.set_manager(Arc::downgrade(&m.m));
+  let retire_m = Arc::downgrade(&m.m);
+  mirror.set_retire_hook(Arc::new(move |id, record| {
+    let m = retire_m.upgrade()?;
+    Some(Box::pin(async move { m.retire_host_copy(&id, &record).await }))
+  }));
   let weak = Arc::downgrade(&m.m);
   mirror.set_gone_hook(Arc::new(move |a, id| { if let Some(m) = weak.upgrade() { m.host_copy_gone(a, id); } }));
   mirror.start();

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { useWindowFocused } from '../plugins/motion';
+import { useWindowFocused } from '../chrome/motion';
 
 // Whether anyone is plausibly looking at the page: its window has the focus and there was input within REST_MS. The
 // composer beam turns for as long as it is lit (around a tenth of a core in WebKit's GPU process and as much again in

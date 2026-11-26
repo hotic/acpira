@@ -344,7 +344,7 @@ async fn a_cli_without_a_sidekick_select_gets_the_hosts_whose_pick_names_the_cli
   let model = ConfigControl { id: "model".into(), name: "Model".into(), category: Some("model".into()), options: vec![option("m1", "Model 1"), option("m2", "Model 2")], ..Default::default() };
   h.deps.policy = Arc::new(crate::support::TestPolicy { sidekick: vec![SidekickSource { agent: "fake".into(), name: "Fake CLI".into(), model, shapes: None }], ..Default::default() });
   // The select goes only to a CLI that is handed Acpira's MCP server, which `ask_agent` lives in
-  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("acpira"));
+  h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new("acpira")));
   let roster = roster(h.dir.path()).await;
   let hub = RelayHub::start(roster.clone(), Arc::new(|_: &str| {})).await.unwrap();
   let s = Disposing(h.session("/tmp"));
@@ -1209,7 +1209,7 @@ async fn hub_session(fake: &crate::support::FakeAgent) -> (Harness, Disposing, A
   let mut h = Harness::new(fake, json!({}));
   let roster = roster(h.dir.path()).await;
   let hub = RelayHub::start(roster.clone(), Arc::new(|_: &str| {})).await.unwrap();
-  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+  h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub)));
   let s = Disposing(h.session("/tmp"));
   s.start().await;
   (h, s, roster)

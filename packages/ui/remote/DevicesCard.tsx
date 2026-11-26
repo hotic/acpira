@@ -6,10 +6,10 @@ import { Button } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { Row } from '../ui/Row';
 import { PanelHeader } from '../ui/Panel';
-import type { SettingsPage } from '../settings/Nav';
+import type { SettingsPage } from '../chrome/settingsPage';
 import { t } from '../i18n';
 import { deviceOrder, PATH_NAME, remoteAccessOp, unavailableKey, useRemoteAccess } from './access';
-import { MarkSvg } from '../chat/marks';
+import { MarkSvg } from '../chrome/marks';
 import { DeviceGlyph, PairingCore, usePairing } from './Pairing';
 import { seenLine } from './seen';
 

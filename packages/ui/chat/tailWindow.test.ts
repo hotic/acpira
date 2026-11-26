@@ -20,7 +20,7 @@ const commands = (n: number): ToolCallBlock[] => Array.from({ length: n }, (_, i
 function render(blocks: AgentTurn['blocks'], running: boolean, fold: 'codex' | 'cursor') {
   return renderToStaticMarkup(createElement(AppearanceContext.Provider, { value: { ...BASE_APPEARANCE, fold, motion: 'none' } },
     createElement(AgentMessage, { turn: { role: 'agent', blocks }, running, index: 0, turnIndex: 1, last: true,
-      actions: false, lead: 'static', onPermission: () => {} })));
+      actions: false, onPermission: () => {} })));
 }
 
 const target = (i: number) => `command-${String(i).padStart(4, '0')}`;

@@ -18,7 +18,7 @@ use crate::project_files;
 use crate::remote::connections::Connections;
 use crate::session_manager::{SessionManager, Viewer, ViewerShell};
 use crate::settings::SettingsCenter;
-use crate::sidecar::platform::SidecarPlatform;
+use crate::sidecar_platform::SidecarPlatform;
 use crate::terminal::TerminalHub;
 
 mod files;
@@ -45,7 +45,7 @@ where
   F::Output: Send + 'static,
 {
   match wire {
-    Some(w) => tokio::spawn(crate::sidecar::platform::ORIGIN.scope(w, fut)),
+    Some(w) => tokio::spawn(acpira_host_base::origin::ORIGIN.scope(w, fut)),
     None => tokio::spawn(fut),
   }
 }
@@ -670,7 +670,7 @@ mod tests {
   // A page's spawned task still answers to its window when it calls the platform later
   #[tokio::test]
   async fn a_spawned_task_keeps_its_page_s_wire_as_origin() {
-    use crate::sidecar::platform::origin;
+    use crate::sidecar_platform::origin;
     assert_eq!(super::spawn_on(Some(7), async { tokio::task::yield_now().await; origin() }).await.ok(), Some(Some(7)));
     assert_eq!(super::spawn_on(None, async { origin() }).await.ok(), Some(None));
   }

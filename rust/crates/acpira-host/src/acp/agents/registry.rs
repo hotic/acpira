@@ -413,7 +413,7 @@ pub fn antigravity() -> AgentDef {
   }
 }
 
-pub const SELF_AGENT_ID: &str = "acpira";
+pub use acpira_shared::host_tools::SELF_AGENT_ID;
 
 /// The built-in agent: no install, no login, launched as `<engine> agent --home <root>`
 pub fn self_agent(exe: &str, root: &std::path::Path) -> AgentDef {

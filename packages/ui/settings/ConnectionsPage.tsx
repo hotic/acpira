@@ -21,7 +21,7 @@ import { usePresence } from '../ui/usePresence';
 import {
   blockItem, blockList, DangerAction, DialogBody, Dot, FooterNote, Group, ItemRow, Note, PickContent, Section, SectionAction,
   Select, SettingsDialog, Status, shortPath, Switch, useSettingRow,
-} from './controls';
+} from '../chrome/controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 // Settings → Connections: the SSH hosts remote folders live on (docs/dev/remote.md). A list of hosts, each opening a dialog (connection progress, its projects, removal); adding is

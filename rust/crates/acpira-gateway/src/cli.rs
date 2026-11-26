@@ -172,7 +172,7 @@ async fn try_cmd(args: &[String]) -> Result<()> {
   let t0 = Instant::now();
   let ep = endpoint::bind(Options { secret: me, relays: Relays::N0, alpns: vec![], bind: None, bypass: None }).await?;
   let known = dir.join("computers.json");
-  let mut computers: Vec<Value> = acpira_desktop::json_file::read_json(&known).and_then(|v| v.as_array().cloned()).unwrap_or_default();
+  let mut computers: Vec<Value> = acpira_host_base::json_file::read_json(&known).and_then(|v| v.as_array().cloned()).unwrap_or_default();
   let id = ticket.id.to_string();
   if !computers.iter().any(|c| c["id"] == id.as_str()) {
     let name = crate::gateway::computer_name();
@@ -180,7 +180,7 @@ async fn try_cmd(args: &[String]) -> Result<()> {
       PairReply::Paired { name, .. } => {
         println!("paired with {name} in {:.2} s", t0.elapsed().as_secs_f64());
         computers.push(json!({ "id": id, "name": name }));
-        acpira_desktop::json_file::write_json_strict(&known, &Value::Array(computers))?;
+        acpira_host_base::json_file::write_json_strict(&known, &Value::Array(computers))?;
       }
       PairReply::Refused { reason } => bail!("{reason}"),
     }

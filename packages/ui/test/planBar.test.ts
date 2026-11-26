@@ -11,7 +11,7 @@ const open = plan(entry('A', 'completed'), entry('B', 'pending'));
 // A todo tool's row as the engine stores it, the parsed list on `todoEntries`
 const todoRow = (entries: PlanEntry[], status: ToolCallBlock['status'] = 'completed'): ToolCallBlock =>
   ({ type: 'tool_call', id: 'todo', kind: 'other', verb: 'Update todos', verbKey: 'verb.todo', status, todoEntries: entries });
-const shellSource = readFileSync(join(import.meta.dirname, '../chat/Shell.tsx'), 'utf8');
+const shellSource = readFileSync(join(import.meta.dirname, '../shell/Shell.tsx'), 'utf8');
 const planBarSource = readFileSync(join(import.meta.dirname, '../chat/PlanBar.tsx'), 'utf8');
 
 describe('PlanBar dock visibility', () => {

@@ -4,8 +4,8 @@ import { t } from '../i18n';
 import { Dialog } from '../ui/Dialog';
 import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
-import { MarkdownParts, StagedParts } from '../panel/FileViewer';
-import { CODE_CARD, CODE_INSET } from './CodeBlock';
+import { MarkdownParts, StagedParts } from '../markdown/StagedParts';
+import { CODE_CARD, CODE_INSET } from '../markdown/CodeBlock';
 import { looksLikeMarkdown } from './markdownGuess';
 
 // .md names render unconditionally; plain-text names (pasted text, a .txt, a label with no extension) earn it through

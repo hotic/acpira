@@ -10,26 +10,27 @@ What the engine (`rust/`) and its shells cannot give back from a quick look. Age
 - Each session is one short-held mutex; prompts, cards and platform RPCs wait with it released. `SessionManager` never holds its lock across a session lock or an await.
 - Records, index, prefs, blobs, locks and accounts stay byte-compatible with the old TS engine's output.
 - Panics abort in release builds and end every session, so run-time code never panics on outside input (`[workspace.lints]`; literal regexes go through `acpira_shared::re::compile`).
+- Static DAG gate (`test/architecture-layers.test.ts`): `acpira-host` obeys L00–L15 (zero upward edges / intra-layer SCCs); `acpira-agent` is acyclic; `acpira-host-base`, `acpira-store`, `acpira-plugin-build` enforce crate firewalls (`oxc_*` isolated). Register new modules in `HOST_LAYERS`.
 
 ## Sidecar protocol and shells
 
 - Contract: `packages/shared/sidecar.ts` mirrored in `acpira-shared/src/sidecar.rs`. An engine serves `SIDECAR_PROTOCOL_MIN..=SIDECAR_PROTOCOL_VERSION`: changes stay additive (both sides, phones included, skip unknown fields and envelope types); only a breaking change raises the number. `probe` / `drain` answer before hello and stay stable — every later build asks them.
 - `sidecar/server.rs`: control messages run strictly in order; `WebviewMsg`s dispatch in order but never await, so `stop` never queues behind a turn. `DISPOSE_GRACE` stays below the shells' 3 s wait before SIGTERM.
-- Shared settings (`store/shared_settings.rs`): only `SHELL_SETTING_KEYS` belong to the shell; every other key lives once in `<ACPIRA_HOME>/settings.json`, so shells cannot disagree on which agents are on. A `settingsChanged` copy of a shared key is a no-op.
+- Shared settings (`acpira-store/src/shared_settings.rs`): only `SHELL_SETTING_KEYS` belong to the shell; all other keys live once in `<ACPIRA_HOME>/settings.json`. A `settingsChanged` copy of a shared key is a no-op.
 - `SidecarClient` (`packages/engine-client/`): queued platform events go before every `attachView` — views read the environment on attach.
 - VS Code shell: `migrateOnce` runs before the sidecar (only VS Code reads SecretStorage). With no `<ACPIRA_HOME>` neither runs until the page's consent card (`createDataHome`): both create it. Desktop twin: `desktop.md`.
 - `BridgeCore` (`bridge_core.rs`): idle views still coalesce pushes: a summoned child may stream into a session whose turn is over. `sent` stays locked from `ready` until `init` posts, so a racing push becomes a `sessionPatch`, not a second transcript.
 - Shell-originated messages (editor selection and copy, first run, tour) never reach the sidecar: first run precedes any engine. Unverified: whether VS Code calls `DocumentPasteEditProvider` for every copy.
-- `acpira.context.set` / `add` (`docs/context-api.md`) must be contributed in `package.json` (hidden by `"when": "false"`): only a contributed command activates the extension from another extension.
+- `acpira.context.set` / `add` (`docs/context-api.md`) must be contributed in `package.json` (`"when": "false"`): only contributed commands activate from another extension.
 
 ## Machine engine
 
-- One `acpira serve` per OS user and data root (`machine_engine/`) on `<home>/run/engine.sock` (Windows: a pipe, `windows-compatibility.md`); every shell and SSH peer reaches it via `acpira engine`. No second engine collides on an agent (`session_locked`).
-- It runs from `<home>/engine/<version>-<digest16>/`, never a bundle: VS Code deletes an old extension folder under its engine. A copy pins (`.in-use` flock) from its pick on; `prune` keeps the newest release (fallback).
-- Newest wins (`policy.rs`), compared per probe. A drained engine gives up the endpoint at once, its wires once the successor answers (else a reconnecting shell starts an old build), and ends once nothing is in flight (`AcpSession::in_flight`); turns cannot move — ACP pipes belong to the process. `-dev.<stamp>` packages replace a release only from a local shell.
-- Window facts (cwd, projects, capabilities, shell settings) are per wire; viewer-less reads take the active wire's, IDE actions go to the causing view's wire.
-- Idle exit over SSH waits 3 h like VS Code Server: a reconnected Remote-SSH window is a new macOS security session, keychain locked; only the earlier engine still reads Claude Code's login. An engine from another SSH login (or started over SSH when `gui/<uid>` could run it) retires idle with a store locked (`Engine::retires_for`). The state lock is never held across a runtime call: platform calls return through it.
-- Leases (`store/session_lease.rs`): one engine drives a session (others coexist while it drains); without the lease turns are refused, the record opens read-only. Mirror revs start at −2⁴⁰ so pages accept the live view after; `SentViews::deliver` drops only an older rev of the same epoch.
+- One `acpira serve` per OS user and data root (`machine_engine/`) on `<home>/run/engine.sock` (Windows: pipe, `windows-compatibility.md`); every shell and SSH peer reaches it via `acpira engine` (no second engine collides on an agent, `session_locked`).
+- Runs from `<home>/engine/<version>-<digest16>/`, never a bundle (VS Code deletes old extension folders under its engine). A copy pins (`.in-use` flock) on pick; `prune` keeps the newest release (fallback).
+- Newest wins (`policy.rs`) per probe. A drained engine releases its endpoint immediately, its wires once the successor answers, and exits once nothing is in flight (`AcpSession::in_flight`); turns cannot move (ACP pipes belong to the process). `-dev.<stamp>` replaces a release only from a local shell.
+- Window facts (cwd, projects, capabilities, shell settings) are per wire; viewer-less reads use the active wire, IDE actions target the causing view's wire.
+- Idle exit over SSH waits 3 h (like VS Code Server): a reconnected Remote-SSH window gets a new macOS security session with locked keychain, so only the earlier engine still reads Claude Code's login. Engines from another SSH login (or started over SSH when `gui/<uid>` could run it) retire idle with a locked store (`Engine::retires_for`). State lock is never held across runtime calls.
+- Leases (`acpira-store/src/session_lease.rs`): one engine drives a session (others coexist while draining); without the lease turns refuse and the record opens read-only. Mirror revs start at −2⁴⁰ so pages accept live views after; `SentViews::deliver` drops only older revs of the same epoch.
 - Takeover: `<id>.takeover`. Handover without a click: a mirror keeps `<id>.wanted` fresh; the holder releases a session no viewer shows once `can_let_go` (idle, or stopped on sign-in). A credential-locked engine requests neither, nor opens a mirrored session whose lease frees (read-only until the store unlocks): SSH shares account files, not the keychain.
 - Known limit: the engine keeps its starter's environment (a stale `SSH_AUTH_SOCK` reaches later agents).
 
@@ -81,9 +82,9 @@ What the engine (`rust/`) and its shells cannot give back from a quick look. Age
 ## Stores
 
 - `migrateOnce` runs once per source: VS Code and Cursor keep separate `globalStorage` but share `~/.acpira`; the destination never overwrites.
-- File lock: `store/file_lock.rs` and `apps/vscode/src/store/fileLock.ts` speak one protocol.
-- Session records, `sessions.db`, compatibility files: `session-store.md`.
-- Storage tab: files place by what records reference, never by name (UUID guessing misfiles live chats, openai/codex#52842); deletes go through `delete_session`, so leases and undo apply.
+- File lock: `acpira-host-base/src/file_lock.rs` and `apps/vscode/src/store/fileLock.ts` speak one protocol.
+- Session records, `sessions.db`, compatibility files (`acpira-store`): `session-store.md`.
+- Storage tab: files place by record refs, never by name (UUID guessing misfiles live chats, openai/codex#52842); deletes go through `delete_session` for leases and undo.
 
 ## Accounts and quota
 
@@ -110,5 +111,5 @@ What the engine (`rust/`) and its shells cannot give back from a quick look. Age
 Only a prompt-less `pnpm probe` (or one with only `--mcp`) spends no model calls. Give a CLI a temp store (`DSH_HOME`, `PI_CODING_AGENT_DIR`) where it has one. Flags: script headers.
 
 - `pnpm probe <agent>` (`scripts/probe/acp.ts`): raw `initialize` + `session/new` (+ one prompt), launched as the engine does; first stop for protocol issues. `--wait` keeps listening for `available_commands_update`: Grok / Kimi send it after `session/new` returns, Devin during.
-- `scripts/probe/*-host.ts` drive the webview path through the sidecar (`agent-host`: generic smoke; `antigravity-accounts-host`: saved accounts and quota, no prompt sent; `orchestrator-host`: an Antigravity orchestrator turn as relay rounds; `remote-claude-host` / `remote-codex-host` need a local-run SSH host). Raw-wire variants: `subagents.ts`, `steering.ts`.
+- `scripts/probe/*-host.ts` drive the webview path through the sidecar (`agent-host`, `antigravity-accounts-host`, `orchestrator-host`, `remote-claude-host`, `remote-codex-host`). Raw-wire variants: `subagents.ts`, `steering.ts`.
 - OpenCode retries a 503 silently: if a prompt never returns, curl the gateway, pass `--model`.

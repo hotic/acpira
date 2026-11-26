@@ -3,8 +3,8 @@ import type { ImageRef, ToolCallBlock } from '@acpira/shared/transcript';
 import { toolVideos } from '@acpira/shared/imageTools';
 import { t, useLocale } from '../i18n';
 import { Button } from '../ui/Button';
-import { BlobUrlContext, OpenBlobContext } from './fileLinks';
-import { useShownBlob } from './stagedBlob';
+import { BlobUrlContext, OpenBlobContext } from '../markdown/fileLinks';
+import { useShownBlob } from '../markdown/stagedBlob';
 
 // Media bytes never enter React state. Only a visible recording gets a source; the browser owns decoding and seeking.
 export const ShownVideos = memo(function ShownVideos({ block }: { block: ToolCallBlock }) {

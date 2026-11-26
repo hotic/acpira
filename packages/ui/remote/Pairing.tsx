@@ -3,7 +3,7 @@ import { Check, Laptop, Pencil, Smartphone, Tablet } from 'lucide-react';
 import type { DeviceKind, DeviceStatus, GatewayStatus, PathKind } from '@acpira/shared/devices';
 import { cn } from '../ui/cn';
 import { Button, ChipTag } from '../ui/Button';
-import { MarkSvg } from '../chat/marks';
+import { MarkSvg } from '../chrome/marks';
 import { windowsOS } from '../desktop';
 import { t } from '../i18n';
 import { PATHS, PATH_NAME, pairingDeadline, remoteAccessOp, useRemoteAccess } from './access';

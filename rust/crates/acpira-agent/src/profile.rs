@@ -66,7 +66,7 @@ impl Profile {
 
   pub fn allows(&self, tool: &str) -> bool {
     // The history tools are how chunk compaction gives the model its own past back, not a capability
-    if tool == crate::tools::HISTORY_GREP || tool == crate::tools::HISTORY_LIST {
+    if tool == crate::defs::HISTORY_GREP || tool == crate::defs::HISTORY_LIST {
       return true;
     }
     self.tools.iter().any(|p| match p.strip_prefix(OWN) {
@@ -78,7 +78,7 @@ impl Profile {
   /// The modes its sessions offer: Agent, and Plan only when the profile lets the model leave it (`exit_plan`)
   pub fn offers_mode(&self, mode: &str) -> bool {
     // Read-only only narrows what the profile already allows, so a summoned specialised agent can consult too
-    mode == crate::modes::AGENT || mode == crate::modes::READ_ONLY || (mode == crate::modes::PLAN && self.allows(crate::tools::EXIT_PLAN))
+    mode == crate::defs::MODE_AGENT || mode == crate::defs::MODE_READ_ONLY || (mode == crate::defs::MODE_PLAN && self.allows(crate::defs::EXIT_PLAN))
   }
 
   pub fn variant(&self) -> String {

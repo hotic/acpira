@@ -1,6 +1,6 @@
 import { imageMimeOf } from '@acpira/shared/attachments';
 import type { ImageRef, ToolCallBlock, ToolContent } from '@acpira/shared/transcript';
-import { parseFileLink } from './fileLinks';
+import { parseFileLink } from '../markdown/fileLinks';
 
 const EDIT_SUCCESS_RECEIPTS = new Set(['Edit applied successfully.', 'Wrote file successfully.']);
 

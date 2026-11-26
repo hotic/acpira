@@ -8,7 +8,7 @@ import { deviceOrder, remoteAccessOp, unavailableKey } from '../remote/access';
 import { DeviceGlyph, KIND_ICON, PairingCore, PathTag, usePairing } from '../remote/Pairing';
 import { seenLine } from '../remote/seen';
 import { StateCell } from './ConnectionsPage';
-import { DangerAction, DialogBody, Dot, Field, ItemRow, Note, Section, SectionAction, Select, SettingsDialog, Switch, TextBox } from './controls';
+import { DangerAction, DialogBody, Dot, Field, ItemRow, Note, Section, SectionAction, Select, SettingsDialog, Switch, TextBox } from '../chrome/controls';
 
 // Settings → Connections, at the top: remote access (rust/crates/acpira-host/src/devices/). The switch that installs the
 // gateway, its relays and keep-awake, then the paired devices; "Add device" opens the pairing core (remote/Pairing.tsx)

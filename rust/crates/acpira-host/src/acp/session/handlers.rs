@@ -10,11 +10,12 @@ use acpira_shared::transcript::*;
 use crate::acp::session::AcpSession;
 use crate::acp::session::errors::auth_hint_of;
 use crate::acp::session::queue::PeerTurn;
+use crate::acp::transcript::normalize::{RetryReport, RetryText, refine_retry, report_retry};
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::process::ClientHandlers;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
-use crate::acp::transcript::normalize::{RetryText, refine_retry, report_retry};
-use crate::acp::vendors::{Vendor, claude_retry, claude_workflow_log};
+use crate::acp::vendors::dispatch::{self, CustomNotification, CustomRequest};
+use crate::acp::vendors::{Vendor, claude_retry, claude_workflow_log, grok};
 use crate::i18n::{t, tp};
 
 /// The client handlers of one process generation: a replaced process's late callbacks are ignored
@@ -29,9 +30,7 @@ impl SessionHandlers {
     let current = s.core.lock().proc_gen;
     (current == self.gen_id).then_some(s)
   }
-}
 
-impl ClientHandlers for SessionHandlers {
   fn on_auth_retry(&self, params: Value) {
     let Some(s) = self.live().filter(|s| s.vendor == Vendor::Claude) else { return };
     let closing = {
@@ -61,7 +60,15 @@ impl ClientHandlers for SessionHandlers {
 
   fn on_api_retry(&self, params: Value) {
     let Some(s) = self.live().filter(|s| s.vendor == Vendor::Claude) else { return };
-    let Some(report) = claude_retry::report_of(&params) else { return };
+    let Some(info) = claude_retry::report_of(&params) else { return };
+    let report = RetryReport {
+      attempt: info.attempt,
+      max: info.max,
+      text: info.text,
+      quality: RetryText::Summary,
+      reconnect: info.reconnect,
+      wait_ms: info.wait_ms,
+    };
     let attempt = report.attempt;
     let sid = {
       let mut c = s.core.lock();
@@ -91,32 +98,6 @@ impl ClientHandlers for SessionHandlers {
         s.touch(&mut c);
       }
     });
-  }
-
-  fn on_update(&self, params: Value) {
-    if let Some(s) = self.live() {
-      s.on_update(params);
-    }
-  }
-
-  fn on_permission(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
-    let s = self.session.upgrade();
-    Box::pin(async move {
-      match s {
-        Some(s) => s.on_permission(req, cancel).await,
-        None => Ok(json!({ "outcome": { "outcome": "cancelled" } })),
-      }
-    })
-  }
-
-  fn on_elicitation(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
-    let s = self.session.upgrade();
-    Box::pin(async move {
-      match s {
-        Some(s) => Ok(s.on_elicitation(req, cancel).await),
-        None => Ok(json!({ "action": "cancel" })),
-      }
-    })
   }
 
   fn on_grok_question(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
@@ -165,6 +146,57 @@ impl ClientHandlers for SessionHandlers {
         None => Err(RpcError::new(-32603, "the session has moved on to another process")),
       }
     })
+  }
+}
+
+impl ClientHandlers for SessionHandlers {
+  fn on_update(&self, params: Value) {
+    if let Some(s) = self.live() {
+      s.on_update(params);
+    }
+  }
+
+  fn on_custom_notification(&self, method: &str, params: Value) {
+    match dispatch::decode_notification(method, params) {
+      Some(CustomNotification::Update(update)) => self.on_update(update),
+      Some(CustomNotification::AuthRetry(params)) => self.on_auth_retry(params),
+      Some(CustomNotification::ApiRetry(params)) => self.on_api_retry(params),
+      None => {}
+    }
+  }
+
+  fn on_permission(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    let s = self.session.upgrade();
+    Box::pin(async move {
+      match s {
+        Some(s) => s.on_permission(req, cancel).await,
+        None => Ok(json!({ "outcome": { "outcome": "cancelled" } })),
+      }
+    })
+  }
+
+  fn on_elicitation(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    let s = self.session.upgrade();
+    Box::pin(async move {
+      match s {
+        Some(s) => Ok(s.on_elicitation(req, cancel).await),
+        None => Ok(json!({ "action": "cancel" })),
+      }
+    })
+  }
+
+  fn on_custom_request(&self, method: String, params: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    match dispatch::decode_request(&method, params) {
+      Ok(CustomRequest::RemoteTool(req)) => self.on_remote_tool(req, cancel),
+      Ok(CustomRequest::PluginHooks) => self.on_plugin_hooks(),
+      Ok(CustomRequest::PluginHook(req)) => self.on_plugin_hook(req),
+      Ok(CustomRequest::GrokQuestion(req)) => self.on_grok_question(req, cancel),
+      Ok(CustomRequest::GrokExitPlan(req)) => {
+        let perm = grok::exit_plan_permission(&req);
+        Box::pin(grok::approve_plan_answer(self.on_permission(perm, cancel)))
+      }
+      Err(e) => Box::pin(async move { Err(e) }),
+    }
   }
 
   fn on_stderr(&self, line: &str) {

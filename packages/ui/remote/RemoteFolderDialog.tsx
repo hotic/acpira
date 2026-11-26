@@ -6,7 +6,7 @@ import { imeKey } from '../ui/ime';
 import { Button } from '../ui/Button';
 import { Shimmer } from '../ui/Shimmer';
 import { t } from '../i18n';
-import { SettingsDialog } from '../settings/controls';
+import { SettingsDialog } from '../chrome/controls';
 import { browseRemote, connectionOp, useConnections, type RemoteListing } from './api';
 import { ConnectStatus } from './ConnectStatus';
 

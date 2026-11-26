@@ -49,7 +49,7 @@ pub fn path(home: &Path) -> PathBuf {
 /// made from `exe` the first time. None where engines start without one: anywhere but macOS, and data roots other
 /// than the user's own `~/.acpira` (tests and custom homes keep their engines plain children)
 pub fn ensure(home: &Path, exe: &Path) -> Option<PathBuf> {
-  if !cfg!(target_os = "macos") || !crate::devices::launch_agent::is_default_user_home(home) {
+  if !cfg!(target_os = "macos") || !crate::platform::launchd::is_default_user_home(home) {
     return None;
   }
   home.parent().and_then(app_launcher).or_else(|| make(home, exe))
@@ -57,7 +57,7 @@ pub fn ensure(home: &Path, exe: &Path) -> Option<PathBuf> {
 
 /// The frozen launcher alone: what starts the engine when the app's launcher could not
 pub fn frozen(home: &Path, exe: &Path) -> Option<PathBuf> {
-  if !cfg!(target_os = "macos") || !crate::devices::launch_agent::is_default_user_home(home) {
+  if !cfg!(target_os = "macos") || !crate::platform::launchd::is_default_user_home(home) {
     return None;
   }
   make(home, exe)
@@ -380,16 +380,22 @@ fn image_path(pid: libc::pid_t) -> Option<PathBuf> {
 /// over. This watches the parent's executable and, once it no longer sits at the path it started from and nothing is
 /// running, retires the engine (`Engine::retire`): the next shell starts a fresh one under the new bundle (one that ran
 /// the gateway: `serve`, on its way out)
+/// Narrow engine surface watched by `launcher::watch` so `machine_engine` does not depend on `sidecar::server`
+pub trait EngineWatch: Send + Sync {
+  fn draining(&self) -> bool;
+  fn busy_or_in_flight(&self) -> bool;
+  fn retire(&self, reason: &str);
+}
+
 #[cfg(target_os = "macos")]
-pub fn watch(engine: &std::sync::Arc<crate::sidecar::server::Engine>) {
+pub fn watch(engine: std::sync::Weak<dyn EngineWatch>) {
   // SAFETY: getppid has no preconditions
   let parent = unsafe { libc::getppid() };
   let Some(started) = image_path(parent).filter(|p| in_app(p)) else { return };
-  let weak = std::sync::Arc::downgrade(engine);
   tokio::spawn(async move {
     loop {
       tokio::time::sleep(WATCH_EVERY).await;
-      let Some(engine) = weak.upgrade() else { return };
+      let Some(engine) = engine.upgrade() else { return };
       if engine.draining() {
         return;
       }
@@ -397,7 +403,7 @@ pub fn watch(engine: &std::sync::Arc<crate::sidecar::server::Engine>) {
         continue;
       }
       // Waits for running work: retiring hands the endpoint over at once, a turn mid-way would be split from its window
-      if engine.busy() || engine.runtime().is_some_and(|rt| rt.manager.in_flight()) {
+      if engine.busy_or_in_flight() {
         continue;
       }
       engine.retire(&format!("its launcher {} was replaced; a fresh engine takes over", started.display()));
@@ -407,7 +413,7 @@ pub fn watch(engine: &std::sync::Arc<crate::sidecar::server::Engine>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn watch(_engine: &std::sync::Arc<crate::sidecar::server::Engine>) {}
+pub fn watch(_engine: std::sync::Weak<dyn EngineWatch>) {}
 
 /// Starts `program args` in a session of its own with responsibility disclaimed, so macOS charges what it and its
 /// children do to it rather than to the app that started it. Output goes to `log`, from `cwd`. Returns the pid

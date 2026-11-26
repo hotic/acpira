@@ -10,7 +10,7 @@ import { AgentMark } from '../chat/AgentMark';
 import {
   DialogBody, Field, FooterNote, FormField, FormGrid, inputBox, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Select,
   SettingsDialog, Switch, Tabs, pathSep, shortPath,
-} from './controls';
+} from '../chrome/controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The Shared tab: one set of skills, MCP servers and prompts in open files, reaching every agent.

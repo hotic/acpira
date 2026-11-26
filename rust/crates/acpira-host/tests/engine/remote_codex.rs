@@ -274,7 +274,7 @@ done
   h.deps.remote = Some(connections.clone());
   let roster = Arc::new(acpira_host::relay::roster::Roster::new(h.dir.path()));
   let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
-  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+  h.deps.host_mcp = Some(std::sync::Arc::new(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub)));
 
   let s = Disposing(h.session(&format!("ssh://example-host{}", folder.display())));
   s.start().await;

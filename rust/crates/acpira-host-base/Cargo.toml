@@ -1,0 +1,26 @@
+[package]
+name = "acpira-host-base"
+description = "Host-side OS and utility primitives shared by the engine, gateway and desktop shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+acpira-shared.workspace = true
+anyhow.workspace = true
+libc.workspace = true
+parking_lot.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

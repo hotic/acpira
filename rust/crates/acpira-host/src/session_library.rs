@@ -14,7 +14,7 @@ use std::pin::Pin;
 use acpira_shared::session_links::{session_link, session_ref_id};
 use acpira_shared::transcript::{AgentInfo, SessionSummary};
 
-use crate::relay::wire::{SessionReadArgs, SessionSearchArgs};
+use crate::relay_wire::{SessionReadArgs, SessionSearchArgs};
 use crate::store::session_digest::{SEARCH_BYTES, cut};
 use crate::store::session_search::{fold, terms_of};
 

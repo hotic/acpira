@@ -6,7 +6,7 @@ use acpira_shared::num::Num;
 use acpira_shared::transcript::{AgentBlock, AgentTurn, ContextUse, ToolCallBlock, Turn, TurnStop, TurnUsage};
 
 use super::{Node, RelayOpen, RelayRound, RouteCtx, SubagentTree};
-use crate::acp::session::prompt::merge_usage;
+use crate::acp::transcript::merge_usage;
 use crate::acp::transcript::normalize::end_turn;
 use crate::i18n::t;
 use crate::util::now_ms;

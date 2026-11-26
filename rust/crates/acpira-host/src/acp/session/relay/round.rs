@@ -135,6 +135,9 @@ impl AcpSession {
       }
       None => None,
     };
+    if let Some(rp) = self.core.lock().relays.procs.get_mut(&r.thread) {
+      rp.turn_seen = true;
+    }
     let answer = proc.request("session/prompt", params).await.map_err(anyhow::Error::new)?;
     let usage = prompt_usage_of(&answer, baseline).await;
     {
@@ -268,7 +271,7 @@ impl AcpSession {
       return Ok(None);
     }
     let thread = r.thread.as_str();
-    let wanted = (r.persona.model.clone(), r.persona.effort.clone(), r.persona.fast);
+    let wanted = (r.persona.model.clone(), r.persona.effort.clone(), r.persona.fast.clone());
     let live = {
       let c = self.core.lock();
       c.relays
@@ -338,12 +341,12 @@ impl AcpSession {
       return Ok(None);
     }
     self.log(&format!("relay {}: spawn {bin} {} for {}", short(thread), def.args.join(" "), r.persona.name));
-    let proc = AgentProcess::spawn(&def, &bin, &self.process_cwd(), handlers, env.as_ref(), None).await?;
+    let proc = crate::acp::agents::spawn::spawn_agent(&def, &bin, &self.process_cwd(), handlers, env.as_ref(), None).await?;
     // Registered before anything else can fail, so the close or a failed open always ends it
     let closed = {
       let mut c = self.core.lock();
       if !c.relays.closed && !r.cancel.is_cancelled() {
-        let rp = RelayProc { proc: proc.clone(), peer: String::new(), opened: Value::Null, start_mode: None, mode: None, applied: (None, None, None) };
+        let rp = RelayProc { proc: proc.clone(), peer: String::new(), opened: Value::Null, start_mode: None, mode: None, applied: (None, None, None), turn_seen: false };
         c.relays.procs.insert(thread.to_owned(), rp);
       }
       c.relays.closed
@@ -477,7 +480,7 @@ impl AcpSession {
     };
     // Past the depth limit the entry still leads back here (`ask_caller`, the session tools); the hub lists no personas
     let entry = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(agent, &self.arc(), Some(thread), depth));
-    crate::host_mcp::push_entry(&mut servers, entry);
+    acpira_shared::host_tools::push_entry(&mut servers, entry);
     let mut req = self.with_remote(json!({ "cwd": self.cwd, "mcpServers": servers })).await;
     self.with_other_folders(proc, &mut req);
     self.with_prompt_layers(&mut req, agent);

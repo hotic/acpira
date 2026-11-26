@@ -13,15 +13,15 @@ pub mod antigravity_subagents;
 pub mod attachments;
 pub mod child_sessions;
 pub mod compaction;
-pub mod computer_card;
 pub mod context;
 pub mod context_claude;
 pub mod context_claude_sdk;
 pub mod context_estimate;
 pub mod controls;
 pub mod edit;
-pub mod errors;
-pub mod failure;
+pub use crate::acp::transport::errors;
+pub mod ext;
+pub use crate::acp::transcript::failure;
 pub mod gates;
 pub mod goal;
 pub mod handlers;
@@ -38,7 +38,7 @@ pub mod prompt;
 pub mod queue;
 pub mod relay;
 pub mod remote;
-pub mod restore_turns;
+pub use crate::acp::transcript::restore_turns;
 pub mod stand;
 pub mod tasks;
 pub mod turn_usage;
@@ -60,9 +60,9 @@ use acpira_shared::num::Num;
 use acpira_shared::slash_commands::restore_command_receipts;
 use acpira_shared::transcript::*;
 
-use crate::acp::agents::model_sources::ModelFacts;
 use crate::acp::agents::pool::AgentPool;
 use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::probe::model_sources::ModelFacts;
 use crate::acp::session::compaction::CompactionState;
 use crate::acp::session::controls::ControlPicks;
 use crate::acp::session::gates::{PermissionGate, QuestionGate};
@@ -82,37 +82,7 @@ use crate::store::record::{ForkedFrom, ImportedFrom, SessionRecord};
 use crate::store::transcript_store::{LogFn, TranscriptStore};
 use crate::util::{now_iso, random_uuid};
 
-/// The hooks the account layer gives a session: environment variables before spawn, authenticate after initialize, and
-/// the automatic switch when the bound account runs out of quota or was removed
-pub trait SessionAccountHooks: Send + Sync {
-  fn spawn_env(&self, agent: String, account: String) -> BoxFuture<Option<StrMap>>;
-  fn authenticate(&self, agent: String, account: String, proc: Arc<AgentProcess>) -> BoxFuture<Result<()>>;
-  /// Why no process may start on `account` now (an account its source no longer offers); checked before any spawn, as
-  /// a process without the account's variables would run on the CLI's own login
-  fn unavailable(&self, _agent: String, _account: String) -> Option<String> {
-    None
-  }
-  /// (id, label) of the account to move to after `current` ran out of quota; None = stay and show the error
-  fn fallback(&self, _agent: String, _current: Option<String>) -> BoxFuture<Option<(String, String)>> {
-    Box::pin(async { None })
-  }
-  /// (id, label) of the saved account to bind when `account` was removed; None = keep it (still saved, a plugin's, or
-  /// nothing left to move to)
-  fn replacement(&self, _agent: String, _account: String) -> BoxFuture<Option<(String, String)>> {
-    Box::pin(async { None })
-  }
-  fn label(&self, _account: String) -> Option<String> {
-    None
-  }
-  /// The account's quota, read again unless a recent read stands; None = nothing known
-  fn quota(&self, _account: String) -> BoxFuture<Option<acpira_shared::transcript::AccountQuota>> {
-    Box::pin(async { None })
-  }
-  /// The saved account a new session of `agent` binds (the last one chosen); None = the CLI's own credentials
-  fn default_account(&self, _agent: String) -> Option<String> {
-    None
-  }
-}
+pub use crate::accounts::SessionAccountHooks;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CompactionPolicy {
@@ -192,12 +162,12 @@ pub struct SessionDeps {
   /// None: the built-in texts and the project's (tests)
   pub data_home: Option<std::path::PathBuf>,
   /// The plugins' resident processes, which hear the session's events; None: no plugins (tests)
-  pub plugin_runtime: Option<std::sync::Arc<crate::plugins::runtime::Runtimes>>,
+  pub plugin_runtime: Option<Arc<dyn ext::PluginRuntimePort>>,
   /// The `mcpServers` entry of Acpira's own MCP server (`host_mcp.rs`), sent with session/new, load and resume
-  pub host_mcp: Option<crate::host_mcp::HostMcp>,
+  pub host_mcp: Option<Arc<dyn ext::SessionHostMcp>>,
   /// SSH hosts: a session whose folder is on one runs the built-in agent's project tools there (`remote.rs`). None:
   /// no remote folders (tests, shells without the feature)
-  pub remote: Option<Arc<crate::remote::connections::Connections>>,
+  pub remote: Option<Arc<dyn crate::remote_seam::RemoteConnector>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -387,13 +357,13 @@ pub struct AcpSession {
   /// Those that came with no row to bind to (an MCP call ahead of its ACP `tool_call`), so a stop still reaches them
   pub(crate) loose_calls: parking_lot::Mutex<std::collections::HashMap<String, crate::acp::transport::cancel::Cancel>>,
   /// Codex in a folder on an SSH host: the way to its exec-server there, as long as its CLI runs (`remote_exec_env`)
-  pub(crate) exec_tunnel: parking_lot::Mutex<Option<crate::remote::codex_exec::ExecTunnel>>,
-  /// Loopback Streamable HTTP bridge for stdio MCP servers under Codex SSH local run (`remote::mcp_http`)
-  pub(crate) mcp_bridge: parking_lot::Mutex<Option<crate::remote::mcp_http::McpHttpBridge>>,
+  pub(crate) exec_tunnel: parking_lot::Mutex<Option<Box<dyn crate::remote_seam::ExecTunnelPort>>>,
+  /// Loopback Streamable HTTP bridge for stdio MCP servers under Codex SSH local run (`acp::local_run::mcp_http`)
+  pub(crate) mcp_bridge: parking_lot::Mutex<Option<crate::acp::local_run::mcp_http::McpHttpBridge>>,
   /// The `clientId`s of the actions the session ran, newest last (`claim_client_id`); saved with the record
   client_ids: parking_lot::Mutex<std::collections::VecDeque<String>>,
   /// The plugin host each card offered by `plugin_activate` came through, by card id (`plugin_card.rs`)
-  pub(crate) plugin_offers: parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::plugins::host::PluginHost>>>,
+  pub(crate) plugin_offers: parking_lot::Mutex<std::collections::HashMap<String, Arc<dyn ext::PluginCardPort>>>,
   /// The machine whose built-in agent settings the session reads (`adopt_sender`); saved with the record
   settings_from: parking_lot::Mutex<Option<String>>,
   /// Who sent last since the running turn started: the next turn reads their settings (`sent_by`)
@@ -483,6 +453,14 @@ impl AcpSession {
       let sidekick = crate::acp::session::host_sidekick::restored(&controls.options);
       let turns = restore_command_receipts(restore_plan_snapshots(record.turns));
       let turns = if seal { restore_interrupted_turns(turns, &record.updated_at) } else { turns };
+      // Preserve the post-compaction usage floor across idle process release and reopen so a session ending on a
+      // completed compaction does not re-trigger auto /compact before the next prompt
+      let compacted_at = matches!(
+        turns.last(),
+        Some(Turn::Agent(a)) if a.blocks.iter().any(|b| matches!(b, AgentBlock::Compaction(x) if x.status == CompactionStatus::Completed))
+      )
+      .then(|| record.usage.map(|u| u.used.0))
+      .flatten();
       let state = NormalizeState {
         turns,
         controls,
@@ -544,7 +522,7 @@ impl AcpSession {
           pending_prompt: None,
           turn_failure: None,
           building_plan: false,
-          compaction: CompactionState::default(),
+          compaction: CompactionState { at: compacted_at, ..Default::default() },
           usage: UsageTracker::default(),
           model_facts: ModelFacts::default(),
           picks: ControlPicks::default(),

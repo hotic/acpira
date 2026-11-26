@@ -13,7 +13,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { Toast } from '../ui/Toast';
 import { cn } from '../ui/cn';
 import { getLocale, t } from '../i18n';
-import { cardFill, Count, DialogBody, FooterNote, Group, ItemRow, Meta, Note, rowHover, rowRules, Section, SectionAction, SectionDescription, Segmented, SettingsDialog, shortPath } from './controls';
+import { cardFill, Count, DialogBody, FooterNote, Group, ItemRow, Meta, Note, rowHover, rowRules, Section, SectionAction, SectionDescription, Segmented, SettingsDialog, shortPath } from '../chrome/controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 // Settings → Storage: what the data directory holds by owner, drawn as one bar, and the cleanups that are reviewed

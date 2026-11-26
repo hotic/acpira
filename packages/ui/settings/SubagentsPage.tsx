@@ -12,7 +12,7 @@ import { AgentMark } from '../chat/AgentMark';
 import { Button } from '../ui/Button';
 import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
-import { DangerAction, DialogBody, Field, FormField, FormGrid, FormRows, ItemRow, Note, Section, SectionAction, Select, SettingsDialog, Switch, TextBox, type Option } from './controls';
+import { DangerAction, DialogBody, Field, FormField, FormGrid, FormRows, ItemRow, Note, Section, SectionAction, Select, SettingsDialog, Switch, TextBox, type Option } from '../chrome/controls';
 import type { SettingsPage } from './Nav';
 import type { SettingsHandlers } from './SettingsShell';
 import { orderById, SortableRows } from './SortableRows';

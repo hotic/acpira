@@ -45,17 +45,17 @@ impl Config {
   }
 
   /// Where sessions take a scratch folder (`scratch.rs`); None leaves them the system's temp folder
-  pub fn scratch_place(&self) -> Option<crate::scratch::Place> {
+  pub fn scratch_place(&self) -> Option<crate::defs::Place> {
     match self.providers.scratch_place_of() {
       "off" => None,
-      "project" => Some(crate::scratch::Place::Project),
-      _ => Some(crate::scratch::Place::Data),
+      "project" => Some(crate::defs::Place::Project),
+      _ => Some(crate::defs::Place::Data),
     }
   }
 
   /// Chunk compaction is picked on the settings page (`chunk.rs`); otherwise the summary
   pub fn chunked(&self) -> bool {
-    self.providers.compaction.as_deref() == Some(crate::chunk::STRATEGY)
+    self.providers.compaction.as_deref() == Some(crate::defs::CHUNK_STRATEGY)
   }
 
   /// The Raw mode's system prompt from the settings page; empty when none is set
@@ -66,8 +66,8 @@ impl Config {
   /// The search setup picked on the settings page. The default backend uses no key; a keyed pick brings every keyed
   /// backend that is set up, the picked one first. DeepSeek goes through `web_search_via`'s source (its address and
   /// key) when one is named, else DeepSeek's own API with its search key
-  pub fn web_search(&self) -> crate::tools::web::SearchSetup {
-    use crate::tools::web::{DeepSeekSearch, SearchSetup, tools_search_url};
+  pub fn web_search(&self) -> crate::defs::SearchSetup {
+    use crate::defs::{DeepSeekSearch, SearchSetup, tools_search_url};
     let pick = self.providers.web_search.as_deref();
     if !matches!(pick, Some("jina" | "deepseek")) {
       return SearchSetup::default();
@@ -93,6 +93,14 @@ impl Config {
   pub fn default_pick(&self) -> Option<String> {
     self.providers.usable().next().map(|(p, m)| acpira_shared::providers::model_pick(&p.id, &m.id))
   }
+}
+
+/// A configured model with the limits the configuration leaves open filled from the catalogue (marked estimated)
+pub fn limits(config: &Config, catalog: &Catalog, pick: &str) -> Option<ProviderModel> {
+  let (_, m) = config.find(pick)?;
+  let mut model = m.clone();
+  crate::catalog::complete(&mut model, catalog);
+  Some(model)
 }
 
 /// The plugins' sources (`plugins/providers.json`, written by the engine) after the user's own: an id the user's file

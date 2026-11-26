@@ -43,15 +43,16 @@ impl AcpSession {
   /// Send `event` with the session's identity added to `data`
   pub(crate) fn emit(&self, event: &str, data: impl FnOnce() -> Value) {
     let Some(rt) = &self.deps.plugin_runtime else { return };
-    rt.emit(event, || {
-      let mut d = data();
-      if let Some(o) = d.as_object_mut() {
-        o.insert("session".into(), json!(self.id));
-        o.insert("agent".into(), json!(self.agent));
-        o.insert("cwd".into(), json!(self.cwd));
-      }
-      d
-    });
+    if !rt.hears(event) {
+      return;
+    }
+    let mut d = data();
+    if let Some(o) = d.as_object_mut() {
+      o.insert("session".into(), json!(self.id));
+      o.insert("agent".into(), json!(self.agent));
+      o.insert("cwd".into(), json!(self.cwd));
+    }
+    rt.emit_value(event, d);
   }
 
   /// After a live update was applied to the transcript: tool rows, streamed text, usage and mode changes

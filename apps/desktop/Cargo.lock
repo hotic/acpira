@@ -42,6 +42,7 @@ dependencies = [
 name = "acpira-desktop"
 version = "2.1.9"
 dependencies = [
+ "acpira-host-base",
  "acpira-shared",
  "libc",
  "parking_lot",
@@ -87,7 +88,7 @@ dependencies = [
 name = "acpira-gateway"
 version = "2.1.9"
 dependencies = [
- "acpira-desktop",
+ "acpira-host-base",
  "acpira-net",
  "acpira-shared",
  "anyhow",
@@ -116,31 +117,21 @@ dependencies = [
  "acpira-computer",
  "acpira-desktop",
  "acpira-gateway",
+ "acpira-host-base",
+ "acpira-plugin-build",
  "acpira-rpc",
  "acpira-shared",
+ "acpira-store",
  "aes-gcm",
  "anyhow",
  "base64 0.22.1",
- "blake3",
  "chrono",
  "flate2",
  "junction",
  "libc",
- "oxc_allocator",
- "oxc_ast",
- "oxc_ast_visit",
- "oxc_codegen",
- "oxc_diagnostics",
- "oxc_parser",
- "oxc_resolver",
- "oxc_semantic",
- "oxc_span",
- "oxc_transformer",
- "oxc_transformer_plugins",
  "parking_lot",
  "portable-pty",
  "regex",
- "rusqlite",
  "same-file",
  "semver",
  "serde",
@@ -156,6 +147,21 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "acpira-host-base"
+version = "2.1.9"
+dependencies = [
+ "acpira-shared",
+ "anyhow",
+ "libc",
+ "parking_lot",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -179,6 +185,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "acpira-plugin-build"
+version = "2.1.9"
+dependencies = [
+ "acpira-host-base",
+ "base64 0.22.1",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_codegen",
+ "oxc_diagnostics",
+ "oxc_parser",
+ "oxc_resolver",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_transformer",
+ "oxc_transformer_plugins",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "acpira-rpc"
 version = "2.1.9"
 dependencies = [
@@ -198,6 +225,26 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "acpira-store"
+version = "2.1.9"
+dependencies = [
+ "acpira-host-base",
+ "acpira-shared",
+ "anyhow",
+ "base64 0.22.1",
+ "blake3",
+ "chrono",
+ "parking_lot",
+ "rusqlite",
+ "same-file",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "zstd",
 ]
 
 [[package]]

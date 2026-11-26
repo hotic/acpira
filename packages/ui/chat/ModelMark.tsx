@@ -1,5 +1,5 @@
 import { modelBrand } from '@acpira/shared/models';
-import { MarkSvg } from './marks';
+import { MarkSvg } from '../chrome/marks';
 
 // Vendor logo for a model family ("GLM-5.2" → Zhipu mark). brand is the pre-resolved mark key — from the option's
 // wire id via groupModels / optionBrand, since display names ("K3") are only labels; without one the family name is tried

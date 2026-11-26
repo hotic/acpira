@@ -1,0 +1,30 @@
+[package]
+name = "acpira-plugin-build"
+description = "Static oxc compiler and bundler for Acpira TypeScript/TSX plugins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+acpira-host-base.workspace = true
+base64.workspace = true
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_ast_visit.workspace = true
+oxc_codegen.workspace = true
+oxc_diagnostics.workspace = true
+oxc_parser.workspace = true
+oxc_resolver.workspace = true
+oxc_semantic.workspace = true
+oxc_span.workspace = true
+oxc_transformer.workspace = true
+oxc_transformer_plugins.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

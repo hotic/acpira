@@ -13,7 +13,7 @@ use acpira_host::acp::agents::adapter_info::read_adapter_info;
 use acpira_host::acp::agents::registry::{AdapterDef, AdapterEngine, AgentDef, NativeLayout, AgentRegistry, resolve_command, search_dirs, search_paths};
 use acpira_host::acp::agents::launch::{Env, resolve_executable};
 use acpira_host::platform::command::{Os, spawn_spec};
-use acpira_host::acp::agents::model_sources::grok_model_sources;
+use acpira_host::acp::probe::model_sources::grok_model_sources;
 
 use crate::support::{expect_eq, expect_match, v};
 

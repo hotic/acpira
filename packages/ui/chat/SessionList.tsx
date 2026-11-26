@@ -32,7 +32,7 @@ import { NAV_LEAD, NAV_ROW, NavDivider, NavEmpty, NavHint, NavSearch } from './N
 import { buildSessionTree, categoryOf, draggable, dropAction, isChatFolder, offList, projectOf as projectOfMeta, projectSessions, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
 import { ViewMenu } from './ViewMenu';
-import { clockRoot, rowDone, rowState } from './styleClock';
+import { clockRoot, rowDone, rowState } from '../chrome/styleClock';
 import { CONNECTION_STATE_NAME, useConnections, useFolderHost } from '../remote/api';
 import { RemoteFolderIcon } from '../remote/RemoteFolderIcon';
 

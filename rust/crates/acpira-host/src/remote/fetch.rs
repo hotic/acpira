@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::remote::archive::{download_progress, extract_zip};
+use crate::http::archive::{download_progress, extract_zip};
 
 /// Where releases are published; `<base>/<tag>/<asset>` is an asset's URL
 pub const RELEASES: &str = "https://github.com/hotic/acpira/releases/download";

@@ -604,6 +604,16 @@ impl ExecTunnel {
   }
 }
 
+impl crate::remote_seam::ExecTunnelPort for ExecTunnel {
+  fn url(&self) -> String {
+    ExecTunnel::url(self)
+  }
+
+  fn stop_commands(&self) {
+    ExecTunnel::stop_commands(self);
+  }
+}
+
 impl Drop for ExecTunnel {
   fn drop(&mut self) {
     self.accept.abort();

@@ -1,5 +1,8 @@
 pub mod agents;
+pub mod launch;
 pub mod local_run;
+pub mod login_path;
+pub mod probe;
 pub mod session;
 pub mod transcript;
 pub mod transport;

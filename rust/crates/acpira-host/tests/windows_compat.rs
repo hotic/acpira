@@ -8,7 +8,7 @@ use std::time::Duration;
 use acpira_host::acp::agents::launch::ProcessEnv;
 use acpira_host::acp::agents::pool::IdleHandlers;
 use acpira_host::acp::agents::registry::{AgentRegistry, resolve_command};
-use acpira_host::acp::transport::process::AgentProcess;
+use acpira_host::acp::agents::spawn::spawn_agent;
 use acpira_host::platform::command::Os;
 use serde_json::json;
 
@@ -55,7 +55,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
 "#).unwrap();
   let node = resolve_command("node", &[], Os::Windows, &ProcessEnv).await.unwrap();
   let registry = AgentRegistry::new(&json!({"fixture":{"command":node,"args":[script]}}));
-  let proc = AgentProcess::spawn(
+  let proc = spawn_agent(
     registry.get("fixture").unwrap(),
     &node,
     dir.path().to_str().unwrap(),

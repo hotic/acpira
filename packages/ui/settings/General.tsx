@@ -5,10 +5,10 @@ import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AGENT_PRIORITIES, AUTO_PROXY_
 import { LANGUAGES, type Language } from '@acpira/shared/i18n/core';
 import { launchable, pickDefaultAgent } from '@acpira/shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
-import { MarkSvg } from '../chat/marks';
+import { MarkSvg } from '../chrome/marks';
 import { playChime } from '../effects/chime';
 import { t } from '../i18n';
-import { Field, NumberField, Section, Select, Switch } from './controls';
+import { Field, NumberField, Section, Select, Switch } from '../chrome/controls';
 import type { SettingsHandlers } from './SettingsShell';
 import { TourSection } from './TourSection';
 

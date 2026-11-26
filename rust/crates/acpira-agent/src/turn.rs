@@ -18,28 +18,36 @@ use serde_json::{Value, json};
 use acpira_rpc::cancel::Cancel;
 use acpira_rpc::rpc::RpcError;
 
-use crate::acp::{Server, Session, SessionState};
+use crate::acp::{Server, Session};
+#[cfg(test)]
+use crate::acp::SessionState;
+pub(crate) use crate::acp::settle;
 use crate::compact::{self, Policy, Reason};
+pub use crate::config::limits;
+pub use crate::defs::{DEFAULT_CONTEXT, prompt_parts, user_home};
+pub(crate) use crate::defs::prompt_text;
 use crate::goal;
-use crate::llm::{self, Event, Item, LlmError, Part, Request, StopReason, ToolCall, Usage};
+use crate::llm::{self, Event, Item, LlmError, Part, Request, StopReason, Usage};
+#[cfg(test)]
+use crate::llm::ToolCall;
 use crate::modes;
 use crate::skills;
 use crate::tools;
+pub(crate) use crate::tools::names::kind_of;
 
 mod approval;
 mod arg_path;
 mod calls;
+mod critique_hook;
 mod request;
 mod riders;
 mod setup;
 
-pub(crate) use self::calls::kind_of;
 use self::calls::{Flow, call_title, hidden, mcp_meta, run_tools};
 use self::request::{
   EMPTY_REPLY, MAX_ATTEMPTS, Unfinished, approx, describe, empty_reply, log_request, log_view, max_tokens, request_event, retriable,
   retry_delay, retry_notice, stream_idle,
 };
-pub use self::setup::limits;
 pub(crate) use self::setup::opened_context;
 use self::setup::{
   compact_history, offers_ask, plugin_tools, refresh_limits, report_usage, send_usage, setup, sidekick_note, sidekick_unlisted,
@@ -48,9 +56,6 @@ use self::setup::{
 
 /// Misnamed tool calls taken as the tool they map to, per turn; later ones get the error so a confused model stops
 const MAX_CORRECTIONS: u32 = 2;
-
-/// The context size reported when a model has none configured
-pub const DEFAULT_CONTEXT: u64 = 128_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stop {
@@ -152,7 +157,7 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
       Ok(Stop::EndTurn)
     }
     None => tokio::select! {
-      r = body(&server, &session, &params, &stats, kind) => r,
+      r = body(&server, &session, &params, &stats, kind, cancel.clone()) => r,
       _ = cancel.cancelled() => Ok(Stop::Cancelled),
     },
   };
@@ -180,7 +185,10 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
       (s.tools, s.held)
     };
     let outcome = match &result {
-      Ok(Stop::Cancelled) => goal::Outcome::Cancelled,
+      Ok(Stop::Cancelled) => {
+        session.jobs.discard_pending_deliveries();
+        goal::Outcome::Cancelled
+      }
       Ok(Stop::Refusal) | Err(_) => goal::Outcome::Failed,
       Ok(_) if held => goal::Outcome::Held,
       Ok(_) => goal::Outcome::Ended,
@@ -244,50 +252,7 @@ fn prune_due(server: &Server, session: &Session, params: &Value, pick: Option<&s
   used >= policy.threshold(size, output) * PRUNE_AT_TENTHS / 10
 }
 
-/// Close the history after a turn ended any way: cut-off text becomes an assistant message, and every tool call
-/// without a result gets one
-pub(crate) fn settle(st: &mut SessionState) {
-  let text = std::mem::take(&mut st.partial_text);
-  let reasoning = std::mem::take(&mut st.partial_reasoning);
-  if !text.is_empty() {
-    st.items.push(Item::Assistant { text, reasoning, tool_calls: vec![], native: None });
-  }
-  let Some(last_call) = st.items.iter().rposition(|i| matches!(i, Item::Assistant { tool_calls, .. } if !tool_calls.is_empty())) else { return };
-  // Only results after that reply answer it: providers reuse call ids across replies, so an older result with the
-  // same id says nothing about the current call
-  let answered: std::collections::HashSet<&str> = st.items[last_call + 1..]
-    .iter()
-    .filter_map(|i| match i {
-      Item::ToolResult { call_id, .. } => Some(call_id.as_str()),
-      _ => None,
-    })
-    .collect();
-  let Item::Assistant { tool_calls, .. } = &st.items[last_call] else { return };
-  let missing: Vec<ToolCall> = tool_calls.iter().filter(|c| !answered.contains(c.id.as_str())).cloned().collect();
-  // A change that landed before its command was cut off is reported as made, so the model does not make it again
-  let landed = std::mem::take(&mut st.landed);
-  for c in missing {
-    let item = match landed.iter().find(|(id, _)| *id == c.id) {
-      Some((_, text)) => Item::ToolResult { call_id: c.id, name: c.name, content: text.clone(), is_error: false, images: vec![] },
-      None => Item::ToolResult { call_id: c.id, name: c.name, content: "Cancelled by the user before it finished.".into(), is_error: true, images: vec![] },
-    };
-    st.items.push(item);
-  }
-}
-
-/// The prompt's text blocks, joined (attachments and images left out)
-pub(crate) fn prompt_text(prompt: &Value) -> String {
-  prompt
-    .as_array()
-    .into_iter()
-    .flatten()
-    .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
-    .filter_map(|b| b.get("text").and_then(Value::as_str))
-    .collect::<Vec<_>>()
-    .join("\n")
-}
-
-async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>, kind: Option<goal::Kind>) -> Result<Stop, String> {
+async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>, kind: Option<goal::Kind>, cancel: Cancel) -> Result<Stop, String> {
   // The MCP servers still starting are waited for here, so the tool set is complete from the first request on
   let mut offer = session.mcp.offer(&tools::names::ALL).await;
   // A sidekick picked where acpira offered no ask_agent at all (no persona when its tools were listed) has no tool a
@@ -305,6 +270,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
   plugin_tools(server, session, &mut s).await;
   let prompt = params.get("prompt").unwrap_or(&Value::Null);
   let text = prompt_text(prompt);
+  let mut critique = critique_hook::TurnCritique::new(text.clone(), s.pick.clone());
   // /compact summarizes the history and ends the turn; nothing of it enters the history
   if skills::is_compact(&text) {
     match compact_history(server, session, &s, Reason::Manual, None).await {
@@ -628,7 +594,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       if let Some(u) = usage {
         let wire = crate::context::Wire { format: s.endpoint.format, url: s.endpoint.url.clone(), family: s.endpoint.family };
         let setting = crate::context::Setting { system: &s.system, sections: &s.sections, mcp: &s.mcp };
-        let snap = crate::context::Snapshot::of_call(request, item.clone(), wire, setting, u, estimated, &st);
+        let snap = crate::context::Snapshot::of_call(request, item.clone(), wire, setting, u, estimated, st.summarized, st.folded);
         st.context = Some(Arc::new(snap));
       }
       st.items.push(item);
@@ -638,7 +604,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => {
         let names = s.names();
         stats.lock().tools += reply.tool_calls.iter().filter(|c| !hidden(&c.name, &names)).count() as u64;
-        let flow = run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections).await;
+        let flow = run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections, &mut critique, &cancel).await;
         let stopped = matches!(flow, Flow::Stop);
         (flow, stopped)
       }
@@ -652,6 +618,15 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     match flow {
       Flow::Continue => {}
       Flow::Stop if crate::steer::may_end(session) => {
+        if !stopped
+          && let Some(handoff) = critique.review_draft(server, session, &s, &reply.text, stopped, &cancel).await
+        {
+          // Isolated review-scope revision handoff: keeps Lead's prompt cache prefix intact without logging a user replay chunk
+          let item = Item::User(vec![Part::Text(handoff.clone())]);
+          session.store.append(json!({ "type": "critique_handoff", "scope": "review", "text": handoff }));
+          session.state.lock().items.push(item);
+          continue;
+        }
         // A turn the user stopped waits for their direction, and so does its goal (`goal::Outcome::Held`)
         stats.lock().held = stopped;
         return Ok(Stop::EndTurn);
@@ -666,67 +641,6 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       }
     }
   }
-}
-
-pub fn user_home() -> Option<std::path::PathBuf> {
-  std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(std::path::PathBuf::from)
-}
-
-/// The prompt's content blocks as user message parts
-pub fn prompt_parts(prompt: &Value, images: bool) -> Vec<Part> {
-  let mut parts = vec![];
-  for block in prompt.as_array().into_iter().flatten() {
-    match block.get("type").and_then(Value::as_str) {
-      Some("text") => {
-        if let Some(t) = block.get("text").and_then(Value::as_str) {
-          parts.push(Part::Text(t.to_owned()));
-        }
-      }
-      Some("image") => {
-        let data = block.get("data").and_then(Value::as_str).unwrap_or("");
-        let mime = block.get("mimeType").and_then(Value::as_str).unwrap_or("image/png");
-        if images && !data.is_empty() {
-          parts.push(Part::Image { mime: mime.to_owned(), data: data.to_owned() });
-        } else {
-          parts.push(Part::Text("[An image was attached, but this model does not accept images.]".into()));
-        }
-      }
-      Some("resource") => {
-        let r = block.get("resource").unwrap_or(&Value::Null);
-        let uri = r.get("uri").and_then(Value::as_str).unwrap_or("");
-        match r.get("text").and_then(Value::as_str) {
-          Some(text) => parts.push(Part::Text(format!("<attachment uri=\"{uri}\">\n{text}\n</attachment>"))),
-          None => parts.push(Part::Text(format!("[Attached: {uri}]"))),
-        }
-      }
-      Some("resource_link") => {
-        let uri = block.get("uri").and_then(Value::as_str).unwrap_or("");
-        let name = block.get("name").and_then(Value::as_str).unwrap_or(uri);
-        parts.push(Part::Text(format!("[{name}]({uri})")));
-      }
-      _ => {}
-    }
-  }
-  let mut merged = merge_text(parts);
-  if merged.is_empty() {
-    merged.push(Part::Text(String::new()));
-  }
-  merged
-}
-
-/// Adjacent text parts joined into one, as a message reads
-pub(crate) fn merge_text(parts: Vec<Part>) -> Vec<Part> {
-  let mut merged: Vec<Part> = vec![];
-  for p in parts {
-    match (merged.last_mut(), p) {
-      (Some(Part::Text(prev)), Part::Text(t)) => {
-        prev.push_str("\n\n");
-        prev.push_str(&t);
-      }
-      (_, p) => merged.push(p),
-    }
-  }
-  merged
 }
 
 #[cfg(test)]

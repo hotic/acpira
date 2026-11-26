@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::transport::process::{AgentProcess, ClientHandlers};
+use acpira_host::acp::transport::process::ClientHandlers;
 use acpira_host::acp::transport::cancel::Cancel;
 use acpira_host::acp::transport::rpc::{BoxFuture, RpcError};
 use acpira_host::acp::session::AcpSession;
@@ -955,9 +955,6 @@ impl ClientHandlers for Recorder {
   fn on_elicitation(&self, _req: Value, _cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
     Box::pin(async { Err(RpcError::method_not_found("elicitation/create")) })
   }
-  fn on_grok_question(&self, _req: Value, _cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
-    Box::pin(async { Err(RpcError::method_not_found("_x.ai/ask")) })
-  }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -968,7 +965,7 @@ async fn extension_updates_reach_the_process_handler_raw_and_child_streams_pass_
   let bin = h.deps.registry.resolve_binary("fake").await.expect("node on PATH");
   let rec = Recorder::default();
   let updates = rec.0.clone();
-  let proc = AgentProcess::spawn(&def, &bin, "/tmp", Arc::new(rec), None, None).await.unwrap();
+  let proc = acpira_host::acp::agents::spawn::spawn_agent(&def, &bin, "/tmp", Arc::new(rec), None, None).await.unwrap();
   let created = proc.request("session/new", json!({ "cwd": "/tmp", "mcpServers": [] })).await.unwrap();
   let sid = created["sessionId"].as_str().unwrap().to_owned();
   proc.request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": "subagents-early" }] })).await.unwrap();

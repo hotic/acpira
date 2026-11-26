@@ -60,7 +60,8 @@ export function rootRows(turnNodes: SubagentSummary[]): SubagentSummary[] {
   return turnNodes.filter(n => n.parentId === undefined || !ids.has(n.parentId));
 }
 
-export interface WorkflowProgress { done: number; total: number }
+import type { WorkflowProgress } from '../../markdown/fileLinks';
+export type { WorkflowProgress };
 
 // A Claude workflow's agents are receipt nodes keyed `<asyncTaskId>#<index>` in peer.agentId (`subagent_tree.rs`
 // `workflow_progress`), so the run's tool row can count them by task id without another field on the wire

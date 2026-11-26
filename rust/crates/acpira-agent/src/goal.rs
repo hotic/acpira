@@ -26,27 +26,20 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use acpira_rpc::rpc::RpcError;
 
 use crate::acp::{Server, Session, SessionState};
-use crate::llm::{Part, STEER_OPEN, ToolSpec, Usage};
+pub use crate::defs::{
+  GOAL_CONTINUE as CONTINUE, GOAL_CREATE as CREATE, GOAL_GET as GET, GOAL_IDLE_TURNS as IDLE_TURNS, GOAL_METHOD as METHOD,
+  GOAL_UPDATE as UPDATE, goal_capability as capability, goal_is_tool as is_tool, goal_slash_command as slash_command,
+};
+pub use crate::goal_data::{Call, Goal, Status, published, revive, rewound, spec};
+use crate::llm::{Part, STEER_OPEN, Usage};
 use crate::modes;
 use crate::prompt::Library;
 use crate::tools::{Action, Output};
-
-pub const METHOD: &str = "_session/goal";
-/// The prompt the client sends to go on with an active goal (`initialize` names it as `acpira/continue`)
-pub const CONTINUE: &str = "/goal continue";
-
-pub const GET: &str = "get_goal";
-pub const CREATE: &str = "create_goal";
-pub const UPDATE: &str = "update_goal";
-
-/// Continuation turns in a row that called no tool, after which the goal is blocked (Codex: three empty turns)
-pub const IDLE_TURNS: u32 = 3;
 
 /// An objective longer than this is written to the session's `outputs/` and the notes point there, as Codex does with
 /// its goal objective file, instead of repeating it in every continuation
@@ -56,87 +49,6 @@ const OBJECTIVE_HEAD: usize = 600;
 
 const OPEN: &str = "<goal>\n";
 const CLOSE: &str = "\n</goal>";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Status {
-  Active,
-  Paused,
-  Blocked,
-  /// The token budget is spent: the turn running then wraps up (and still counts, `SessionState::goal_wrapping`), and no
-  /// other turn continues the goal or counts toward it
-  BudgetLimited,
-  Complete,
-}
-
-impl Status {
-  /// The wire name (codex-acp's `status`)
-  pub fn wire(self) -> &'static str {
-    match self {
-      Status::Active => "active",
-      Status::Paused => "paused",
-      Status::Blocked => "blocked",
-      Status::BudgetLimited => "budgetLimited",
-      Status::Complete => "complete",
-    }
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Goal {
-  pub objective: String,
-  pub status: Status,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub token_budget: Option<u64>,
-  #[serde(default)]
-  pub tokens_used: u64,
-  /// Wall clock of the turns that ran while the goal was active
-  #[serde(default)]
-  pub time_used_ms: u64,
-  #[serde(default)]
-  pub created_at: u64,
-  #[serde(default)]
-  pub updated_at: u64,
-  /// Continuation turns in a row that called no tool other than the goal's own
-  #[serde(default)]
-  pub idle_turns: u32,
-}
-
-impl Goal {
-  pub fn new(objective: &str, budget: Option<u64>) -> Goal {
-    let now = crate::store::now_ms();
-    Goal {
-      objective: objective.trim().to_owned(),
-      status: Status::Active,
-      token_budget: budget,
-      tokens_used: 0,
-      time_used_ms: 0,
-      created_at: now,
-      updated_at: now,
-      idle_turns: 0,
-    }
-  }
-
-  pub fn remaining(&self) -> Option<u64> {
-    self.token_budget.map(|b| b.saturating_sub(self.tokens_used))
-  }
-
-  /// The snapshot the client gets at `session_info_update._meta.goal`: codex-acp's fields
-  pub fn snapshot(&self) -> Value {
-    let mut v = json!({
-      "objective": self.objective,
-      "status": self.status.wire(),
-      "tokensUsed": self.tokens_used,
-      "timeUsedSeconds": self.time_used_ms / 1000,
-      "updatedAt": self.updated_at,
-    });
-    if let Some(b) = self.token_budget {
-      v["tokenBudget"] = json!(b);
-    }
-    v
-  }
-}
 
 /// A `/goal …` prompt
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -340,9 +252,9 @@ pub fn turn_parts(kind: Kind, note: String, objective: Option<&str>, prompt: &Va
   let attached: Vec<Value> = prompt.as_array().into_iter().flatten().filter(|b| b.get("type").and_then(Value::as_str) != Some("text")).cloned().collect();
   let mut parts = vec![Part::Text(text)];
   if !attached.is_empty() {
-    parts.extend(crate::turn::prompt_parts(&Value::Array(attached), images).into_iter().filter(|p| !matches!(p, Part::Text(t) if t.is_empty())));
+    parts.extend(crate::defs::prompt_parts(&Value::Array(attached), images).into_iter().filter(|p| !matches!(p, Part::Text(t) if t.is_empty())));
   }
-  crate::turn::merge_text(parts)
+  crate::defs::merge_text(parts)
 }
 
 /// Told to the turn running when the budget ran out, in front of its next call (adapted from Codex's
@@ -358,85 +270,8 @@ explicitly asks to pause it.\n{}\n</steer>",
   )
 }
 
-/// The goal tools, offered in Agent and Plan mode alike (`modes::TOOLS`), so the request prefix does not change
-pub fn is_tool(name: &str) -> bool {
-  matches!(name, GET | CREATE | UPDATE)
-}
-
-pub fn spec(name: &str) -> Option<ToolSpec> {
-  Some(match name {
-    GET => ToolSpec {
-      name: GET.into(),
-      description: "Get this session's goal: its objective and status, the token budget and usage, and the time spent.".into(),
-      parameters: json!({ "type": "object", "properties": {} }),
-    },
-    CREATE => ToolSpec {
-      name: CREATE.into(),
-      description: "Start a goal: an objective you keep working toward across turns until it is achieved. Only when the user \
-explicitly asks for a goal, or to keep going until something is done; never infer one from an ordinary task. Fails while \
-the session has an unfinished goal."
-        .into(),
-      parameters: json!({
-        "type": "object",
-        "properties": {
-          "objective": { "type": "string", "description": "The concrete objective, in the user's terms" },
-          "token_budget": { "type": "integer", "description": "A positive token budget, only when the user asks for one" },
-        },
-        "required": ["objective"],
-      }),
-    },
-    UPDATE => ToolSpec {
-      name: UPDATE.into(),
-      description: "Mark the session's goal complete, blocked or paused. complete: only once an audit of the current state \
-proves every requirement is met, never because the budget is nearly spent or you are stopping. blocked: only when the \
-same blocker has stopped progress for three goal turns in a row and you cannot go on without the user or an outside \
-change. paused: only when the user asks to pause it. Resuming and budget limits belong to the user and the system."
-        .into(),
-      parameters: json!({
-        "type": "object",
-        "properties": { "status": { "type": "string", "enum": ["complete", "blocked", "paused"] } },
-        "required": ["status"],
-      }),
-    },
-    _ => return None,
-  })
-}
-
-/// A goal tool's call, run by the turn itself (`run_tool`): it changes the session, not the disk
-#[derive(Debug, Clone, PartialEq)]
-pub enum Call {
-  Get,
-  Create { objective: String, budget: Option<u64> },
-  Update { status: Status },
-}
-
 pub fn prepare(name: &str, args: &Value) -> Result<Action, String> {
-  Ok(Action::Goal(match name {
-    GET => Call::Get,
-    CREATE => {
-      let objective = crate::tools::str_arg(args, "objective")?.trim().to_owned();
-      if objective.is_empty() {
-        return Err("The objective must not be empty".into());
-      }
-      let budget = match args.get("token_budget") {
-        None | Some(Value::Null) => None,
-        Some(_) => Some(crate::tools::num_arg(args, "token_budget").filter(|b| *b > 0).ok_or("token_budget must be a positive whole number when given")?),
-      };
-      Call::Create { objective, budget }
-    }
-    _ => Call::Update {
-      status: match crate::tools::str_arg(args, "status")? {
-        "complete" => Status::Complete,
-        "blocked" => Status::Blocked,
-        "paused" => Status::Paused,
-        other => {
-          return Err(format!(
-            "update_goal only marks the goal complete, blocked, or paused at the user's explicit request; \"{other}\" belongs to the user or the system"
-          ));
-        }
-      },
-    },
-  }))
+  crate::goal_data::prepare_call(name, args).map(Action::Goal)
 }
 
 /// What the goal tools answer: Codex's shape (the goal, the tokens left, and on completion the usage to report)
@@ -526,52 +361,12 @@ fn counters_only(before: Option<&Goal>, after: Option<&Goal>) -> bool {
 
 /// Record the goal in the session log, where a reopen reads the last one back (`store::Loaded::goal`)
 pub fn save(store: &crate::store::Store, goal: Option<&Goal>) {
-  store.prelude(json!({ "type": "goal", "goal": goal }));
+  store.save_goal(goal);
 }
 
 /// The snapshot to the client. Not recorded for the replay: load and resume publish the current goal again
 pub fn publish(server: &Server, session_id: &str, goal: Option<&Goal>) {
-  let update = json!({ "sessionUpdate": "session_info_update", "_meta": { "goal": goal.map(Goal::snapshot) } });
-  server.conn().notify("session/update", json!({ "sessionId": session_id, "update": update }));
-}
-
-/// What a reopened session tells the client: its goal while unfinished, else none (a met goal stays off the dock)
-pub fn published(goal: Option<&Goal>) -> Option<&Goal> {
-  goal.filter(|g| g.status != Status::Complete)
-}
-
-/// A goal read back by a new process: an active one comes back paused, since the run it was part of ended with the
-/// process that ran it (a crash, an engine restart). True when it changed
-pub fn revive(goal: &mut Option<Goal>) -> bool {
-  match goal.as_mut() {
-    Some(g) if g.status == Status::Active => {
-      g.status = Status::Paused;
-      g.updated_at = crate::store::now_ms();
-      true
-    }
-    _ => false,
-  }
-}
-
-/// The goal after a rewind (`acp.rs` `Server::rewind`) to a turn that started with `then`, the session holding `now`: the
-/// goal goes back to how it stood then, so one created, met, blocked or spent in the cut turns does not outlive them.
-/// Two things stay as they are now: the tokens and time the same goal already spent (the budget caps real spending), and
-/// a goal that is not running now does not start running again by the rewind alone (it comes back paused, the dock
-/// resumes it)
-pub fn rewound(then: Option<Goal>, now: Option<&Goal>) -> Option<Goal> {
-  let mut g = then?;
-  if let Some(n) = now.filter(|n| n.created_at == g.created_at) {
-    g.tokens_used = g.tokens_used.max(n.tokens_used);
-    g.time_used_ms = g.time_used_ms.max(n.time_used_ms);
-  }
-  if g.status == Status::Active && now.is_none_or(|n| n.status != Status::Active) {
-    g.status = Status::Paused;
-  }
-  if matches!(g.status, Status::Active | Status::Paused) && g.remaining() == Some(0) {
-    g.status = Status::BudgetLimited;
-  }
-  g.updated_at = crate::store::now_ms();
-  Some(g)
+  server.publish_goal(session_id, goal);
 }
 
 /// Time and tokens count toward the goal: while it is active, and in the turn that ran out of budget until it ends
@@ -718,20 +513,6 @@ pub fn control(server: &Server, params: &Value) -> Result<Value, RpcError> {
     None => return Err(RpcError::new(-32602, "action is required")),
   }
   Ok(json!({}))
-}
-
-/// The capability `initialize` advertises: codex-acp's, plus the prompt that continues an active goal
-pub fn capability() -> Value {
-  json!({ "version": 1, "controlMethod": METHOD, "actions": ["set", "pause", "resume", "clear"], "acpira/continue": CONTINUE })
-}
-
-/// `/goal` in the session's slash commands
-pub fn slash_command() -> Value {
-  json!({
-    "name": "goal",
-    "description": "Set a goal the agent keeps working toward across turns until it is achieved",
-    "input": { "hint": "<objective> | pause | resume | clear" },
-  })
 }
 
 #[cfg(test)]

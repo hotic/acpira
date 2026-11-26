@@ -8,7 +8,7 @@ import { DEFAULT_SETTINGS } from '@acpira/shared/settings';
 import { newModel, type ProviderModel, type ProviderView } from '@acpira/shared/providers';
 import { setLocale, t } from '../i18n';
 import { AgentSettings, BinaryPathDialog, type AgentSettingsProps, type AgentTab } from './AgentPage';
-import { NodeInstallDialog } from './NodeInstallDialog';
+import { NodeInstallDialog } from '../chrome/NodeInstallDialog';
 import { editTokens, fmtTokens, ModelEditor, parseTokens } from './ProviderModel';
 import { dropSlot, type ProvidersState } from './ProvidersSection';
 import type { SettingsHandlers } from './SettingsShell';

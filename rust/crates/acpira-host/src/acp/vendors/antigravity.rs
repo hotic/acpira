@@ -31,6 +31,27 @@ use crate::platform::command::Os;
 /// console window over the desktop
 pub const DISABLE_AUTO_UPDATE_ENV: &str = "AGY_CLI_DISABLE_AUTO_UPDATE";
 
+/// The account env entry naming a saved account's gemini dir; `spawn_args` turns it into `--gemini-dir`.
+pub const STORE_ENV: &str = "ACPIRA_ANTIGRAVITY_GEMINI_DIR";
+
+/// Host Google credentials scrubbed when a saved or plugin Antigravity account specifies its own store.
+pub const ACCOUNT_SCRUB_ENV: [&str; 6] = [
+  "AGY_ADC_AUTH",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_GEMINI_BASE_URL",
+  "GOOGLE_CLOUD_QUOTA_PROJECT",
+];
+
+/// The flags a saved account adds to the agent's command line; empty for other agents and for the local login.
+pub fn spawn_args(agent: &str, account_env: Option<&acpira_shared::transcript::StrMap>) -> Vec<String> {
+  match account_env.and_then(|e| e.get(STORE_ENV)) {
+    Some(dir) if agent == "antigravity" => vec!["--gemini-dir".to_owned(), dir.clone()],
+    _ => Vec::new(),
+  }
+}
+
 /// Whether a long-lived `agy acp` process should default `DISABLE_AUTO_UPDATE_ENV` to `"true"`: Windows only, and only
 /// when the host environment did not set it, so an explicit setting still wins
 pub fn suppress_acp_auto_update(os: Os, inherited: Option<&OsStr>) -> bool {

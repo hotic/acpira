@@ -1,0 +1,853 @@
+// Leaf transcript, turn, block, control, account and category types shared across contracts without pulling in SessionView.
+
+import type { MsgKey } from './i18n/keys';
+
+// Built-in devin / grok; custom ids can be added in acpira.agents
+export type AgentId = string;
+
+export interface AgentInfo {
+  id: AgentId;
+  name: string;
+  // Goes through the account layer (multiple logins can be stored and switched); agents without it rely on their own CLI's login
+  accounts?: boolean;
+  // Its account layer also takes a pasted API key as an account (addAccountKey), beside the terminal login
+  accountKeys?: boolean;
+  // Quota is read only on an explicit user refresh, never automatically (e.g. `agy -p /usage`)
+  manualQuota?: boolean;
+  // Minimum seconds between manual quota refreshes (mirrors the provider's rate-limit floor, e.g. 180 for Claude)
+  quotaCooldown?: number;
+  // The store holding the CLI's logins (the macOS keychain) is locked for this host's session, e.g. a remote workspace over SSH:
+  // the logins exist but neither the CLI nor Acpira can read them until it is unlocked (unlockCredentials)
+  credentialsLocked?: boolean;
+  // Read-only official CLI account; independent of the selected model's provider.
+  localAccount?: LocalAccountInfo;
+  // An executable was detected locally; false greys it out in the menu, undefined means not probed yet
+  available?: boolean;
+  // Switched off in the settings rail (acpira.disabledAgents): hidden from the new-session entry points, its sessions still open
+  disabled?: boolean;
+  // Commands a probe looked for but did not find (the agent's own command and/or extra AgentDef.requires), for the install hint
+  missing?: string[];
+  // Directories searched for the agent's own command when it was not found (built-in candidates, PATH, common global bins)
+  searched?: string[];
+  // How to get the CLI when none was found: the vendor's one-line install for this platform and its docs page
+  install?: AgentInstall;
+  // The adapter version to update to (npm's latest, never below the version this release pins), when the installed adapter
+  // is older; the in-app install (installAgent) updates it
+  update?: string;
+  // Who makes the CLI, for an agent the page knows no vendor of (an agents.json entry or a plugin's)
+  vendor?: string;
+  // The agent's mark as SVG path data on a 24 x 24 box, for an agent the page has no mark of its own for
+  mark?: string[];
+  // It can run on this machine in a folder on an SSH host, only its tools there (`canRunHere`); absent from older engines
+  sshLocal?: boolean;
+}
+
+export interface AgentInstall {
+  // A shell line to run in a terminal; absent when the vendor publishes no one-liner for this platform
+  command?: string;
+  docs?: string;
+}
+
+// One allowance window as the vendor reports it (Devin: daily / weekly; a plan may hide either). remaining is 0..1, resetsAt an ISO timestamp
+export interface QuotaWindow {
+  id: string;
+  remaining: number;
+  resetsAt?: string;
+}
+
+// Usage allowance of an account, fetched from the vendor by the account provider; in memory only, refreshed after turns and on demand
+export interface AccountQuota {
+  windows: QuotaWindow[];
+  // Optional vendor-reported on-demand balance in USD; absence means unavailable, not zero.
+  onDemandBalanceUsd?: number;
+  fetchedAt: string;
+}
+
+export interface LocalAccountInfo {
+  label: string;
+  detail?: string;
+  status: 'loading' | 'ready' | 'login_required' | 'expired' | 'unavailable';
+  quota?: AccountQuota;
+}
+
+// Account: one login identity of an agent. Only metadata here; secrets live in the host vault and never enter the webview
+export interface AccountInfo {
+  id: string;
+  agent: AgentId;
+  // Primary label (email) and secondary label (plan · name)
+  label: string;
+  detail?: string;
+  addedAt: string;
+  lastUsedAt?: string;
+  quota?: AccountQuota;
+  // Why there are no bars: the last quota read failed and the next one waits (a 429 pauses reads for minutes). Absent while quota is set
+  quotaIssue?: AccountQuotaIssue;
+  // The credential is a pasted API key: no sign-in renews it, so an expired one reads as a rejected key to paste again
+  keyAuth?: boolean;
+  // The name of the plugin that lists this account (`accounts/set`): it lives while that plugin runs, never stored
+  plugin?: string;
+  // The plugin's tag beside the label, shown in place of a plan
+  badge?: string;
+  // False: no remove button (a plugin account whose plugin answers no `account.remove`)
+  removable?: boolean;
+}
+
+export type AccountQuotaIssue = 'rate_limited' | 'expired' | 'unavailable';
+
+// Session-level options: modes come from modes.availableModes of session/new; the rest (model / reasoning level / …) are select-type configOptions —
+// whatever ACP provides is what we show, we don't invent our own
+export interface SessionOption {
+  id: string;
+  name: string;
+  description?: string;
+  // ACP group identity survives flattening; it need not represent a provider.
+  group?: { id: string; name: string };
+  // Verified by an agent adapter, never inferred from a display name.
+  source?: { id: string; name: string; kind: 'official' | 'custom' };
+  // The agent's own classification of a mode / option (`_meta.kind`, e.g. codex / claude `full_access`); display only, never parsed into ids
+  kind?: string;
+}
+
+export interface ConfigControl {
+  // id of the configOption; required when calling set_config_option
+  id: string;
+  name: string;
+  // ACP's semantic category: model / thought_level / model_config / custom; affects placement, ordering and icon, not wire values
+  category?: string;
+  // ACP boolean configOption (RFD boolean-config-option). `options` carries the synthetic Off/On pair so every
+  // string-value path (turn settings, hidden lists, history replay) keeps working; the wire request still sends `type: 'boolean'` + a real boolean
+  type?: 'boolean';
+  options: SessionOption[];
+  value?: string;
+}
+
+export interface SessionControls {
+  modes: SessionOption[];
+  modeId?: string;
+  // If modes come from a category=mode configOption, record its id
+  modeConfigId?: string;
+  // Parameters advertised for each model before selection. An empty list means the model has none.
+  modelParams?: Record<string, ConfigControl[]>;
+  options: ConfigControl[];
+}
+
+// Slash commands from available_commands_update. `input.hint` is the agent's unstructured hint for the text
+// typed after the command name — a display hint, never a schema to validate against
+export interface SlashCommand {
+  name: string;
+  description: string;
+  input?: { hint: string };
+  // A plugin's command: the plugin, and the composer button it also is (its label; `draft`: its text replaces the draft)
+  plugin?: string;
+  button?: string;
+  draft?: boolean;
+  // The button's glyph and look (manifest BUTTON_ICONS / BUTTON_LOOKS); absent: a bolt (a wand for `draft`), `brand`
+  icon?: string;
+  look?: 'brand' | 'solid' | 'outline' | 'icon';
+  // The button runs with the draft as its arguments; otherwise it leaves the draft and its attachments alone
+  takesDraft?: boolean;
+  // The button opens this menu instead of running the command, the session's picks checked
+  menu?: CommandMenuItem[];
+  // The first group's pick, a tag on the chip like the mode chip's access level
+  badge?: string;
+}
+
+// One row of a plugin command button's menu (plugins/manifest.rs MenuItemDef)
+export interface CommandMenuItem {
+  id: string;
+  kind: 'radio' | 'toggle' | 'action' | 'separator';
+  group?: string;
+  label: string;
+  description?: string;
+  checked?: boolean;
+}
+
+export interface AuthMethodInfo {
+  id: string;
+  name: string;
+  description?: string;
+  // `type: 'terminal'` on the wire: the client runs the agent binary with these args/env in an interactive
+  // terminal and never passes the method to `authenticate`
+  terminal?: { args: string[]; env?: Record<string, string> };
+}
+
+// Session lifecycle: starting (spawn process / initialize / session.new) → ready; login failure → auth_required;
+// old sessions that can't be resumed → readonly; process died → error
+export type SessionStatus = 'starting' | 'ready' | 'auth_required' | 'readonly' | 'error' | 'closed';
+
+// Aligned with ACP ToolKind
+export type ToolKind = 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';
+export type ToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+
+// An image the agent produced (tool result or message chunk). Widgets (text/html) and videos (video/*) reuse this
+// stored shape for record compatibility; render by mimeType. The bytes live in the session's blob directory
+// under a content-hash name; `uri` keeps a path the agent saved itself (codex-acp writes generations to disk)
+export interface ImageRef {
+  blob?: string;
+  mimeType: string;
+  uri?: string;
+}
+
+export type ToolContent =
+  | { type: 'text'; text: string }
+  | { type: 'diff'; lines: DiffLine[]; source?: DiffSource }
+  | { type: 'list'; items: string[] }
+  | ({ type: 'image' } & ImageRef);
+
+// The whole files behind a diff. Records keep both texts; a page view carries the path only (`omitted`), since an edit
+// holds every byte of the file twice and long sessions ran to megabytes of them over Remote-SSH. The page renders the
+// diff from its `lines` and asks for the texts when it needs them (WebviewMsg `diffSource`)
+export interface FullDiffSource {
+  path: string;
+  oldText: string;
+  newText: string;
+  omitted?: undefined;
+}
+export type DiffSource = FullDiffSource | { path: string; omitted: true };
+
+export interface DiffLine {
+  kind: 'hunk' | 'add' | 'del' | 'ctx';
+  text: string;
+  // Source positions are captured before unchanged context is collapsed.
+  oldLine?: number;
+  newLine?: number;
+}
+
+// JetBrains AIR sessionFailure actions, the only values the adapters emit
+export type FailureAction = 'retry' | 'login' | 'new_session';
+export type FailureCategory = 'connection' | 'access' | 'limit' | 'request' | 'service' | 'unknown';
+
+// An AIR sessionFailure warning or advisory delivered out of band: lives on the turn that was active
+// when it arrived, upserted by id (a higher revision replaces the row in place). The error that ends a
+// turn additionally lands on AgentTurn.error and is rendered by the alert card, so a notice row whose
+// id matches the turn error's failureId is not drawn a second time. An ACP `notice` update (ids `notice:<n>`,
+// category `unknown`, no actions) is a row too, and the only source of `info`
+export interface NoticeBlock {
+  type: 'notice';
+  id: string;
+  revision: number;
+  category: FailureCategory;
+  severity: 'warning' | 'error';
+  // An informational ACP notice, stored as a warning plus this flag so engines up to 1.10.6 still read the record
+  info?: boolean;
+  title: string;
+  details?: string;
+  actions: FailureAction[];
+  // Set on the row that logs one run of provider retries. An optional field rather than a block type of its own, so
+  // older engines still read the record (as a plain warning with the latest error)
+  retry?: RetryLog;
+}
+
+// One run of provider retries inside a turn: every failed attempt with the provider's own error text. `in_progress`
+// while retrying; `completed` once the stream resumed, `failed` when the turn errored, `cancelled` when it was stopped
+export interface RetryLog {
+  status: ToolStatus;
+  max?: number;
+  // When the next attempt starts (epoch ms), while one is scheduled
+  nextAt?: number;
+  // The last attempt lost the connection rather than getting an error answer
+  reconnect?: boolean;
+  attempts: RetryAttempt[];
+}
+
+export interface RetryAttempt {
+  // When the failure was reported (epoch ms)
+  at: number;
+  attempt?: number;
+  // The error as the provider or the CLI worded it, verbatim
+  text: string;
+}
+
+// JetBrains AIR asyncTasks state: background work the adapter reports independently of the prompt
+// lifecycle. Terminal values are final; stopRequested records a host stop request the adapter's own
+// state update has not confirmed yet
+export type AsyncTaskState = 'running' | 'paused' | 'completed' | 'failed' | 'stopped';
+export interface AsyncTaskInfo {
+  id: string;
+  state: AsyncTaskState;
+  canStop: boolean;
+  taskType?: string;
+  name?: string;
+  description?: string;
+  summary?: string;
+  lastToolName?: string;
+  outputFilePath?: string;
+  usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+  stopRequested?: true;
+}
+
+export interface ToolCallBlock {
+  type: 'tool_call';
+  // Observation lost; not a receipt that the remote process stopped.
+  observation?: 'unknown';
+  id: string;
+  kind: ToolKind;
+  verb: string;
+  // Set when the verb comes from the tool's identity (e.g. a todo-list tool filed under kind "think") rather than its ACP kind; renders in the current UI locale
+  verbKey?: MsgKey;
+  // The MCP server the call went to, as configured (`blockbench`): the row reads "Call blockbench" with the tool's title as
+  // its target, whichever adapter naming the call came in
+  mcpServer?: string;
+  target?: string;
+  targetMono?: boolean;
+  // Preserve ACP file references independently of the compact heading target.
+  locations?: { path: string; line?: number }[];
+  // Explicit read parameters; kept separately because later ACP locations omit the range.
+  readRange?: { path: string; start: number; end?: number };
+  status: ToolStatus;
+  // A command the agent parked in the background (Devin's exec past its timeout): it stays in_progress until the process exits,
+  // so it must not pass for what the agent is doing right now
+  background?: boolean;
+  // An AIR async task owns this row once attached: its state drives status, the end-of-turn sweep
+  // leaves it alone while the task runs, and stop requests go through `_session/async_task/stop`
+  asyncTask?: AsyncTaskInfo;
+  // Observed execution time; initial pending approvals and replay-only tools have no timer.
+  startedAt?: number;
+  endedAt?: number;
+  meta?: string;
+  diffStat?: { add: number; del: number };
+  // Confirmed todo-tool output, separate from the standard live plan update.
+  todoEntries?: PlanEntry[];
+  content?: ToolContent;
+  // Every renderable content item in wire order, present only when there is more than one; `content` stays the
+  // primary item so records written before this field render unchanged
+  contents?: ToolContent[];
+  // This row is the delegation call of a subagent node (run_subagent / Agent); the node carries the child's transcript
+  subagentId?: string;
+}
+
+export interface ThoughtBlock {
+  type: 'thought';
+  text: string;
+  // Legacy observation interval until the next block, not actual reasoning duration.
+  // Retained for stored transcripts; the UI must not display it as a thought timer.
+  startedAt?: number;
+  durationSec?: number;
+  streaming?: boolean;
+}
+
+export type PlanStatus = 'pending' | 'in_progress' | 'completed';
+export type PlanPriority = 'high' | 'medium' | 'low';
+
+export interface PlanEntry {
+  title: string;
+  status: PlanStatus;
+  // ACP PlanEntry.priority; absent on entries persisted before it was kept
+  priority?: PlanPriority;
+}
+
+export interface PlanBlock {
+  type: 'plan';
+  entries: PlanEntry[];
+  // This turn contained a real list change, even if it ended at an earlier state.
+  // Absent on legacy records that also stored unchanged session snapshots.
+  changed?: true;
+}
+
+export interface TextBlock {
+  type: 'text';
+  // Stable externally supplied identity and visible message phase, when provided.
+  id?: string;
+  phase?: 'commentary' | 'final';
+  markdown: string;
+  streaming?: boolean;
+  // Local image files the markdown embeds (`![](/abs/shot.png)`), read into the blob store by the host; `uri` is the source as written.
+  // An entry without `blob` was tried and could not be read
+  images?: ImageRef[];
+  // Stretch boundary timing (epoch ms) on a closing final reply before a reopened continuation (`mark_reply_final`)
+  endedAt?: number;
+  resumedAt?: number;
+}
+
+export type PermissionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';
+
+export interface PermissionBlock {
+  type: 'permission';
+  id: string;
+  title: string;
+  command?: string;
+  description?: string;
+  planId?: string;
+  // `_meta.permission.defaultToNo`: the adapter already ordered reject first; the card makes the reject button primary
+  defaultToNo?: boolean;
+  options: { id: string; label: string; kind: PermissionKind; detail?: string }[];
+}
+
+// A saved implementation plan, separate from the live to-do list.
+export interface PlanDocumentBlock {
+  type: 'plan_document';
+  id: string;
+  title: string;
+  markdown: string;
+  path?: string;
+  toolCallId: string;
+  approvalToolCallId?: string;
+  status: 'draft' | 'ready' | 'approved' | 'rejected' | 'executing';
+  // Stretch boundary timing (epoch ms): end of the planning stretch ahead of the card, start of the continuation after it
+  endedAt?: number;
+  resumedAt?: number;
+}
+
+// Context compaction (ACP compaction_update): a single status line
+export type CompactionStatus = 'in_progress' | 'completed' | 'failed' | 'cancelled';
+
+export interface CompactionBlock {
+  type: 'compaction';
+  id: string;
+  status: CompactionStatus;
+  // The agent's reason for a failed compaction
+  error?: string;
+}
+
+// A structured question the agent put to the user: one property of an elicitation form (Devin / Kimi `elicitation/create`, mode form)
+// or one entry of Grok's `_x.ai/ask_user_question`. `id` is the key the answer goes back under (form property / Grok question text)
+export interface QuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export type QuestionKind = 'single' | 'multiple' | 'text';
+
+export interface Question {
+  id: string;
+  // Short header (Devin / Kimi `header`); the question itself is `text`
+  title?: string;
+  text: string;
+  kind: QuestionKind;
+  // Empty for a free-text question
+  options: QuestionOption[];
+  // A free-text answer is accepted alongside the options (Grok always; Devin when it says allowOther)
+  other?: boolean;
+  // A text answer must be a number (schema type number / integer)
+  numeric?: boolean;
+  required?: boolean;
+}
+
+// The answer of one question: the chosen option id, the free text, or the chosen ids of a multi-select
+export type QuestionAnswer = string | string[];
+export type QuestionAnswers = Record<string, QuestionAnswer>;
+
+// How the card was closed: `answered` sent the answers, `skipped` told the agent to go on with what it has, `cancelled` is the turn ending first
+export type QuestionOutcome = 'answered' | 'skipped' | 'cancelled';
+
+// The question card. Pending (no outcome) it is pinned above the composer; resolved it stays in the message as the record of what was asked and picked
+export interface QuestionBlock {
+  type: 'question';
+  id: string;
+  toolCallId?: string;
+  // The form's own message, when it says more than the questions do
+  message?: string;
+  questions: Question[];
+  outcome?: QuestionOutcome;
+  answers?: QuestionAnswers;
+  // The agent takes images with the answers (the built-in agent, on a model that reads images)
+  images?: boolean;
+  // Images sent with the answers, by question id; the bytes are in the session's blob store
+  answerImages?: Record<string, ImageRef[]>;
+}
+
+// An image draft as a question card sends it with an answer
+export type ImageDraft = Extract<Draft, { kind: 'image' }>;
+
+// An image the agent streamed as a message chunk (image generation / view results); pixels are in the blob store, never base64 here
+export interface ImageBlock {
+  type: 'image';
+  id: string;
+  blob?: string;
+  mimeType: string;
+  uri?: string;
+}
+
+// A queued prompt steered into this running turn over `_session/steering`: it joined the agent loop at this point instead of
+// waiting for a turn of its own, so it renders as a user message between the blocks around it
+export interface SteerBlock {
+  type: 'steer';
+  id: string;
+  text: string;
+  attachments?: Attachment[];
+}
+
+// The agent's goal (AIR goal extension, codex-acp / claude-agent-acp): it keeps working toward `objective` across turns until it
+// judges it met. Counters are whatever the agent reports: Claude its stop-hook rounds, Codex time and tokens against a budget.
+// `limited` is Codex's usageLimited / budgetLimited
+export type GoalStatus = 'active' | 'paused' | 'blocked' | 'limited' | 'complete';
+export interface SessionGoal {
+  objective: string;
+  status: GoalStatus;
+  iterations?: number;
+  tokenBudget?: number;
+  tokensUsed?: number;
+  timeUsedSeconds?: number;
+  // Epoch ms of the agent's last goal change: timeUsedSeconds counts up to here
+  updatedAt?: number;
+}
+// A goal control the agent advertises at initialize; `set` is also what `/goal <objective>` does
+export type GoalAction = 'set' | 'pause' | 'resume' | 'clear';
+export type GoalEvent = 'set' | 'paused' | 'resumed' | 'blocked' | 'limited' | 'complete' | 'cleared';
+// A goal milestone: the dock strip shows the present, these rows keep the history. Counters are the snapshot's at that moment
+export interface GoalBlock {
+  type: 'goal';
+  event: GoalEvent;
+  objective?: string;
+  iterations?: number;
+  tokensUsed?: number;
+  timeUsedSeconds?: number;
+}
+
+export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock | NoticeBlock | SteerBlock | GoalBlock;
+
+// Where a shared text came from (another extension's selection, a picked web page); absent on dropped text. It rides on the
+// `text` kind so engines released before it still read the record, as a plain text attachment
+export interface TextContext {
+  sourceId: string;
+  sourceName: string;
+  uri?: string;
+  comment?: string;
+}
+
+// What the composer attaches to a prompt before the host has seen it: images and dropped text carry their payload (base64 / text),
+// files carry a URI (Explorer drag / @ mention) that the host resolves — image files become `image`, everything else stays a link
+export type Draft =
+  | { kind: 'image'; mimeType: string; data: string; name?: string }
+  | { kind: 'text'; name: string; text: string; context?: TextContext }
+  // `data`: base64 bytes of an OS file the webview only holds as a blob (paste / Finder drop); the host stages it and links the staged path
+  | { kind: 'file'; uri: string; name: string; data?: string }
+  // A line range of an editor document (the IDE's selection, its "Add to chat" action, or a paste of text copied there); lines are 1-based and inclusive
+  | { kind: 'selection'; uri: string; name: string; startLine: number; endLine: number; text: string }
+  // Text quoted from the conversation with the user's optional remark on it
+  | { kind: 'quote'; text: string; comment?: string };
+
+// Attachment as persisted on a user turn. Images and dropped text live in the session's blob directory (the turn keeps only the file name,
+// the webview loads it via blobBase; absent when the write failed — the prompt still went out, only the preview is gone); files are paths the agent reads by itself (sent as resource_link)
+export type Attachment =
+  | { kind: 'image'; blob?: string; mimeType: string; name?: string }
+  | { kind: 'text'; blob?: string; name: string; context?: TextContext }
+  | { kind: 'file'; uri: string; name: string }
+  // The selected text is in the blob store like dropped text
+  | { kind: 'selection'; blob?: string; uri: string; name: string; startLine: number; endLine: number }
+  // Quotes are short and kept inline
+  | { kind: 'quote'; text: string; comment?: string };
+
+export interface UserTurn {
+  role: 'user';
+  id?: string;
+  text: string;
+  // Advertised command selected at send time; retained for historical highlighting.
+  command?: string;
+  attachments?: Attachment[];
+  // The exact ACP selections used when this message was sent; older records omit it.
+  settings?: TurnSettings;
+  // Retrying a failed edited turn must rebuild its preceding context as well.
+  edited?: true;
+  // Internal execution instruction; the plan card represents it in the UI.
+  planId?: string;
+  // Sent automatically by Acpira (/compact over threshold, the continue after an account switch or after a Retry); never rendered as a bubble
+  auto?: boolean;
+  // Why an automatic turn was sent; absent on an automatic turn means the over-threshold /compact
+  autoReason?: AutoReason;
+  // With autoReason `goal`: the goal's next turn, which the engine sent because the goal was still active when the turn
+  // before ended (the built-in agent leaves continuing to the client); it reads as the reply before it carried on. A flag
+  // rather than an AutoReason value, since engines released before it fail the whole record on an unknown value
+  goalContinue?: true;
+}
+
+// `accountSwitch`: the previous turn ran out of account quota and the session moved to another account
+// `retry`: the previous turn failed after doing part of the work; Retry asked the agent to carry on instead of resending the message
+// `gate`: the workspace gate (`.agents/hooks.json`) blocked the previous turn and sent its findings back to the agent
+// `goal`: a goal control from the dock (set as goal, resume, clear) went out as its `/goal …` command; the goal row stands for it
+// (with `goalContinue`, the goal's next turn)
+export type AutoReason = 'compact' | 'accountSwitch' | 'retry' | 'gate' | 'goal' | 'subagents';
+
+export interface TurnSettings {
+  modeId?: string;
+  config: Record<string, string>;
+}
+
+// How an agent turn ended. `end_turn` and `cancelled` are the normal outcomes; the rest stopped the turn short and are shown to the user:
+// the ACP stopReasons max_tokens / max_turn_requests / refusal, plus `error` when session/prompt itself failed (details in AgentTurn.error)
+export type TurnStop = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled' | 'error';
+
+export interface TurnError {
+  message: string;
+  // JSON-RPC error code when the failure was a protocol error
+  code?: number;
+  // The vendor's error kind (Devin: data['cognition.ai/errorKind']) and whether it says the same request may succeed if retried
+  kind?: string;
+  retryable?: boolean;
+  // AIR sessionFailure on a turn-ending error: the payload's id (it also owns a NoticeBlock on this
+  // turn, which the renderer suppresses) and the action list the adapter declared — the UI renders
+  // exactly these, never a locally guessed set
+  failureId?: string;
+  actions?: FailureAction[];
+}
+
+// Token accounting the agent reported for one prompt (ACP PromptResponse.usage, Grok's _meta), plus the context snapshot the last
+// usage_update left after it. Every field is present only when the peer reported it: Kimi 0.41.0 reports no per-prompt tokens at all
+export interface TurnUsage {
+  // The whole prompt, cache reads and writes included, whichever semantics the agent reported (the engine folds them)
+  input?: number;
+  output?: number;
+  cachedRead?: number;
+  cachedWrite?: number;
+  reasoning?: number;
+  total?: number;
+  // Model rounds the prompt took (Grok `_meta.usage.modelCalls`)
+  modelCalls?: number;
+  // Milliseconds the model calls streamed, each from its first event to its end, when the agent times them itself
+  // (the built-in agent's `_meta.usage.decodeMs`); the output speed divides by it instead of estimating
+  decodeMs?: number;
+  // The model the agent says answered (Grok `_meta.modelId`); the webview falls back to the user turn's settings otherwise
+  model?: string;
+  // The vendor's id for this request (Grok `_meta.requestId`, Devin `_meta['cognition.ai/userMessageId']`)
+  requestId?: string;
+  // Tokens in context / window after this turn, from the latest usage_update (or Grok's session info poll)
+  context?: { used: number; size: number };
+}
+
+export interface AgentTurn {
+  role: 'agent';
+  // External execution state cannot currently be established.
+  observation?: 'unknown';
+  blocks: AgentBlock[];
+  // Per-prompt token accounting the agent reported; absent when the peer reports none (Kimi)
+  usage?: TurnUsage;
+  // Wall-clock prompt duration, including tools and permission waits. Absent on older transcripts.
+  startedAt?: number;
+  // When the first streamed block landed; the turn's clock (live and finished) counts from here so the wait for the
+  // agent's first output is not working time. Absent until then, and on older transcripts. `startedAt` stays the identity
+  respondedAt?: number;
+  endedAt?: number;
+  // Milliseconds the live turn spent with only background work open and the model silent past a grace period (the
+  // engine's `normalize/idle.rs`): waiting, neither tool time nor generation, so the output speed leaves it out
+  idleMs?: number;
+  // What it's currently doing (inferred from usage and tool states); empty when the turn ends
+  activity?: { kind: ToolKind; label: string };
+  // How the turn ended; absent while it runs (and on turns persisted before this field existed)
+  stop?: TurnStop;
+  error?: TurnError;
+  // A slash request can finish without prose. Keep the receipt separate from
+  // agent-authored blocks, with only observed ACP setting changes.
+  command?: { name: string; mode?: string; options?: { name: string; value: string }[] };
+  // A provider retry in progress: shown in the working label only, cleared once the stream resumes or the turn ends
+  retry?: TurnRetry;
+  // Plugins an agent of this turn offered (plugin_activate), shown after the reply and clickable for good
+  pluginCards?: PluginCard[];
+}
+
+// A plugin card (docs/dev/plugins.md, Activation): the frozen version an agent asked to enable. Its state (offered, in
+// effect, replaced) is read from the plugins' state (PluginsView), not kept here; only what applying it from this card
+// changed is, so the card can put it back
+export interface PluginCard {
+  // Unique within the session
+  id: string;
+  plugin: string;
+  // The frozen version it offers
+  snapshot: string;
+  name: string;
+  description: string;
+  // skin: a theme; ui: interface pieces; agent: a specialised agent; exec: runs a program (named in `runs`)
+  kind: 'skin' | 'ui' | 'agent' | 'exec' | 'other' | (string & {});
+  runs?: string;
+  // The slots its interface pieces take, for the thumbnail's map
+  slots?: string[];
+  // The cron expressions of its schedules: it runs unattended, and may act on sessions while nobody watches
+  schedules?: string[];
+  // What it contributes (tools, hooks, agent …): where the card's mark flies once applied (plugins/landings.ts)
+  adds?: string[];
+  // The style hooks (STYLE_HOOKS) its stylesheet names, first seen first: a style lands on those parts of the page
+  restyles?: string[];
+  // The source folder, which the corner button reveals
+  folder: string;
+  at: number;
+  // Set when it was applied from this card: the version enabled before (none: it was off) and the skin before
+  // ('' for none; absent when the card is not a skin)
+  undo?: { snapshot?: string; skin?: string };
+  // The tool call that offered it (the agent's plugin_activate): shown right after that row, not under everything the
+  // turn streams later. Absent on older records, or when the call is not in the turn: after the reply
+  after?: string;
+}
+
+export interface TurnRetry {
+  attempt?: number;
+  max?: number;
+  // The adapter's own wording, for the label's tooltip
+  detail: string;
+}
+
+export type Turn = UserTurn | AgentTurn;
+
+export interface SessionSummary {
+  id: string;
+  title: string;
+  agent: AgentId;
+  accountId?: string;
+  // The agent's own session id, so a native listing can tell which sessions are already imported
+  acpSessionId?: string;
+  // The project the session belongs to: the workspace folder it was opened in (also the agent's working directory)
+  cwd: string;
+  // ISO timestamp; the webview formats it itself
+  updatedAt: string;
+  // When the last turn ended finished, epoch ms; absent while the last turn is anything else. A rename, a pin or a read
+  // leaves it alone, unlike updatedAt, so a plugin style can age a finished session (styleClock.ts)
+  completedAt?: number;
+  // When the session was started (ISO), for the list's "created" order; absent on index entries written before the field
+  // existed, which order by updatedAt instead
+  createdAt?: string;
+  pinned?: boolean;
+  // Archived: left out of the list unless its view filter asks for archived sessions
+  archived?: boolean;
+  // The user category (SessionCategory.id) the session is filed under; pinned and filed are exclusive. An id no category
+  // carries any more (deleted in some window) reads as unfiled
+  category?: string;
+  // background: the turn ended but a background task it started (background Bash, Monitor, a workflow) still runs
+  state?: 'working' | 'waiting' | 'unread' | 'error' | 'background';
+  // Only beside `background`: a turn ended there that nobody has looked at yet ('unread' itself would read as finished)
+  unread?: boolean;
+  // Only beside `waiting`: only questions wait; a permission card waiting too wins, as it holds up a tool
+  question?: boolean;
+  // Only beside `background`: when Claude's pending ScheduleWakeup resumes the session (ms since the epoch)
+  wakeAt?: number;
+  // The model the session last ran: the wire id is its identity (the vendor is read from it), the name its label. Absent
+  // while no model control is known and on index entries written before the field existed
+  model?: { id: string; name: string };
+}
+
+// A user-made group of sessions inside one project (cwd), shown between the project and its sessions
+export interface SessionCategory {
+  id: string;
+  name: string;
+  cwd: string;
+  collapsed?: boolean;
+}
+
+// A user-made top-level section of a project shell's list ("Work", "Personal"), at the level of Pinned / Projects: it holds
+// whole projects, each project in at most one section. Projects in none stay under Projects
+export interface SessionSection {
+  id: string;
+  name: string;
+  // Project folders in this section, in list order
+  projects: string[];
+  collapsed?: boolean;
+}
+
+// Every category in list order, plus the projects folded in the "all projects" list; shared by every window
+export interface SessionCategories {
+  categories: SessionCategory[];
+  collapsedProjects: string[];
+  // Project folders in the order a project shell (the desktop app) lists them, folders without a session yet included;
+  // absent until a project shell first connects. IDE session trees do not read it
+  projects?: string[];
+  // Folders a project shell took off its list: their sessions stay and a search still finds them, but the list no longer
+  // shows the folder for them until it is added again (a session started there adds it)
+  removedProjects?: string[];
+  // Project shells' sections, in list order (absent until the first one is made)
+  sections?: SessionSection[];
+  // What a project holds beyond its folder, keyed by that (primary) folder: a name of its own and further folders, which
+  // agents get as ACP `additionalDirectories`. A project without either has no entry
+  projectMeta?: Record<string, ProjectMeta>;
+}
+
+// A project's own name and its folders besides the primary one (absolute, in the order the user listed them)
+export interface ProjectMeta {
+  name?: string;
+  extra?: string[];
+}
+
+// One edit of the category list, applied by the host to what is on disk so concurrent windows compose.
+// The page picks a new category's id, so it can file a session or start renaming the new row right away
+export type CategoryOp =
+  | { op: 'create'; id: string; name: string; cwd: string }
+  | { op: 'rename'; id: string; name: string }
+  | { op: 'delete'; id: string }
+  | { op: 'collapse'; id: string; collapsed: boolean }
+  // Move `id` before `before` (same project), or to the end of its project's categories
+  | { op: 'reorder'; id: string; before?: string }
+  | { op: 'collapseProject'; cwd: string; collapsed: boolean }
+  // Project shells only: register a folder at the end of `projects` (undoing a removal), take it off the list (onto
+  // `removedProjects`, its sessions stay), move it before `before` (or to the end), and the first order, which applies
+  // only while `projects` is absent
+  | { op: 'addProject'; cwd: string }
+  | { op: 'removeProject'; cwd: string }
+  // Project shells: a project's name (blank: its folder's), primary folder (taking over its place, section and
+  // categories) and further folders; a folder that was a project of its own, or another project's, joins this one
+  | { op: 'editProject'; cwd: string; primary: string; name?: string; extra: string[] }
+  | { op: 'reorderProject'; cwd: string; before?: string }
+  | { op: 'seedProjects'; cwds: string[] }
+  // Sections (project shells): the page picks a new one's id, so it can start renaming it at once; `project` files that
+  // folder into it in the same edit (a separate setProjectSection could land first and find no section). Deleting one
+  // leaves its projects under Projects; `setProjectSection` without `section` takes a project out, with one files it before
+  // `before` (a project of that section; absent: at its end)
+  | { op: 'createSection'; id: string; name: string; project?: string }
+  | { op: 'renameSection'; id: string; name: string }
+  | { op: 'deleteSection'; id: string }
+  | { op: 'collapseSection'; id: string; collapsed: boolean }
+  | { op: 'reorderSection'; id: string; before?: string }
+  | { op: 'setProjectSection'; cwd: string; section?: string; before?: string };
+
+// One entry of an agent's own session list (ACP session/list), for the history list's "Import from <agent>"
+export interface NativeSessionInfo {
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  updatedAt?: string;
+  // The Acpira record that already holds this native session
+  localId?: string;
+}
+
+export interface Usage {
+  used: number;
+  size: number;
+  cost?: number;
+  // A compaction finished and the agent has not reported its context since (Devin): `used` still predates it and this is
+  // that figure; the next report replaces the snapshot and drops the field
+  compactedFrom?: number;
+}
+
+// A prompt waiting for the running turn to end. Its attachments are staged when it is queued (blobs on disk), so the webview shows
+// them the way it shows a sent turn's; the id addresses it for editing / removal while it waits
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  attachments: Attachment[];
+  sending?: boolean;
+}
+
+export interface ForkOrigin {
+  sessionId: string;
+  turnIndex: number;
+  agent?: AgentId;
+}
+
+
+// How an account comes in: import reads the CLI's own local login; login runs an isolated login in the terminal that leaves the local login untouched;
+// auto is the "+" in the menu: import the local login if it hasn't been imported yet, otherwise log in a new one in the terminal
+export type AddAccountVia = 'import' | 'login' | 'auto';
+// unlock: the credential store holding the agent's logins (macOS keychain) is unlocked in a terminal, no account is added;
+// key: a pasted API key is checked with the vendor and stored as an account (addAccountKey)
+export type AccountActionVia = AddAccountVia | 'unlock' | 'key';
+
+// Host-owned progress survives webview remounts and prevents duplicate imports across panels.
+export interface AccountAction {
+  agent: AgentId;
+  via: AccountActionVia;
+  status: 'pending' | 'success' | 'missing' | 'cancelled' | 'error';
+  error?: string;
+}
+
+// One agent's in-app install: the registry's install line run by the engine itself on its own machine (no terminal).
+// Host-owned like AccountAction, so a remounted page or a second panel shows the same run
+export interface AgentInstallProgress {
+  agent: AgentId;
+  status: 'running' | 'success' | 'failed' | 'cancelled';
+  // The last lines of the installer's output, ANSI removed, carriage-return progress collapsed
+  log: string[];
+  // The proxy the installer went through; absent when it used the inherited environment
+  proxy?: string;
+  // npm's global prefix was not writable, so packages went to this user directory
+  prefix?: string;
+  // Why it failed, already localized
+  error?: string;
+  // Failed because Node.js / npm was not found: the page offers downloading a private portable Node.js LTS and retrying
+  missingNode?: boolean;
+}

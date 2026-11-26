@@ -143,7 +143,7 @@ fn skills_block(dirs: &[std::path::PathBuf]) -> Option<Value> {
 
 /// A command button's menu as the page draws it, the session's picks checked, and the chip's badge: the label of the
 /// first group's pick
-fn command_menu(def: &crate::plugins::manifest::CommandDef, stored: Option<&serde_json::Map<String, Value>>) -> (Vec<CommandMenuItem>, Option<String>) {
+fn command_menu(def: &super::ext::CommandDef, stored: Option<&serde_json::Map<String, Value>>) -> (Vec<CommandMenuItem>, Option<String>) {
   if def.menu.is_empty() {
     return (vec![], None);
   }
@@ -189,8 +189,8 @@ impl AcpSession {
   /// Every plugin command menu's picks in this session, defaults filled in, by command name; None when no plugin
   /// command has a menu. Takes the core lock, so never called with it held
   fn plugin_menu_picks(&self) -> Option<Value> {
-    let contributed = self.deps.plugin_runtime.as_ref()?.contributed();
-    let mut menus = contributed.commands.iter().filter(|c| !c.def.menu.is_empty()).peekable();
+    let commands = self.deps.plugin_runtime.as_ref()?.contributed_commands();
+    let mut menus = commands.iter().filter(|c| !c.def.menu.is_empty()).peekable();
     menus.peek()?;
     let c = self.core.lock();
     Some(Value::Object(menus.map(|cmd| (cmd.def.name.clone(), Value::Object(cmd.def.menu_picks(c.plugin_state.menus.get(&cmd.def.name))))).collect()))
@@ -201,8 +201,8 @@ impl AcpSession {
   /// keeps nothing otherwise). A failed hook shows as a notice
   pub fn plugin_menu_pick(self: &Arc<Self>, name: &str, item: &str) {
     let Some(rt) = self.deps.plugin_runtime.clone() else { return };
-    let contributed = rt.contributed();
-    let Some(cmd) = contributed.commands.iter().find(|c| c.def.name == name && c.def.menu.iter().any(|i| i.id == item && i.kind != "separator")) else { return };
+    let commands = rt.contributed_commands();
+    let Some(cmd) = commands.iter().find(|c| c.def.name == name && c.def.menu.iter().any(|i| i.id == item && i.kind != "separator")) else { return };
     let picks = {
       let mut c = self.core.lock();
       let current = cmd.def.menu_picks(c.plugin_state.menus.get(name));
@@ -228,7 +228,7 @@ impl AcpSession {
 
   /// An answer's `picks` (from the `menu` or `command` hook) for command `def`'s menu: what the menu has replaces the
   /// stored picks, the rest is dropped
-  fn apply_menu_answer(&self, def: &crate::plugins::manifest::CommandDef, answer: &Value) {
+  fn apply_menu_answer(&self, def: &super::ext::CommandDef, answer: &Value) {
     let Some(picks) = answer.get("picks").and_then(Value::as_object) else { return };
     if def.menu.is_empty() {
       return;
@@ -271,7 +271,7 @@ impl AcpSession {
     if first
       && !command
       && self.agent != crate::acp::agents::registry::SELF_AGENT_ID
-      && let Some(block) = skills_block(&rt.contributed().skills)
+      && let Some(block) = skills_block(&rt.contributed_skills())
     {
       tail.push(block);
     }
@@ -290,7 +290,7 @@ impl AcpSession {
     let mut blocked = None;
     let mut redirect = None;
     let out = rt
-      .chain("prompt", payload, |plugin, answer, p| {
+      .chain("prompt", payload, &mut |plugin, answer, p| {
         if let Some(reason) = text_of(&answer, "block") {
           blocked = Some(format!("{plugin}: {}", clipped(reason)));
           return false;
@@ -342,9 +342,8 @@ impl AcpSession {
   /// The menu's commands with the plugins' after the agent's own (an agent's command of the same name wins); None when
   /// no plugin adds one. `menus`: the session's picks, checked in each button's menu
   pub(crate) fn plugin_commands(&self, own: &[SlashCommand], menus: &crate::store::record::PluginMenus) -> Option<Vec<SlashCommand>> {
-    let contributed = self.deps.plugin_runtime.as_ref()?.contributed();
-    let extra: Vec<SlashCommand> = contributed
-      .commands
+    let commands = self.deps.plugin_runtime.as_ref()?.contributed_commands();
+    let extra: Vec<SlashCommand> = commands
       .iter()
       .filter(|c| !own.iter().any(|o| o.name == c.def.name))
       .map(|c| {
@@ -376,7 +375,7 @@ impl AcpSession {
   /// Whether `text` runs a plugin's command: `/name` that a plugin contributes and the agent's own `commands` lack
   pub(crate) fn runs_plugin_command(&self, commands: &[SlashCommand], text: &str) -> bool {
     let (Some(rt), Some(name)) = (self.deps.plugin_runtime.as_ref(), command_name(text)) else { return false };
-    !commands.iter().any(|c| c.name == name) && rt.contributed().commands.iter().any(|c| c.def.name == name)
+    !commands.iter().any(|c| c.name == name) && rt.contributed_commands().iter().any(|c| c.def.name == name)
   }
 
   /// `/name …` naming a plugin's command (and none of the agent's): Some(Ok(Some(text))) is the prompt to send in its
@@ -395,8 +394,8 @@ impl AcpSession {
     if self.core.lock().state.commands.iter().any(|c| c.name == name) {
       return None;
     }
-    let contributed = rt.contributed();
-    let cmd = contributed.commands.iter().find(|c| c.def.name == name)?;
+    let commands = rt.contributed_commands();
+    let cmd = commands.iter().find(|c| c.def.name == name)?;
     if let Some(template) = cmd.def.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
       return Some(Ok(Some(expand(template, args))));
     }
@@ -447,7 +446,7 @@ impl AcpSession {
       "autoApprove": auto,
     }));
     let mut verdict = PermVerdict::Pass;
-    rt.chain("permission", payload, |plugin, answer, _| match answer.get("decision").and_then(Value::as_str) {
+    rt.chain("permission", payload, &mut |plugin, answer, _| match answer.get("decision").and_then(Value::as_str) {
       Some("deny") => {
         let reason = text_of(&answer, "reason").map(clipped).unwrap_or_default();
         verdict = PermVerdict::Deny(plugin.to_owned(), reason);
@@ -490,7 +489,7 @@ impl AcpSession {
         "max": RETRY_MAX,
       }));
       let mut wait = None;
-      rt.chain("retry", payload, |plugin, answer, _| {
+      rt.chain("retry", payload, &mut |plugin, answer, _| {
         if answer.get("retry").and_then(Value::as_bool) == Some(true) {
           let ms = answer.get("delayMs").and_then(Value::as_u64).map(Duration::from_millis).unwrap_or(RETRY_DELAY_DEFAULT);
           me.log(&format!("plugin {plugin}: retry in {} ms", ms.min(RETRY_DELAY_MAX).as_millis()));
@@ -540,7 +539,7 @@ impl AcpSession {
     tokio::spawn(async move {
       let payload = me.plugin_payload(json!({ "title": title, "source": source, "prompt": prompt }));
       let out = rt
-        .chain("title", payload, |_, answer, p| {
+        .chain("title", payload, &mut |_, answer, p| {
           if let Some(t) = text_of(&answer, "title") {
             p["title"] = json!(crate::util::tidy_title(t, crate::limits::TITLE_MAX));
           }
@@ -599,12 +598,12 @@ impl AcpSession {
     }
   }
 
-  fn offer_settled(&self, rt: Arc<crate::plugins::runtime::Runtimes>, turn: usize, started: Option<i64>, original: Prose, next: Value, ended: bool) {
+  fn offer_settled(&self, rt: Arc<dyn super::ext::PluginRuntimePort>, turn: usize, started: Option<i64>, original: Prose, next: Value, ended: bool) {
     let me = self.arc();
     tokio::spawn(async move {
       let payload = me.plugin_payload(json!({ "blocks": [original.to_json()], "next": next, "ended": ended }));
       let out = rt
-        .chain("transcript", payload, |plugin, answer, p| {
+        .chain("transcript", payload, &mut |plugin, answer, p| {
           let Some(answer) = answer.get("blocks") else { return true };
           let current = parse_parts(&p["blocks"]).unwrap_or_default();
           match parse_parts(answer) {
@@ -643,7 +642,7 @@ impl AcpSession {
       }
       let mut block = None;
       let out = rt
-        .chain("tool.before", self.plugin_payload(json!({ "tool": name, "arguments": arguments })), |plugin, answer, p| {
+        .chain("tool.before", self.plugin_payload(json!({ "tool": name, "arguments": arguments })), &mut |plugin, answer, p| {
           if let Some(reason) = text_of(&answer, "block") {
             block = Some(format!("{plugin}: {}", clipped(reason)));
             return false;
@@ -660,7 +659,7 @@ impl AcpSession {
       return json!({});
     }
     let out = rt
-      .chain("tool.after", self.plugin_payload(json!({ "tool": name, "arguments": arguments, "result": result })), |_, answer, p| {
+      .chain("tool.after", self.plugin_payload(json!({ "tool": name, "arguments": arguments, "result": result })), &mut |_, answer, p| {
         if let Some(r) = answer.get("result").filter(|r| r.get("content").is_some_and(Value::is_array)) {
           p["result"] = r.clone();
         }
@@ -681,7 +680,7 @@ impl AcpSession {
   pub(crate) async fn plugin_loop_hook(&self, hook: &str, payload: Value) -> Value {
     let Some(rt) = self.deps.plugin_runtime.clone().filter(|rt| rt.has_hook(hook)) else { return payload };
     let mut out = rt
-      .chain(hook, self.plugin_payload(payload), |plugin, answer, p| {
+      .chain(hook, self.plugin_payload(payload), &mut |plugin, answer, p| {
         if let Some(reason) = text_of(&answer, "block") {
           p["block"] = json!(format!("{plugin}: {}", clipped(reason)));
           return false;
@@ -715,11 +714,11 @@ impl AcpSession {
   /// the list; Acpira's own server stays whatever a plugin answers
   pub(crate) async fn plugin_mcp(&self, servers: Vec<Value>) -> Vec<Value> {
     let Some(rt) = self.deps.plugin_runtime.clone().filter(|rt| rt.has_hook("session.mcp")) else { return servers };
-    let own: Vec<Value> = servers.iter().filter(|s| crate::host_mcp::is_host_entry(s)).cloned().collect();
+    let own: Vec<Value> = servers.iter().filter(|s| acpira_shared::host_tools::is_host_entry(s)).cloned().collect();
     // The grant in our own entry's env stays in the engine
-    let shown: Vec<Value> = servers.iter().filter(|s| !crate::host_mcp::is_host_entry(s)).cloned().collect();
+    let shown: Vec<Value> = servers.iter().filter(|s| !acpira_shared::host_tools::is_host_entry(s)).cloned().collect();
     let out = rt
-      .chain("session.mcp", self.plugin_payload(json!({ "servers": shown })), |plugin, answer, p| {
+      .chain("session.mcp", self.plugin_payload(json!({ "servers": shown })), &mut |plugin, answer, p| {
         match answer.get("servers").and_then(Value::as_array) {
           Some(list) => {
             let list: Vec<Value> = list.iter().filter(|s| s.get("name").and_then(Value::as_str).is_some_and(|n| !n.is_empty())).cloned().collect();
@@ -732,7 +731,7 @@ impl AcpSession {
       })
       .await;
     let mut next: Vec<Value> = out.get("servers").and_then(Value::as_array).cloned().unwrap_or_default();
-    next.retain(|s| !crate::host_mcp::is_host_entry(s) && s.get("name").and_then(Value::as_str) != Some(crate::host_mcp::SERVER_NAME));
+    next.retain(|s| !acpira_shared::host_tools::is_host_entry(s) && s.get("name").and_then(Value::as_str) != Some(acpira_shared::host_tools::SERVER));
     next.extend(own);
     next
   }
@@ -741,11 +740,11 @@ impl AcpSession {
 /// `agent.launch`: an agent process is about to start for a session. The payload names the agent, its command, args and
 /// the definition's own env (the account layer's variables are never shown); an answer `{ args?, env? }` replaces the
 /// args and sets (a string) or removes (null) variables. The definition as it will start
-pub(crate) async fn plugin_launch(rt: Option<&Arc<crate::plugins::runtime::Runtimes>>, def: &AgentDef, session: &str, cwd: &str) -> AgentDef {
+pub(crate) async fn plugin_launch(rt: Option<&Arc<dyn super::ext::PluginRuntimePort>>, def: &AgentDef, session: &str, cwd: &str) -> AgentDef {
   let Some(rt) = rt.filter(|rt| rt.has_hook("agent.launch")) else { return def.clone() };
   let payload = json!({ "session": session, "agent": def.id, "cwd": cwd, "command": def.command, "args": def.args, "env": def.env });
   let out = rt
-    .chain("agent.launch", payload, |_, answer, p| {
+    .chain("agent.launch", payload, &mut |_, answer, p| {
       if let Some(args) = answer.get("args").and_then(Value::as_array) {
         p["args"] = json!(args.iter().filter_map(Value::as_str).collect::<Vec<_>>());
       }

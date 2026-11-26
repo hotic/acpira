@@ -4,6 +4,7 @@
 //! macOS under one fixed program (`launcher`), so privacy grants survive new builds.
 
 pub mod ensure;
+pub mod launchd;
 pub mod launcher;
 pub mod policy;
 pub mod stage;

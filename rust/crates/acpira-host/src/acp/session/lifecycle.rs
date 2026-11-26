@@ -11,7 +11,8 @@ use acpira_shared::inventory::AgentHealthStage;
 use acpira_shared::transcript::*;
 
 use crate::acp::agents::lock_holder;
-use crate::acp::agents::model_sources::read_model_facts;
+use crate::acp::agents::spawn::spawn_agent;
+use crate::acp::probe::model_sources::read_model_facts;
 use crate::acp::session::errors::{AccountAuthError, RestoreFailure, classify_restore_error, error_text, is_api_key_method, is_auth};
 use crate::acp::session::handlers::SessionHandlers;
 use crate::acp::session::queue::{PeerTurn, PromptQueue};
@@ -42,7 +43,7 @@ impl AcpSession {
       req["_meta"][acpira_agent::acp::LAYERS_META] = json!(layers);
     }
     // Its skills too, which it lists and loads like the user's own; the engine's own first
-    let skills: Vec<_> = self.deps.plugin_runtime.as_ref().map(|rt| rt.shipped_skills().into_iter().chain(rt.contributed().skills.iter().cloned()).collect()).unwrap_or_default();
+    let skills: Vec<_> = self.deps.plugin_runtime.as_ref().map(|rt| rt.shipped_skills().into_iter().chain(rt.contributed_skills()).collect()).unwrap_or_default();
     if !skills.is_empty() {
       req["_meta"][acpira_agent::acp::SKILLS_META] = json!(skills);
     }
@@ -121,8 +122,8 @@ impl AcpSession {
     }
     // The entry's env carries a grant for this session: the hub finds it when the agent calls ask_agent
     let entry = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(&self.agent, &self.arc(), None, 0));
-    if crate::host_mcp::push_entry(&mut servers, entry) {
-      self.log(&format!("shared MCP: left out the server named {}, which is Acpira's own", crate::host_mcp::SERVER_NAME));
+    if acpira_shared::host_tools::push_entry(&mut servers, entry) {
+      self.log(&format!("shared MCP: left out the server named {}, which is Acpira's own", acpira_shared::host_tools::SERVER));
     }
     // The plugins' processes may change the list; Acpira's own server stays
     let mut servers = self.plugin_mcp(servers).await;
@@ -147,7 +148,7 @@ impl AcpSession {
           }
         })
       };
-      match crate::remote::mcp_http::McpHttpBridge::rewrite(servers.clone(), self.process_cwd(), log).await {
+      match crate::acp::local_run::mcp_http::McpHttpBridge::rewrite(servers.clone(), self.process_cwd(), log).await {
         Ok((rewritten, bridge, names)) => {
           *self.mcp_bridge.lock() = bridge;
           if !names.is_empty() {
@@ -158,7 +159,7 @@ impl AcpSession {
         Err(e) => {
           self.mcp_bridge.lock().take();
           self.log(&format!("remote: could not start MCP HTTP bridge: {e:#}"));
-          servers.into_iter().filter(|s| crate::remote::mcp_http::stdio_spec(s).is_none()).collect()
+          servers.into_iter().filter(|s| crate::acp::local_run::mcp_http::stdio_spec(s).is_none()).collect()
         }
       }
     } else {
@@ -292,13 +293,13 @@ impl AcpSession {
     // A plugin's `agent.launch` hook changes how this session's agent starts, so a warm process will not do
     let launched = self.deps.plugin_runtime.as_ref().is_some_and(|rt| rt.has_hook("agent.launch"));
     let def = if launched { crate::acp::session::plugin_hooks::plugin_launch(self.deps.plugin_runtime.as_ref(), &def, &self.id, &dir).await } else { def };
-    // A stand-in CLI starts with its gate's arguments and environment (`StandProfile::launch`), after any plugin's, so no
+    // A stand-in CLI starts with its gate's arguments and environment (`StandProfile::apply_launch`), after any plugin's, so no
     // launch hook can drop them
     let stand = self.gated_remote_stand()?;
-    let def = match &stand {
-      Some(s) => s.profile.launch(&def),
-      None => def,
-    };
+    let mut def = def;
+    if let Some(s) = &stand {
+      s.profile.apply_launch(&mut def.args, &mut def.env);
+    }
     let (gen_id, account) = {
       let mut c = self.core.lock();
       c.usage.reset_for_process();
@@ -358,7 +359,7 @@ impl AcpSession {
           env.get_or_insert_with(Default::default).extend(exec);
         }
         // A CLI that did not start leaves no exec-server behind on the host
-        AgentProcess::spawn(&def, &bin, &dir, handlers, env.as_ref(), None).await.inspect_err(|_| drop(self.exec_tunnel.lock().take()))?
+        spawn_agent(&def, &bin, &dir, handlers, env.as_ref(), None).await.inspect_err(|_| drop(self.exec_tunnel.lock().take()))?
       }
     };
     let info = proc.init.get("agentInfo");
@@ -403,6 +404,7 @@ impl AcpSession {
         methods
       });
       *self.own_dirs.lock() = proc.own_dirs.clone();
+      c.agy_subagents.reset_dir();
       c.proc = Some(proc);
     }
     self.handoff().await
@@ -422,7 +424,7 @@ impl AcpSession {
           (Some(a), Some(h)) => h.spawn_env(self.agent.clone(), a.clone()).await,
           _ => None,
         };
-        match claude_auth::authenticated(&def, &binary, &self.cwd, env.as_ref()).await {
+        match claude_auth::authenticated(&def.args, def.env.as_ref(), &binary, &self.cwd, env.as_ref()).await {
           Ok(Some(false)) => {
             self.log("Claude auth status: signed out");
             return Err(anyhow::Error::new(crate::acp::transport::rpc::RpcError::new(-32000, "Authentication required")));
@@ -482,11 +484,11 @@ impl AcpSession {
           // An agent that cannot start Acpira's MCP server fails a restore that carries it, and the refusal noted by
           // session/new does not outlive the sidecar: retry once without it, as session/new does
           if let Err(e) = &result
-            && crate::host_mcp::has_server(&req)
+            && acpira_shared::host_tools::has_server(&req)
             && !is_auth(&anyhow::Error::new(e.clone()))
           {
             self.log(&format!("{method} with the Acpira MCP server failed ({e}); retrying without it"));
-            result = proc.request_ordered(method, crate::host_mcp::without_server(req.clone())).await;
+            result = proc.request_ordered(method, acpira_shared::host_tools::without_server(req.clone())).await;
             if result.is_ok()
               && let Some(h) = &self.deps.host_mcp
             {
@@ -585,9 +587,9 @@ impl AcpSession {
     let (r, handoff) = match self.request_new(&proc, req.clone()).await? {
       // An agent that cannot start Acpira's MCP server must still get a session: retry once without it, and leave it out
       // of this agent's later requests for the life of the sidecar
-      Err(e) if crate::host_mcp::has_server(&req) => {
+      Err(e) if acpira_shared::host_tools::has_server(&req) => {
         self.log(&format!("session/new with the Acpira MCP server failed ({e}); retrying without it"));
-        let (r, h) = self.request_new(&proc, crate::host_mcp::without_server(req)).await?.map_err(anyhow::Error::new)?;
+        let (r, h) = self.request_new(&proc, acpira_shared::host_tools::without_server(req)).await?.map_err(anyhow::Error::new)?;
         if let Some(h) = &self.deps.host_mcp {
           h.refuse(&self.agent);
         }

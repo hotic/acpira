@@ -12,7 +12,7 @@ use acpira_shared::transcript::*;
 
 use super::fork::holds_unseen_turns;
 use super::{SessionManager, Viewer};
-use crate::acp::agents::native_sessions::list_native_sessions;
+use crate::acp::probe::native_sessions::list_native_sessions;
 use crate::acp::session::AcpSession;
 use crate::i18n::t;
 use crate::limits::RENAME_MAX;

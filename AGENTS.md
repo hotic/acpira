@@ -47,10 +47,10 @@ A chat shell for VS Code / Cursor, IntelliJ and a desktop app that drives offici
 
 One pnpm workspace: each package declares its own dependencies (versions in the `catalog`) and imports another by name (`@acpira/shared/x`), never by relative path. Packages export their TypeScript sources; nothing imports from `apps/`. Shared build output goes to the root `dist/`.
 
-- `rust/` the engine: `acpira-shared` contracts; `acpira-host` (`acp/` the ACP client: `transport/`, `agents/`, `session/`, `transcript/`, `vendors/`; plus `session_manager.rs`, `store/`, `accounts/`, `sidecar/`); `acpira-agent` the built-in agent; binary `acpira`
-- `packages/`: `shared/` contracts and pure logic; `ui/` the React UI; `engine-client/` the VS Code shell's engine client; `picker/` the browser panel's element picker
-- `apps/vscode/` the extension; `apps/desktop/` the Tauri app (own Cargo workspace, window-free logic in `rust/crates/acpira-desktop`); `apps/intellij/` the IntelliJ plugin; `apps/ios/` the iOS app; `apps/android/` the Android app (Compose prototype); `apps/harmony/` the HarmonyOS app (ArkTS prototype)
-- `test/` cross-package contracts, `fake-agent.ts` and shared fixtures; `scripts/` probes, evals, release; `lab/` the LAB (local only)
+- `rust/`: `acpira-shared` contracts; `acpira-host-base` OS/i18n/lock; `acpira-store` persistence & leases; `acpira-plugin-build` oxc; `acpira-host` engine; `acpira-agent`; binary `acpira`
+- `packages/`: `shared/` contracts & logic; `ui/` React UI; `engine-client/` VS Code client; `picker/` browser element picker
+- `apps/`: `vscode/` extension; `desktop/` Tauri app (own Cargo workspace, `rust/crates/acpira-desktop`); `intellij/` plugin; `ios/`, `android/`, `harmony/` mobile apps
+- `test/` contracts, `fake-agent.ts` & fixtures; `scripts/` probes, evals, release; `lab/` local LAB
 
 ## Read before changing
 

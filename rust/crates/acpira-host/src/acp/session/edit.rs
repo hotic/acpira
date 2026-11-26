@@ -399,7 +399,7 @@ impl AcpSession {
   /// carried it, the agent has not refused it since, and the agent launches handed-over servers at all (Pi takes the
   /// list and starts none of it)
   pub(crate) fn reads_itself(&self) -> bool {
-    let sent = self.core.lock().mcp_sent.iter().any(|n| n == crate::host_mcp::SERVER_NAME);
+    let sent = self.core.lock().mcp_sent.iter().any(|n| n == acpira_shared::host_tools::SERVER);
     sent
       && self.deps.host_mcp.as_ref().is_some_and(|h| !h.refused(&self.agent))
       && crate::agent_ext::agent_ext(&self.agent).is_none_or(|e| e.shared.mcp)
@@ -793,7 +793,7 @@ impl AcpSession {
         let me = self.clone();
         let text = edit.text.clone();
         let edited = (continuing && !pending) || (pending && !retry) || (rewind_to.is_some() && !retry);
-        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited, id: None }), None));
+        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited, id: None, from_edit: true }), None));
         return Ok(());
       }
       if let Some(b) = rebuilt {
@@ -852,7 +852,7 @@ impl AcpSession {
       accepted = true;
       let me = self.clone();
       let text = edit.text.clone();
-      crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: true, id: None }), None));
+      crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: true, id: None, from_edit: true }), None));
       Ok(())
     }
     .await;

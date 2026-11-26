@@ -284,15 +284,15 @@ pub(super) fn widget_tool_def() -> Value {
   })
 }
 
-const COMPUTER_APPS_DESCRIPTION: &str = "List the apps running on the user's computer, with the window titles of the ones \
-the user has let you use. Start here to find the name the other computer tools take as `app`.";
+const COMPUTER_APPS_DESCRIPTION: &str = "List the apps running on the user's computer with their window titles. Start \
+here to find the name the other computer tools take as `app`.";
 
 const COMPUTER_OBSERVE_DESCRIPTION: &str = "Read one window of an app on the user's computer as an indented outline, \
 one element per line: `b3 button \"Save\"`, `t1 textfield \"Name\" = \"Ada\"`. The leading word is the element's ref, which \
 stays the same across calls. The first call for a window answers the whole outline, later ones only what changed since \
 (`+` added, `~` changed, `-` removed); `full` asks for the outline again. A large window is cut short: a line ending in \
 `(+N not read)` can be read on its own with `focus`. The window may be in the background or covered, and the user's \
-pointer, keyboard focus and front app stay untouched. The user is asked once before an app is used.";
+pointer, keyboard focus and front app stay untouched.";
 
 /// `KEYS` stands for the key step's example, which names the system's own modifier keys (`computer_keys`)
 const COMPUTER_ACT_DESCRIPTION: &str = "Carry out steps in an app's window on the user's computer, in order, and get \
@@ -522,13 +522,7 @@ pub(super) fn show_image_with(args: &Map<String, Value>, check: &dyn Fn(&str) ->
 }
 
 /// Video MIME is deliberately limited to containers the webview can play without a bundled decoder.
-pub fn video_mime_of(path: &str) -> Option<&'static str> {
-  match Path::new(path).extension()?.to_str()?.to_ascii_lowercase().as_str() {
-    "mp4" => Some("video/mp4"),
-    "webm" => Some("video/webm"),
-    _ => None,
-  }
-}
+pub use acpira_shared::host_tools::{video_mime_of, widget_mime_of};
 
 pub(super) fn call_show_video(args: &Map<String, Value>) -> Value {
   show_video_with(args, &|path| {
@@ -578,12 +572,6 @@ fn check_image(path: &str) -> Result<(), String> {
 }
 
 /// `.html` / `.htm`: the files `show_widget` takes, stored as `text/html` blobs beside the session's images
-pub fn widget_mime_of(path: &str) -> Option<&'static str> {
-  let tail = path.rsplit(['/', '\\']).next().unwrap_or(path);
-  let ext = tail.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase())?;
-  matches!(ext.as_str(), "html" | "htm").then_some("text/html")
-}
-
 /// Validate the widget file; the host reads it into the session once the call completes
 pub(super) fn call_show_widget(args: &Map<String, Value>) -> Value {
   show_widget_with(args, &check_widget)

@@ -38,14 +38,7 @@ const WALK_LIMIT: usize = 5000;
 /// TMPDIR
 pub const VARS: [&str; 3] = ["TMPDIR", "TEMP", "TMP"];
 
-/// Where new scratch folders go (`ProvidersFile::scratch_place`)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Place {
-  /// Under the data root, one folder per project
-  Data,
-  /// In the project's `.acpira/tmp`
-  Project,
-}
+pub use crate::defs::Place;
 
 /// Where a session's scratch folder goes: the folder it already has in either place, else the one `at` names. None
 /// where it takes none: a path over `MAX_BYTES`, and in the project the user's home and a filesystem root (`.acpira`
@@ -337,7 +330,7 @@ pub fn sweep(root: &Path, home: &Path, own: &Path, now: SystemTime) {
   if !real_dir(root) {
     return;
   }
-  let (owner_home, logs) = (home_key(home), crate::acp::sessions_root(home));
+  let (owner_home, logs) = (home_key(home), crate::defs::sessions_root(home));
   let Ok(rd) = std::fs::read_dir(root) else { return };
   for dir in rd.flatten().map(|e| e.path()).filter(|p| p != own && real_dir(p)) {
     let Some(session) = owner_in(&dir, &owner_home) else { continue };

@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use acpira_shared::protocol::{FileHit, ProjectChange, ProjectEditOp, ProjectEntry};
@@ -12,15 +13,14 @@ use acpira_shared::remote::parse_remote_folder;
 use serde_json::{Value, json};
 
 use crate::project_files::{self, ProjectError};
-use crate::remote::client::RemoteClient;
-use crate::remote::connections::Connections;
+use crate::remote_seam::{RemoteClientPort, RemoteConnector};
 
 /// How long a page's read waits for the host's connection to come (back) up
 const CONNECT_WAIT: Duration = Duration::from_secs(20);
 
 pub enum Workspace {
   Local(PathBuf),
-  Remote { client: RemoteClient, path: PathBuf },
+  Remote { client: Arc<dyn RemoteClientPort>, path: PathBuf },
 }
 
 /// The folder's own path: the host's for a folder on an SSH host (what the agent's edits name)
@@ -42,10 +42,10 @@ pub fn process_folder(folder: String) -> String {
 
 impl Workspace {
   /// The workspace of a session folder; one on an SSH host connects first when it is not connected
-  pub async fn open(folder: &str, connections: Option<&Connections>) -> Result<Workspace, ProjectError> {
+  pub async fn open<C: RemoteConnector + ?Sized>(folder: &str, connections: Option<&C>) -> Result<Workspace, ProjectError> {
     let Some(f) = parse_remote_folder(folder) else { return Ok(Workspace::Local(PathBuf::from(folder))) };
     let connections = connections.ok_or_else(|| ProjectError::Other("this engine has no SSH connections".into()))?;
-    let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| ProjectError::Other(format!("{e:#}")))?;
+    let client = connections.ensure(f.alias, CONNECT_WAIT).await.map_err(|e| ProjectError::Other(format!("{e:#}")))?;
     Ok(Workspace::Remote { client, path: PathBuf::from(f.path) })
   }
 
@@ -56,10 +56,10 @@ impl Workspace {
   }
 
   /// One `project` op on the host; its `error` comes back as the local one would
-  async fn call(client: &RemoteClient, root: &Path, op: &str, mut a: Value) -> Result<Value, ProjectError> {
+  async fn call(client: &dyn RemoteClientPort, root: &Path, op: &str, mut a: Value) -> Result<Value, ProjectError> {
     a["op"] = json!(op);
     a["cwd"] = json!(root);
-    let r = client.call("project", a).await.map_err(|e| ProjectError::Other(e.to_string()))?;
+    let r = client.call("project".into(), a).await.map_err(ProjectError::Other)?;
     match r.value.get("error").and_then(Value::as_str) {
       Some(code) => Err(ProjectError::from_code(code)),
       None => Ok(r.value),
@@ -73,7 +73,7 @@ impl Workspace {
   pub async fn list_dir(&self, rel: &str) -> Result<Vec<ProjectEntry>, ProjectError> {
     match self {
       Workspace::Local(root) => project_files::list_dir(root, rel).await,
-      Workspace::Remote { client, path } => Self::call(client, path, "listDir", json!({ "rel": rel })).await.map(|v| Self::field(&v, "entries")),
+      Workspace::Remote { client, path } => Self::call(client.as_ref(), path, "listDir", json!({ "rel": rel })).await.map(|v| Self::field(&v, "entries")),
     }
   }
 
@@ -82,14 +82,14 @@ impl Workspace {
   pub async fn edit(&self, edit: &ProjectEditOp) -> Result<(), ProjectError> {
     match self {
       Workspace::Local(root) => project_files::edit(root, edit, true).await,
-      Workspace::Remote { client, path } => Self::call(client, path, "edit", json!({ "edit": edit })).await.map(drop),
+      Workspace::Remote { client, path } => Self::call(client.as_ref(), path, "edit", json!({ "edit": edit })).await.map(drop),
     }
   }
 
   pub async fn git_marks(&self) -> BTreeMap<String, String> {
     match self {
       Workspace::Local(root) => project_files::git_marks(root).await,
-      Workspace::Remote { client, path } => Self::call(client, path, "gitMarks", json!({})).await.map(|v| Self::field(&v, "marks")).unwrap_or_default(),
+      Workspace::Remote { client, path } => Self::call(client.as_ref(), path, "gitMarks", json!({})).await.map(|v| Self::field(&v, "marks")).unwrap_or_default(),
     }
   }
 
@@ -98,7 +98,7 @@ impl Workspace {
   pub async fn read_text(&self, rel: &str) -> Result<String, ProjectError> {
     match self {
       Workspace::Local(root) => project_files::read_text(&project_files::resolve_read(root, rel)?).await,
-      Workspace::Remote { client, path } => Self::call(client, path, "readText", json!({ "rel": rel })).await.map(|v| Self::field(&v, "text")),
+      Workspace::Remote { client, path } => Self::call(client.as_ref(), path, "readText", json!({ "rel": rel })).await.map(|v| Self::field(&v, "text")),
     }
   }
 
@@ -108,7 +108,7 @@ impl Workspace {
     }
     match self {
       Workspace::Local(root) => project_files::head_text(root, rel).await,
-      Workspace::Remote { client, path } => Self::call(client, path, "headText", json!({ "rel": rel })).await.ok().and_then(|v| Self::field(&v, "text")),
+      Workspace::Remote { client, path } => Self::call(client.as_ref(), path, "headText", json!({ "rel": rel })).await.ok().and_then(|v| Self::field(&v, "text")),
     }
   }
 
@@ -116,7 +116,7 @@ impl Workspace {
     match self {
       Workspace::Local(root) => project_files::session_changes(root, bases).await,
       Workspace::Remote { client, path } => {
-        Self::call(client, path, "sessionChanges", json!({ "bases": bases })).await.map(|v| Self::field(&v, "files")).unwrap_or_default()
+        Self::call(client.as_ref(), path, "sessionChanges", json!({ "bases": bases })).await.map(|v| Self::field(&v, "files")).unwrap_or_default()
       }
     }
   }
@@ -126,7 +126,7 @@ impl Workspace {
     match self {
       Workspace::Local(_) => vec![],
       Workspace::Remote { client, path } => {
-        Self::call(client, path, "searchFiles", json!({ "query": query })).await.map(|v| Self::field(&v, "files")).unwrap_or_default()
+        Self::call(client.as_ref(), path, "searchFiles", json!({ "query": query })).await.map(|v| Self::field(&v, "files")).unwrap_or_default()
       }
     }
   }
@@ -141,7 +141,7 @@ impl Workspace {
         Some((meta.len(), mtime))
       }
       Workspace::Remote { client, .. } => {
-        let st = client.call("stat", json!({ "path": path })).await.ok()?;
+        let st = client.call("stat".into(), json!({ "path": path })).await.ok()?;
         if st.value.get("kind").and_then(Value::as_str) != Some("file") {
           return None;
         }
@@ -161,11 +161,11 @@ impl Workspace {
         tokio::fs::read(path).await.ok()
       }
       Workspace::Remote { client, .. } => {
-        let st = client.call("stat", json!({ "path": path })).await.ok()?;
+        let st = client.call("stat".into(), json!({ "path": path })).await.ok()?;
         if st.value.get("size").and_then(Value::as_u64)? > max {
           return None;
         }
-        client.call("read", json!({ "path": path })).await.ok().map(|r| r.data)
+        client.call("read".into(), json!({ "path": path })).await.ok().map(|r| r.data)
       }
     }
   }

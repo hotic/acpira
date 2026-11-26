@@ -198,13 +198,13 @@ impl SessionManager {
       accounts: self.deps.accounts.clone().map(|a| Arc::new(AccountHooks(a)) as Arc<dyn SessionAccountHooks>),
       policy: Arc::new(policy),
       pool: Some(self.pool.clone()),
-      host_mcp: self.deps.host_mcp.clone(),
+      host_mcp: self.deps.host_mcp.clone().map(|h| Arc::new(h) as Arc<dyn crate::acp::session::ext::SessionHostMcp>),
       shared_mcp: self.deps.shared_mcp.clone(),
       plugin_hooks: self.deps.plugin_hooks.clone(),
       plugin_prompts: self.deps.plugin_prompts.clone(),
       data_home: Some(self.deps.lease_root.clone()),
-      plugin_runtime: self.deps.plugin_runtime.clone(),
-      remote: self.deps.remote.clone(),
+      plugin_runtime: self.deps.plugin_runtime.clone().map(|r| r as Arc<dyn crate::acp::session::ext::PluginRuntimePort>),
+      remote: self.deps.remote.clone().map(|r| r as Arc<dyn crate::remote_seam::RemoteConnector>),
     }
   }
 

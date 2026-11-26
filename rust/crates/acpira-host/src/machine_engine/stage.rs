@@ -12,17 +12,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// Under ACPIRA_HOME
-pub const DIR: &str = "engine";
+pub use crate::platform::engine_layout::{DIGEST_LEN, DIR, EXE, SOURCE, source_of};
 const IN_USE: &str = ".in-use";
 const DIGESTS: &str = ".digests.json";
-/// The path the copy was landed from: a checkout's build finds the other platforms' helpers through it
-/// (`remote::deploy::local_binary`)
-const SOURCE: &str = ".source";
-/// The landed binary's name, whatever the source was called (the desktop app ships it as `acpira-engine`)
-pub const EXE: &str = if cfg!(windows) { "acpira.exe" } else { "acpira" };
-/// Digest characters in a folder name
-pub const DIGEST_LEN: usize = 16;
 /// Copies kept beyond those in use: the newest few, so going back to a recent build needs no copy
 const KEEP_RECENT: usize = 2;
 
@@ -101,19 +93,6 @@ fn complete(source: &Path, dir: &Path) {
 }
 
 /// Where the landed copy in `dir` came from
-pub fn source_of(dir: &Path) -> Option<PathBuf> {
-  let bytes = std::fs::read(dir.join(SOURCE)).ok()?;
-  #[cfg(unix)]
-  {
-    use std::os::unix::ffi::OsStringExt;
-    Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
-  }
-  #[cfg(not(unix))]
-  {
-    String::from_utf8(bytes).ok().map(PathBuf::from)
-  }
-}
-
 fn copy_exe(from: &Path, to: &Path) -> Result<()> {
   std::fs::copy(from, to).with_context(|| format!("{} → {}", from.display(), to.display()))?;
   #[cfg(unix)]

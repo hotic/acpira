@@ -10,7 +10,7 @@ use std::time::Duration;
 use acpira_host::acp::agents::launch::ProcessEnv;
 use acpira_host::acp::agents::pool::IdleHandlers;
 use acpira_host::acp::agents::registry::{AgentRegistry, resolve_command};
-use acpira_host::acp::transport::process::AgentProcess;
+use acpira_host::acp::agents::spawn::spawn_agent;
 use acpira_host::platform::command::Os;
 use serde_json::{Value, json};
 
@@ -31,7 +31,7 @@ async fn handshake(command: &Path, cwd: &Path, args: Vec<String>, expected_args:
     &json!({ "fixture": { "command": command, "args": args, "env": {"ACPIRA_LITERAL_TEST": "must-not-expand", "bang": "must-not-expand"} } }),
   );
   let binary = registry.resolve_binary("fixture").await.expect("fixture executable");
-  let proc = AgentProcess::spawn(
+  let proc = spawn_agent(
     registry.get("fixture").unwrap(),
     &binary,
     cwd.to_str().unwrap(),

@@ -3,10 +3,11 @@
 
 use serde_json::{Value, json};
 
+use crate::acp::agents::config as agent_config;
 use crate::acp::agents::registry::AgentRegistry;
-use crate::acp::transport::process::initialize_request;
+use crate::acp::agents::spawn::initialize_request;
 use crate::platform::command::{Os, spawn_spec};
-use crate::store::{agent_config, data_dir};
+use crate::store::data_dir;
 
 pub async fn run(args: &[String]) -> i32 {
   crate::acp::agents::login_path::ready().await;
