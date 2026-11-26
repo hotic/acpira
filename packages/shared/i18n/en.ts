@@ -787,6 +787,7 @@ export const en = {
   'host.sessionTakenOver': 'Another Acpira engine took this session over, so it is read-only here now. Take it over to continue here.',
   'host.takeOverTimeout': 'The other Acpira engine did not let go of the session within 10 seconds. Try again.',
   'host.newSessionTimeout': 'The agent did not open the session within 90 seconds. Try again.',
+  'host.newSessionTimeout.antigravity': 'Could not reach Google. Check the network proxy and try again.',
   'host.sessionBusyElsewhere': 'Another Acpira engine has this session open right now. Take it over to continue here.',
   'host.sessionCopy': 'This session runs on {machine}. It is read-only here, so continue it on that computer.',
   'host.sessionCopyAnother': 'another computer',

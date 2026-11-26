@@ -768,6 +768,7 @@
   "host.sessionTakenOver": "Un autre moteur Acpira a repris cette session ; elle est en lecture seule ici. Reprenez-la ici pour continuer.",
   "host.takeOverTimeout": "L'autre moteur Acpira n'a pas libéré la session en 10 secondes ; réessayez.",
   "host.newSessionTimeout": "L'agent n'a pas ouvert la session en 90 secondes ; réessayez.",
+  "host.newSessionTimeout.antigravity": "Impossible de joindre Google. Vérifiez le proxy réseau, puis réessayez.",
   "host.sessionBusyElsewhere": "Un autre moteur Acpira a cette session ouverte ; reprenez-la ici pour continuer.",
   "host.sessionCopy": "Cette session s'exécute sur {machine}. Ici, elle est en lecture seule ; poursuivez-la sur cet ordinateur.",
   "host.sessionCopyAnother": "un autre ordinateur",

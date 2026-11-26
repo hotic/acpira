@@ -622,7 +622,10 @@ impl AcpSession {
       Ok(answer) => Ok(answer),
       Err(_) => {
         self.log(&format!("session/new: no answer within {} s", NEW_SESSION_WAIT.as_secs()));
-        Err(anyhow!(t("host.newSessionTimeout")))
+        // agy answers session/new only after Google's endpoints answer (loadCodeAssist, fetchAvailableModels), retrying
+        // each unreachable call, so a blocked network is what outlasts the wait: point at the proxy setting
+        let key = if self.vendor == Vendor::Antigravity { "host.newSessionTimeout.antigravity" } else { "host.newSessionTimeout" };
+        Err(anyhow!(t(key)))
       }
     }
   }

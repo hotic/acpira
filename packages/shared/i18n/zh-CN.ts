@@ -800,6 +800,7 @@ export const zhCN = {
   'host.sessionTakenOver': '这个会话已被另一个 Acpira 引擎接管，这里变成只读。在此接管可以拿回来继续。',
   'host.takeOverTimeout': '另一个 Acpira 引擎 10 秒内没有交出这个会话，请再试一次。',
   'host.newSessionTimeout': 'agent 90 秒内没有建好会话，请再试一次。',
+  'host.newSessionTimeout.antigravity': '无法连接到 Google，请检查网络代理后重试。',
   'host.sessionBusyElsewhere': '另一个 Acpira 引擎正打开着这个会话，先在此接管才能继续。',
   'host.sessionCopy': '这个会话在 {machine} 上运行，这里只能查看；要继续请回到那台电脑。',
   'host.sessionCopyAnother': '另一台电脑',

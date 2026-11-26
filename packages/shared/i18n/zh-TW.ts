@@ -796,6 +796,7 @@ export const zhTW = {
   'host.sessionTakenOver': '這個工作階段已被另一個 Acpira 引擎接管，這裡變成唯讀。在此接管可以拿回來繼續。',
   'host.takeOverTimeout': '另一個 Acpira 引擎 10 秒內沒有交出這個工作階段，請再試一次。',
   'host.newSessionTimeout': 'agent 90 秒內沒有建好工作階段，請再試一次。',
+  'host.newSessionTimeout.antigravity': '無法連線到 Google，請檢查網路代理後重試。',
   'host.sessionBusyElsewhere': '另一個 Acpira 引擎正開著這個工作階段，先在此接管才能繼續。',
   'host.sessionCopy': '這個工作階段在 {machine} 上執行，這裡只能檢視；要繼續請回到那台電腦。',
   'host.sessionCopyAnother': '另一台電腦',

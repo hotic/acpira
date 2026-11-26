@@ -785,6 +785,7 @@ export const ja = {
   'host.sessionTakenOver': 'このセッションは別の Acpira エンジンに引き継がれ、ここでは読み取り専用になりました。ここで引き継ぐと取り戻せます。',
   'host.takeOverTimeout': '別の Acpira エンジンが 10 秒以内にセッションを手放しませんでした。もう一度お試しください。',
   'host.newSessionTimeout': 'エージェントが 90 秒以内にセッションを開きませんでした。もう一度お試しください。',
+  'host.newSessionTimeout.antigravity': 'Google に接続できません。ネットワークプロキシを確認して、もう一度お試しください。',
   'host.sessionBusyElsewhere': '別の Acpira エンジンがこのセッションを開いています。続けるにはここで引き継いでください。',
   'host.sessionCopy': 'このセッションは {machine} で実行されています。ここでは閲覧のみです。続けるにはそのコンピューターで操作してください。',
   'host.sessionCopyAnother': '別のコンピューター',
