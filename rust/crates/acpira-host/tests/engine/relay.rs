@@ -218,6 +218,11 @@ async fn the_hub_lists_enabled_personas_and_forwards_an_ask_to_the_session_its_g
   };
   let root = token_of(hub.env(&s.0, None, 0));
   let deepest = token_of(hub.env(&s.0, Some("thr"), acpira_host::relay::MAX_DEPTH));
+  // One grant per session, thread and depth: a later session request carries the same entry, which a CLI that
+  // compares entries (agy) would otherwise register as one more server
+  assert_eq!(token_of(hub.env(&s.0, None, 0)), root);
+  assert_eq!(token_of(hub.env(&s.0, Some("thr"), acpira_host::relay::MAX_DEPTH)), deepest);
+  assert_ne!(root, deepest);
   let addr = hub.addr().to_owned();
   let replies = tokio::task::spawn_blocking(move || {
     let req = |token: &str, op| HubRequest { token: token.into(), op };

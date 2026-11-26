@@ -159,14 +159,23 @@ impl RelayHub {
   }
 
   /// The MCP entry's `env` (ACP name / value pairs) for one session's agent, or for the CLI of one of its summoned
-  /// threads one level deeper: a fresh grant, dropped once the session is gone
+  /// threads one level deeper: one grant per session, thread and depth, dropped once the session is gone. The same
+  /// one every time, so every session request of a process carries the same entry: `agy` takes an entry whose env
+  /// changed for another server and registers it again beside the first (`docs/dev/agent-quirks-antigravity.md`)
   pub fn env(&self, session: &Arc<AcpSession>, caller: Option<&str>, depth: u32) -> Value {
-    let token = random_uuid();
-    {
+    let token = {
       let mut grants = self.grants.lock();
       grants.retain(|_, g| g.session.strong_count() > 0);
-      grants.insert(token.clone(), Grant { session: Arc::downgrade(session), caller: caller.map(str::to_owned), depth });
-    }
+      let held = grants.iter().find(|(_, g)| std::ptr::eq(g.session.as_ptr(), Arc::as_ptr(session)) && g.caller.as_deref() == caller && g.depth == depth);
+      match held {
+        Some((token, _)) => token.clone(),
+        None => {
+          let token = random_uuid();
+          grants.insert(token.clone(), Grant { session: Arc::downgrade(session), caller: caller.map(str::to_owned), depth });
+          token
+        }
+      }
+    };
     json!([{ "name": ENV_ADDR, "value": self.addr }, { "name": ENV_TOKEN, "value": token }])
   }
 
