@@ -19,6 +19,9 @@ use crate::store::data_dir::home_dir;
 pub struct InstallDef {
   pub posix: Option<String>,
   pub windows: Option<String>,
+  /// Command used to update an already-installed CLI when re-running the bootstrap installer is a no-op or unsafe
+  pub update_posix: Option<String>,
+  pub update_windows: Option<String>,
   pub docs: Option<String>,
 }
 
@@ -65,6 +68,8 @@ pub struct AgentDef {
   pub login: Option<LoginDef>,
   pub install: Option<InstallDef>,
   pub adapter: Option<AdapterDef>,
+  /// Where a built-in non-npm CLI publishes its latest release version
+  pub release: Option<super::cli_latest::ReleaseSource>,
   /// A known CLI's label on `--version`; absent for adapters and arbitrary commands
   pub version_prefix: Option<&'static str>,
   pub env: Option<StrMap>,
@@ -136,7 +141,17 @@ fn list(v: &[&str]) -> Vec<String> {
 }
 
 fn install(posix: &str, windows: &str, docs: &str) -> Option<InstallDef> {
-  Some(InstallDef { posix: Some(s(posix)), windows: Some(s(windows)), docs: Some(s(docs)) })
+  Some(InstallDef { posix: Some(s(posix)), windows: Some(s(windows)), docs: Some(s(docs)), ..Default::default() })
+}
+
+fn install_with_update(posix: &str, windows: &str, update: &str, docs: &str) -> Option<InstallDef> {
+  Some(InstallDef {
+    posix: Some(s(posix)),
+    windows: Some(s(windows)),
+    update_posix: Some(s(update)),
+    update_windows: Some(s(update)),
+    docs: Some(s(docs)),
+  })
 }
 
 fn login(command: &str, args: &[&str]) -> Option<LoginDef> {
@@ -212,6 +227,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     },
     AgentDef {
       login: login("grok", &["login"]),
+      release: Some(super::cli_latest::ReleaseSource::Grok),
       version_prefix: Some("grok"),
       install: install(
         "curl -fsSL https://x.ai/cli/install.sh | bash",
@@ -236,6 +252,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     },
     AgentDef {
       login: login("devin", &["auth", "login"]),
+      release: Some(super::cli_latest::ReleaseSource::Devin),
       version_prefix: Some("devin"),
       install: install(
         "curl -fsSL https://cli.devin.ai/install.sh | bash",
@@ -269,6 +286,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       // Kimi Code 2.2.0 `kimi login` runs the device-code flow its ACP terminal-auth method names
       login: login("kimi", &["login"]),
+      release: Some(super::cli_latest::ReleaseSource::Kimi),
       version_prefix: Some("kimi"),
       install: install(
         "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
@@ -285,6 +303,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     },
     AgentDef {
       login: login("opencode", &["auth", "login"]),
+      release: Some(super::cli_latest::ReleaseSource::OpenCode),
       version_prefix: Some("opencode"),
       install: install("curl -fsSL https://opencode.ai/install | bash", "npm install -g --include=optional opencode-ai", "https://opencode.ai/docs/acp/"),
       ..base(
@@ -332,6 +351,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       // No login subcommand: the interactive `droid` signs in on first run (ACP also offers a device-pairing method)
       login: login("droid", &[]),
+      release: Some(super::cli_latest::ReleaseSource::Droid),
       version_prefix: Some("droid"),
       install: install(
         "curl -fsSL https://app.factory.ai/cli | sh",
@@ -356,10 +376,13 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       // Provider and model setup; ACP also offers it as a terminal auth method (`hermes acp --setup`)
       login: login("hermes", &["model"]),
+      release: Some(super::cli_latest::ReleaseSource::Hermes),
       version_prefix: Some("Hermes Agent"),
-      install: install(
+      // `install.sh` is a first-time bootstrap; updating an existing install runs `hermes update --yes`
+      install: install_with_update(
         "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
         "iex (irm https://hermes-agent.nousresearch.com/install.ps1)",
+        "hermes update --yes",
         "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp",
       ),
       ..base("hermes", "Hermes Agent", "hermes", &["acp"], &["~/.local/bin/hermes", "/opt/homebrew/bin/hermes", "/usr/local/bin/hermes"])
@@ -373,14 +396,17 @@ pub fn builtin_agents() -> Vec<AgentDef> {
 pub fn antigravity() -> AgentDef {
   AgentDef {
     login: login("agy", &["acp", "--login"]),
+    release: Some(super::cli_latest::ReleaseSource::Antigravity),
     version_prefix: Some("agy"),
     // agy 1.5.9 has no full-access mode over ACP (`--dangerously-skip-permissions` is a process flag): full access runs
     // in `accept-edits` with the host approving every command. Not `auto`: that mode never asks, runs commands in agy's
     // own sandbox (a repository's `.git` is read-only, so `git pull` / `commit` fail) and refuses a sandbox bypass itself
     access: access(&[("ask", "default", false), ("auto-edit", "accept-edits", false), ("auto", "auto", false), ("full", "accept-edits", true)]),
-    install: install(
+    // Both install.sh and install.ps1 exit 0 without upgrading when agy is already present; `agy update` upgrades in place
+    install: install_with_update(
       "curl -fsSL https://antigravity.google/cli/install.sh | bash",
       "irm https://antigravity.google/cli/install.ps1 | iex",
+      "agy update",
       "https://antigravity.google/docs/ide/extensions/acp",
     ),
     ..base("antigravity", "Antigravity", "agy", &["acp"], &["~/.local/bin/agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy"])
@@ -502,7 +528,7 @@ fn overlay(mut b: AgentDef, c: CustomAgentSetting, login: Vec<String>, install: 
   let own_package = |line: &str| b.adapter.as_ref().is_some_and(|a| line.contains(a.package.as_str()));
   if let Some(line) = install.filter(|l| !own_package(l)) {
     let docs = docs.or_else(|| b.install.as_ref().and_then(|i| i.docs.clone()));
-    b.install = Some(InstallDef { posix: Some(line.clone()), windows: Some(line), docs });
+    b.install = Some(InstallDef { posix: Some(line.clone()), windows: Some(line), docs, ..Default::default() });
   }
   if let Some(env) = c.env {
     b.env.get_or_insert_with(Default::default).extend(env);
@@ -584,8 +610,10 @@ impl AgentRegistry {
         terminal_auth: c.terminal_auth != Some(false),
         ignore_modes: c.ignore_modes == Some(true),
         login: login.split_first().map(|(cmd, rest)| LoginDef { command: cmd.clone(), args: rest.to_vec() }),
-        install: (command.is_some() || docs.is_some()).then(|| InstallDef { posix: command.clone(), windows: command, docs }),
+        install: (command.is_some() || docs.is_some())
+          .then(|| InstallDef { posix: command.clone(), windows: command, docs, ..Default::default() }),
         adapter: None,
+        release: None,
         version_prefix: None,
         vendor: c.vendor.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()),
         mark: c.mark.as_ref().and_then(|m| mark_paths(m).ok()),
@@ -653,7 +681,7 @@ impl AgentRegistry {
           available: probed.then_some(found),
           missing: if probed && !found { missing.get(id).filter(|m| !m.is_empty()).cloned() } else { None },
           searched: if probed && !found { searched.get(id).filter(|m| !m.is_empty()).cloned() } else { None },
-          install: self.install(id),
+          install: self.install_for(id, found),
           update: if found { updates.get(id).cloned() } else { None },
           vendor: d.vendor.clone(),
           mark: d.mark.clone(),
@@ -664,11 +692,24 @@ impl AgentRegistry {
       .collect()
   }
 
-  /// The install line for this platform (plus docs); None when the definition offers nothing usable here
+  /// The install (or in-place update, when already installed and the vendor separates them) line for this platform plus docs
   pub fn install(&self, id: &str) -> Option<AgentInstall> {
+    let installed = self.resolved.lock().contains_key(id);
+    self.install_for(id, installed)
+  }
+
+  fn install_for(&self, id: &str, installed: bool) -> Option<AgentInstall> {
     let agent = self.defs.get(id)?;
     let def = agent.install.as_ref()?;
-    let command = if self.os == Os::Windows {
+    let update = installed
+      .then(|| match self.os {
+        Os::Windows => def.update_windows.clone(),
+        Os::Posix => def.update_posix.clone(),
+      })
+      .flatten();
+    let command = if let Some(cmd) = update {
+      Some(cmd)
+    } else if self.os == Os::Windows {
       def.windows.clone()
     } else if super::installer::npm_prefix_blocked() {
       // npm's global prefix is not writable here (a system Node on a shared server): the copyable line goes to ~/.local,
@@ -731,11 +772,11 @@ impl AgentRegistry {
     self.probed.load(Ordering::Acquire).then(|| self.resolved.lock().contains_key(id))
   }
 
-  /// Find the executable; a lookup that flips availability notifies subscribers like a full probe would
-  /// Drop the path `id` was last found at, so the next lookup searches anew: an install may have put a newer copy
-  /// earlier in the search order while the old one stays where it was
+  /// Drop the path `id` was last found at and its cached CLI version, so the next lookup searches anew: an install may
+  /// have put a newer copy earlier in the search order or updated a wrapper script in place
   pub fn forget_resolved(&self, id: &str) {
     self.resolved.lock().remove(id);
+    super::version::invalidate(id);
   }
 
   pub async fn resolve_binary(&self, id: &str) -> Option<String> {
@@ -771,6 +812,10 @@ impl AgentRegistry {
     }
     match found {
       Some(f) if missing.is_empty() => {
+        // Only query vendor release feeds for CLIs actually installed on this machine
+        if let Some(source) = def.release {
+          super::cli_latest::kick(source, self.os);
+        }
         let update = update_for(def, &f).await;
         match update {
           Some(v) => self.updates.lock().insert(id.to_owned(), v),
@@ -859,23 +904,29 @@ fn retarget(line: &str, targets: &[(&str, semver::Version)]) -> String {
   line.split(' ').map(word).collect::<Vec<_>>().join(" ")
 }
 
-/// The version to offer when a tracked package found next to `binary` is older than its target (the adapter's first);
+/// The version to offer when a tracked npm adapter or a built-in native CLI is older than its latest target;
 /// a version that cannot be read offers nothing
 async fn update_for(def: &AgentDef, binary: &str) -> Option<String> {
-  let adapter = def.adapter.as_ref()?;
-  for package in tracked(def) {
-    let Some(target) = target_for(def, package) else { continue };
-    let installed = if package == adapter.package {
-      super::adapter_info::installed_version(binary, package).await
-    } else {
-      super::adapter_info::read_adapter_info(binary, def).await.and_then(|i| i.engine?.version)
-    };
-    let Some(installed) = installed.and_then(|v| semver::Version::parse(&v).ok()) else { continue };
-    if installed < target {
-      return Some(target.to_string());
+  if let Some(adapter) = def.adapter.as_ref() {
+    for package in tracked(def) {
+      let Some(target) = target_for(def, package) else { continue };
+      let installed = if package == adapter.package {
+        super::adapter_info::installed_version(binary, package).await
+      } else {
+        super::adapter_info::read_adapter_info(binary, def).await.and_then(|i| i.engine?.version)
+      };
+      let Some(installed) = installed.and_then(|v| semver::Version::parse(&v).ok()) else { continue };
+      if installed < target {
+        return Some(target.to_string());
+      }
     }
+    return None;
   }
-  None
+  let source = def.release?;
+  // Wait until the background HTTP lookup has populated the cache before spawning `--version`
+  let target = super::cli_latest::cached(source)?;
+  let installed = super::version::installed_version(binary, def).await.and_then(|v| semver::Version::parse(&v).ok())?;
+  (installed < target).then(|| target.to_string())
 }
 
 /// Global bin directories package managers use outside the usual PATH entries, tried last: an npm prefix set up to avoid
@@ -1062,7 +1113,7 @@ mod tests {
     let package = "@acpira-test/npm-latest-adapter";
     def.adapter.as_mut().unwrap().package = package.into();
     let line = format!("npm install -g --include=optional {package}@1.2.0");
-    def.install = Some(InstallDef { posix: Some(line.clone()), windows: Some(line), docs: None });
+    def.install = Some(InstallDef { posix: Some(line.clone()), windows: Some(line), docs: None, ..Default::default() });
     assert_eq!(target_for(&def, package).unwrap().to_string(), "1.2.0", "nothing looked up: the pin");
     super::super::npm_latest::seed(package, "1.1.0");
     assert_eq!(target_for(&def, package).unwrap().to_string(), "1.2.0", "an older latest never undercuts the pin");
@@ -1208,5 +1259,49 @@ mod tests {
     let npm_dirs = search_dirs("npm", &[], Os::Windows, &env);
     assert!(npm_dirs.iter().any(|d| d.eq_ignore_ascii_case(r"C:\Program Files\nodejs")), "{npm_dirs:?}");
     assert_eq!(search_paths(r"D:\tools\agy.exe", &agy.candidates, Os::Windows, &env), vec![r"D:\tools\agy.exe"]);
+  }
+
+  #[tokio::test]
+  async fn native_cli_offers_update_when_release_is_newer_and_uses_update_command() {
+    use super::super::cli_latest::{self, ReleaseSource};
+    let r = AgentRegistry::with_os(&json!({}), Os::Posix);
+    assert!(
+      r.install("antigravity").unwrap().command.unwrap().contains("install.sh"),
+      "uninstalled antigravity uses the bootstrap installer"
+    );
+    assert!(
+      r.install("hermes").unwrap().command.unwrap().contains("install.sh"),
+      "uninstalled hermes uses the bootstrap installer"
+    );
+    r.resolved.lock().insert("antigravity".into(), "/usr/local/bin/agy".into());
+    r.resolved.lock().insert("hermes".into(), "/usr/local/bin/hermes".into());
+    assert_eq!(r.install("antigravity").unwrap().command.as_deref(), Some("agy update"));
+    assert_eq!(r.install("hermes").unwrap().command.as_deref(), Some("hermes update --yes"));
+
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let t = tempfile::tempdir().unwrap();
+      let script = t.path().join("agy");
+      std::fs::write(&script, "#!/bin/sh\necho 1.5.16\n").unwrap();
+      std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+      let def = antigravity();
+      let bin = script.to_str().unwrap();
+
+      cli_latest::clear(ReleaseSource::Antigravity);
+      assert_eq!(update_for(&def, bin).await, None, "no cached release yet");
+
+      cli_latest::seed(ReleaseSource::Antigravity, "1.5.16");
+      assert_eq!(update_for(&def, bin).await, None, "already up to date");
+
+      cli_latest::seed(ReleaseSource::Antigravity, "1.6.0");
+      assert_eq!(update_for(&def, bin).await.as_deref(), Some("1.6.0"), "newer release offered");
+
+      // After an in-place upgrade, invalidating the cached version picks up the new `--version`
+      std::fs::write(&script, "#!/bin/sh\necho 1.6.0\n").unwrap();
+      super::super::version::invalidate(&def.id);
+      assert_eq!(update_for(&def, bin).await, None, "update offer clears after upgrade");
+      cli_latest::clear(ReleaseSource::Antigravity);
+    }
   }
 }

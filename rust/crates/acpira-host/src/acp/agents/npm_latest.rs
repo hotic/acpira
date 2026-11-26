@@ -39,6 +39,10 @@ pub fn found_newer() -> tokio::sync::watch::Receiver<u64> {
   FOUND.subscribe()
 }
 
+pub(super) fn notify_newer() {
+  FOUND.send_modify(|n| *n += 1);
+}
+
 /// The last version looked up for `package`, however old
 pub fn cached(package: &str) -> Option<semver::Version> {
   CACHE.lock().get(package).and_then(|e| e.version.clone())

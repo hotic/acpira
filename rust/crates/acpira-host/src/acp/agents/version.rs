@@ -1,20 +1,69 @@
 //! Installed versions of known non-adapter CLIs, without opening an ACP session.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant, SystemTime};
 
+use parking_lot::Mutex;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::{launch, registry::{AgentDef, SELF_AGENT_ID, is_own_binary}};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 const OUTPUT_LIMIT: u64 = 8192;
+/// Short TTL so wrapper scripts (e.g. Hermes) whose own mtime does not change after an external upgrade still refresh
+const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileStamp {
+  canonical: PathBuf,
+  modified: Option<SystemTime>,
+  len: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CachedVersion {
+  stamp: FileStamp,
+  at: Instant,
+  version: Option<String>,
+}
+
+static CACHE: LazyLock<Mutex<HashMap<String, CachedVersion>>> = LazyLock::new(Default::default);
+
+/// Drop any cached version for `agent` (called after an in-app install / update finishes)
+pub(crate) fn invalidate(agent: &str) {
+  CACHE.lock().remove(agent);
+}
+
+async fn file_stamp(binary: &str) -> Option<FileStamp> {
+  let canonical = tokio::fs::canonicalize(binary).await.unwrap_or_else(|_| PathBuf::from(binary));
+  let meta = tokio::fs::metadata(&canonical).await.ok()?;
+  Some(FileStamp { canonical, modified: meta.modified().ok(), len: meta.len() })
+}
 
 pub(crate) async fn installed_version(binary: &str, def: &AgentDef) -> Option<String> {
   if (def.id == SELF_AGENT_ID || def.args.first().map(String::as_str) == Some("agent")) && is_current_exe(binary) {
     return Some(acpira_shared::version::VERSION.to_owned());
   }
   let prefix = def.version_prefix?;
+  let stamp = file_stamp(binary).await;
+  if let Some(ref s) = stamp
+    && let Some(hit) = CACHE.lock().get(&def.id)
+    && hit.stamp == *s
+    && hit.at.elapsed() < CACHE_TTL
+  {
+    return hit.version.clone();
+  }
+  let version = run_version(binary, def, prefix).await;
+  if let Some(s) = stamp {
+    CACHE.lock().insert(def.id.clone(), CachedVersion { stamp: s, at: Instant::now(), version: version.clone() });
+  }
+  version
+}
+
+async fn run_version(binary: &str, def: &AgentDef, prefix: &str) -> Option<String> {
   let mut cmd = launch::command(binary, &["--version".into()]);
   cmd.current_dir(crate::store::data_dir::home_dir()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
   cmd.envs(def.env.iter().flatten());
