@@ -98,18 +98,7 @@ impl Remote {
     };
     let spills = reply.get("spills").and_then(Value::as_array).cloned().unwrap_or_default();
     if !spills.is_empty() {
-      let _ = std::fs::create_dir_all(&ctx.outputs);
-      for s in &spills {
-        let (Some(name), Some(text)) = (s.get("name").and_then(Value::as_str), s.get("text").and_then(Value::as_str)) else { continue };
-        // A name the host made from the call id; never a path
-        if name.contains(['/', '\\']) || name.starts_with('.') {
-          continue;
-        }
-        let _ = std::fs::write(ctx.outputs.join(name), text);
-      }
-      if let Some(dir) = reply.get("spillDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
-        out.model = out.model.replace(dir, &ctx.outputs.to_string_lossy());
-      }
+      apply_spills(&mut out, &spills, reply.get("spillDir").and_then(Value::as_str), &ctx.outputs);
     }
     out
   }
@@ -136,10 +125,87 @@ impl Remote {
   }
 }
 
+/// Persist remote spill files locally before rewriting spillDir references in `out.model`.
+/// If saving locally fails, never leave the model pointing at a missing local path: restore the raw spill text when it
+/// fits inside the output budget, else note explicitly that the spill could not be saved locally
+fn apply_spills(out: &mut Output, spills: &[Value], remote_dir: Option<&str>, local_dir: &Path) {
+  let mut failed = false;
+  let mut fallback_raw: Option<&str> = None;
+  if let Err(e) = std::fs::create_dir_all(local_dir) {
+    eprintln!("[acpira agent] cannot create remote spill dir {}: {e}", local_dir.display());
+    failed = true;
+  }
+  for s in spills {
+    let (Some(name), Some(text)) = (s.get("name").and_then(Value::as_str), s.get("text").and_then(Value::as_str)) else { continue };
+    // A name the host made from the call id; never a path
+    if name.contains(['/', '\\']) || name.starts_with('.') {
+      continue;
+    }
+    if spills.len() == 1 {
+      fallback_raw = Some(text);
+    }
+    if !failed
+      && let Err(e) = std::fs::write(local_dir.join(name), text)
+    {
+      eprintln!("[acpira agent] cannot write remote spill {}: {e}", local_dir.join(name).display());
+      failed = true;
+    }
+  }
+  if !failed {
+    if let Some(dir) = remote_dir.filter(|d| !d.is_empty()) {
+      out.model = out.model.replace(dir, &local_dir.to_string_lossy());
+    }
+    return;
+  }
+  // If a folded single-call output fits within the standard budget, hand back the raw text rather than a broken link
+  if let Some(raw) = fallback_raw
+    && raw.len() <= crate::budget::MAX_BYTES
+    && raw.lines().count() <= crate::budget::MAX_LINES
+  {
+    let footer = out.model.lines().rev().find(|l| l.starts_with("[exit code ") || l.starts_with("[timed out ") || *l == "[killed by a signal]");
+    out.model = match footer {
+      Some(f) => format!("{}\n{f}", raw.trim_end()),
+      None => raw.trim_end().to_owned(),
+    };
+    return;
+  }
+  if let Some(dir) = remote_dir.filter(|d| !d.is_empty()) {
+    out.model = out.model.replace(dir, "<unavailable-local-spill>");
+  }
+  out.model.push_str("\n[Note: the full output could not be saved locally; do not read the spill path above.]");
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
   use std::path::PathBuf;
+
+  #[test]
+  fn spill_write_failure_restores_budget_safe_output_or_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    // Place a regular file where the spill directory should be so create_dir_all fails deterministically
+    let blocker = dir.path().join("not-a-dir");
+    std::fs::write(&blocker, "x").unwrap();
+    let mut small = Output {
+      model: "folded preview\n[Folded 20 lines. Full output saved at /remote/spills/c1.txt]\n[exit code 1]".into(),
+      is_error: true,
+      content: vec![],
+      raw_output: None,
+    };
+    apply_spills(&mut small, &[json!({ "name": "c1.txt", "text": "raw line 1\nraw error\n" })], Some("/remote/spills"), &blocker);
+    assert_eq!(small.model, "raw line 1\nraw error\n[exit code 1]");
+
+    let huge_raw = "x\n".repeat(crate::budget::MAX_LINES + 50);
+    let mut big = Output {
+      model: "preview\n[Output truncated. Full output is in /remote/spills/c2.txt]".into(),
+      is_error: false,
+      content: vec![],
+      raw_output: None,
+    };
+    apply_spills(&mut big, &[json!({ "name": "c2.txt", "text": huge_raw })], Some("/remote/spills"), &blocker);
+    assert!(!big.model.contains("/remote/spills"));
+    assert!(big.model.contains("could not be saved locally"));
+  }
 
   #[test]
   fn the_session_folder_stays_here_and_the_project_goes_there() {

@@ -17,14 +17,22 @@ pub enum Keep {
   HeadTail,
 }
 
+/// Save full tool output to `<dir>/<safe_name>.txt`; callers that compress or truncate must check this succeeded
+/// before claiming the full output is readable from disk
+pub fn spill(text: &str, dir: &Path, name: &str) -> std::io::Result<std::path::PathBuf> {
+  std::fs::create_dir_all(dir)?;
+  let file = dir.join(format!("{}.txt", safe_name(name)));
+  std::fs::write(&file, text)?;
+  Ok(file)
+}
+
 /// The text fitted to the budget; `name` names the spill file (a tool call id)
 pub fn fit(text: &str, keep: Keep, dir: &Path, name: &str) -> String {
   let lines = text.lines().count();
   if lines <= MAX_LINES && text.len() <= MAX_BYTES {
     return text.to_owned();
   }
-  let file = dir.join(format!("{}.txt", safe_name(name)));
-  let saved = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&file, text)).is_ok();
+  let saved = spill(text, dir, name).ok();
   let preview = match keep {
     Keep::Head => head(text, MAX_LINES, MAX_BYTES),
     Keep::HeadTail => {
@@ -34,14 +42,13 @@ pub fn fit(text: &str, keep: Keep, dir: &Path, name: &str) -> String {
       format!("{h}\n… {omitted} lines omitted …\n{t}")
     }
   };
-  let note = if saved {
-    format!(
+  let note = match saved {
+    Some(file) => format!(
       "[Output truncated: {lines} lines, {} bytes in total. The full output is in {}; read it with the read tool (offset / limit) instead of re-running the command.]",
       text.len(),
       file.display()
-    )
-  } else {
-    format!("[Output truncated: {lines} lines, {} bytes in total; the full output could not be saved.]", text.len())
+    ),
+    None => format!("[Output truncated: {lines} lines, {} bytes in total; the full output could not be saved.]", text.len()),
   };
   format!("{preview}\n\n{note}")
 }

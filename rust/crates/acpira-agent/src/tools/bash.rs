@@ -20,17 +20,7 @@ pub const MAX_TIMEOUT_MS: u64 = 600_000;
 const DRAIN_GRACE: Duration = Duration::from_millis(200);
 const FLUSH_EVERY: Duration = Duration::from_millis(50);
 
-pub fn shell() -> (String, Vec<&'static str>) {
-  #[cfg(windows)]
-  {
-    ("powershell.exe".into(), vec!["-NoProfile", "-NonInteractive", "-Command"])
-  }
-  #[cfg(not(windows))]
-  {
-    let sh = if Path::new("/bin/bash").exists() { "/bin/bash" } else { "/bin/sh" };
-    (sh.into(), vec!["-c"])
-  }
-}
+pub use crate::defs::shell;
 
 pub fn spec() -> ToolSpec {
   let (sh, _) = shell();
@@ -267,7 +257,7 @@ pub async fn run(command_line: &str, workdir: &Path, timeout_ms: u64, ctx: &Ctx)
   }
 
   let code = status.and_then(|s| s.ok()).and_then(|s| s.code());
-  let mut model = if all.trim().is_empty() { "(no output)".to_owned() } else { budgeted(all.trim_end(), Keep::HeadTail, ctx) };
+  let mut model = if all.trim().is_empty() { "(no output)".to_owned() } else { format_model_output(command_line, all.trim_end(), ctx) };
   if timed_out {
     model.push_str(&format!("\n[timed out after {}s; the command was killed]", timeout_ms / 1000));
   } else {
@@ -283,6 +273,180 @@ pub async fn run(command_line: &str, workdir: &Path, timeout_ms: u64, ctx: &Ctx)
     content: vec![],
     raw_output: Some(json!({ "exitCode": code, "timedOut": timed_out })),
   }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputClass {
+  /// Verbatim commands (cat, git diff/show, text pipelines, or unknown commands): standard HeadTail budget only
+  Raw,
+  /// Recognized build/test/install commands eligible for spill-first repetitive progress folding
+  BuildTest,
+}
+
+fn classify(command: &str) -> OutputClass {
+  let low = command.to_ascii_lowercase();
+  // Never fold commands whose output is source/diff/structured data
+  let raw_prefixes = ["cat ", "git diff", "git show", "jq ", "awk ", "sed ", "head ", "tail ", "nl "];
+  let trimmed = low.trim_start();
+  if raw_prefixes.iter().any(|p| trimmed.starts_with(p)) || trimmed.contains("| jq") || trimmed.contains("| awk") || trimmed.contains("| sed") {
+    return OutputClass::Raw;
+  }
+  let build_markers = [
+    "cargo test",
+    "cargo check",
+    "cargo clippy",
+    "cargo build",
+    "pnpm ",
+    "npm ",
+    "yarn ",
+    "pytest",
+    "unittest",
+    "go test",
+    "gradle",
+    "gradlew",
+    "swift test",
+    "swift build",
+    "xcodebuild",
+    "vitest",
+    "jest",
+    "pip install",
+    "uv ",
+  ];
+  if build_markers.iter().any(|m| trimmed.contains(m)) {
+    OutputClass::BuildTest
+  } else {
+    OutputClass::Raw
+  }
+}
+
+fn is_diagnostic_line(line: &str) -> bool {
+  let low = line.to_ascii_lowercase();
+  line.contains("FAILED")
+    || line.contains("FAIL ")
+    || line.contains("FAIL\t")
+    || low.contains("error:")
+    || low.contains("error[")
+    || low.contains("panic")
+    || low.contains("warning:")
+    || low.contains("assertionerror")
+    || low.contains("traceback")
+    || low.contains("exception")
+    || low.contains("exit code")
+    || low.contains("timed out")
+    || low.starts_with("thread '")
+}
+
+fn is_repetitive_progress_line(line: &str) -> bool {
+  let t = line.trim_start();
+  let prefixes = [
+    "Compiling ",
+    "Downloading ",
+    "Downloaded ",
+    "Fetching ",
+    "Fresh ",
+    "Checking ",
+    "Updating ",
+    "Blocking waiting",
+    "Locking ",
+    "Packaging ",
+    "Archiving ",
+    "PASS ",
+    "ok ",
+    "✓ ",
+    "✔ ",
+    "Progress:",
+    "> Task :",
+  ];
+  if prefixes.iter().any(|p| t.starts_with(p)) {
+    return true;
+  }
+  if t.starts_with("test ") && t.ends_with(" ... ok") {
+    return true;
+  }
+  // Progress counters like "[12/140] Building ..."
+  if let Some(rest) = t.strip_prefix('[')
+    && let Some((head, _)) = rest.split_once(']')
+    && let Some((a, b)) = head.split_once('/')
+    && !a.is_empty()
+    && !b.is_empty()
+    && a.chars().all(|c| c.is_ascii_digit())
+    && b.chars().all(|c| c.is_ascii_digit())
+  {
+    return true;
+  }
+  false
+}
+
+/// Fold repetitive progress/passing lines from build/test output while preserving diagnostics, surrounding failure
+/// context, and the trailing summary. Returns `(folded_text, folded_line_count)` only when savings are material
+fn fold_build_test(text: &str) -> Option<(String, usize)> {
+  let lines: Vec<&str> = text.lines().collect();
+  if lines.len() < 24 {
+    return None;
+  }
+  let tail_keep = 16usize;
+  let cutoff = lines.len().saturating_sub(tail_keep);
+  // Keep every diagnostic line plus 2 lines of context around it
+  let mut keep_diag = vec![false; lines.len()];
+  for (i, line) in lines.iter().enumerate() {
+    if is_diagnostic_line(line) {
+      let from = i.saturating_sub(2);
+      let to = (i + 2).min(lines.len() - 1);
+      for slot in &mut keep_diag[from..=to] {
+        *slot = true;
+      }
+    }
+  }
+  let mut out: Vec<String> = Vec::with_capacity(lines.len());
+  let mut folded_run = 0usize;
+  let mut folded_total = 0usize;
+  let flush = |out: &mut Vec<String>, run: &mut usize| {
+    if *run > 0 {
+      out.push(format!("[... {} repetitive build/test lines folded ...]", *run));
+      *run = 0;
+    }
+  };
+  for (i, &line) in lines.iter().enumerate() {
+    if i < cutoff && !keep_diag[i] && is_repetitive_progress_line(line) {
+      folded_run += 1;
+      folded_total += 1;
+    } else {
+      flush(&mut out, &mut folded_run);
+      out.push(line.to_owned());
+    }
+  }
+  flush(&mut out, &mut folded_run);
+  if folded_total < 12 {
+    return None;
+  }
+  let folded = out.join("\n");
+  if text.len().saturating_sub(folded.len()) < 400 {
+    return None;
+  }
+  Some((folded, folded_total))
+}
+
+/// Three-class output formatter: spills raw output to disk BEFORE returning a folded summary so the model always has
+/// a verified read escape hatch; falls back to standard HeadTail budget if spilling fails
+fn format_model_output(command_line: &str, trimmed: &str, ctx: &Ctx) -> String {
+  if classify(command_line) == OutputClass::BuildTest
+    && let Some((folded, folded_count)) = fold_build_test(trimmed)
+    && let Ok(file) = crate::budget::spill(trimmed, &ctx.outputs, &ctx.call_id)
+  {
+    let fitted = if folded.lines().count() <= crate::budget::MAX_LINES && folded.len() <= crate::budget::MAX_BYTES {
+      folded
+    } else {
+      let h = crate::budget::head(&folded, crate::budget::MAX_LINES / 2, crate::budget::MAX_BYTES / 2);
+      let t = crate::budget::tail(&folded, crate::budget::MAX_LINES / 2, crate::budget::MAX_BYTES / 2);
+      format!("{h}\n… folded output truncated …\n{t}")
+    };
+    return format!(
+      "{fitted}\n\n[Folded {folded_count} repetitive build/test lines. Full output ({} bytes) is in {}; read it with the read tool (offset / limit) if needed.]",
+      trimmed.len(),
+      file.display()
+    );
+  }
+  budgeted(trimmed, Keep::HeadTail, ctx)
 }
 
 #[cfg(all(test, unix))]
@@ -358,6 +522,43 @@ mod tests {
     let parts: Vec<_> = std::env::split_paths(&path).collect();
     assert_eq!(parts.last(), Some(&skill.join("bin")));
     assert_eq!(crate::skills::path_with(&[]), None);
+  }
+
+  #[test]
+  fn selective_folding_spills_first_keeps_diagnostics_and_skips_raw_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut noisy = String::new();
+    for i in 1..=40 {
+      noisy.push_str(&format!("   Compiling crate_{i} v0.1.0 (/path/to/crate_{i})\n"));
+    }
+    noisy.push_str("error[E0308]: mismatched types in src/lib.rs:42\n");
+    for i in 1..=20 {
+      noisy.push_str(&format!("test suite::case_{i} ... ok\n"));
+    }
+    noisy.push_str("test result: FAILED. 20 passed; 1 failed;\n");
+
+    let c = ctx(dir.path(), Default::default());
+    // 1. Raw commands like `cat` and `git diff` stay verbatim with no spill file created
+    let raw_out = format_model_output("git diff HEAD", &noisy, &c);
+    assert_eq!(raw_out, noisy);
+    assert!(!c.outputs.join("b1.txt").exists());
+
+    // 2. Build/test commands spill raw text first, then return folded summary preserving diagnostics and tail
+    let folded = format_model_output("cargo test -p acpira-agent", &noisy, &c);
+    assert!(folded.contains("repetitive build/test lines folded"), "{folded}");
+    assert!(folded.contains("error[E0308]: mismatched types"), "{folded}");
+    assert!(folded.contains("test result: FAILED"), "{folded}");
+    assert!(folded.contains("b1.txt"), "{folded}");
+    assert_eq!(std::fs::read_to_string(c.outputs.join("b1.txt")).unwrap(), noisy);
+
+    // 3. When spill fails (outputs points to a regular file), fall back to uncompressed output
+    let blocker = dir.path().join("blocked");
+    std::fs::write(&blocker, "x").unwrap();
+    let mut bad = ctx(dir.path(), Default::default());
+    bad.outputs = blocker;
+    let fallback = format_model_output("cargo test -p acpira-agent", &noisy, &bad);
+    assert_eq!(fallback, noisy);
+    assert!(!fallback.contains("Folded"));
   }
 
   #[test]

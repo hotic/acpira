@@ -81,6 +81,9 @@ struct Buf {
   /// Set when the command ended: its exit code, None when a signal ended it
   exit: Option<Option<i32>>,
   killed: bool,
+  /// Whether the terminal state (exit status + unread output up to `read`) has already been reported
+  /// via `start`, explicit `job` polling, inline delivery, or discarded by cancel/rewind
+  delivered_end: bool,
 }
 
 struct Job {
@@ -305,6 +308,9 @@ impl Jobs {
     let unread = b.text.get(start..).unwrap_or_default();
     let fresh = if job.tty.is_some() { overstrike(unread) } else { unread.to_owned() };
     b.read = b.dropped + b.text.len();
+    if b.exit.is_some() {
+      b.delivered_end = true;
+    }
     let status = match b.exit {
       None => format!("[job {id} is still running: {}]", job.command),
       Some(_) if b.killed => format!("[job {id} was stopped]"),
@@ -330,6 +336,68 @@ impl Jobs {
     }
     let content = if shown.is_empty() { vec![] } else { vec![super::text_content(&shown)] };
     Some(Output { model: format!("{model}\n{status}"), is_error: failed, content, raw_output: None })
+  }
+
+  /// Drain all background jobs that have exited and have not yet had their final state reported.
+  /// Shares the exact `b.read` cursor with `report()` so neither `start()`, explicit `job` checks, nor inline
+  /// delivery can ever duplicate output. Attached onto the next real `ToolResult` (never via `steer`).
+  pub fn drain_completed(&self) -> Option<String> {
+    const PER_JOB_MAX_BYTES: usize = 4096;
+    const PER_JOB_MAX_LINES: usize = 80;
+    let jobs = self.jobs.lock();
+    let mut parts: Vec<String> = vec![];
+    for (id, job) in jobs.iter() {
+      let mut b = job.buf.lock();
+      if b.exit.is_none() || b.delivered_end {
+        continue;
+      }
+      let start = b.read.max(b.dropped) - b.dropped;
+      let skipped = b.dropped.saturating_sub(b.read);
+      let unread = b.text.get(start..).unwrap_or_default();
+      let fresh = if job.tty.is_some() { overstrike(unread) } else { unread.to_owned() };
+      b.read = b.dropped + b.text.len();
+      b.delivered_end = true;
+      let status = match b.exit {
+        Some(_) if b.killed => "stopped".to_owned(),
+        Some(Some(0)) => "exit code 0".to_owned(),
+        Some(Some(c)) => format!("exit code {c}"),
+        Some(None) => "killed by signal".to_owned(),
+        None => continue,
+      };
+      let mut body = String::new();
+      if skipped > 0 {
+        body.push_str(&format!("[{skipped} bytes of older output were dropped]\n"));
+      }
+      let trimmed = fresh.trim_end();
+      if trimmed.is_empty() {
+        body.push_str("(no new output)");
+      } else if trimmed.len() <= PER_JOB_MAX_BYTES && trimmed.lines().count() <= PER_JOB_MAX_LINES {
+        body.push_str(trimmed);
+      } else {
+        body.push_str(&crate::budget::tail(trimmed, PER_JOB_MAX_LINES, PER_JOB_MAX_BYTES));
+        body.push_str(&format!("\n[truncated inline tail; {} bytes total]", trimmed.len()));
+      }
+      parts.push(format!("[background job {id} completed ({status}): {}]\n{body}", job.command));
+    }
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
+  }
+
+  /// Whether any background job in this session is still running
+  pub fn has_running(&self) -> bool {
+    self.jobs.lock().values().any(|j| j.buf.lock().exit.is_none())
+  }
+
+  /// Void any completed-but-undelivered job completions (called on turn cancel or history rewind) so stale
+  /// completions are never injected into a later unrelated turn
+  pub fn discard_pending_deliveries(&self) {
+    let jobs = self.jobs.lock();
+    for job in jobs.values() {
+      let mut b = job.buf.lock();
+      if b.exit.is_some() && !b.delivered_end {
+        b.read = b.dropped + b.text.len();
+        b.delivered_end = true;
+      }
+    }
   }
 }
 
@@ -589,5 +657,44 @@ mod tests {
     assert_eq!(overstrike("progress 10%\rprogress 100%\nnext\r\n"), "progress 100%\nnext\n");
     assert_eq!(overstrike("abc\u{8}\u{8}XY"), "aXY");
     assert_eq!(overstrike("⠋ loading\r⠙ loading\rdone     "), "done     ");
+  }
+
+  #[tokio::test]
+  async fn completed_jobs_drain_once_sharing_report_cursor_and_void_on_discard() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(dir.path());
+    let jobs = Jobs::default();
+    // 1. A job that already ended during START_WAIT is marked delivered by start() -> never re-drained
+    let quick = jobs.start("echo fast-done", dir.path(), false, &c).await;
+    assert!(quick.model.contains("exited with code 0"), "{}", quick.model);
+    assert!(jobs.drain_completed().is_none(), "fast job already reported by start()");
+
+    // 2. A job that finishes after start() is drained once with unread tail, advancing the shared cursor
+    let slow = jobs.start("echo head; sleep 2; echo tail-line", dir.path(), false, &c).await;
+    assert!(slow.model.contains("still running"), "{}", slow.model);
+    assert!(jobs.drain_completed().is_none(), "running job is not drained yet");
+    for _ in 0..30 {
+      if let Some(batch) = jobs.drain_completed() {
+        assert!(batch.contains("background job 2 completed (exit code 0)"), "{batch}");
+        let body = batch.split_once('\n').map_or("", |(_, b)| b);
+        assert!(body.contains("tail-line") && !body.contains("head"), "shared cursor excludes already-read head: {batch}");
+        assert!(jobs.drain_completed().is_none(), "second drain returns nothing");
+        let after = jobs.check("2", 0, false, None, &c).await;
+        assert!(after.model.contains("(no new output)") && after.model.contains("exited with code 0"), "{}", after.model);
+        break;
+      }
+      tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+
+    // 3. Discarding pending deliveries (cancel/rewind) voids completed undelivered jobs
+    jobs.start("sleep 2; echo stale-output", dir.path(), false, &c).await;
+    for _ in 0..30 {
+      if jobs.jobs.lock()["3"].buf.lock().exit.is_some() {
+        break;
+      }
+      tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    jobs.discard_pending_deliveries();
+    assert!(jobs.drain_completed().is_none(), "discarded completion must not leak into later turns");
   }
 }

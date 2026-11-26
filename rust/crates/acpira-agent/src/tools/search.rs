@@ -29,9 +29,8 @@ pub const MAX_CONTEXT: usize = 50;
 pub fn grep_spec() -> ToolSpec {
   ToolSpec {
     name: super::GREP.into(),
-    description: "Search file contents with a regular expression (Rust regex syntax). Returns `path:line: text` for up to 100 matches, \
-                  skipping ignored and binary files. With context, each file's matches come under its path as `line: text`, with the \
-                  lines around them as `line- text`."
+    description: "Search file contents with a regular expression (Rust regex syntax). Returns up to 100 matches grouped under each file path \
+                  as `line: text`, skipping ignored and binary files. With context, surrounding lines appear as `line- text`."
       .into(),
     parameters: json!({
       "type": "object",
@@ -172,12 +171,12 @@ pub fn grep(pattern: &str, path: &Path, include: Option<&str>, context: usize, c
     if !hits.is_empty() {
       in_files += 1;
       let name = shown(&abs, &ctx.cwd);
+      let _ = writeln!(out, "{name}");
       if context == 0 {
         for &n in &hits {
-          let _ = writeln!(out, "{name}:{}: {}", n + 1, crate::budget::cut(lines[n].trim_end(), MAX_LINE));
+          let _ = writeln!(out, "{}: {}", n + 1, crate::budget::cut(lines[n].trim_end(), MAX_LINE));
         }
       } else {
-        let _ = writeln!(out, "{name}");
         around(&mut out, &lines, &hits, context);
       }
     }
@@ -308,12 +307,17 @@ mod tests {
     let c = ctx(dir.path());
     let out = grep("(?i)todo", dir.path(), None, 0, &c);
     assert!(out.model.starts_with("3 matches in 3 files"), "{}", out.model);
-    assert!(out.model.contains("src/a.rs:2:     let todo = 1;") && !out.model.contains("bin.dat"), "{}", out.model);
+    assert!(out.model.contains("src/a.rs\n2:     let todo = 1;") && !out.model.contains("bin.dat"), "{}", out.model);
     let only_rs = grep("todo", dir.path(), Some("*.rs"), 0, &c);
     assert!(only_rs.model.starts_with("1 matches"), "{}", only_rs.model);
     assert_eq!(grep("nothing-here", dir.path(), None, 0, &c).model, "No matches.");
     let file = grep("TODO", &dir.path().join("src/util/b.rs"), None, 0, &c);
-    assert!(file.model.contains("src/util/b.rs:1:"), "{}", file.model);
+    assert!(file.model.contains("src/util/b.rs\n1: // TODO later"), "{}", file.model);
+    // Multiple hits in the same file print the path once as a group header
+    std::fs::write(dir.path().join("src/multi.rs"), "todo one\nother\ntodo two\n").unwrap();
+    let multi = grep("todo", &dir.path().join("src/multi.rs"), None, 0, &c).model;
+    assert_eq!(multi.matches("src/multi.rs").count(), 1, "{multi}");
+    assert!(multi.contains("src/multi.rs\n1: todo one\n3: todo two\n"), "{multi}");
     assert!(prepare_grep(&json!({ "pattern": "(" }), dir.path()).is_err());
   }
 

@@ -29,6 +29,43 @@ const MAX_CALL_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 /// image would stay in the history and fail every later request of the session
 const MAX_IMAGE_SIDE: u32 = 8000;
 
+/// Line-number prefix formatting for A/B experiments (`ACPIRA_READ_LINE_NUMBERS`):
+/// - `compact` (default): `{n}\t{line}\n` — lossless, preserves every line number while dropping `{:>6}` padding
+/// - `padded`: legacy `{:>6}\t{line}\n`
+/// - `sparse`: line number on line 1 and every 10th line, bare text in between
+/// - `none`: bare text without line-number prefixes (header still reports line range and total)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineNumberMode {
+  Compact,
+  Padded,
+  Sparse,
+  None,
+}
+
+pub fn line_number_mode() -> LineNumberMode {
+  match std::env::var("ACPIRA_READ_LINE_NUMBERS").ok().as_deref().map(str::trim) {
+    Some("padded") => LineNumberMode::Padded,
+    Some("sparse") => LineNumberMode::Sparse,
+    Some("none") => LineNumberMode::None,
+    _ => LineNumberMode::Compact,
+  }
+}
+
+fn format_line(mode: LineNumberMode, line_no: usize, line: &str) -> String {
+  match mode {
+    LineNumberMode::Compact => format!("{line_no}\t{line}\n"),
+    LineNumberMode::Padded => format!("{line_no:>6}\t{line}\n"),
+    LineNumberMode::Sparse => {
+      if line_no == 1 || line_no.is_multiple_of(10) {
+        format!("{line_no}\t{line}\n")
+      } else {
+        format!("{line}\n")
+      }
+    }
+    LineNumberMode::None => format!("{line}\n"),
+  }
+}
+
 /// One window of a file
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Slice {
@@ -256,6 +293,7 @@ fn view(s: &Slice, images: bool, left: &mut usize) -> Result<View, Box<Output>> 
   if s.offset > total {
     return Err(Box::new(Output::error(format!("offset {} is past the end: {} has {total} lines", s.offset, path.display()))));
   }
+  let mode = line_number_mode();
   let rows = text
     .lines()
     .enumerate()
@@ -263,7 +301,7 @@ fn view(s: &Slice, images: bool, left: &mut usize) -> Result<View, Box<Output>> 
     .take(s.limit)
     .map(|(i, line)| {
       let line = if line.len() > MAX_LINE { format!("{}… [line cut at {MAX_LINE} bytes]", crate::budget::cut(line, MAX_LINE)) } else { line.to_owned() };
-      format!("{:>6}\t{line}\n", i + 1)
+      format_line(mode, i + 1, &line)
     })
     .collect();
   Ok(View { path: path.clone(), offset: s.offset, total, rows, pdf: false })
@@ -451,7 +489,7 @@ mod tests {
     std::fs::write(&f, (1..=10).map(|n| format!("l{n}\n")).collect::<String>()).unwrap();
     let read = |offset, limit| run(&[Slice { path: f.clone(), offset, limit }], false, &ctx(dir.path()));
     let all = read(1, 2000);
-    assert!(all.model.contains("(10 lines)") && all.model.contains("    10\tl10"));
+    assert!(all.model.contains("(10 lines)") && all.model.contains("10\tl10"));
     let part = read(3, 2);
     assert!(part.model.contains("(lines 3-4 of 10; continue with offset 5)"), "{}", part.model);
     assert!(read(9, 5).model.contains("(lines 9-10 of 10)\n"), "a window that reaches the end offers no next one");
@@ -476,7 +514,7 @@ mod tests {
     assert_eq!(paths, [a.as_path(), b.as_path(), dir.path().join("gone.txt").as_path()], "the first path is not read twice");
     let out = run(&files, false, &ctx(dir.path()));
     assert!(!out.is_error, "one missing file does not fail the others");
-    assert!(out.model.contains("     2\ta2") && out.model.contains("     1\tb1") && out.model.contains("File not found"), "{}", out.model);
+    assert!(out.model.contains("2\ta2") && out.model.contains("1\tb1") && out.model.contains("File not found"), "{}", out.model);
     let many: Vec<String> = (0..MAX_PATHS).map(|n| format!("f{n}")).collect();
     assert!(prepare(&json!({ "path": "a.txt", "paths": many }), dir.path(), false).is_err());
     // A lone string, and an array sent as a JSON string
@@ -497,8 +535,8 @@ mod tests {
       "a repeated window and a bare repeat of the first file are dropped"
     );
     let out = run(&files, false, &ctx(dir.path()));
-    assert!(out.model.contains("(lines 120-122 of 300; continue with offset 123)\n   120\tline 120\n   121\tline 121\n   122\tline 122\n"), "{}", out.model);
-    assert!(out.model.contains("(lines 200-300 of 300)\n   200\tline 200"), "{}", out.model);
+    assert!(out.model.contains("(lines 120-122 of 300; continue with offset 123)\n120\tline 120\n121\tline 121\n122\tline 122\n"), "{}", out.model);
+    assert!(out.model.contains("(lines 200-300 of 300)\n200\tline 200"), "{}", out.model);
     // The bare file in `path` with its ranges in `paths` reads only the ranges; another file named bare stays whole
     let files = slices(json!({ "path": "a.rs", "paths": ["a.rs:120-122", "b.rs"] }), dir.path());
     assert_eq!(files, [Slice { path: f.clone(), offset: 120, limit: 3 }, Slice { path: dir.path().join("b.rs"), offset: 1, limit: DEFAULT_LIMIT }]);
@@ -522,7 +560,7 @@ mod tests {
     std::fs::write(&small, "tiny\n").unwrap();
     let files = slices(json!({ "path": "big.txt", "paths": ["other.txt", "small.txt"] }), dir.path());
     let out = run(&files, false, &ctx(dir.path()));
-    assert!(out.model.contains("     1\ttiny"), "the small file is read whole");
+    assert!(out.model.contains("1\ttiny"), "the small file is read whole");
     let rows = |c: &str| out.model.lines().filter(|l| l.contains(&format!("\t{c}{c}{c}"))).count();
     assert_eq!((rows("x"), rows("y")), (12, 12), "the two large files get the same share");
     assert!(out.model.len() < MAX_BYTES + 1024, "{}", out.model.len());
@@ -625,7 +663,7 @@ mod tests {
     std::fs::write(&notes, "frame notes\n").unwrap();
     let files = slices(json!({ "path": "notes.txt", "paths": ["frame.jpg", "huge.png"] }), dir.path());
     let out = run(&files, true, &ctx(dir.path()));
-    assert!(out.model.contains("     1\tframe notes") && out.model.contains("640x480") && out.model.contains("9000x200"), "{}", out.model);
+    assert!(out.model.contains("1\tframe notes") && out.model.contains("640x480") && out.model.contains("9000x200"), "{}", out.model);
     assert_eq!((out.content.len(), super::super::mcp::model_images(&out.content).len()), (2, 1));
 
     // A picture the providers do not take says how to get one they do
@@ -651,5 +689,15 @@ mod tests {
     let text_only = run(&file, false, &ctx(dir.path()));
     assert!(text_only.model.contains("does not accept images") && !text_only.model.contains("frames over"), "{}", text_only.model);
     assert_eq!(text_only.content[0]["content"]["mimeType"], "image/gif");
+  }
+
+  #[test]
+  fn line_number_modes_format_as_expected() {
+    assert_eq!(format_line(LineNumberMode::Compact, 7, "let x = 1;"), "7\tlet x = 1;\n");
+    assert_eq!(format_line(LineNumberMode::Padded, 7, "let x = 1;"), "     7\tlet x = 1;\n");
+    assert_eq!(format_line(LineNumberMode::Sparse, 1, "first"), "1\tfirst\n");
+    assert_eq!(format_line(LineNumberMode::Sparse, 5, "mid"), "mid\n");
+    assert_eq!(format_line(LineNumberMode::Sparse, 10, "tenth"), "10\ttenth\n");
+    assert_eq!(format_line(LineNumberMode::None, 10, "\tindented"), "\tindented\n");
   }
 }
