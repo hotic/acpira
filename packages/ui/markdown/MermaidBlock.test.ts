@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSvgSize, prepareSvgForExport, scopeSvgIds } from './MermaidBlock';
+import { computeLightboxCanvasSize, parseSvgSize, prepareSvgForExport, scopeSvgIds } from './MermaidBlock';
 
 describe('MermaidBlock helpers', () => {
   it('reads intrinsic dimensions from viewBox before width/height attributes', () => {
@@ -37,5 +37,22 @@ describe('MermaidBlock helpers', () => {
     expect(out).toContain('width="1201"');
     expect(out).toContain('height="301"');
     expect(out).not.toContain('width="100%"');
+  });
+
+  it('clamps lightbox canvas dimensions to GPU-safe texture side and pixel budgets', () => {
+    const normal = computeLightboxCanvasSize({ width: 800, height: 600 }, 2);
+    expect(normal.width).toBe(2400);
+    expect(normal.height).toBe(1800);
+    expect(normal.scale).toBe(3);
+
+    const wide = computeLightboxCanvasSize({ width: 3200, height: 480 }, 2);
+    expect(wide.width).toBeLessThanOrEqual(8192);
+    expect(wide.width * wide.height).toBeLessThanOrEqual(12_000_000);
+    expect(wide.scale).toBeGreaterThan(2);
+
+    const huge = computeLightboxCanvasSize({ width: 6000, height: 4000 }, 2);
+    expect(huge.width).toBeLessThanOrEqual(8192);
+    expect(huge.height).toBeLessThanOrEqual(8192);
+    expect(huge.width * huge.height).toBeLessThanOrEqual(12_000_000);
   });
 });

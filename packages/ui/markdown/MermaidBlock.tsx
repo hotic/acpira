@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useState, type CSSProperties, type MouseEvent, type ReactElement } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactElement } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { Check, CodeXml, Copy, Eye, Image as ImageIcon, Maximize2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import type { MermaidConfig } from '@streamdown/mermaid';
@@ -24,8 +24,29 @@ const ATTR_W_RE = /<svg\b[^>]*\bwidth\s*=\s*["']([\d.]+)(?:px)?["']/i;
 const ATTR_H_RE = /<svg\b[^>]*\bheight\s*=\s*["']([\d.]+)(?:px)?["']/i;
 const MAX_CANVAS_PIXELS = 16_000_000;
 const MAX_CANVAS_SIDE = 16_384;
+// GPU-safe texture budget for the interactive lightbox bitmap: crisp at 1:1 and beyond without exceeding Metal / Skia limits.
+const MAX_LIGHTBOX_CANVAS_PIXELS = 12_000_000;
+const MAX_LIGHTBOX_CANVAS_SIDE = 8_192;
+const MAX_LIGHTBOX_RASTER_SCALE = 4;
+// Quiet time after the last zoom / pan write before the visible region is re-rasterized sharp.
+const DETAIL_SETTLE_MS = 160;
 const EXPORT_PAD = 24;
 const EXPORT_DPR = 2;
+
+export function computeLightboxCanvasSize(size: SvgSize, dpr = 2): { width: number; height: number; scale: number } {
+  const safeDpr = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const desiredScale = Math.min(MAX_LIGHTBOX_RASTER_SCALE, Math.max(2, safeDpr * 1.5));
+  const scale = Math.min(
+    desiredScale,
+    MAX_LIGHTBOX_CANVAS_SIDE / Math.max(1, size.width, size.height),
+    Math.sqrt(MAX_LIGHTBOX_CANVAS_PIXELS / Math.max(1, size.width * size.height)),
+  );
+  return {
+    width: Math.max(1, Math.round(size.width * scale)),
+    height: Math.max(1, Math.round(size.height * scale)),
+    scale,
+  };
+}
 
 const contextMenuCollision = { side: 'flip', align: 'flip', fallbackAxisSide: 'none' } as const;
 const positionerClass = 'z-50 w-max min-w-pop-sm';
@@ -290,20 +311,20 @@ export function MermaidBlock({ chart }: { chart: string }) {
     );
   }
 
-  const zoomed = inlineZoom.scale > 1.01;
+  const zoomed = inlineZoom.zoomed;
   const inlineBoxStyle: CSSProperties | undefined = size ? {
     width: `min(100%, ${size.width}px, calc(var(--mermaid-max-h) * ${size.width / size.height}))`,
     aspectRatio: `${size.width} / ${size.height}`,
   } : undefined;
 
   const onStageClick = () => {
-    if (inlineZoom.consumeDrag() || zoomed) return;
+    if (inlineZoom.consumeDrag() || inlineZoom.getScale() > 1.01) return;
     setExpanded(true);
   };
 
   const onStageDoubleClick = (e: MouseEvent) => {
     e.stopPropagation();
-    if (inlineZoom.transformed) {
+    if (inlineZoom.isTransformed()) {
       inlineZoom.reset();
     } else {
       setExpanded(true);
@@ -372,19 +393,23 @@ export function MermaidBlock({ chart }: { chart: string }) {
           >
             <div
               ref={inlineZoom.targetRef as React.RefObject<HTMLDivElement | null>}
-              style={{
-                ...inlineBoxStyle,
-                ...(inlineZoom.transform ? { transform: inlineZoom.transform } : undefined),
-              }}
-              className={cn('shrink-0', size ? SVG_FILL : '[&_svg]:h-auto [&_svg]:max-w-full')}
+              style={inlineBoxStyle}
+              className={cn(
+                'shrink-0',
+                inlineZoom.transformed && 'will-change-transform',
+                size ? SVG_FILL : '[&_svg]:h-auto [&_svg]:max-w-full',
+              )}
               dangerouslySetInnerHTML={{ __html: svg }}
             />
           </div>
         </DiagramMenu>
 
         {inlineZoom.transformed && (
-          <div className="pointer-events-none absolute bottom-gap-half left-gap-half rounded-sm bg-bg-2/90 px-1.5 py-0.5 font-mono text-4 text-fg-3 ring ring-conversation-line tabular-nums">
-            {Math.round(inlineZoom.scale * 100)}%
+          <div
+            ref={inlineZoom.scaleLabelRef as React.RefObject<HTMLDivElement | null>}
+            className="pointer-events-none absolute bottom-gap-half left-gap-half rounded-sm bg-bg-2/90 px-1.5 py-0.5 font-mono text-4 text-fg-3 ring ring-conversation-line tabular-nums"
+          >
+            {Math.round(inlineZoom.getScale() * 100)}%
           </div>
         )}
       </div>
@@ -394,10 +419,10 @@ export function MermaidBlock({ chart }: { chart: string }) {
   );
 }
 
-// Frameless vector diagram Lightbox (same family as `Lightbox` and `SharePreviewDialog`): only the diagram card floats
-// over the blurred scrim — no toolbars or corner chrome. Wheel / pinch zooms under the pointer, drag pans freely across
-// the whole shell, double-click toggles between 1:1 readable size (anchored at the click) and fit-to-view, right-click
-// opens Copy image / Copy code, and backdrop click or Esc closes it.
+// Frameless diagram Lightbox (same family as `Lightbox` and `SharePreviewDialog`): rasterizes the Mermaid SVG once
+// onto a HiDPI `<canvas>` so wheel / pinch zooming runs as pure GPU texture compositing instead of re-rasterizing
+// SVG `<foreignObject>` nodes (and avoids injecting a second `<style>` block into WebKit). Falls back to scoped inline
+// SVG only when intrinsic dimensions are absent or bitmap decode fails.
 function DiagramLightbox({ svg, chart, size, theme, onClose }: {
   svg: string;
   chart: string;
@@ -406,11 +431,31 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
   onClose: () => void;
 }) {
   useLocale();
-  const scopedSvg = useMemo(() => scopeSvgIds(svg, 'lb'), [svg]);
-  const zoom = useImageZoom(scopedSvg, { naturalSize: size, wheelMode: 'zoom' });
+  const [rasterFailed, setRasterFailed] = useState(false);
+  const useFallbackSvg = !size || rasterFailed;
+  const scopedSvg = useMemo(() => (useFallbackSvg ? scopeSvgIds(svg, 'lb') : undefined), [svg, useFallbackSvg]);
+  // Re-rasterize the visible part at screen resolution once a zoom / pan settles (see redrawDetail below).
+  const detailTimer = useRef<number | undefined>(undefined);
+  const detailRef = useRef<HTMLCanvasElement | null>(null);
+  const redrawDetailRef = useRef<() => void>(() => {});
+  const scheduleDetail = useCallback(() => {
+    // The detail layer is pinned in screen space, so it cannot follow a moving view: drop it until the view settles.
+    if (detailRef.current) detailRef.current.style.display = 'none';
+    window.clearTimeout(detailTimer.current);
+    detailTimer.current = window.setTimeout(() => redrawDetailRef.current(), DETAIL_SETTLE_MS);
+  }, []);
+  useEffect(() => () => window.clearTimeout(detailTimer.current), []);
+  const zoom = useImageZoom(svg, { naturalSize: size, wheelMode: 'zoom', onViewChange: scheduleDetail });
   // Callback ref state (not useRef) because Dialog.Portal mounts its children after the initial effect runs.
   const [popup, setPopup] = useState<HTMLDivElement | null>(null);
+  const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
+  // Decoded standalone SVG plus the scale the base canvas was rasterized at, kept for detail redraws.
+  const rasterRef = useRef<{ img: HTMLImageElement; scale: number } | null>(null);
   const [popupSize, setPopupSize] = useState<SvgSize>();
+
+  useEffect(() => {
+    setRasterFailed(false);
+  }, [svg]);
 
   // Measure the popup viewport so wide or tall diagrams fit generously while small ones stay at 1:1 without upscaling.
   useEffect(() => {
@@ -425,6 +470,98 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
     return () => ro.disconnect();
   }, [popup]);
 
+  // Decode the standalone SVG once into the lightbox canvas so wheel / pinch zoom stays GPU-composited.
+  useEffect(() => {
+    if (!canvasEl || !size || rasterFailed) return;
+    let dead = false;
+    const raster = computeLightboxCanvasSize(size, window.devicePixelRatio || 1);
+    const standalone = prepareSvgForExport(svg, size);
+    const img = new Image();
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(standalone)}`;
+    void img.decode().then(() => {
+      if (dead) return;
+      canvasEl.width = raster.width;
+      canvasEl.height = raster.height;
+      const ctx = canvasEl.getContext('2d');
+      if (!ctx) {
+        setRasterFailed(true);
+        return;
+      }
+      ctx.setTransform(raster.scale, 0, 0, raster.scale, 0, 0);
+      ctx.clearRect(0, 0, size.width, size.height);
+      // Draw twice for WebKit foreignObject reliability (docs/dev/webview.md)
+      ctx.drawImage(img, 0, 0, size.width, size.height);
+      ctx.drawImage(img, 0, 0, size.width, size.height);
+      rasterRef.current = { img, scale: raster.scale };
+    }).catch(() => {
+      if (!dead) setRasterFailed(true);
+    });
+    return () => {
+      dead = true;
+      rasterRef.current = null;
+      canvasEl.width = 0;
+      canvasEl.height = 0;
+      const detail = detailRef.current;
+      if (detail) {
+        detail.width = 0;
+        detail.height = 0;
+        detail.style.display = 'none';
+      }
+    };
+  }, [canvasEl, svg, size, rasterFailed]);
+
+  // The base canvas is capped (MAX_LIGHTBOX_CANVAS_*), so a large diagram zoomed past its raster scale would be a
+  // stretched bitmap. Once the view settles, draw just the on-screen part of the vector SVG at device resolution into
+  // an opaque overlay canvas pinned 1:1 in screen space above the stage. It must stay outside the transformed stage:
+  // WebKit composites a canvas inside a scaled layer at a capped contents scale, which blurs it again.
+  redrawDetailRef.current = () => {
+    const detail = detailRef.current;
+    const raster = rasterRef.current;
+    if (!detail || !canvasEl || !raster || !size || !popup) return;
+    const hide = () => { detail.style.display = 'none'; detail.width = 0; detail.height = 0; };
+    const base = canvasEl.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    if (!base.width) return hide();
+    const perUnit = base.width / size.width; // screen px per diagram unit
+    // The base bitmap is enough up to its own raster scale.
+    if (perUnit * dpr <= raster.scale * 1.05) return hide();
+    const view = popup.getBoundingClientRect();
+    // Snap to device pixels so the overlay bitmap maps 1:1 onto the screen.
+    const snap = (v: number) => Math.round(v * dpr) / dpr;
+    const left = snap(Math.max(base.left, view.left));
+    const top = snap(Math.max(base.top, view.top));
+    const right = snap(Math.min(base.right, view.right));
+    const bottom = snap(Math.min(base.bottom, view.bottom));
+    if (right <= left || bottom <= top) return hide();
+    const w = Math.round((right - left) * dpr);
+    const h = Math.round((bottom - top) * dpr);
+    detail.width = w;
+    detail.height = h;
+    Object.assign(detail.style, {
+      display: 'block',
+      left: `${left - view.left}px`,
+      top: `${top - view.top}px`,
+      width: `${w / dpr}px`,
+      height: `${h / dpr}px`,
+    });
+    const ctx = detail.getContext('2d');
+    if (!ctx) return hide();
+    // Opaque card fill so the soft base bitmap never shows through around the sharp glyphs.
+    ctx.fillStyle = getComputedStyle(canvasEl.parentElement ?? canvasEl).backgroundColor;
+    ctx.fillRect(0, 0, w, h);
+    // Scale through the context transform and draw the whole SVG, letting the canvas bounds clip: WebKit rasterizes
+    // an SVG at its intrinsic size for a source-rect drawImage, which would just stretch the same soft pixels.
+    ctx.setTransform(perUnit * dpr, 0, 0, perUnit * dpr, (base.left - left) * dpr, (base.top - top) * dpr);
+    // Draw twice for WebKit foreignObject reliability (docs/dev/webview.md)
+    ctx.drawImage(raster.img, 0, 0, size.width, size.height);
+    ctx.drawImage(raster.img, 0, 0, size.width, size.height);
+  };
+
+  // A resize moves the visible region, so refresh the detail layer too.
+  useEffect(() => {
+    if (popupSize) scheduleDetail();
+  }, [popupSize, scheduleDetail]);
+
   const fitted = useMemo(() => {
     if (!size || !popupSize) return undefined;
     // Account for outer page padding + inner card padding so the fitted card never touches the shell edges.
@@ -438,6 +575,8 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
   }, [size, popupSize]);
 
   const actualTarget = fitted && fitted.fitRatio < 0.98 ? 1 / fitted.fitRatio : 1;
+  const actualTargetRef = useRef(actualTarget);
+  actualTargetRef.current = actualTarget;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -445,15 +584,24 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
       if (e.key === '+' || e.key === '=') { e.preventDefault(); zoom.zoomIn(); }
       else if (e.key === '-') { e.preventDefault(); zoom.zoomOut(); }
       else if (e.key === '0') { e.preventDefault(); zoom.reset(); }
-      else if (e.key === '1') { e.preventDefault(); if (actualTarget > 1.02) zoom.zoomTo(actualTarget); else zoom.reset(); }
+      else if (e.key === '1') {
+        e.preventDefault();
+        if (actualTargetRef.current > 1.02) zoom.zoomTo(actualTargetRef.current);
+        else zoom.reset();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  });
+  }, [zoom]);
+
+  const popupRef = useCallback((el: HTMLDivElement | null) => {
+    setPopup(el);
+    zoom.surfaceRef(el);
+  }, [zoom.surfaceRef]);
 
   const onDiagramDoubleClick = (e: MouseEvent) => {
     e.stopPropagation();
-    if (zoom.transformed) {
+    if (zoom.isTransformed()) {
       zoom.reset();
     } else if (actualTarget > 1.05) {
       zoom.zoomTo(actualTarget, e.clientX, e.clientY);
@@ -466,14 +614,13 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
     <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Popup
-          ref={el => {
-            setPopup(el);
-            zoom.surfaceRef(el);
-          }}
+          ref={popupRef}
           aria-label={t('diagram.title')}
           onScrimClick={zoom.onBackdropClick(onClose)}
-          className="absolute inset-0 z-40 flex touch-none items-center justify-center overflow-hidden bg-scrim p-page backdrop-blur-xs"
+          className="absolute inset-0 z-40 flex touch-none items-center justify-center overflow-hidden p-page"
         >
+          {/* Separate static backdrop so GPU-composited diagram zoom never forces backdrop-filter re-compositing */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 bg-scrim backdrop-blur-xs" />
           <DiagramMenu svg={svg} chart={chart} size={size} theme={theme}>
             <div
               ref={zoom.targetRef as React.RefObject<HTMLDivElement | null>}
@@ -481,19 +628,27 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
               onClick={e => e.stopPropagation()}
               onDoubleClick={onDiagramDoubleClick}
               onPointerDown={zoom.onPointerDown}
-              style={zoom.transform ? { transform: zoom.transform } : undefined}
               className={cn(
-                'acp-share-stage flex shrink-0 items-center justify-center rounded-lg border border-line bg-bg-1 p-pad shadow-pop select-none',
-                zoom.scale > 1 && (zoom.dragging ? 'cursor-grabbing' : 'cursor-grab'),
+                'acp-share-stage relative z-1 flex shrink-0 items-center justify-center rounded-lg border border-line bg-bg-1 p-pad shadow-pop select-none will-change-transform',
+                zoom.canPan && (zoom.dragging ? 'cursor-grabbing' : 'cursor-grab'),
               )}
             >
-              <div
-                style={fitted ? { width: fitted.width, height: fitted.height } : undefined}
-                className={cn('shrink-0', fitted ? SVG_FILL : 'max-h-(--lightbox-max-h) max-w-full [&_svg]:h-auto [&_svg]:max-w-full')}
-                dangerouslySetInnerHTML={{ __html: scopedSvg }}
-              />
+              {useFallbackSvg ? (
+                <div
+                  style={fitted ? { width: fitted.width, height: fitted.height } : undefined}
+                  className={cn('shrink-0', fitted ? SVG_FILL : 'max-h-(--lightbox-max-h) max-w-full [&_svg]:h-auto [&_svg]:max-w-full')}
+                  dangerouslySetInnerHTML={{ __html: scopedSvg ?? '' }}
+                />
+              ) : (
+                <canvas
+                  ref={setCanvasEl}
+                  style={fitted ? { width: fitted.width, height: fitted.height } : undefined}
+                  className={cn('block shrink-0', !fitted && 'max-h-(--lightbox-max-h) max-w-full')}
+                />
+              )}
             </div>
           </DiagramMenu>
+          {!useFallbackSvg && <canvas ref={detailRef} aria-hidden className="pointer-events-none absolute z-2 hidden" />}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

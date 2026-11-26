@@ -9,9 +9,9 @@ import { optionClass } from '../ui/DropdownMenu';
 import { ShellLayerContext, popupClass } from '../ui/Overlay';
 import { hostImageSave } from '../vscodeApi';
 import { AgentMark } from './AgentMark';
-import { useImageZoom } from './Lightbox';
+import { useImageZoom } from '../markdown/Lightbox';
 import { ModelMark } from './ModelMark';
-import { MarkSvg } from './marks';
+import { MarkSvg } from '../chrome/marks';
 import { blobToDataUrl, renderShareCardToPng, shareFileName } from './shareCapture';
 import type { ShareMeta } from './turnActionHelpers';
 
@@ -190,11 +190,10 @@ export function SharePreviewDialog({ payload, onClose }: {
                     // Shown whole: at most the card's own width, scaled down (ratio kept) when taller than the stage
                     style={{
                       maxWidth: `min(100%, ${renderedImg.width}px)`,
-                      ...(zoom.transform ? { transform: zoom.transform } : undefined),
                     }}
                     className={cn(
-                      'acp-share-stage block h-auto max-h-full w-auto shrink-0 rounded-lg shadow-pop select-none',
-                      zoom.scale > 1 && (zoom.dragging ? 'cursor-grabbing' : 'cursor-grab'),
+                      'acp-share-stage block h-auto max-h-full w-auto shrink-0 rounded-lg shadow-pop select-none will-change-transform',
+                      zoom.canPan && (zoom.dragging ? 'cursor-grabbing' : 'cursor-grab'),
                     )}
                   />
                 }
