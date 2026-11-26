@@ -37,6 +37,10 @@ export interface Config {
   // A sidekick in another CLI through the host's own select (`host_sidekick.rs`, every CLI session without one of its
   // own): a MODELS key the built-in agent runs, picked as `acpira/eval-sidekick/<id>`
   hostSidekick?: string;
+  // Cross-family strong Critic model added as `eval-critic` provider (discovered silently by `critique::peer`)
+  critic?: string;
+  // Per-cell environment variables forwarded to the sidecar / built-in agent (e.g. `ACPIRA_READ_LINE_NUMBERS`)
+  env?: Record<string, string>;
   // The session mode set once the session starts (the built-in agent's `team`)
   mode?: string;
   // A line put before the task's prompt, on its own line: how a user starts this configuration's orchestration
@@ -111,6 +115,28 @@ export const CONFIGS: Record<string, Config> = {
   'codex-orch-sol': { harness: 'codex', model: 'gpt-6.1-sol', helpers: [ledgerWorker('gpt-6.1-sol')], trigger: LEDGER_TRIGGER },
   // Claude Code on its own login leading the built-in agent's workers on Sol
   'claude-max-orch-sol': { harness: 'claude-max', model: 'claude-opus-5.5', pick: { model: 'opus', effort: 'high' }, helpers: [ledgerWorker('gpt-6.1-sol')], trigger: LEDGER_TRIGGER },
+  // P0 read line-number A/B matrix (padded baseline vs compact default vs sparse vs none)
+  'read-padded': { harness: 'acpira', model: 'gpt-6.2-sol', env: { ACPIRA_READ_LINE_NUMBERS: 'padded' } },
+  'read-compact': { harness: 'acpira', model: 'gpt-6.2-sol', env: { ACPIRA_READ_LINE_NUMBERS: 'compact' } },
+  'read-sparse': { harness: 'acpira', model: 'gpt-6.2-sol', env: { ACPIRA_READ_LINE_NUMBERS: 'sparse' } },
+  'read-none': { harness: 'acpira', model: 'gpt-6.2-sol', env: { ACPIRA_READ_LINE_NUMBERS: 'none' } },
+  'read-ds-padded': { harness: 'acpira', model: 'deepseek-v4.1-flash', env: { ACPIRA_READ_LINE_NUMBERS: 'padded' } },
+  'read-ds-compact': { harness: 'acpira', model: 'deepseek-v4.1-flash', env: { ACPIRA_READ_LINE_NUMBERS: 'compact' } },
+  'read-ds-sparse': { harness: 'acpira', model: 'deepseek-v4.1-flash', env: { ACPIRA_READ_LINE_NUMBERS: 'sparse' } },
+  'read-ds-none': { harness: 'acpira', model: 'deepseek-v4.1-flash', env: { ACPIRA_READ_LINE_NUMBERS: 'none' } },
+  // P1 invisible cross-family Critique A/B (baseline skips as NoPeer; -crit adds a metered cross-family strong peer)
+  'acpira-sol2-luna': { harness: 'acpira', model: 'gpt-6.2-sol', sidekick: 'gpt-6-luna' },
+  'acpira-sol2-luna-crit': { harness: 'acpira', model: 'gpt-6.2-sol', sidekick: 'gpt-6-luna', critic: 'claude-opus-5.5' },
+  'acpira-sol2': { harness: 'acpira', model: 'gpt-6.2-sol' },
+  'acpira-sol2-crit': { harness: 'acpira', model: 'gpt-6.2-sol', critic: 'deepseek-v4-pro' },
+  'acpira-sol2-crit-grok': { harness: 'acpira', model: 'gpt-6.2-sol', critic: 'grok-4.7' },
+  'acpira-sol2-ds': { harness: 'acpira', model: 'gpt-6.2-sol', sidekick: 'deepseek-v4.1-flash' },
+  'acpira-sol2-ds-crit': { harness: 'acpira', model: 'gpt-6.2-sol', sidekick: 'deepseek-v4.1-flash', critic: 'kimi-k3.1-pro' },
+  'acpira-ds-flash': { harness: 'acpira', model: 'deepseek-v4.1-flash' },
+  'acpira-ds-flash-crit': { harness: 'acpira', model: 'deepseek-v4.1-flash', critic: 'gpt-6.2-astra' },
+  'acpira-glm': { harness: 'acpira', model: 'glm-5.3' },
+  'acpira-glm-crit': { harness: 'acpira', model: 'glm-5.3', critic: 'gpt-6.2-astra' },
+  'acpira-opus-luna-crit': { harness: 'acpira', model: 'claude-opus-5.5', sidekick: 'gpt-6-luna', critic: 'gpt-6.2-astra' },
 };
 
 // The configuration's helpers that run on a CLI's own login, so the metering proxy sees none of their calls
@@ -134,11 +160,16 @@ export function setupHelpers(c: Config, o: { home: string; acpiraHome: string; b
     else builtin.push({ id: `eval-${h.id}`, api: spec.api, base: o.baseFor(h.id), models: [{ spec }] });
   }
   const picks: Record<string, string> = {};
+  if (c.env) Object.assign(env, c.env);
   if (c.sidekick || c.hostSidekick) {
     const spec = MODELS[(c.sidekick ?? c.hostSidekick)!]!;
     builtin.push({ id: 'eval-sidekick', api: spec.api, base: o.baseFor('sidekick'), models: [{ spec }] });
     if (c.sidekick) picks.sidekick = `eval-sidekick/${spec.id}`;
     else picks[HOST_SIDEKICK] = `acpira/eval-sidekick/${spec.id}`;
+  }
+  if (c.critic) {
+    const spec = MODELS[c.critic]!;
+    builtin.push({ id: 'eval-critic', api: spec.api, base: o.baseFor('critic'), models: [{ spec }] });
   }
   if (c.harness.startsWith('acpira')) picks.model = `evalgw/${MODELS[c.model]!.id}`;
   if (builtin.length) addBuiltinProviders(o.acpiraHome, builtin);

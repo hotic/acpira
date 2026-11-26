@@ -1,0 +1,77 @@
+{
+  "description": "Planted-plan micro-suite for P1 zero-tool Plan Critique: 6 defective plans (4 dev + 2 holdout) and 2 clean control plans to measure both catch rate and false-positive rate.",
+  "cases": [
+    {
+      "id": "semver-port-float-numbers",
+      "split": "dev",
+      "expect": "revise",
+      "requirement": "Port js/semver.js to Python as semverlite. Must match JavaScript behavior for every input including numeric prerelease identifiers and version bounds. Use Python stdlib only.",
+      "plan": "1. Create semverlite/__init__.py.\n2. Parse major, minor, patch and numeric prerelease tokens using Python float() to mirror JavaScript's IEEE 754 number type.\n3. Compare numeric identifiers with float equality and ordering, rejecting values > 1e308.\n4. Add unittest cases under tests/ covering parse, compare, and max_satisfying.",
+      "expectedTarget": "numeric parsing / float()",
+      "expectedEvidence": "JavaScript semver identifiers are safe non-negative integers (MAX_SAFE_INTEGER) and never parsed as floats; using float() breaks integer-only validation (e.g. scientific notation, decimal points, precision > 2^53) and disagrees with js/semver.js."
+    },
+    {
+      "id": "relay-full-access-stuck-guard",
+      "split": "dev",
+      "expect": "revise",
+      "requirement": "Fix relay so a consult or work round is never sent while the child CLI refuses to leave full-access (bypass) mode.",
+      "plan": "1. In rust/crates/acpira-host/src/acp/session/relay.rs, inspect the result of relay_mode().\n2. When relay_mode returns mode_ok == false AND stuck_in_bypass == true, abort the round with an error.\n3. When the CLI offers no mode below full access, relay_mode returns Ok(()) as today and the round proceeds normally.\n4. Add a unit test checking mode_ok == false && stuck_in_bypass == true.",
+      "expectedTarget": "stuck_in_bypass guard in relay.rs",
+      "expectedEvidence": "If the CLI advertises no mode below full access, relay_mode succeeds without switching, leaving stuck_in_bypass == true while mode_ok == true; gating on !mode_ok still executes consult/work rounds in full-access mode."
+    },
+    {
+      "id": "brand-glued-word-boundary",
+      "split": "dev",
+      "expect": "revise",
+      "requirement": "Map vendor marks for model families including IDs where version digits are glued directly onto the family name such as qwen3.8-27b, glm4.6, and gpt4o-mini.",
+      "plan": "1. In packages/shared/models.ts, compile a table of family regexes using word boundaries: /\\bqwen\\b/i, /\\bglm\\b/i, /\\bgpt\\b/i, /\\bclaude\\b/i.\n2. Run each regex against the model id and return the first matching vendor mark.\n3. Add unit tests for claude-opus-5.5 and gpt-6-astra.",
+      "expectedTarget": "regex word boundaries in models.ts",
+      "expectedEvidence": "In regex, both letters and digits are word characters (\\w), so there is no \\b boundary between 'qwen' and '3' in 'qwen3.8-27b' or 'glm' and '4' in 'glm4.6'; the plan fails the explicit requirement."
+    },
+    {
+      "id": "paste-loopback-ssrf",
+      "split": "dev",
+      "expect": "revise",
+      "requirement": "When pasting HTML containing both text and <img> tags, preserve text and fetch safe remote images without allowing request forgery against local services on loopback ports.",
+      "plan": "1. Parse pasted text/html with DOMParser and extract all <img src> attributes.\n2. Filter URLs to http: or https: schemes, then call fetch(url) to inline them as data URLs.\n3. Keep the plain text alongside the inlined images in the draft.\n4. Rely on the webview CSP to block unsafe requests.",
+      "expectedTarget": "img src fetch / loopback SSRF",
+      "expectedEvidence": "The webview CSP allows loopback ports (needed by open_browser), so filtering only by http/https still fetches localhost, 127.0.0.1, and [::1] URLs embedded in pasted HTML."
+    },
+    {
+      "id": "release-reopen-race",
+      "split": "holdout",
+      "expect": "revise",
+      "requirement": "Release idle background sessions' agent processes to save RAM while guaranteeing a fast reopen never races with the closing process on the native session or session lease.",
+      "plan": "1. In session_manager.rs, when a session stays idle past the timeout, drop its session lease immediately and spawn a detached task to dispose the child process.\n2. On load_session, acquire the lease and spawn a new agent process resuming the native session ID right away for low latency.\n3. Log disposal errors to stderr.",
+      "expectedTarget": "lease drop and detached dispose in session_manager.rs",
+      "expectedEvidence": "Dropping the lease and spawning a detached dispose allows load_session to resume the same native session while the old process is still running and writing to it, creating a race condition."
+    },
+    {
+      "id": "jobs-steer-replay-pollution",
+      "split": "holdout",
+      "expect": "revise",
+      "requirement": "Deliver completed background job outputs to the built-in agent automatically without adding extra polling turns, without polluting session replay with synthetic user messages, and without breaking prompt cache prefixes.",
+      "plan": "1. When a background job finishes in jobs.rs, format its exit status and output tail.\n2. Inject it into the active turn via steer::record so the model receives it right away.\n3. Leave Jobs::report unchanged so manual polling still works independently.",
+      "expectedTarget": "steer::record injection and unshared read cursor",
+      "expectedEvidence": "steer::record appends a user_message_chunk which fabricates synthetic user turns on session replay, and leaving Jobs::report with an independent cursor causes duplicate delivery."
+    },
+    {
+      "id": "clean-grep-grouping",
+      "split": "dev",
+      "expect": "approve",
+      "requirement": "Reduce token overhead in built-in grep when context == 0 by grouping consecutive matches from the same file under one file header while preserving line numbers and leaving context > 0 output unchanged.",
+      "plan": "1. In rust/crates/acpira-agent/src/tools/search.rs, keep context > 0 formatting untouched.\n2. When context == 0, track the last emitted file path; print the file path once as a header line and format each hit beneath it as `{line}:{text}`.\n3. Update unit tests in search.rs to assert grouped context == 0 output and unchanged context > 0 output, plus verify read range compatibility.",
+      "expectedTarget": null,
+      "expectedEvidence": null
+    },
+    {
+      "id": "clean-spill-first-bash",
+      "split": "holdout",
+      "expect": "approve",
+      "requirement": "Add selective folding for repetitive cargo/pnpm/test output in bash.rs while keeping cat and git diff verbatim, guaranteeing the full output is saved to outputs/<call>.txt before returning a folded summary, including over SSH.",
+      "plan": "1. Classify bash commands into raw-verbatim (cat, git diff, git show, unknown pipes) and foldable build/test/install commands.\n2. Fix remote.rs so failed local spill writes return an error instead of ignoring the Result.\n3. Attempt to write full stdout/stderr to outputs/<call>.txt first; only return the folded summary with the saved file path if the write succeeded, otherwise fall back to the existing HeadTail budget.\n4. Always retain the first diagnostic, failure section, exit code, signal, and timeout markers. Add unit tests for all branches.",
+      "expectedTarget": null,
+      "expectedEvidence": null
+    }
+  ]
+}

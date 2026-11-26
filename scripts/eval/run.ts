@@ -11,6 +11,8 @@ import { deepseekKey, gatewayKey } from './keys';
 import { type Call, OUTAGE, startMeter } from './meter';
 import { type QuotaSnap, claudeUsage, quotaSpent, readQuota } from './native';
 import { cost } from './prices';
+import { replayFiles } from './replay';
+import { SUITES } from './suites';
 
 // Harness comparison on long tasks (docs/dev/builtin-agent.md, "Harness comparison") and the Fusion comparison
 // (docs/dev/evals.md, Fusion bench). Spends real model calls, and subscription quota for native-login configurations.
@@ -361,6 +363,57 @@ const sumCalls = (calls: Call[]) => ({
   reasoning: calls.reduce((a, c) => a + c.reasoning, 0),
 });
 
+// Inter-request gap statistics around the 300s Anthropic ephemeral cache TTL
+function cacheGapStats(calls: Call[]) {
+  let over300s = 0;
+  let over300sCacheDrop = 0;
+  let maxGapS = 0;
+  let prevHit = 0;
+  for (let i = 1; i < calls.length; i++) {
+    const prev = calls[i - 1]!;
+    const cur = calls[i]!;
+    const gapS = Math.round((cur.t - (prev.t + prev.ms)) / 1000);
+    if (gapS > maxGapS) maxGapS = gapS;
+    const hit = cur.input > 0 ? cur.cacheRead / cur.input : 0;
+    if (gapS > 300) {
+      over300s++;
+      if (prevHit >= 0.5 && hit < 0.25 && cur.input >= 4000) over300sCacheDrop++;
+    }
+    prevHit = hit;
+  }
+  return maxGapS > 0 ? { over300s, over300sCacheDrop, maxGapS } : undefined;
+}
+
+// Guardrail and critique counts extracted from the run's built-in agent session JSONL(s)
+function sessionLogStats(acpiraHome: string) {
+  const dir = join(acpiraHome, 'agent/sessions');
+  if (!existsSync(dir)) return {};
+  const files = readdirSync(dir).filter(f => f.endsWith('.jsonl')).map(f => join(dir, f));
+  if (!files.length) return {};
+  const rep = replayFiles(files);
+  const critique = { ran: 0, approved: 0, revised: 0, skipped: 0, invalid: 0 };
+  for (const f of files) {
+    for (const line of readFileSync(f, 'utf8').split('\n')) {
+      if (!line.startsWith('{"type":"critique"')) continue;
+      try {
+        const ev = JSON.parse(line) as { outcome?: string };
+        if (ev.outcome === 'skipped') critique.skipped++;
+        else {
+          critique.ran++;
+          if (ev.outcome === 'approve') critique.approved++;
+          else if (ev.outcome === 'revise') critique.revised++;
+          else if (ev.outcome === 'invalid') critique.invalid++;
+        }
+      } catch { /* partial crash line */ }
+    }
+  }
+  const hasCritique = critique.ran > 0 || critique.skipped > 0;
+  return {
+    guardrails: rep.guardrails,
+    ...(hasCritique ? { critique } : {}),
+  };
+}
+
 // The quota a native login spends, read around each run that uses one (the agents its lead and its helpers run in)
 const nativeAgents = (setup: HarnessSetup, c?: Config) => [...new Set([
   ...(setup.unmetered && !setup.cli && ['claude', 'devin'].includes(setup.agent) ? [setup.agent] : []),
@@ -425,12 +478,18 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
 
   const mine = o.calls.filter(c => c.run === runId);
   const lead = sumCalls(mine);
+  const cacheGap = cacheGapStats(mine);
+  const logStats = sessionLogStats(acpiraHome);
   // Claude Code on its own login: the tokens its transcripts recorded stand in for the meter's
   const native = setup.agent === 'claude' && setup.unmetered && !DRY ? claudeUsage(home) : undefined;
   // A Claude helper's tokens are its own transcripts under the run's HOME, which holds no other Claude session (no
   // Claude lead beside a Claude helper, setupHelpers)
   const nativeIds = new Set(nativeHelpers(cell.config).map(h => h.id));
-  const helpers = Object.fromEntries([...(cell.config?.helpers ?? []).map(h => [h.id, h.model] as const), ...(cell.config?.sidekick || cell.config?.hostSidekick ? [['sidekick', (cell.config.sidekick ?? cell.config.hostSidekick)!] as const] : [])]
+  const helpers = Object.fromEntries([
+    ...(cell.config?.helpers ?? []).map(h => [h.id, h.model] as const),
+    ...(cell.config?.sidekick || cell.config?.hostSidekick ? [['sidekick', (cell.config.sidekick ?? cell.config.hostSidekick)!] as const] : []),
+    ...(cell.config?.critic ? [['critic', cell.config.critic] as const] : []),
+  ]
     .map(([id, model]) => {
       const u = nativeIds.has(id) && !DRY ? { ...claudeUsage(home), reasoning: 0, nativeUsage: true } : sumCalls(o.calls.filter(c => c.run === `${runId}.${id}`));
       return [id, { ...u, costUsd: Math.round(cost({ model, ...u }) * 1000) / 1000 }];
@@ -450,6 +509,8 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
     ...(Object.keys(helpers).length ? { helpers } : {}),
     ...(outcome.subagents ? { subagents: outcome.subagents } : {}),
     ...(outcome.autoTurns ? { autoTurns: outcome.autoTurns } : {}),
+    ...(cacheGap ? { cacheGap } : {}),
+    ...logStats,
     ...(quotaBefore && quotaAfter ? { quota: quotaSpent(quotaBefore, quotaAfter), quotaAt: { before: quotaBefore, after: quotaAfter } } : {}),
     ...(DRY ? { dry: true } : {}),
   };
@@ -464,8 +525,14 @@ async function main() {
   const model = arg('model');
   const harnesses = (arg('harness') ?? '').split(',').filter(Boolean);
   const configs = (arg('config') ?? '').split(',').filter(Boolean);
-  const tasks = (arg('task') ?? readdirSync(TASKS_DIR).filter(d => existsSync(join(TASKS_DIR, d, 'task.json'))).join(',')).split(',');
-  const reps = Number(arg('reps', '1'));
+  const suiteName = arg('suite');
+  if (suiteName && !SUITES[suiteName]) {
+    console.error(`unknown --suite ${suiteName} (have ${Object.keys(SUITES).join(', ')})`);
+    process.exit(2);
+  }
+  const suite = suiteName ? SUITES[suiteName] : undefined;
+  const tasks = (arg('task') ?? (suite ? suite.tasks.join(',') : readdirSync(TASKS_DIR).filter(d => existsSync(join(TASKS_DIR, d, 'task.json'))).join(','))).split(',');
+  const reps = Number(arg('reps', String(suite?.defaultReps ?? 1)));
   const byHarness = !!model && !!MODELS[model] && harnesses.length > 0 && harnesses.every(h => HARNESSES[h]);
   const byConfig = configs.length > 0 && configs.every(c => CONFIGS[c]);
   if (byHarness === byConfig) {

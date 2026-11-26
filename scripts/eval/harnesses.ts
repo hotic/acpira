@@ -33,6 +33,10 @@ export const MODELS: Record<string, ModelSpec> = {
   // stream at a tool call with empty input (docs/dev/builtin-agent.md, real providers)
   'claude-sonnet-5.5': { id: 'claude-sonnet-5-5', api: 'anthropic', catalog: 'claude-sonnet-5-5', context: 200_000, output: 32_000 },
   'gpt-6.1-sol': { id: 'gpt-6.1-sol', api: 'responses', catalog: 'gpt-6.1-sol', context: 400_000, output: 32_000 },
+  'gpt-6.2-sol': { id: 'gpt-6.2-sol', api: 'responses', catalog: 'gpt-6.2-sol', context: 400_000, output: 65_536 },
+  'gpt-6.2-astra': { id: 'gpt-6.2-astra', api: 'responses', catalog: 'gpt-6.2-astra', context: 1_050_000, output: 128_000 },
+  'gemini-4-carbon': { id: 'gemini-4-carbon', api: 'chat', catalog: 'gemini-4-carbon', context: 1_048_576, output: 65_536 },
+  'grok-4.7': { id: 'grok-4.7', api: 'chat', catalog: 'grok-4.7', context: 256_000, output: 32_768 },
   // The review bench's reviewer and the Fusion pairs' other halves (all listed by the gateway's /v1/models on 2026-10-21)
   'gpt-6-astra': { id: 'gpt-6-astra', api: 'responses', catalog: 'gpt-6-astra', context: 1_050_000, output: 128_000 },
   'gpt-6-luna': { id: 'gpt-6-luna', api: 'responses', catalog: 'gpt-6-luna', context: 1_050_000, output: 128_000 },
