@@ -14,18 +14,13 @@ use acpira_shared::transcript::{SessionStatus, TurnStop};
 use crate::acp::session::late_reply::has_background_commands;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transport::rpc::BoxFuture;
+use crate::acp::vendors::Vendor;
 use crate::i18n::t;
 use crate::json::str_of;
 use crate::util::js_num;
 
 static COMPACT: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"^/compact(?:\s|$)"));
 static TOKENS_AFTER: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"- Tokens after:\s*([\d,]+)"));
-static DEVIN_DONE: LazyLock<Regex> = LazyLock::new(|| {
-  acpira_shared::re::compile(r"Context compacted|Nothing to compact\.|(?:Force compaction|Compaction) failed:|Compaction cancel(?:ed|led)\.")
-});
-static KIMI_DONE: LazyLock<Regex> = LazyLock::new(|| {
-  acpira_shared::re::compile(r"Compaction completed\.|Compaction cancelled\.|Compaction is blocked by the current turn;|/compact failed:")
-});
 
 /// Room kept below the window when the threshold follows the model (the built-in agent's RESERVED_OUTPUT cap)
 const MODEL_RESERVE: f64 = 32_000.0;
@@ -64,7 +59,7 @@ pub struct CompactionCompletion {
 impl CompactionCompletion {
   pub fn new(agent: Option<&str>) -> Self {
     CompactionCompletion {
-      manual: matches!(agent, Some("devin" | "kimi")),
+      manual: agent.is_some_and(|a| Vendor::of(a).manual_prose_compaction()),
       agent: agent.map(str::to_owned),
       pending: HashSet::new(),
       structured: false,
@@ -98,11 +93,8 @@ impl CompactionCompletion {
       if let Some(n) = TOKENS_AFTER.captures(&self.text).and_then(|c| c[1].replace(',', "").parse::<f64>().ok()) {
         self.tokens_after = Some(n);
       }
-      if self.manual {
-        let terminal = if agent == "devin" { &*DEVIN_DONE } else { &*KIMI_DONE };
-        if terminal.is_match(&self.text) {
-          self.manual = false;
-        }
+      if self.manual && Vendor::of(&agent).compaction_prose_done(&self.text) {
+        self.manual = false;
       }
     }
     if !self.manual
@@ -160,8 +152,12 @@ impl AcpSession {
 
   pub(crate) fn should_auto_compact(&self, c: &Core) -> bool {
     let Some(policy) = self.deps.policy.compaction() else { return false };
-    let used = c.state.usage.map(|u| u.used.0).unwrap_or(0.0);
-    let size = c.state.usage.map(|u| u.size.0).unwrap_or(0.0);
+    let Some(usage) = c.state.usage else { return false };
+    // Stale pre-compaction usage belongs to an already-finished /compact (e.g. agy / Devin): wait for a fresh snapshot
+    if usage.compacted_from.is_some() {
+      return false;
+    }
+    let (used, size) = (usage.used.0, usage.size.0);
     let at = if policy.at_tokens > 0.0 { policy.at_tokens } else { model_threshold(size) };
     if !policy.auto || used == 0.0 || at <= 0.0 || !Self::can_compact_of(c) || c.status != SessionStatus::Ready || used < at {
       return false;
@@ -214,4 +210,110 @@ fn tail16(s: &str, n: usize) -> String {
     units += c.len_utf16();
   }
   String::new()
+}
+
+#[cfg(test)]
+mod tests {
+  use std::sync::Arc;
+
+  use serde_json::json;
+
+  use acpira_shared::num::Num;
+  use acpira_shared::transcript::{AgentBlock, AgentTurn, CompactionBlock, CompactionStatus, SessionStatus, Turn, TurnStop, Usage, UserTurn};
+
+  use crate::acp::agents::registry::AgentRegistry;
+  use crate::acp::session::{AcpSession, CompactionPolicy, SessionDeps, SessionPolicy};
+  use crate::store::record::SessionRecord;
+  use crate::store::transcript_store::TranscriptStore;
+
+  struct FixedPolicy(CompactionPolicy);
+
+  impl SessionPolicy for FixedPolicy {
+    fn compaction(&self) -> Option<CompactionPolicy> {
+      Some(self.0)
+    }
+  }
+
+  fn restored_session(turns: Vec<Turn>, usage: Option<Usage>, at_tokens: f64) -> (Arc<AcpSession>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let deps = SessionDeps {
+      registry: Arc::new(AgentRegistry::new(&json!({}))),
+      log: Arc::new(|_| {}),
+      on_change: Arc::new(|_, _| {}),
+      blobs: TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_| {}), None),
+      notify: None,
+      accounts: None,
+      policy: Arc::new(FixedPolicy(CompactionPolicy { at_tokens, auto: true })),
+      pool: None,
+      shared_mcp: None,
+      plugin_hooks: None,
+      plugin_prompts: None,
+      data_home: None,
+      plugin_runtime: None,
+      host_mcp: None,
+      remote: None,
+    };
+    let mut record: SessionRecord = serde_json::from_value(json!({
+      "id": "s1",
+      "agent": "antigravity",
+      "cwd": dir.path().to_string_lossy(),
+      "updatedAt": "2026-11-26T00:00:00Z",
+      "turns": [],
+      "commands": [{ "name": "compact", "description": "Compact" }]
+    }))
+    .unwrap();
+    record.turns = turns;
+    record.usage = usage;
+    let s = AcpSession::new(record, deps);
+    s.core.lock().status = SessionStatus::Ready;
+    (s, dir)
+  }
+
+  #[test]
+  fn stale_compacted_usage_never_retriggers_auto_compaction() {
+    let usage = Usage { used: Num(506_052.0), size: Num(1_000_000.0), cost: None, compacted_from: Some(Num(506_052.0)) };
+    let (s, _dir) = restored_session(vec![], Some(usage), 400_000.0);
+    let c = s.core.lock();
+    assert!(!s.should_auto_compact(&c));
+  }
+
+  #[test]
+  fn restored_session_ending_on_completed_compaction_preserves_usage_floor() {
+    let turns = vec![
+      Turn::User(UserTurn { text: "/compact".into(), auto: Some(true), ..Default::default() }),
+      Turn::Agent(AgentTurn {
+        blocks: vec![AgentBlock::Compaction(CompactionBlock { id: "c1".into(), status: CompactionStatus::Completed, error: None })],
+        stop: Some(TurnStop::EndTurn),
+        ..Default::default()
+      }),
+    ];
+    // Even if post-compaction usage is non-stale and still above threshold (or re-emitted on resume at the same size),
+    // reopening after an idle process release must not immediately run a second /compact
+    let usage = Usage { used: Num(420_000.0), size: Num(1_000_000.0), cost: None, compacted_from: None };
+    let (s, _dir) = restored_session(turns, Some(usage), 400_000.0);
+    {
+      let c = s.core.lock();
+      assert_eq!(c.compaction.at, Some(420_000.0));
+      assert!(!s.should_auto_compact(&c));
+    }
+    // Once real usage grows by another tenth of the threshold (420k + 40k = 460k), auto-compaction becomes eligible again
+    {
+      let mut c = s.core.lock();
+      c.state.usage = Some(Usage { used: Num(460_000.0), size: Num(1_000_000.0), cost: None, compacted_from: None });
+      assert!(s.should_auto_compact(&c));
+    }
+  }
+
+  #[test]
+  fn restored_session_without_trailing_compaction_still_auto_compacts_over_threshold() {
+    let turns = vec![
+      Turn::User(UserTurn { text: "big".into(), ..Default::default() }),
+      Turn::Agent(AgentTurn { stop: Some(TurnStop::EndTurn), ..Default::default() }),
+    ];
+    let usage = Usage { used: Num(420_000.0), size: Num(1_000_000.0), cost: None, compacted_from: None };
+    let (s, _dir) = restored_session(turns, Some(usage), 400_000.0);
+    let c = s.core.lock();
+    assert_eq!(c.compaction.at, None);
+    assert!(s.should_auto_compact(&c));
+  }
 }

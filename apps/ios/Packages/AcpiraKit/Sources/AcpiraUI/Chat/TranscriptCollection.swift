@@ -229,6 +229,15 @@ struct TranscriptCollection: UIViewRepresentable {
     /// The one row currently hosting on-demand native `SelectionTextView`s; nil during idle scrolling and streaming
     private var interactiveRowID: String?
     private var doubleTapGesture: UITapGestureRecognizer?
+    /// Pressed block geometry for the open `UIContextMenuInteraction` so highlight and dismissal target that block
+    /// instead of `TranscriptCollectionView` itself (which otherwise hides the whole transcript behind black)
+    private struct ContextMenuTarget {
+      let identifier: NSString
+      let rowID: String
+      let frameInCell: CGRect
+      let fallbackCenter: CGPoint
+    }
+    private var activeContextMenu: ContextMenuTarget?
     /// The environment the rows read. Hosted cells do not inherit the SwiftUI environment across the representable,
     /// so it is copied in whole and handed to every cell a pass configures
     private var environment = EnvironmentValues()
@@ -500,6 +509,13 @@ struct TranscriptCollection: UIViewRepresentable {
       let pointInCell = hit.pointInCell
       let scheme = collectionView?.traitCollection.userInterfaceStyle == .light ? ColorScheme.light : .dark
 
+      let identifier = UUID().uuidString as NSString
+      let fallbackCenter = collectionView.map { view in
+        hit.cell.contentView.convert(CGPoint(x: hit.frameInCell.midX, y: hit.frameInCell.midY), to: view)
+      } ?? location
+      activeContextMenu = ContextMenuTarget(identifier: identifier, rowID: rowID,
+                                            frameInCell: hit.frameInCell, fallbackCenter: fallbackCenter)
+
       let previewProvider: UIContextMenuContentPreviewProvider? = offersSelection ? {
         let card = QuotePreviewCard(text: inspection.previewText)
           .environment(\.colorScheme, scheme)
@@ -510,7 +526,7 @@ struct TranscriptCollection: UIViewRepresentable {
         return host
       } : nil
 
-      return UIContextMenuConfiguration(identifier: nil, previewProvider: previewProvider) { [weak self] _ in
+      return UIContextMenuConfiguration(identifier: identifier, previewProvider: previewProvider) { [weak self] _ in
         var items: [UIMenuElement] = []
         if let link = inspection.link {
           let openSystem = UIAction(title: t("browser.openSystem"), image: UIImage(systemName: "safari")) { _ in
@@ -536,6 +552,75 @@ struct TranscriptCollection: UIViewRepresentable {
         }
         return UIMenu(children: items)
       }
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                configuration: UIContextMenuConfiguration,
+                                highlightPreviewForItemWithIdentifier identifier: any NSCopying) -> UITargetedPreview? {
+      targetedPreview(for: identifier)
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                configuration: UIContextMenuConfiguration,
+                                dismissalPreviewForItemWithIdentifier identifier: any NSCopying) -> UITargetedPreview? {
+      targetedPreview(for: identifier)
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                willEndFor configuration: UIContextMenuConfiguration,
+                                animator: (any UIContextMenuInteractionAnimating)?) {
+      let id = configuration.identifier
+      let clear = { [weak self] in
+        if self?.activeContextMenu?.identifier.isEqual(id) == true {
+          self?.activeContextMenu = nil
+        }
+      }
+      if let animator {
+        animator.addCompletion(clear)
+      } else {
+        clear()
+      }
+    }
+
+    /// Targets an unparented snapshot of the pressed block rather than `TranscriptCollectionView` itself:
+    /// UIKit hides the targeted preview's view during highlight and dismissal, so falling back to `interaction.view`
+    /// blanked out the entire transcript to solid black until the menu finished dismissing.
+    private func targetedPreview(for identifier: any NSCopying) -> UITargetedPreview? {
+      guard let target = activeContextMenu, target.identifier.isEqual(identifier),
+            let view = collectionView, view.window != nil else { return nil }
+      let cell = dataSource?.indexPath(for: target.rowID).flatMap { view.cellForItem(at: $0) }
+      let visibleRect: CGRect?
+      if let cell {
+        let raw = cell.contentView.convert(target.frameInCell, to: view)
+        let clipped = raw.intersection(view.bounds)
+        visibleRect = !clipped.isNull && clipped.width >= 1 && clipped.height >= 1 ? clipped : nil
+      } else {
+        visibleRect = nil
+      }
+      let center: CGPoint
+      if let visibleRect {
+        center = CGPoint(x: visibleRect.midX, y: visibleRect.midY)
+      } else {
+        center = CGPoint(x: min(max(target.fallbackCenter.x, view.bounds.minX), view.bounds.maxX),
+                         y: min(max(target.fallbackCenter.y, view.bounds.minY), view.bounds.maxY))
+      }
+      let previewTarget = UIPreviewTarget(container: view, center: center)
+      let params = UIPreviewParameters()
+      params.backgroundColor = .clear
+      if let cell, let visibleRect {
+        let rectInCell = view.convert(visibleRect, to: cell.contentView)
+        if rectInCell.width >= 1, rectInCell.height >= 1,
+           let snapshot = cell.contentView.resizableSnapshotView(from: rectInCell, afterScreenUpdates: false,
+                                                                 withCapInsets: .zero) {
+          params.visiblePath = UIBezierPath(roundedRect: snapshot.bounds, cornerRadius: Metrics.rSm)
+          return UITargetedPreview(view: snapshot, parameters: params, target: previewTarget)
+        }
+      }
+      let size = visibleRect?.size ?? CGSize(width: 2, height: 2)
+      let placeholder = UIView(frame: CGRect(origin: .zero, size: size))
+      placeholder.backgroundColor = .clear
+      params.shadowPath = UIBezierPath()
+      return UITargetedPreview(view: placeholder, parameters: params, target: previewTarget)
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {

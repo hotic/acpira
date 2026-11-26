@@ -862,6 +862,20 @@ struct DetentTests {
     #expect(items[3].top == 0)
   }
 
+  // Shell.tsx afterActions: the engine's own /compact row stands right under the reply's action row
+  @Test func anAutoCompactRowHugsTheActionRowAbove() {
+    var compact = UserTurn(text: "/compact")
+    compact.auto = true
+    var view = SessionView(id: "s", agent: "claude", title: "", cwd: "", status: .ready)
+    view.turns = [.user(UserTurn(text: "ask")), .agent(AgentTurn(blocks: [.text(TextBlock(markdown: "done"))], stop: .end_turn)),
+                  .user(compact), .agent(AgentTurn(blocks: [], stop: nil))]
+    view.running = true
+    let items = threadItems(view, wholeTurns: [])
+    #expect(items.map(\.id) == ["u0", "a1", "a3"])
+    #expect(items[1].bottom == 0)
+    #expect(items[2].top == 0)
+  }
+
   @Test func automaticCompactionDoesNotStackAnExtraTopGap() {
     var compact = UserTurn(text: "/compact")
     compact.auto = true
@@ -876,7 +890,8 @@ struct DetentTests {
     ]
     let items = threadItems(view, wholeTurns: [])
     #expect(items.map(\.id) == ["u0", "a1", "a3", "u4"])
-    #expect(items[1].bottom == Metrics.gap)
+    // The compaction row hugs the reply's action row (Shell.tsx afterActions)
+    #expect(items[1].bottom == 0)
     #expect(items[2].top == 0)
     #expect(items[2].bottom == WebMetrics.msgGap)
     #expect(items[3].top == 0)

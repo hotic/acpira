@@ -161,6 +161,18 @@ private let claudeOptions: [PermissionOption] = decode("""
     #expect(showsTurnActions(turn, running: false))
   }
 
+  @Test func runningCompactTurnWithoutUpdatesShowsInProgressCompaction() throws {
+    let empty: AgentTurn = decode(#"{"blocks":[],"command":{"name":"compact"}}"#)
+    #expect(isCompactTurn(empty))
+    let shown = compactionForDisplay(empty, running: true)
+    let block = try #require(shown.blocks.first)
+    guard case .compaction(let c) = block else { Issue.record("expected compaction block"); return }
+    #expect(c.status == .in_progress)
+    #expect(shown.blocks.count == 1)
+    #expect(isCompactTurn(AgentTurn(), prompt: UserTurn(text: "/compact")))
+    #expect(!isCompactTurn(AgentTurn(), prompt: UserTurn(text: "/compactify")))
+  }
+
   @Test func aRevisedPlanEndsQuietly() {
     let doc: PlanDocumentBlock = decode(#"{"id":"d","title":"T","markdown":"m","toolCallId":"t","status":"rejected"}"#)
     var turn = AgentTurn(blocks: [.planDocument(doc)], stop: .cancelled)

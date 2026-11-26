@@ -53,11 +53,42 @@ nonisolated struct LoopAnimation: CustomAnimation {
 
 /// `content` moved between its resting form (`far` false) and the loop's far end by `move`, over and over: a turn is
 /// `rotationEffect(.degrees(far ? 360 : 0))` under `.ramp`. `move` may only change animatable values.
-/// The state is set once per identity: a view rebuilt under a new identity starts again at the wall clock's place
+/// Restarts cleanly at the wall clock's phase whenever the view returns to screen (navigation pop, scroll reuse) or
+/// the app returns to foreground, since UIKit strips layer animations while a view is off-screen while SwiftUI keeps
+/// `@State` alive.
 struct Loop<Content: View, Moved: View>: View {
   var period: Double
   var shape: LoopShape = .ramp
   @ViewBuilder var content: Content
+  var move: (Content, Bool) -> Moved
+  @State private var run = 0
+  @State private var armed = false
+  @Environment(\.scenePhase) private var phase
+
+  var body: some View {
+    LoopRun(period: period, shape: shape, content: content, move: move)
+      .id(run)
+      .transition(.identity)
+      .onAppear {
+        if armed { restart() }
+        armed = true
+      }
+      .onChange(of: phase) { old, now in
+        if old != .active, now == .active, armed { restart() }
+      }
+  }
+
+  private func restart() {
+    var transaction = Transaction()
+    transaction.disablesAnimations = true
+    withTransaction(transaction) { run += 1 }
+  }
+}
+
+private struct LoopRun<Content: View, Moved: View>: View {
+  var period: Double
+  var shape: LoopShape
+  var content: Content
   var move: (Content, Bool) -> Moved
   @State private var far = false
 

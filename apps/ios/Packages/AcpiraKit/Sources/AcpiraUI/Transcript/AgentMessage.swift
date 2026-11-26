@@ -149,6 +149,8 @@ struct AgentMessage: View {
   var cut: ReplyCut = .whole
   /// Off when summoned agents' wake follows: the reply it wakes keeps the exchange's action row (ThreadItems.swift)
   var actions = true
+  /// Reply to a `/compact` prompt (Shell.tsx `compacting`)
+  var compacting = false
   @Environment(\.sessionActions) private var sessionActions
   @Environment(\.subagentTranscript) private var readOnly
   @Environment(\.quietEntrance) private var quiet
@@ -157,16 +159,22 @@ struct AgentMessage: View {
   @Environment(\.rowHitTargets) private var hitTargets
 
   var body: some View {
+    let isCompact = compacting || isCompactTurn(turn)
     // An older settled reply opens and closes its action row on a tap (the newest one always shows it). Rows,
     // links and buttons inside keep their own taps; the text's own taps reach it through its selection surface
-    let canTap = !last && !readOnly && actions && showsTurnActions(turn, running: running)
+    let canTap = !last && !readOnly && actions && !isCompact && showsTurnActions(turn, running: running)
     let tap = canTap ? reveal.map { ReplyTap(index: index, reveal: $0) } : nil
     let _ = {
       hitTargets?.turnIndex = index
       hitTargets?.canTapActions = canTap
     }()
     let absorbed = absorbedNotices(turn)
-    let shown = displayTurn(turn, absorbed: absorbed)
+    let base = isCompact ? compactionForDisplay(turn, running: running) : turn
+    let shown = displayTurn(base, absorbed: absorbed)
+    // A /compact reply holding only its compaction row shimmers that row in place without a generic Working head above it
+    let compactionOnly = isCompact && !shown.blocks.isEmpty && shown.blocks.allSatisfy {
+      if case .compaction = $0 { true } else { false }
+    }
     // Subagent rows sit where they were delegated: a placed delegation row stays in the turn's process, and its node
     // with that node's same-turn descendants renders at that point. The others follow the turn's process
     let placed = delegatedIds(shown.blocks, subagents)
@@ -184,7 +192,8 @@ struct AgentMessage: View {
         // a cut reply draws the last stretch's reply alone
         if (lastSection || cut.opens) && (visible || (lastSection && ((running && !planWait) || outcome || !placement.rest.isEmpty))) {
           CodexMessage(turn: sectionTurn(shown, section, first: i == 0, last: lastSection),
-                       running: lastSection && running, onPermission: sessionActions.permission,
+                       running: lastSection && running, working: lastSection && running && !compactionOnly,
+                       onPermission: sessionActions.permission,
                        subagents: lastSection ? placement.rest : [], stretch: i == 0 ? nil : section.key,
                        cut: lastSection ? cut : .whole)
         }
@@ -197,7 +206,7 @@ struct AgentMessage: View {
         }
       }
       // A child's transcript offers no action row: fork there would act on the parent session
-      if cut.closes && actions && showsTurnActions(turn, running: running) && !readOnly {
+      if cut.closes && actions && !isCompact && showsTurnActions(turn, running: running) && !readOnly {
         TurnActions(turn: turn, index: index, settings: settings, retry: retry, last: last)
       }
     }
@@ -230,6 +239,8 @@ struct AgentMessage: View {
 struct CodexMessage: View {
   let turn: AgentTurn
   var running: Bool
+  /// False while a `/compact` turn shows only its compaction row (`Turns.tsx` `working`), retiring the generic Working head
+  var working: Bool?
   var onPermission: (String, String) -> Void
   /// The turn's children with no delegation row to sit at: they follow the process, before the reply
   var subagents: [SubagentSummary] = []
@@ -251,7 +262,7 @@ struct CodexMessage: View {
       if cut.opens {
         // Goal milestones before anything else (a `/goal` prompt's own "Goal set") open the turn above the fold
         ForEach(Array(split.goalsLead.enumerated()), id: \.offset) { _, goal in GoalRow(block: goal) }
-        CodexFold(turn: turn, blocks: process, running: running, hasTools: hasTools, stretch: stretch)
+        CodexFold(turn: turn, blocks: process, running: working ?? running, hasTools: hasTools, stretch: stretch)
         ForEach(split.notices, id: \.id) { NoticeRow(block: $0) }
         if !subagents.isEmpty {
           SubagentGroup(nodes: subagents)

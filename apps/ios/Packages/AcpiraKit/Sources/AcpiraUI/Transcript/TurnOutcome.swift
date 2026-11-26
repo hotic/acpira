@@ -46,6 +46,60 @@ func displayTurn(_ turn: AgentTurn, absorbed: [NoticeBlock]) -> AgentTurn {
   return shown
 }
 
+/// Whether a user prompt or turn receipt names `/compact` (Shell.tsx `compacting`)
+func isCompactTurn(_ turn: AgentTurn, prompt: UserTurn? = nil) -> Bool {
+  if turn.command?.name == "compact" { return true }
+  guard let text = prompt?.text.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+  return text == "/compact" || text.hasPrefix("/compact ") || text.hasPrefix("/compact\n") || text.hasPrefix("/compact\t")
+}
+
+/// Presentation-only mirror of `compactionDisplay.ts`: covers a running `/compact` before any `compaction_update`
+/// lands (including peers like agy that emit nothing until `end_turn`) and legacy prose replies, so the turn renders
+/// a single live "Compacting context" row instead of a generic "Working" head
+func compactionForDisplay(_ turn: AgentTurn, running: Bool) -> AgentTurn {
+  let text = turn.blocks.compactMap { if case .text(let b) = $0 { b.markdown } else { nil } }
+    .joined().trimmingCharacters(in: .whitespacesAndNewlines)
+  let structured = turn.blocks.compactMap { if case .compaction(let b) = $0 { b } else { nil } }
+  let prefixes = [
+    "Compacting context", "Context compaction started", "Compaction started",
+    "Context compacted", "Compaction completed.", "Nothing to compact.",
+  ]
+  let known = text.firstMatch(of: CompactionPattern.known) != nil
+    || (running && !text.isEmpty && prefixes.contains { $0.hasPrefix(text) })
+  guard known || !structured.isEmpty || (running && turn.blocks.isEmpty) else { return turn }
+
+  var status: CompactionStatus = structured.last?.status ?? .in_progress
+  if structured.isEmpty {
+    if text.firstMatch(of: CompactionPattern.failed) != nil { status = .failed }
+    else if text.firstMatch(of: CompactionPattern.cancelled) != nil { status = .cancelled }
+    else if text.firstMatch(of: CompactionPattern.completed) != nil { status = .completed }
+    else if !running && turn.stop != .error && turn.stop != .cancelled { return turn }
+  }
+  if turn.stop == .error { status = .failed }
+  if turn.stop == .cancelled { status = .cancelled }
+  let error = status == .failed ? structured.last?.error : nil
+  let block = CompactionBlock(structured.first?.id ?? "compact-display", status: status, error: error)
+  var blocks = turn.blocks.filter { b in
+    switch b {
+    case .compaction: false
+    case .text: !known
+    default: true
+    }
+  }
+  if known && status == .failed && !text.isEmpty { blocks.append(.text(TextBlock(markdown: text))) }
+  let trailing: Bool = if case .compaction = turn.blocks.last { !structured.isEmpty && !blocks.isEmpty } else { false }
+  var out = turn
+  out.blocks = trailing ? blocks + [.compaction(block)] : [.compaction(block)] + blocks
+  return out
+}
+
+private enum CompactionPattern {
+  nonisolated(unsafe) static let known = /^(?:Compacting context(?:\.{3}|…|$)|Context compaction started\b|Compaction started\b|Context compacted\b|Compaction completed\.|Nothing to compact\.|(?:Force compaction|Compaction) failed:|\/compact failed:|Compaction cancel(?:ed|led)\.|Compaction is blocked by the current turn;)/
+  nonisolated(unsafe) static let failed = /(?:Force compaction|Compaction) failed:|\/compact failed:|Compaction is blocked by the current turn;/
+  nonisolated(unsafe) static let cancelled = /Compaction cancel(?:ed|led)\./
+  nonisolated(unsafe) static let completed = /Context compacted|Compaction completed\.|Nothing to compact\./
+}
+
 /// A call whose observation was lost must not pass for running work (ToolCall.tsx, useToolSeconds.ts): it shows
 /// settled, so nothing shimmers or ticks and an open command card does not follow its output, and `toolVerb` says its
 /// result is unconfirmed

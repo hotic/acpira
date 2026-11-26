@@ -113,6 +113,7 @@ import cc.hotic.acpira.logic.isSidekick
 import cc.hotic.acpira.logic.linkOnly
 import cc.hotic.acpira.logic.nodesByTurn
 import cc.hotic.acpira.logic.shownReports
+import cc.hotic.acpira.logic.showsTurnActions
 import cc.hotic.acpira.ui.prose.LocalThreadTaps
 import cc.hotic.acpira.ui.prose.ThreadTaps
 import cc.hotic.acpira.ui.prose.threadTaps
@@ -196,9 +197,10 @@ fun ChatScreen(model: AppModel, id: String) {
   val start = remember(held?.earlier) { held?.let(ThreadStart::of) }
   val before = start?.turns ?: 0
   val lead = start?.lead ?: 0
-  // A wake whose only return is the sidekick's shows nothing and has no item (its relay already shows the return)
-  val bareWakes = remember(turns) { turns.count { it is UserTurn && isWake(it) && shownReports(it.text).isEmpty() } }
-  val total = lead + turns.size - bareWakes + if (queued.isEmpty()) 0 else 1
+  // An automatic prompt that shows nothing (an auto /compact, a continue, a wake whose only return is the sidekick's)
+  // has no item: an empty one took the list's spacing twice
+  val hidden = remember(turns) { turns.count { it is UserTurn && hiddenPrompt(it) } }
+  val total = lead + turns.size - hidden + if (queued.isEmpty()) 0 else 1
   // What a prompt's long-press menu offers: edit while the session is idle, Set as goal on the newest typed prompt
   val editable = held?.let(::canEditPrompts) == true
   val goalPrompt = remember(held) { held?.takeIf(::canSetGoal)?.let { lastTypedPrompt(it.turns) } }
@@ -509,7 +511,7 @@ fun ChatScreen(model: AppModel, id: String) {
             prompt = turn
             val wake = isWake(turn)
             val reports = if (wake) shownReports(turn.text) else emptyList()
-            if (wake && reports.isEmpty()) return@forEachIndexed
+            if (hiddenPrompt(turn)) return@forEachIndexed
             item(key = at, contentType = "user") {
               // Summoned agents' wake continues the reply above a row gap under it (Shell.tsx switchedAway)
               Column(Modifier.pullUp(if (wake) Metrics.msgGap - Metrics.gap else 0.dp), verticalArrangement = Arrangement.spacedBy(Metrics.msgGap)) {
@@ -531,10 +533,15 @@ fun ChatScreen(model: AppModel, id: String) {
             val next = turns.getOrNull(index + 1)
             val wokenNext = next is UserTurn && isWake(next)
             val woke = (turns.getOrNull(index - 1) as? UserTurn)?.takeIf(::isWake)
+            // The engine's own /compact closes the exchange above: its row stands right under the reply's action row,
+            // at a row's pitch like one of that reply's steps (Shell.tsx `afterActions`)
+            val afterActions = (turns.getOrNull(index - 1) as? UserTurn)?.let(::isAutoCompact) == true &&
+              (turns.getOrNull(index - 2) as? AgentTurn)?.let { showsTurnActions(it, false) } == true
             item(key = at, contentType = "agent") {
               val last = index == turns.size - 1
               val rowFirst = (running && last) || turn.blocks.any { it !is TextBlock }
               val pull = when {
+                afterActions -> Metrics.msgGap
                 woke == null -> 0.dp
                 rowFirst && shownReports(woke.text).isNotEmpty() -> Metrics.msgGap
                 else -> Metrics.msgGap - Metrics.gap
@@ -648,6 +655,12 @@ private class GrownHold(private val list: LazyListState) : RemeasurementModifier
 
 /** Summoned agents' wake: the automatic prompt that hands their replies back (HistoryMessage.tsx SubagentsReported) */
 private fun isWake(turn: UserTurn): Boolean = turn.auto == true && turn.autoReason == "subagents"
+
+/** The engine's over-threshold /compact: an automatic prompt that draws no bubble */
+private fun isAutoCompact(turn: UserTurn): Boolean = turn.auto == true && turn.text.trim().let { it == "/compact" || it.startsWith("/compact ") }
+
+/** An automatic prompt with nothing to draw: only a wake with reports shows its rows */
+private fun hiddenPrompt(turn: UserTurn): Boolean = turn.auto == true && !(isWake(turn) && shownReports(turn.text).isNotEmpty())
 
 /** Takes [by] off the list's spacing above the item: it stands that much higher and its slot that much shorter */
 private fun Modifier.pullUp(by: Dp): Modifier = if (by <= 0.dp) this else layout { measurable, constraints ->

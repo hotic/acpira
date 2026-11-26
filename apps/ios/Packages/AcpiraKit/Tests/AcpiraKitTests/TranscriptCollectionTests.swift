@@ -289,7 +289,23 @@ import UIKit
     // No SelectionTextView exists before any selection gesture
     #expect(selectionViews(in: cell).isEmpty)
     // The collection owns a single shared UIContextMenuInteraction for deferred block menus
-    #expect(view.interactions.contains { $0 is UIContextMenuInteraction })
+    let interaction = try #require(view.interactions.compactMap { $0 as? UIContextMenuInteraction }.first)
+    let delegate = try #require(interaction.delegate)
+    // Highlight and dismissal previews must target an unparented block preview inside the collection rather than
+    // `TranscriptCollectionView` itself, or UIKit hides the entire transcript behind black while the menu runs.
+    let point = cell.contentView.convert(CGPoint(x: 80, y: 20), to: view)
+    let config = try #require(delegate.contextMenuInteraction(interaction, configurationForMenuAtLocation: point))
+    let highlight = try #require(delegate.contextMenuInteraction?(interaction, configuration: config,
+                                                                  highlightPreviewForItemWithIdentifier: config.identifier))
+    #expect(highlight.view !== view)
+    #expect(highlight.view.window == nil)
+    #expect(highlight.target.container === view)
+    let dismissal = try #require(delegate.contextMenuInteraction?(interaction, configuration: config,
+                                                                  dismissalPreviewForItemWithIdentifier: config.identifier))
+    #expect(dismissal.view !== view)
+    #expect(dismissal.view.window == nil)
+    #expect(dismissal.target.container === view)
+    delegate.contextMenuInteraction?(interaction, willEndFor: config, animator: nil)
     // On-demand probe resolves web links inside list items without mounting persistent selection views
     let listBlock = try #require(Markdown.parse("- 第一项\n- 详见 [docs](https://example.com/docs)").first)
     let inspected = TextSelectionProbe.inspect(block: listBlock, quoteBlock: listBlock, width: 360,

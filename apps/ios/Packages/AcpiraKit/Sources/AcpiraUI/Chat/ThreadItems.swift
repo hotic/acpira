@@ -68,6 +68,8 @@ struct ThreadItem: Equatable {
   /// Pre-sliced reply segments for settled `.piece` rows so scrolling history never re-runs turn splitting or hashes
   /// the whole reply markdown on every cell dequeue
   var settledSlices: [ReplySlice]? = nil
+  /// Reply to a `/compact` prompt (`Shell.tsx` `compacting`)
+  var compacting = false
 
   /// The spinner row's id (`Kind.earlier`)
   static let earlierID = "e"
@@ -103,8 +105,11 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarl
     // Summoned agents' wake next (Shell.tsx switchedAway): this reply, the report rows and the reply they wake read as
     // one answer, so the reply drops its action row and the wake follows a row gap under it
     let wokenNext = !lastExchange && isWake(groups[n + 1].user)
-    let next = !lastExchange && !wokenNext
-      ? (endsWithActions(exchange, running: session.running, active: activeAgent) ? Metrics.gap : WebMetrics.msgGap) : 0
+    // The engine's own /compact next (a hidden prompt): its row closes this exchange, standing right under the action
+    // row at a row's pitch like one of the reply's steps (Shell.tsx `afterActions`)
+    let ends = endsWithActions(exchange, running: session.running, active: activeAgent)
+    let compactNext = !lastExchange && ends && isAutoCompact(groups[n + 1].user)
+    let next = !lastExchange && !wokenNext && !compactNext ? (ends ? Metrics.gap : WebMetrics.msgGap) : 0
     let start = out.count
     let hasPrompt = exchange.user.map { $0.auto != true } ?? false
     if let user = exchange.user, hasPrompt {
@@ -134,13 +139,14 @@ func threadItems(_ session: SessionView, preOpen: Set<PreOpen> = [], loadingEarl
       // A child announced in a turn ahead of the view has no row until that turn is loaded
       let subagents = nodes[index] ?? []
       let actions = !(wokenNext && item.index == exchange.agents.last?.index)
+      let compacting = isCompactTurn(item.turn, prompt: exchange.user)
       let scope = "\(session.id):\(index)"
       func row(_ id: String, _ cut: ReplyCut, turn: AgentTurn = item.turn, top: CGFloat) -> ThreadItem {
         ThreadItem(id: id,
                    kind: .agent(turn, index: index, scope: scope, running: running, last: isLastTurn,
                                 settings: exchange.user?.settings, retry: item.index == retry, subagents: subagents,
                                 cut: cut, actions: actions),
-                   exchange: exchange.id, top: top, preOpen: opened)
+                   exchange: exchange.id, top: top, preOpen: opened, compacting: compacting)
       }
       // A settled turn's rows come out the same on every push until something they are made of changes: kept, the
       // thread neither cuts every long reply again for each streamed chunk of the running turn nor hands the
@@ -289,6 +295,13 @@ struct TurnRowsKey: Equatable {
 /// Summoned agents' wake: the automatic prompt that hands their replies back (HistoryMessage.tsx SubagentsReported)
 private func isWake(_ user: UserTurn?) -> Bool { user?.auto == true && user?.autoReason == "subagents" }
 
+/// The engine's over-threshold /compact: an automatic prompt that draws no bubble
+private func isAutoCompact(_ user: UserTurn?) -> Bool {
+  guard let user, user.auto == true else { return false }
+  let text = user.text.trimmingCharacters(in: .whitespacesAndNewlines)
+  return text == "/compact" || text.hasPrefix("/compact ")
+}
+
 private func endsWithActions(_ exchange: Exchange, running: Bool, active: Int?) -> Bool {
   guard let last = exchange.agents.last else { return false }
   let live = running && last.index == active && last.turn.stop == nil
@@ -330,12 +343,12 @@ struct ThreadItemView: View {
       SubagentReturns(reports: reports)
     case let .agent(turn, index, scope, running, last, settings, retry, subagents, cut, actions):
       if case .piece = cut, let slices = item.settledSlices, slices.count == 1 {
-        let canTap = !last && actions && showsTurnActions(turn, running: running)
+        let canTap = !last && actions && !item.compacting && showsTurnActions(turn, running: running)
         ReplyPieceView(segments: slices[0].segments, images: slices[0].text.images,
                        turnIndex: index, canTapActions: canTap)
       } else {
         AgentMessage(turn: turn, running: running, scope: scope, index: index, last: last, settings: settings, retry: retry,
-                     subagents: subagents, cut: cut, actions: actions)
+                     subagents: subagents, cut: cut, actions: actions, compacting: item.compacting)
       }
     case let .replyPiece(segments, images, turnIndex, canTapActions):
       ReplyPieceView(segments: segments, images: images, turnIndex: turnIndex, canTapActions: canTapActions)
