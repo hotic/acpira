@@ -238,7 +238,7 @@ impl AcpSession {
       can_steer: self.can_steer_of(&c),
       can_stop_commands: self.can_stop_commands_of(&c),
       goal: c.state.goal.as_ref(),
-      goal_actions: Self::goal_actions_of(&c),
+      goal_actions: self.goal_actions_of(&c),
       subagents: subagents.as_deref(),
       forked_from: c.lineage.forked_from.as_ref().filter(|f| f.turn_index >= 0).map(|f| ForkOrigin {
         session_id: f.session_id.clone(),

@@ -834,6 +834,10 @@ impl AcpSession {
         c.lineage.history_context |= !prefix.is_empty();
         self.relay_truncate(&mut c, idx);
         c.state.usage = None;
+        if self.synthesizes_goal(&c) {
+          c.state.goal = None;
+          c.goal_clearing = false;
+        }
         c.state.commands = vec![];
         c.compaction.at = None;
         c.access = access;

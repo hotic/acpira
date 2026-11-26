@@ -23,7 +23,7 @@ use crate::acp::session::{AcpSession, Core, num};
 use crate::acp::transcript::normalize::{activity_of, apply_goal, apply_session_failure, end_turn_at, fail_turn};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
-use crate::acp::vendors::antigravity::ReplyError;
+use crate::acp::vendors::antigravity::{self, GoalMarker, ReplyError};
 use crate::acp::vendors::{FailureLog, Vendor, claude_window, droid_usage, goal, kimi_failure, logged_failure, pi_failure, pi_usage};
 use crate::i18n::{t, tp};
 use crate::limits::TITLE_MAX;
@@ -625,6 +625,18 @@ impl AcpSession {
       ..Default::default()
     }));
     let agent_idx = c.state.turns.len() - 1;
+    // Antigravity `/goal <objective>` activates a Stop hook without sending a goal snapshot on the wire
+    if origin == Origin::Goal && text == antigravity::GOAL_CANCEL_PROMPT {
+      c.goal_clearing = true;
+    } else {
+      c.goal_clearing = false;
+      if origin != Origin::Compact
+        && self.synthesizes_goal(&c)
+        && let Some(objective) = antigravity::goal_objective(text)
+      {
+        apply_goal(&mut c.state, Some(antigravity::active_goal(objective, started_at)), true);
+      }
+    }
     if std::mem::take(&mut c.retry_pending) {
       c.retried_turn = Some(started_at);
     }
@@ -771,9 +783,24 @@ impl AcpSession {
         self.settle(&mut c, TurnStop::Cancelled, Some(error));
         return Some(Settled { stop: TurnStop::Cancelled, exhausted });
       }
+      // Antigravity ends a `/goal` turn when its model emits `<!-- GOAL_COMPLETE -->` or `<!-- GOAL_CANCELLED -->`:
+      // strip the HTML marker and tell cancellation apart from completion before settling
+      let mut goal_marker_seen = c.goal_clearing;
+      if stop == TurnStop::EndTurn
+        && self.synthesizes_goal(&c)
+        && c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Active)
+        && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
+        && let Some(marker) = antigravity::strip_goal_marker(turn)
+      {
+        goal_marker_seen = true;
+        if marker == GoalMarker::Cancelled {
+          c.goal_clearing = true;
+        }
+      }
       // Some CLIs acknowledge provider failures as empty end_turn responses: record the missing output
       let empty = stop == TurnStop::EndTurn
         && !auto
+        && !goal_marker_seen
         && agent_turn_mut(&mut c, agent_idx, started_at).is_some_and(|turn| {
           turn.command.is_none() && turn.blocks.iter().all(|b| matches!(b, AgentBlock::Text(x) if x.markdown.trim().is_empty()))
         });
@@ -990,11 +1017,19 @@ impl AcpSession {
     }
     self.plugin_settled(c, true);
     c.goal_steered = None;
-    // Claude's goal holds the turn until it is met, so a turn that ended on its own met it (`goal::met_by_turn_end`)
-    if ended
+    let goal_clearing = std::mem::take(&mut c.goal_clearing);
+    // Antigravity's `/goal` is a Stop hook without wire snapshots; a clean turn end completes it unless cancelled
+    if ended && self.synthesizes_goal(c) && c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Active) {
+      if goal_clearing {
+        apply_goal(&mut c.state, None, true);
+      } else if let Some(met) = goal::met_by_turn_end(c.state.goal.as_ref()) {
+        apply_goal(&mut c.state, Some(met), true);
+      }
+    } else if ended
       && self.vendor.goal_met_at_turn_end()
       && let Some(met) = goal::met_by_turn_end(c.state.goal.as_ref())
     {
+      // Claude's goal holds the turn until it is met, so a turn that ended on its own met it (`goal::met_by_turn_end`)
       apply_goal(&mut c.state, Some(met), true);
     }
     // A met goal shows on the dock only until the turn that met it ends; a later prompt must not bring it back

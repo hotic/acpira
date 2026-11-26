@@ -304,6 +304,9 @@ pub(crate) struct Core {
   /// The last turn ended on its own with the goal still active, on an agent that leaves continuing to the client
   /// (`vendors::goal::continue_prompt`): the goal's next turn goes out once nothing of the user's waits (`goal_wake`)
   pub goal_due: bool,
+  /// A synthesized Antigravity goal clear is in flight: when this turn ends cleanly it marks the goal cleared rather
+  /// than complete (`session/goal.rs`)
+  pub goal_clearing: bool,
   pub perms: PermissionGate,
   pub questions: QuestionGate,
   pub queue: PromptQueue,
@@ -533,6 +536,7 @@ impl AcpSession {
           startup_banner: None,
           goal_steered: None,
           goal_due: false,
+          goal_clearing: false,
           perms: PermissionGate::default(),
           questions: QuestionGate::default(),
           queue: PromptQueue::default(),
@@ -818,9 +822,22 @@ impl AcpSession {
     cfg!(unix) && (c.proc.as_ref().is_some_and(|p| p.pid.is_some()) || c.relays.procs.values().any(|rp| rp.proc.pid.is_some()))
   }
 
-  /// The goal controls the running agent advertises (`vendors::goal::actions`)
-  pub(crate) fn goal_actions_of(c: &Core) -> Option<Vec<GoalAction>> {
-    c.proc.as_ref().and_then(|p| crate::acp::vendors::goal::actions(&p.init))
+  /// Antigravity (`agy acp` 1.5.17) ships `/goal` as a Stop hook (`available_commands_update`) without advertising the
+  /// ACP goal extension (`_meta.jetbrains.air.goal` / `_session/goal`). Until the CLI advertises the extension itself,
+  /// the host tracks the goal from `/goal` prompts and turn settlement
+  pub(crate) fn synthesizes_goal(&self, c: &Core) -> bool {
+    self.vendor == Vendor::Antigravity
+      && c.proc.as_ref().is_some_and(|p| crate::acp::vendors::goal::actions(&p.init).is_none())
+      && (c.state.commands.iter().any(|cmd| cmd.name == "goal") || c.state.goal.is_some())
+  }
+
+  /// The goal controls the running agent advertises (`vendors::goal::actions`), or the host-tracked controls for
+  /// Antigravity while `agy acp` exposes `/goal` without the ACP goal extension
+  pub(crate) fn goal_actions_of(&self, c: &Core) -> Option<Vec<GoalAction>> {
+    c.proc
+      .as_ref()
+      .and_then(|p| crate::acp::vendors::goal::actions(&p.init))
+      .or_else(|| self.synthesizes_goal(c).then(|| vec![GoalAction::Set, GoalAction::Clear]))
   }
 
   pub fn runtime_info(&self) -> Option<AgentRuntimeInfo> {

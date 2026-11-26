@@ -19,7 +19,8 @@ use std::ffi::OsStr;
 use std::sync::LazyLock;
 
 use acpira_shared::model_shapes::is_model_control;
-use acpira_shared::transcript::{AgentBlock, ConfigControl};
+use acpira_shared::num::Num;
+use acpira_shared::transcript::{AgentBlock, AgentTurn, ConfigControl, GoalStatus, SessionGoal};
 use regex::Regex;
 use serde_json::Value;
 
@@ -140,6 +141,145 @@ fn command_output(text: &str) -> Option<String> {
     _ if out.is_empty() => format!("exit code {code}"),
     _ => format!("{out}\nexit code {code}"),
   })
+}
+
+/// Stop-hook completion and cancellation markers `agy` 1.5.17 instructs its model to emit inside `/goal` turns
+pub const GOAL_COMPLETE_MARKER: &str = "<!-- GOAL_COMPLETE -->";
+pub const GOAL_CANCELLED_MARKER: &str = "<!-- GOAL_CANCELLED -->";
+
+/// Prompt sent to cancel an active Antigravity `/goal` turn: `agy` has no `/goal clear` subcommand or `_session/goal`
+/// RPC, and its `GoalStopHook` releases the active goal only when the model emits `GOAL_CANCELLED_MARKER`
+pub const GOAL_CANCEL_PROMPT: &str = "Cancel the active goal now. Include <!-- GOAL_CANCELLED --> in your response and stop.";
+
+/// Which stop-hook marker an Antigravity `/goal` reply carried
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalMarker {
+  Complete,
+  Cancelled,
+}
+
+/// Extracts the objective from a `/goal <objective>` prompt for Antigravity (`agy acp` 1.5.17).
+/// Rejects commands sharing the prefix (`/goals`) and a bare `/goal` without text.
+pub fn goal_objective(text: &str) -> Option<String> {
+  let rest = text.trim().strip_prefix("/goal")?;
+  if !rest.starts_with(char::is_whitespace) {
+    return None;
+  }
+  let objective = rest.trim();
+  (!objective.is_empty()).then(|| objective.to_owned())
+}
+
+/// Builds a host-tracked active `SessionGoal` for an Antigravity `/goal` turn
+pub fn active_goal(objective: String, updated_at: i64) -> SessionGoal {
+  SessionGoal {
+    objective,
+    status: GoalStatus::Active,
+    iterations: None,
+    token_budget: None,
+    tokens_used: None,
+    time_used_seconds: None,
+    updated_at: Some(Num(updated_at as f64)),
+  }
+}
+
+/// Strips `<!-- GOAL_COMPLETE -->` / `<!-- GOAL_CANCELLED -->` stop-hook markers from an Antigravity reply outside
+/// fenced and inline code, returning the last marker seen so the host can tell cancellation from completion.
+pub fn strip_goal_marker(turn: &mut AgentTurn) -> Option<GoalMarker> {
+  let mut found = None;
+  for block in &mut turn.blocks {
+    let AgentBlock::Text(text) = block else { continue };
+    if let Some((cleaned, marker)) = strip_markers_in_text(&text.markdown) {
+      text.markdown = cleaned;
+      found = Some(marker);
+    }
+  }
+  found
+}
+
+fn strip_markers_in_text(input: &str) -> Option<(String, GoalMarker)> {
+  if !input.contains(GOAL_COMPLETE_MARKER) && !input.contains(GOAL_CANCELLED_MARKER) {
+    return None;
+  }
+  let mut out = String::with_capacity(input.len());
+  let mut fence: Option<(char, usize)> = None;
+  let mut found = None;
+  let mut changed = false;
+  for segment in input.split_inclusive('\n') {
+    let (line, nl) = segment.strip_suffix('\n').map_or((segment, ""), |l| (l, "\n"));
+    let trimmed = line.trim_start();
+    if let Some((ch, len)) = fence {
+      out.push_str(segment);
+      if trimmed.chars().take_while(|&c| c == ch).count() >= len && trimmed.trim_start_matches(ch).trim().is_empty() {
+        fence = None;
+      }
+      continue;
+    }
+    if let Some(ch) = trimmed.chars().next().filter(|&c| c == '`' || c == '~') {
+      let len = trimmed.chars().take_while(|&c| c == ch).count();
+      if len >= 3 {
+        fence = Some((ch, len));
+        out.push_str(segment);
+        continue;
+      }
+    }
+    if let Some((cleaned, marker)) = strip_markers_in_line(line) {
+      changed = true;
+      found = Some(marker);
+      // Drop a line that held only the marker so it does not leave stray blank lines behind
+      if !cleaned.trim().is_empty() {
+        out.push_str(cleaned.trim_end());
+        out.push_str(nl);
+      }
+    } else {
+      out.push_str(segment);
+    }
+  }
+  if !changed {
+    return None;
+  }
+  let trimmed = out.trim_end_matches([' ', '\t', '\r', '\n']);
+  Some((trimmed.to_owned(), found?))
+}
+
+fn strip_markers_in_line(line: &str) -> Option<(String, GoalMarker)> {
+  if !line.contains(GOAL_COMPLETE_MARKER) && !line.contains(GOAL_CANCELLED_MARKER) {
+    return None;
+  }
+  let mut out = String::with_capacity(line.len());
+  let mut found = None;
+  let mut rest = line;
+  let mut code_ticks = 0usize;
+  while !rest.is_empty() {
+    if rest.starts_with('`') {
+      let run = rest.bytes().take_while(|&b| b == b'`').count();
+      let (ticks, tail) = rest.split_at_checked(run)?;
+      if code_ticks == 0 {
+        code_ticks = run;
+      } else if code_ticks == run {
+        code_ticks = 0;
+      }
+      out.push_str(ticks);
+      rest = tail;
+      continue;
+    }
+    if code_ticks == 0 {
+      if let Some(tail) = rest.strip_prefix(GOAL_COMPLETE_MARKER) {
+        found = Some(GoalMarker::Complete);
+        rest = tail;
+        continue;
+      }
+      if let Some(tail) = rest.strip_prefix(GOAL_CANCELLED_MARKER) {
+        found = Some(GoalMarker::Cancelled);
+        rest = tail;
+        continue;
+      }
+    }
+    let mut chars = rest.chars();
+    let ch = chars.next()?;
+    out.push(ch);
+    rest = chars.as_str();
+  }
+  found.map(|m| (out, m))
 }
 
 /// The task a background command's row carries, before the call's id
@@ -609,5 +749,57 @@ mod tests {
         model: None,
       })
     );
+  }
+
+  #[test]
+  fn goal_objective_extracts_only_goal_prompts_with_text() {
+    assert_eq!(goal_objective("/goal ship it").as_deref(), Some("ship it"));
+    assert_eq!(goal_objective("  /goal\n  fix the tests  ").as_deref(), Some("fix the tests"));
+    assert_eq!(goal_objective("/goal"), None);
+    assert_eq!(goal_objective("/goal   "), None);
+    assert_eq!(goal_objective("/goals ship it"), None);
+    assert_eq!(goal_objective("ship it"), None);
+  }
+
+  #[test]
+  fn strip_goal_marker_removes_markers_outside_code_and_preserves_code_mentions() {
+    use acpira_shared::transcript::TextBlock;
+    let turn_with = |markdown: &str| AgentTurn {
+      blocks: vec![AgentBlock::Text(TextBlock {
+        id: None,
+        phase: None,
+        markdown: markdown.into(),
+        streaming: None,
+        images: None,
+        ended_at: None,
+        resumed_at: None,
+      })],
+      ..Default::default()
+    };
+    let text_of = |turn: &AgentTurn| match &turn.blocks[0] {
+      AgentBlock::Text(t) => t.markdown.clone(),
+      _ => unreachable!(),
+    };
+
+    let mut complete = turn_with("All tests pass.\n<!-- GOAL_COMPLETE -->\n");
+    assert_eq!(strip_goal_marker(&mut complete), Some(GoalMarker::Complete));
+    assert_eq!(text_of(&complete), "All tests pass.");
+
+    let mut cancelled_only = turn_with("<!-- GOAL_CANCELLED -->");
+    assert_eq!(strip_goal_marker(&mut cancelled_only), Some(GoalMarker::Cancelled));
+    assert_eq!(text_of(&cancelled_only), "");
+
+    let mut inline = turn_with("Stopping now. <!-- GOAL_CANCELLED -->");
+    assert_eq!(strip_goal_marker(&mut inline), Some(GoalMarker::Cancelled));
+    assert_eq!(text_of(&inline), "Stopping now.");
+
+    let mut code = turn_with("Mentioning `<!-- GOAL_COMPLETE -->` in text:\n```html\n<!-- GOAL_CANCELLED -->\n```");
+    let raw = text_of(&code);
+    assert_eq!(strip_goal_marker(&mut code), None);
+    assert_eq!(text_of(&code), raw);
+
+    let mut both = turn_with("Done <!-- GOAL_COMPLETE --> actually <!-- GOAL_CANCELLED -->");
+    assert_eq!(strip_goal_marker(&mut both), Some(GoalMarker::Cancelled));
+    assert_eq!(text_of(&both), "Done  actually");
   }
 }

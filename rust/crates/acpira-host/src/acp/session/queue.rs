@@ -12,7 +12,7 @@ use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, restore_d
 use crate::acp::session::compaction::CompactionCompletion;
 use crate::acp::session::prompt::{Origin, Staged};
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::transcript::normalize::{push_steer, reopen_idle};
+use crate::acp::transcript::normalize::{apply_goal, push_steer, reopen_idle};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{Handoff, RpcError};
 use crate::acp::vendors::{antigravity, claude_autonomous, steering};
@@ -471,14 +471,21 @@ impl AcpSession {
     if let Some(i) = c.queue.entries.iter().position(|q| q.id == steer.id) {
       let entry = c.queue.entries.remove(i);
       let attachments = (!entry.prepared.attachments.is_empty()).then(|| entry.prepared.attachments.clone());
+      let steer_text = entry.text.clone();
       push_steer(&mut c.state, SteerBlock { id: entry.id, text: entry.text, attachments });
+      if self.synthesizes_goal(&c)
+        && let Some(objective) = antigravity::goal_objective(&steer_text)
+      {
+        c.goal_clearing = false;
+        apply_goal(&mut c.state, Some(antigravity::active_goal(objective, crate::util::now_ms())), true);
+      }
     }
     self.bump(&mut c);
     Some(steer.finish(PromptSteerEnd::Landed))
   }
 
   /// The steer's own prompt failed while the running one had not answered: true when it was still waiting to land
-  fn refuse_prompt_steer(&self, id: &str, end: PromptSteerEnd) -> bool {
+  pub(crate) fn refuse_prompt_steer(&self, id: &str, end: PromptSteerEnd) -> bool {
     let mut c = self.core.lock();
     if !c.queue.prompt_steer.as_ref().is_some_and(|s| s.id == id) {
       return false;

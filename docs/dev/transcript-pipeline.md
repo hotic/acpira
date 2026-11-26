@@ -89,6 +89,7 @@ AIR extensions of codex-acp / claude-agent-acp (`acp-agents-compat.md`); code: `
 - `acp/vendors/goal.rs` reads the capability (`_meta.jetbrains.air.goal`, or codex-acp 1.13.0's bare `_meta.goal`) and snapshots from `session_info_update._meta` (`null` = cleared). Dialects: `agent-quirks.md`.
 - Turn-starting actions go out as a hidden `/goal …` prompt so they queue; pause and Codex's clear are `_session/goal` requests, as is Claude's clear during a turn (that goal holds the turn, so a queued clear never goes out).
 - On Claude, a goal still active after `end_turn` is marked complete at settle (`agent-quirks-claude.md`).
+- On Antigravity without native goal capability, `AcpSession::synthesizes_goal` tracks `/goal` prompts, strips `<!-- GOAL_COMPLETE -->` / `<!-- GOAL_CANCELLED -->` markers, and sends `GOAL_CANCEL_PROMPT` on Clear (`agent-quirks-antigravity.md`).
 - With `acpira/continue` (the built-in agent) continuations are client-driven; a gate that gives up clears the mark and pauses the goal (`hooks.rs`).
 
 ## Empty completions

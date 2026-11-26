@@ -418,6 +418,20 @@ const app = acp.agent({ name: 'fake-agent' })
       setTimeout(() => { void client.notify(acp.methods.client.session.update, { sessionId,
         update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: lateBanner } } }); }, 0);
     }
+    if (goalMode === 'antigravity') {
+      setTimeout(() => {
+        void client.notify(acp.methods.client.session.update, {
+          sessionId,
+          update: {
+            sessionUpdate: 'available_commands_update',
+            availableCommands: [
+              { name: 'goal', description: 'Run until the specified goal is completely finished.' },
+              { name: 'compact', description: 'compact it' },
+            ],
+          },
+        });
+      }, 0);
+    }
     return {
       sessionId,
       ...(lateBanner ? { _meta: { piAcp: { startupInfo: lateBanner } } } : {}),
@@ -701,6 +715,10 @@ const app = acp.agent({ name: 'fake-agent' })
       const from = await new Promise<number>(resolve => agyTakeover.set(sid, resolve));
       steerable.add(sid);
       try {
+        if (goalMode === 'antigravity' && text.includes('<!-- GOAL_CANCELLED -->')) {
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '<!-- GOAL_CANCELLED -->' } });
+          return { stopReason: 'end_turn' };
+        }
         await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `steered:${text} ` } });
         for (let i = from; i < 50; i++) {
           if (cancelled.has(sid)) return { stopReason: 'cancelled' };
@@ -719,6 +737,39 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } });
       setTimeout(() => process.exit(1), 50);
       return new Promise<acp.PromptResponse>(() => {});
+    }
+    // Antigravity `/goal`: no wire snapshots or `_session/goal`, only a Stop hook ended by HTML markers
+    if (goalMode === 'antigravity') {
+      if (text.includes('<!-- GOAL_CANCELLED -->')) {
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '<!-- GOAL_CANCELLED -->' } });
+        return { stopReason: 'end_turn' };
+      }
+      const agyGoal = /^\/goal\s+([\s\S]+)$/.exec(text.trim());
+      if (agyGoal) {
+        const arg = agyGoal[1]!.trim();
+        if (arg.startsWith('slow')) {
+          steerable.add(sid);
+          try {
+            await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working ' } });
+            for (let i = 0; i < 40; i++) {
+              if (cancelled.has(sid)) return { stopReason: 'cancelled' };
+              const handed = steerMode === 'agy' ? agyHandOver(sid, i, { inputTokens: 20, outputTokens: 5 }) : undefined;
+              if (handed) return handed;
+              await new Promise(r => setTimeout(r, slowStepMs));
+            }
+          } finally {
+            steerable.delete(sid);
+          }
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n<!-- GOAL_COMPLETE -->' } });
+          return { stopReason: 'end_turn' };
+        }
+        if (arg.startsWith('cancel-self')) {
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Stopping now.\n<!-- GOAL_CANCELLED -->' } });
+          return { stopReason: 'end_turn' };
+        }
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Finished ${arg}.\n<!-- GOAL_COMPLETE -->\n` } });
+        return { stopReason: 'end_turn' };
+      }
     }
     // The goal extension: `/goal …` changes the snapshot, "goal-done" meets it
     const goalCommand = goalMode ? /^\/goal\s+([\s\S]+)$/.exec(text.trim()) : null;

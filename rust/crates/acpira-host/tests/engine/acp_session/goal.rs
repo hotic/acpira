@@ -256,3 +256,74 @@ async fn a_goal_turn_that_failed_before_any_output_is_retried_as_the_goals_next_
   }
   assert_eq!(goal_events(&vw), [json!("set"), json!("complete")]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_synthesizes_goal_lifecycle_from_command_and_markers() {
+  let fake = fake_or_skip!();
+  let env = json!({ "FAKE_GOAL": "antigravity", "FAKE_STEERING": "agy", "FAKE_AGENT_VERSION": "1.5.17" });
+  let h = Harness::for_agent(&fake, "antigravity", json!({ "env": env }));
+  let s = started(&h, "/tmp").await;
+  // Wait for available_commands_update carrying `/goal`
+  until(|| view(&s)["goalActions"] == json!(["set", "clear"]), 5000).await;
+  expect_absent(view(&s), "goal");
+
+  // Typed `/goal` activates the goal, strips `<!-- GOAL_COMPLETE -->` from the reply, and settles as complete
+  prompt(&s, "/goal fix the tests").await;
+  until(|| !s.is_running(), 5000).await;
+  let vw = view(&s);
+  expect_absent(&vw, "goal");
+  assert_eq!(goal_events(&vw), [json!("set"), json!("complete")]);
+  let reply = vw["turns"][1]["blocks"].as_array().unwrap().iter().find(|b| b["type"] == "text").unwrap();
+  assert_eq!(reply["markdown"], "Finished fix the tests.");
+
+  // A reply ending with `<!-- GOAL_CANCELLED -->` clears the goal instead of marking it complete
+  s.control_goal(GoalAction::Set, Some("cancel-self task".into())).await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  let vw = view(&s);
+  expect_absent(&vw, "goal");
+  assert_eq!(goal_events(&vw), [json!("set"), json!("complete"), json!("set"), json!("cleared")]);
+  let reply = vw["turns"][3]["blocks"].as_array().unwrap().iter().find(|b| b["type"] == "text").unwrap();
+  assert_eq!(reply["markdown"], "Stopping now.");
+
+  // A stopped goal turn keeps the goal active; idle Clear sends a hidden cancel prompt and tolerates a marker-only reply
+  let pending = spawn_prompt(&s, "/goal slow port");
+  until(|| s.is_running() && view(&s)["goal"]["status"] == "active", 5000).await;
+  s.cancel().await;
+  pending.await.unwrap();
+  expect_match(&view(&s)["goal"], json!({ "objective": "slow port", "status": "active" }));
+  s.control_goal(GoalAction::Clear, None).await.unwrap();
+  until(|| !s.is_running() && view(&s)["goal"].is_null(), 5000).await;
+  let vw = view(&s);
+  assert_eq!(goal_events(&vw).last(), Some(&json!("cleared")));
+  assert!(vw["turns"].as_array().unwrap().last().unwrap()["error"].is_null());
+
+  // Clearing during a running goal turn steers the cancel prompt silently without inserting a SteerBlock
+  let pending = spawn_prompt(&s, "/goal slow again");
+  until(|| s.is_running() && view(&s)["goal"]["objective"] == "slow again", 5000).await;
+  s.control_goal(GoalAction::Clear, None).await.unwrap();
+  pending.await.unwrap();
+  let vw = view(&s);
+  expect_absent(&vw, "goal");
+  assert_eq!(goal_events(&vw).last(), Some(&json!("cleared")));
+  let last_blocks = vw["turns"].as_array().unwrap().last().unwrap()["blocks"].as_array().unwrap();
+  assert!(!last_blocks.iter().any(|b| b["type"] == "steer"), "clear steer must stay hidden: {last_blocks:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_yields_to_native_goal_extension_when_advertised() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  // Once `agy acp` advertises native goal metadata, the host uses `_session/goal` and native `/goal clear` instead of synthesizing
+  let env = json!({ "FAKE_GOAL": "codex", "FAKE_GOAL_LOG": dir.path().join("goal.log") });
+  let h = Harness::for_agent(&fake, "antigravity", json!({ "env": env }));
+  let s = started(&h, "/tmp").await;
+  assert_eq!(view(&s)["goalActions"], json!(["set", "pause", "resume", "clear"]));
+  prompt(&s, "/goal native task").await;
+  until(|| !s.is_running() && view(&s)["goal"]["objective"] == "native task", 5000).await;
+  s.control_goal(GoalAction::Pause, None).await.unwrap();
+  until(|| view(&s)["goal"]["status"] == "paused", 5000).await;
+  assert_eq!(goal_log(&dir), "pause\n");
+  s.control_goal(GoalAction::Clear, None).await.unwrap();
+  until(|| !s.is_running() && view(&s)["goal"].is_null(), 5000).await;
+  expect_match(view(&s)["turns"].as_array().unwrap().iter().rev().nth(1).unwrap(), json!({ "role": "user", "text": "/goal clear", "auto": true, "autoReason": "goal" }));
+}
