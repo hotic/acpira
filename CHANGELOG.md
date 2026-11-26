@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.9] - 2026-11-26
+
+### Added
+
+- **Computer use.** Agents can list, read and operate the windows of other desktop apps through Acpira's MCP tools, asking once per app on a card. Password stores, system prompts and Acpira itself are never driven. The `computer` tool group stays off until switched on from its tile on the plugin page. macOS is supported. The Windows driver ships as a preview that has not yet run on a real Windows desktop.
+- Installed Antigravity, Grok, Devin, Kimi, OpenCode, Droid and Hermes CLIs are checked against their vendors' release feeds and offer an in-app update. agy and Hermes update in place.
+- Antigravity: `/swarm` workers, `invoke_subagent` children and orchestrator planner / executor rounds show as threads and sidekick relay rounds, with their permissions and questions routed into the child.
+- Antigravity: `/goal` turns get set and clear controls and an active goal, tracked from the prompt and the agent's completion markers until agy reports goals itself.
+- Devin: SWE-2's Standard / Ultrafast speed is the Fast switch in the composer, the sidekick picker and the iOS, Android and HarmonyOS apps.
+- Subagents and their groups reorder by dragging.
+- Tool rows that only carried a bare agent-control tool name (agy's board, swarm and task tools, claude-agent-acp's agent tools) read as a verb and its target.
+- HarmonyOS: sidekick rounds render as a handoff / steps / handback relay, as on the webview and iOS.
+
+### Changed
+
+- Browser panel tabs sleep sooner in hidden or unfocused windows, and a sleeping tab in a visible window shows a placeholder that wakes on a click. An agent navigation wakes it too. The bar no longer warns that a page cannot be picked.
+- To-do and question cards line their text, icons and option keys up with the composer text.
+- iOS: long replies are split into rows and text views are built on touch, so opening a long session no longer freezes, and state marks at rest no longer redraw every frame. Android: breathing state marks no longer recompose every frame.
+
+### Fixed
+
+- Two in-app agent installs no longer race on the shared Node.js download and npm prefix: the second waits and its buttons name the agent installing.
+- Saved Antigravity accounts keep their own token file instead of the OS keyring, and a saved account without a login reports its quota as unavailable. A `session/new` timeout on Antigravity points at the network proxy.
+- Every session request of an agent gets the same MCP grant, so agy no longer registers Acpira's server again when its environment changes.
+- Dragging a selection out of a dialog onto the backdrop no longer closes it, and a text selection no longer stays stuck after clicking window chrome.
+- After an appended turn such as an automatic `/compact`, the gap under the thread on WebKit is right again.
+- Widgets sit flush with the thread column.
+- A long sidekick task no longer clips the model name in the relay head, on the webview and Android.
+- Tencent Hy models carry the Hunyuan mark on every client.
+- iOS: a chat opens at its end from the first frame, and the thread no longer jumps back when a row re-measures during a fling or a streamed line.
+
 ## [2.1.8] - 2026-11-23
 
 ### Added
