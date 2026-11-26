@@ -29,9 +29,10 @@ impl AcpSession {
     let session_id = req.get("sessionId").and_then(Value::as_str).map(str::to_owned);
     let (Some(schema), Some("form")) = (schema, req.get("mode").and_then(Value::as_str)) else { return json!({ "action": "decline" }) };
     let message = req.get("message").and_then(Value::as_str).unwrap_or("").to_owned();
+    // Read before taking the core lock: relay_vendor locks it too
+    let vendor = session_id.as_deref().and_then(|sid| self.relay_vendor(sid)).unwrap_or(self.vendor);
     let (rx, block_id) = {
       let mut c = self.core.lock();
-      let vendor = session_id.as_deref().and_then(|sid| self.relay_vendor(sid)).unwrap_or(self.vendor);
       let Some(target) = self.target_for_call(&mut c, vendor, session_id.as_deref(), tool_call_id.as_deref()) else {
         drop(c);
         self.log(&format!("elicitation request for unknown session {}", session_id.as_deref().unwrap_or("(request scope)")));
@@ -113,9 +114,10 @@ impl AcpSession {
       return cancelled_permission();
     }
     let session_id = req.get("sessionId").and_then(Value::as_str).map(str::to_owned);
+    // Read before taking the core lock: relay_vendor locks it too
+    let vendor = session_id.as_deref().and_then(|sid| self.relay_vendor(sid)).unwrap_or(self.vendor);
     let (rx, block_id) = {
       let mut c = self.core.lock();
-      let vendor = session_id.as_deref().and_then(|sid| self.relay_vendor(sid)).unwrap_or(self.vendor);
       let Some(target) = self.target_for_call(&mut c, vendor, session_id.as_deref(), Some(&tool_call_id)) else {
         drop(c);
         self.log(&format!("question request for unknown session {}", session_id.as_deref().unwrap_or("undefined")));
