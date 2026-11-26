@@ -17,13 +17,37 @@ pub const ASK_CALLER: &str = "ask_caller";
 pub const PLUGIN_GUIDE: &str = "plugin_guide";
 pub const PLUGIN_ACTIVATE: &str = "plugin_activate";
 
+/// Computer use (`acpira-host/src/computer.rs`): the running apps, a window as an outline, steps in a window, a
+/// picture of a window. The engine asks the user once per app before any of them touches it
+pub const COMPUTER_APPS: &str = "computer_apps";
+pub const COMPUTER_OBSERVE: &str = "computer_observe";
+pub const COMPUTER_ACT: &str = "computer_act";
+pub const COMPUTER_SEE: &str = "computer_see";
+/// The computer-use tools. Not in `ALL`: they act outside the workspace, so the built-in agent asks for them like for
+/// any other MCP tool (the ones that only read carry `readOnlyHint`)
+pub const COMPUTER: &[&str] = &[COMPUTER_APPS, COMPUTER_OBSERVE, COMPUTER_ACT, COMPUTER_SEE];
+
 /// Every tool the engine itself serves; a name outside it on the same server belongs to a plugin
 pub const ALL: &[&str] = &[SHOW_IMAGE, SHOW_VIDEO, SHOW_WIDGET, WORKSPACE_HOOKS, OPEN_BROWSER, SEARCH_SESSIONS, READ_SESSION, ASK_AGENT, ASK_CALLER, PLUGIN_GUIDE, PLUGIN_ACTIVATE];
 
 /// The tool groups the plugin page can switch off for every agent (a built-in plugin each). The rest has no switch:
 /// `workspace_hooks` belongs to the hooks, `ask_caller` to a round already summoned, the plugin tools to the kernel
-pub const GROUPS: &[(&str, &[&str])] =
-  &[("summon", &[ASK_AGENT]), ("sessions", &[SEARCH_SESSIONS, READ_SESSION]), ("display", &[SHOW_IMAGE, SHOW_VIDEO, SHOW_WIDGET]), ("browser", &[OPEN_BROWSER])];
+pub const GROUPS: &[(&str, &[&str])] = &[
+  ("summon", &[ASK_AGENT]),
+  ("sessions", &[SEARCH_SESSIONS, READ_SESSION]),
+  ("display", &[SHOW_IMAGE, SHOW_VIDEO, SHOW_WIDGET]),
+  ("browser", &[OPEN_BROWSER]),
+  (COMPUTER_GROUP, COMPUTER),
+];
+pub const COMPUTER_GROUP: &str = "computer";
+
+/// The groups that stay off until the user switches them on
+pub const OFF_BY_DEFAULT: &[&str] = &[COMPUTER_GROUP];
+
+/// Whether `group` is on when the user never touched its switch
+pub fn group_default(group: &str) -> bool {
+  !OFF_BY_DEFAULT.contains(&group)
+}
 
 /// The group `tool` belongs to, if it has one
 pub fn group_of(tool: &str) -> Option<&'static str> {
@@ -37,5 +61,5 @@ pub const REMOTE: &[&str] = &["Read", "Write", "Edit", "MultiEdit", "Bash", "Bas
 
 /// Whether `tool` is one the engine serves itself
 pub fn is_engine_tool(tool: &str) -> bool {
-  ALL.contains(&tool) || REMOTE.contains(&tool)
+  ALL.contains(&tool) || REMOTE.contains(&tool) || COMPUTER.contains(&tool)
 }

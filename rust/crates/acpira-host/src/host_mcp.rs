@@ -35,7 +35,7 @@ use acpira_agent::prompt::{BASE, Library};
 use crate::relay::wire::HostFeatures;
 use self::relay_client::{Relay, listing_print};
 use self::tools::{
-  ask_tool_def, browser_tool_def, call_show_image, call_show_video, call_show_widget, call_workspace_hooks, caller_tool_def, hooks_tool_def, plugin_activate_def,
+  ask_tool_def, browser_tool_def, call_show_image, call_show_video, call_show_widget, call_workspace_hooks, caller_tool_def, computer_tool_defs, hooks_tool_def, plugin_activate_def,
   plugin_guide_def, session_tool_defs, tool_def, tool_error, video_tool_def, widget_tool_def,
 };
 pub use self::tools::{video_mime_of, widget_mime_of};
@@ -336,6 +336,10 @@ pub fn run(version: &str) -> i32 {
         if features.browser {
           tools.push(browser_tool_def());
         }
+        // Computer use: listed only while its group is on, which it is not until the user says so (the filter below)
+        if features.computer {
+          tools.extend(computer_tool_defs());
+        }
         tools.extend(session_tool_defs());
         // A stand-in CLI's session in a folder on an SSH host (`acp::local_run`): the project tools that run there
         if let Some(alias) = &features.remote_tools {
@@ -450,6 +454,18 @@ pub fn run(version: &str) -> i32 {
         });
         continue;
       }
+      // A computer-use call waits on the user's answer about the app and on the app itself, on a thread of its own
+      if method == "tools/call"
+        && name.is_some_and(|n| acpira_shared::host_tools::COMPUTER.contains(&n))
+        && let Some(id) = msg.get("id").cloned()
+      {
+        let (relay, out, params) = (relay.clone(), out.clone(), msg.get("params").cloned().unwrap_or(Value::Null));
+        std::thread::spawn(move || {
+          let result = relay.computer(&params);
+          write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        });
+        continue;
+      }
       if method == "tools/call"
         && msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str) == Some(BROWSER_TOOL)
         && let Some(id) = msg.get("id").cloned()
@@ -553,6 +569,22 @@ mod tests {
     let mut all = acpira_shared::host_tools::ALL.to_vec();
     all.sort_unstable();
     assert_eq!(names, all);
+  }
+
+  #[test]
+  fn the_computer_tools_are_one_group_off_by_default_and_not_free_of_a_card() {
+    use acpira_shared::host_tools::{COMPUTER, COMPUTER_ACT, COMPUTER_GROUP, group_default, group_of, is_engine_tool};
+    let tools = computer_tool_defs();
+    assert_eq!(tools.iter().map(|t| t["name"].as_str().unwrap()).collect::<Vec<_>>(), COMPUTER);
+    for tool in &tools {
+      let name = tool["name"].as_str().unwrap();
+      // The engine's own, so never taken for a plugin's script tool; in the group the switch covers
+      assert!(is_engine_tool(name) && group_of(name) == Some(COMPUTER_GROUP), "{name}");
+      // Outside the list the built-in agent runs without a card: only the tools that read carry the hint that does
+      assert!(!acpira_shared::host_tools::ALL.contains(&name), "{name}");
+      assert_eq!(tool["annotations"]["readOnlyHint"], json!(name != COMPUTER_ACT), "{name}");
+    }
+    assert!(!group_default(COMPUTER_GROUP) && group_default("browser"));
   }
 
   #[test]

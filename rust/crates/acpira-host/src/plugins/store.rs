@@ -126,7 +126,8 @@ pub struct State {
   pub plugins: BTreeMap<String, Entry>,
   #[serde(default)]
   pub proposals: BTreeMap<String, Proposal>,
-  /// Built-in tool groups the user switched off (`false`); a group absent here is on
+  /// Built-in tool groups the user switched away from their default (`host_tools::group_default`); a group absent
+  /// here is at it
   #[serde(default)]
   pub tool_groups: BTreeMap<String, bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,7 +143,7 @@ pub struct State {
 
 impl State {
   pub fn tool_group_on(&self, group: &str) -> bool {
-    self.tool_groups.get(group).copied().unwrap_or(true)
+    self.tool_groups.get(group).copied().unwrap_or_else(|| acpira_shared::host_tools::group_default(group))
   }
 }
 
@@ -544,10 +545,10 @@ impl PluginStore {
         if s.tool_group_on(group) == on {
           return Ok(None);
         }
-        if on {
+        if on == acpira_shared::host_tools::group_default(group) {
           s.tool_groups.remove(group);
         } else {
-          s.tool_groups.insert(group.to_owned(), false);
+          s.tool_groups.insert(group.to_owned(), on);
         }
         Ok(Some(Change { id: group.to_owned(), action: "toolGroup".into(), on: Some(on), provenance, ..Default::default() }))
       })

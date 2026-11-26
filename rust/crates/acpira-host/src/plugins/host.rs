@@ -93,7 +93,7 @@ impl Loaded {
 
   /// The built-in tool groups switched off
   pub fn groups_off(&self) -> Vec<String> {
-    self.state.tool_groups.iter().filter(|(_, on)| !**on).map(|(g, _)| g.clone()).collect()
+    acpira_shared::host_tools::GROUPS.iter().map(|(g, _)| *g).filter(|g| !self.state.tool_group_on(g)).map(str::to_owned).collect()
   }
 }
 
@@ -709,6 +709,8 @@ impl PluginHost {
     let plugins = ids.iter().map(|id| self.info(id, &loaded)).collect();
     let tool_groups = acpira_shared::host_tools::GROUPS
       .iter()
+      // Computer use is offered only where this engine can drive apps
+      .filter(|(g, _)| *g != acpira_shared::host_tools::COMPUTER_GROUP || acpira_computer::SUPPORTED)
       .map(|(g, tools)| ToolGroupInfo { id: (*g).into(), on: state.tool_group_on(g), tools: tools.iter().map(|t| (*t).into()).collect() })
       .collect();
     let mut changes: Vec<PluginChange> = self.store.changes(CHANGES_SHOWN).into_iter().map(change_view).collect();
@@ -1293,7 +1295,12 @@ mod tests {
     h.action(PluginAction::Confirm { id: "demo".into(), snapshot: frozen.hash.clone() }).await.unwrap();
     assert!(h.view().plugins[0].proposal.is_none() && h.loaded().active.len() == 1);
     h.action(PluginAction::ToolGroup { id: "summon".into(), on: false }).await.unwrap();
+    // Computer use is off until the user switches it on
+    assert_eq!(h.loaded().groups_off(), ["summon", "computer"]);
+    h.action(PluginAction::ToolGroup { id: "computer".into(), on: true }).await.unwrap();
     assert_eq!(h.loaded().groups_off(), ["summon"]);
+    h.action(PluginAction::ToolGroup { id: "computer".into(), on: false }).await.unwrap();
+    assert!(!h.loaded().state.tool_groups.contains_key("computer"));
     assert!(h.action(PluginAction::ToolGroup { id: "nope".into(), on: false }).await.is_err());
   }
 }

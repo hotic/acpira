@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Blocks, Bot, Clock, FolderOpen, LayoutPanelLeft, Paintbrush, Palette, PanelTop, Trash2, Undo2, Workflow, Wrench, type LucideIcon } from 'lucide-react';
+import { Blocks, Bot, Clock, FolderOpen, LayoutPanelLeft, MousePointerClick, Paintbrush, Palette, PanelTop, Trash2, Undo2, Workflow, Wrench, type LucideIcon } from 'lucide-react';
 import type { PluginAction, PluginContribution, PluginInfo, PluginsView } from '@acpira/shared/plugins';
 import { Card } from '../ui/Card';
 import { Button, IconButton } from '../ui/Button';
@@ -161,6 +161,33 @@ export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; sa
           </DialogBody>
         </SettingsDialog>
       )}
+    </Card>
+  );
+}
+
+// Computer use: the built-in tools that read and operate other apps. The one tool group with a tile, since it stays
+// off until the user turns it on here; the engine lists the group only where it can drive apps
+export function ComputerUseTile({ on }: { on: boolean }) {
+  const name = t('settings.plugins.computer');
+  const desc = t('settings.plugins.computerDesc');
+  const label = t('settings.agent.enabled', { agent: name });
+  return (
+    <Card data-plugin-tile="computer" className="flex h-full flex-col shadow-none">
+      <div className="flex items-center gap-gap p-pad">
+        <span className={cn('flex size-(--tile-mark) shrink-0 items-center justify-center rounded-lg bg-active text-fg-1', !on && 'text-fg-3')}>
+          <MousePointerClick className="size-lead" strokeWidth={1.5} />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-y-(--stack-gap)">
+          <span className={cn('truncate text-2 font-medium', on ? 'text-fg-1' : 'text-fg-2')}>{name}</span>
+          <span className="truncate text-3 text-fg-3" title={desc}>{desc}</span>
+        </span>
+        <span className="flex shrink-0 items-center">
+          <Switch checked={on} onCheckedChange={next => act({ op: 'toolGroup', id: 'computer', on: next })} aria-label={label} title={label} />
+        </span>
+      </div>
+      <div className="mt-auto flex h-(--tile-foot) items-center border-t border-line px-pad">
+        <span className="truncate text-3 text-fg-3">{t('settings.plugins.bundled')}</span>
+      </div>
     </Card>
   );
 }

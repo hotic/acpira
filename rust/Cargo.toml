@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/acpira-shared", "crates/acpira-rpc", "crates/acpira-agent", "crates/acpira-host", "crates/acpira-desktop", "crates/acpira-net", "crates/acpira-gateway", "crates/acpira-mobile", "crates/acpira-mobile-ohos"]
+members = ["crates/acpira-shared", "crates/acpira-rpc", "crates/acpira-agent", "crates/acpira-computer", "crates/acpira-host", "crates/acpira-desktop", "crates/acpira-net", "crates/acpira-gateway", "crates/acpira-mobile", "crates/acpira-mobile-ohos"]
 
 [workspace.package]
 version = "2.1.8"
@@ -28,6 +28,7 @@ allow_attributes_without_reason = "warn"
 acpira-shared = { path = "crates/acpira-shared" }
 acpira-rpc = { path = "crates/acpira-rpc" }
 acpira-agent = { path = "crates/acpira-agent" }
+acpira-computer = { path = "crates/acpira-computer" }
 # Droid's stored login (accounts/droid.rs, 16-byte IV); already in the tree through iroh
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 anyhow = "1.0.100"
@@ -78,6 +79,11 @@ same-file = "1.0"
 semver = "1.0"
 # Plugin schedules: cron times in the machine's own zone, already in the tree
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Computer use on macOS (acpira-computer): the accessibility client API, Core Graphics events and the AppKit overlay;
+# versions already in the tree
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+objc2 = "0.6"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order", "raw_value"] }
 sha2 = "0.10"

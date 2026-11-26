@@ -16,7 +16,7 @@ import { AgentMark } from '../chat/AgentMark';
 import { t } from '../i18n';
 import { ListHead, Note, SearchBox, Section, Tabs } from './controls';
 import { askPluginsView, usePluginsView } from '../plugins/skin';
-import { SkinPicker, UserPluginTile } from './UserPlugins';
+import { ComputerUseTile, SkinPicker, UserPluginTile } from './UserPlugins';
 import { PLUGIN_KIND_LABEL } from './search';
 
 // Settings → Models: a tile per agent (the built-in one and any a plugin adds among them) with its switch (an off agent
@@ -92,6 +92,10 @@ export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter)
   const skins = view ? view.plugins.filter(p => themed(p) && p.loaded && matchPlugin(p)).length : 0;
   const picking = current === 'look' && !!view && (skins > 0 || !!view.skin);
   const tiles = picking ? shown.filter(p => !themed(p)) : shown;
+  // Computer use is built in: its tile leads the list where the engine offers the group (macOS, Windows)
+  const computer = view?.toolGroups.find(g => g.id === 'computer');
+  const computerShown = !!computer && (current === 'all' || current === 'tools')
+    && (!q || `${t('settings.plugins.computer')} ${t('settings.plugins.computerDesc')}`.toLowerCase().includes(q));
   return <>
     <SearchBox value={query} onChange={setQuery} label={t('settings.plugins.search')} />
     {tabs.length > 1 && <Tabs items={tabs} value={current} onChange={onTab} label={t('settings.plugins.kinds')} />}
@@ -100,9 +104,10 @@ export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter)
       <SkinPicker view={view} filter={matchPlugin} />
       {tiles.length > 0 && <ListHead title={t('settings.plugins.styles')} count={tiles.length} outside />}
     </>}
-    {view && !picking && tiles.length === 0 && <Section><Note>{t(q ? 'settings.plugins.noMatch' : 'settings.plugins.none')}</Note></Section>}
-    {tiles.length > 0 && (
+    {view && !picking && tiles.length === 0 && !computerShown && <Section><Note>{t(q ? 'settings.plugins.noMatch' : 'settings.plugins.none')}</Note></Section>}
+    {(tiles.length > 0 || computerShown) && (
       <div className="grid grid-cols-2 gap-gap settings-narrow:grid-cols-1">
+        {computerShown && computer && <ComputerUseTile on={computer.on} />}
         {tiles.map(p => <UserPluginTile key={p.id} plugin={p} safeMode={!!view?.safeMode} />)}
       </div>
     )}

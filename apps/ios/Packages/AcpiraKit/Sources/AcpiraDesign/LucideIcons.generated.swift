@@ -129,6 +129,7 @@ public enum LucideIcon: String, CaseIterable, Sendable {
   case mic
   case minimize2
   case minus
+  case mousePointerClick
   case moveRight
   case network
   case package
@@ -330,6 +331,7 @@ extension LucideIcon {
     case .mic: [.path("M12 19v3"), .path("M19 10v2a7 7 0 0 1-14 0v-2"), .rect(x: 9, y: 2, width: 6, height: 13, rx: 3)]
     case .minimize2: [.path("m14 10 7-7"), .path("M20 10h-6V4"), .path("m3 21 7-7"), .path("M4 14h6v6")]
     case .minus: [.path("M5 12h14")]
+    case .mousePointerClick: [.path("M14 4.1 12 6"), .path("m5.1 8-2.9-.8"), .path("m6 12-1.9 2"), .path("M7.2 2.2 8 5.1"), .path("M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z")]
     case .moveRight: [.path("M18 8L22 12L18 16"), .path("M2 12H22")]
     case .network: [.rect(x: 16, y: 16, width: 6, height: 6, rx: 1), .rect(x: 2, y: 16, width: 6, height: 6, rx: 1), .rect(x: 9, y: 2, width: 6, height: 6, rx: 1), .path("M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"), .path("M12 12V8")]
     case .package: [.path("M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"), .path("M12 22V12"), .polyline([3.29, 7, 12, 12, 20.71, 7]), .path("m7.5 4.27 9 5.15")]

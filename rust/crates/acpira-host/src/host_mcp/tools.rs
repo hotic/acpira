@@ -7,6 +7,7 @@ use serde_json::{Map, Value, json};
 
 use acpira_shared::attachments::image_mime_of;
 use acpira_shared::host_tools::{
+  COMPUTER_ACT, COMPUTER_APPS, COMPUTER_OBSERVE, COMPUTER_SEE,
   ASK_AGENT as ASK_TOOL, ASK_CALLER as CALLER_TOOL, OPEN_BROWSER as BROWSER_TOOL, PLUGIN_ACTIVATE, PLUGIN_GUIDE, READ_SESSION as READ_SESSION_TOOL,
   SEARCH_SESSIONS as SEARCH_SESSIONS_TOOL, SHOW_IMAGE as TOOL_NAME, SHOW_VIDEO as VIDEO_TOOL, SHOW_WIDGET as WIDGET_TOOL, WORKSPACE_HOOKS as HOOKS_TOOL,
 };
@@ -280,6 +281,123 @@ pub(super) fn widget_tool_def() -> Value {
     "annotations": { "readOnlyHint": true, "openWorldHint": false },
     "_meta": { "anthropic/searchHint": "show interactive html widget ui component slider chart calculator inline generative ui" },
   })
+}
+
+const COMPUTER_APPS_DESCRIPTION: &str = "List the apps running on the user's computer, with the window titles of the ones \
+the user has let you use. Start here to find the name the other computer tools take as `app`.";
+
+const COMPUTER_OBSERVE_DESCRIPTION: &str = "Read one window of an app on the user's computer as an indented outline, \
+one element per line: `b3 button \"Save\"`, `t1 textfield \"Name\" = \"Ada\"`. The leading word is the element's ref, which \
+stays the same across calls. The first call for a window answers the whole outline, later ones only what changed since \
+(`+` added, `~` changed, `-` removed); `full` asks for the outline again. A large window is cut short: a line ending in \
+`(+N not read)` can be read on its own with `focus`. The window may be in the background or covered, and the user's \
+pointer, keyboard focus and front app stay untouched. The user is asked once before an app is used.";
+
+/// `KEYS` stands for the key step's example, which names the system's own modifier keys (`computer_keys`)
+const COMPUTER_ACT_DESCRIPTION: &str = "Carry out steps in an app's window on the user's computer, in order, and get \
+back what changed in the window, so there is no need to observe afterwards. The app stays in the background and a blue \
+frame shows the user which window is being used. Steps: \
+{do:\"click\", on:\"b3\"} (also \"double_click\" and \"right_click\"); \
+{do:\"type\", on:\"t1\", text:\"…\"} inserts at the caret (without `on` it types into whatever has focus); \
+{do:\"set\", on:\"t1\", value:\"…\"} replaces the whole value; \
+{do:\"key\", KEYS; \
+{do:\"scroll\", on:\"e5\", down:5} in lines (also up, left, right); \
+{do:\"menu\", path:\"File > Save As…\"}, with the titles in the language the app shows them in; \
+{do:\"wait\", ms:500}. \
+Use refs from computer_observe. For something the outline does not list, take a picture with computer_see and give \
+`at:[x, y]`, a point in that picture, instead of `on`. The steps stop at the first one that fails.";
+
+/// The key step's example for the system the engine runs on: the Windows driver has no cmd key to press
+fn computer_keys() -> &'static str {
+  if cfg!(windows) {
+    "keys:\"ctrl+s\"} (enter, tab, escape, space, delete, arrows, f1-f12, with ctrl / shift / alt)"
+  } else {
+    "keys:\"cmd+s\"} (enter, tab, escape, space, delete, arrows, f1-f12, with cmd / shift / alt / ctrl)"
+  }
+}
+
+const COMPUTER_SEE_DESCRIPTION: &str = "Take a picture of one app window on the user's computer, also when other \
+windows cover it. Use it for what the outline cannot tell: canvases, images, charts, custom-drawn views, visual \
+checks. For everything else computer_observe is faster and far cheaper.";
+
+/// The computer-use tools (`computer.rs`). The ones that only read say so, which lets a client run them without a card
+pub(super) fn computer_tool_defs() -> Vec<Value> {
+  let app = json!({ "type": "string", "description": "The app, as computer_apps names it, or the id that list gives after the name." });
+  let window = json!({ "type": "string", "description": "A window title, or part of one. Default: the app's front window." });
+  let hint = |words: &str| json!({ "anthropic/searchHint": words });
+  vec![
+    json!({
+      "name": COMPUTER_APPS,
+      "title": "List apps",
+      "description": COMPUTER_APPS_DESCRIPTION,
+      "inputSchema": { "type": "object", "properties": {} },
+      "annotations": { "readOnlyHint": true, "openWorldHint": false },
+      "_meta": hint("computer use desktop mac windows apps running list control gui"),
+    }),
+    json!({
+      "name": COMPUTER_OBSERVE,
+      "title": "Read a window",
+      "description": COMPUTER_OBSERVE_DESCRIPTION,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "app": app,
+          "window": window,
+          "focus": { "type": "string", "description": "A ref from an earlier outline: read only what is under that element." },
+          "full": { "type": "boolean", "description": "Answer the whole outline even when this window was read before." },
+        },
+        "required": ["app"],
+      },
+      "annotations": { "readOnlyHint": true, "openWorldHint": false },
+      "_meta": hint("computer use desktop mac windows app window read observe accessibility ui elements gui test"),
+    }),
+    json!({
+      "name": COMPUTER_ACT,
+      "title": "Act in a window",
+      "description": COMPUTER_ACT_DESCRIPTION.replace("KEYS", computer_keys()),
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "app": app,
+          "window": window,
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "do": { "type": "string", "enum": ["click", "double_click", "right_click", "type", "set", "key", "scroll", "menu", "wait"] },
+                "on": { "type": "string", "description": "The element's ref." },
+                "at": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "description": "A point in the latest computer_see picture of this window, instead of `on`." },
+                "text": { "type": "string" },
+                "value": { "type": "string" },
+                "keys": { "type": "string" },
+                "repeat": { "type": "integer", "minimum": 1 },
+                "down": { "type": "integer" },
+                "up": { "type": "integer" },
+                "left": { "type": "integer" },
+                "right": { "type": "integer" },
+                "path": { "type": "string" },
+                "ms": { "type": "integer", "minimum": 0 },
+              },
+              "required": ["do"],
+            },
+          },
+        },
+        "required": ["app", "steps"],
+      },
+      "annotations": { "readOnlyHint": false, "destructiveHint": true, "openWorldHint": true },
+      "_meta": hint("computer use desktop mac windows app click type press key scroll menu control operate gui test"),
+    }),
+    json!({
+      "name": COMPUTER_SEE,
+      "title": "Picture a window",
+      "description": COMPUTER_SEE_DESCRIPTION,
+      "inputSchema": { "type": "object", "properties": { "app": app, "window": window }, "required": ["app"] },
+      "annotations": { "readOnlyHint": true, "openWorldHint": false },
+      "_meta": hint("computer use desktop mac windows app window screenshot picture see look visual"),
+    }),
+  ]
 }
 
 /// The session tools, offered with the relay env. Read-only (Claude Code runs them concurrently); not `alwaysLoad`, so a

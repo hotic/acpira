@@ -167,6 +167,13 @@ impl Relay {
     self.answer(HubOp::OpenBrowser { url: url.to_owned() })
   }
 
+  /// A computer-use tool: the engine asks the user about the app, then its driver carries the call out
+  pub(super) fn computer(&self, params: &Value) -> Value {
+    use crate::relay::wire::HubOp;
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("").to_owned();
+    self.answer(HubOp::Computer { name, arguments: params.get("arguments").cloned().unwrap_or_else(|| json!({})) })
+  }
+
   /// `show_image` / `show_widget` / `workspace_hooks` for a session folder on an SSH host: the hub checks (and reads)
   /// the files there (`AcpSession::fetch_shown`, `describe_host_hooks`), then the answer is the local one
   pub(super) fn show_on_host(&self, params: &Value) -> Value {
@@ -216,6 +223,7 @@ impl Relay {
       end = match reply {
         HubReply::Done(text) => Some(json!({ "content": [{ "type": "text", "text": text }], "isError": false })),
         HubReply::Error(text) => Some(tool_error(text)),
+        HubReply::Tool(result) => Some(result),
         _ => return true,
       };
       false

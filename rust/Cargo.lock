@@ -28,6 +28,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "acpira-computer"
+version = "2.1.8"
+dependencies = [
+ "base64 0.22.1",
+ "core-foundation",
+ "core-foundation-sys",
+ "libc",
+ "objc2",
+ "serde_json",
+ "windows",
+]
+
+[[package]]
 name = "acpira-desktop"
 version = "2.1.8"
 dependencies = [
@@ -81,6 +94,7 @@ name = "acpira-host"
 version = "2.1.8"
 dependencies = [
  "acpira-agent",
+ "acpira-computer",
  "acpira-desktop",
  "acpira-gateway",
  "acpira-rpc",

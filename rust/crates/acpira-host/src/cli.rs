@@ -73,6 +73,7 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "agent"
         | "mcp"
         | "mcp-host"
+        | "computer-use"
         | "remote"
         | "agents"
         | "model-catalog"
@@ -138,6 +139,10 @@ pub fn run(args: Vec<String>) -> i32 {
   }
   if args.first().map(String::as_str) == Some("mcp-host") {
     return crate::host_mcp::run_host_stdio();
+  }
+  // The computer-use driver (`computer.rs` starts it): before any runtime, since its overlay takes the main thread
+  if args.first().map(String::as_str) == Some("computer-use") {
+    return acpira_computer::run(args.get(1..).unwrap_or_default());
   }
   if args.first().map(String::as_str) == Some("remote") {
     return crate::remote::helper::main(&args[1..], VERSION);

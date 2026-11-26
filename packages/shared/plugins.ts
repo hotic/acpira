@@ -92,8 +92,8 @@ export interface PluginDependencyInfo {
   met: boolean;
 }
 
-export type ToolGroupId = 'summon' | 'sessions' | 'display' | 'browser';
-export const TOOL_GROUPS: readonly ToolGroupId[] = ['summon', 'sessions', 'display', 'browser'];
+export type ToolGroupId = 'summon' | 'sessions' | 'display' | 'browser' | 'computer';
+export const TOOL_GROUPS: readonly ToolGroupId[] = ['summon', 'sessions', 'display', 'browser', 'computer'];
 
 // A built-in tool group of Acpira's MCP server
 export interface ToolGroupInfo {

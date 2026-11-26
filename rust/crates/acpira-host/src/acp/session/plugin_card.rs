@@ -140,6 +140,12 @@ impl AcpSession {
       Some(m) => format!("{head}\n\n{m}"),
       None => head,
     });
+    self.host_ask(questions, message, wait).await
+  }
+
+  /// A question of the engine's own to the user, on a card in this session. The answer as a question card gives it
+  /// (`answers`, `skipped`, `cancelled`), or None when `wait` passed first (the card is withdrawn)
+  pub async fn host_ask(self: &Arc<Self>, questions: Vec<acpira_shared::transcript::Question>, message: Option<String>, wait: Duration) -> Option<Value> {
     let (rx, block_id) = {
       let mut c = self.core.lock();
       let block_id = self.open_question(&mut c, &Target::Root, questions.clone(), None, message);

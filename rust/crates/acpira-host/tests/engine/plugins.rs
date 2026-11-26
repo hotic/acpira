@@ -85,9 +85,9 @@ async fn a_session_lists_and_calls_plugin_tools_and_its_agent_asks_to_enable_one
   let token = hub.env(&session, None, 0)[1]["value"].as_str().unwrap().to_owned();
   let addr = hub.addr().to_owned();
 
-  // Nothing enabled: nothing listed, nothing callable
+  // Nothing enabled: nothing listed, nothing callable; the one group that waits for the user's switch is off
   let listed = op(&addr, &token, HubOp::Plugins).await;
-  assert!(matches!(&listed[..], [HubReply::Plugins { tools, off }] if tools.is_empty() && off.is_empty()), "{listed:?}");
+  assert!(matches!(&listed[..], [HubReply::Plugins { tools, off }] if tools.is_empty() && off == &["computer"]), "{listed:?}");
 
   // Enabled on the page: listed with its served name, run in its frozen copy with the session's folder
   write_plugin(&plugins_root, "demo", "read call; echo \"ws=$ACPIRA_WORKSPACE\"; echo \"$call\"");
@@ -95,7 +95,7 @@ async fn a_session_lists_and_calls_plugin_tools_and_its_agent_asks_to_enable_one
   plugins.action(PluginAction::ToolGroup { id: "browser".into(), on: false }).await.unwrap();
   let listed = op(&addr, &token, HubOp::Plugins).await;
   let [HubReply::Plugins { tools, off }] = &listed[..] else { panic!("{listed:?}") };
-  assert_eq!((tools[0]["name"].as_str(), off.as_slice()), (Some("demo_where"), &["browser".to_owned()][..]));
+  assert_eq!((tools[0]["name"].as_str(), off.as_slice()), (Some("demo_where"), &["browser".to_owned(), "computer".to_owned()][..]));
   let out = done(&op(&addr, &token, HubOp::PluginCall { name: "demo_where".into(), arguments: json!({ "x": 1 }) }).await).unwrap();
   assert!(out.contains(&format!("ws={}", project.path().display())), "{out}");
   assert!(out.contains(&format!("\"session\":\"{id}\"")) && out.contains("\"arguments\":{\"x\":1}"), "{out}");

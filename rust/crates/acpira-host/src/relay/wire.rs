@@ -63,6 +63,13 @@ pub enum HubOp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     result: Option<serde_json::Value>,
   },
+  /// A computer-use tool (`host_tools::COMPUTER`): the engine asks the user about the app first, then its one driver
+  /// carries the call out (`computer.rs`). Answered `Tool` (text, and a picture for `computer_see`) or `Error`
+  Computer {
+    name: String,
+    #[serde(default)]
+    arguments: serde_json::Value,
+  },
   /// A project tool of a stand-in CLI's session in a folder on an SSH host (`host_tools::REMOTE`, `acp::local_run`), run
   /// there or, for the CLI's own files, here; `tool_use_id` is the model's call (`_meta["claudecode/toolUseId"]`),
   /// which ties it to its row. Answered `Tool` (the MCP result) or `Error`. The caller closing the socket cancels it
@@ -218,6 +225,9 @@ pub struct HostFeatures {
   /// (`HubOp::RemoteTool`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub remote_tools: Option<String>,
+  /// This engine can drive other apps (`acpira_computer::SUPPORTED`); the tools are listed while their group is on
+  #[serde(default)]
+  pub computer: bool,
   /// The engine's plugins folder, named in the server's instructions (a data home other than ~/.acpira moves it)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub plugins_root: Option<String>,

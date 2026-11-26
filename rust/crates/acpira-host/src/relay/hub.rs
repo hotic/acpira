@@ -101,6 +101,8 @@ pub struct RelayHub {
   library: parking_lot::RwLock<Option<Weak<dyn SessionLibrary>>>,
   /// The user's plugins: their script tools, the tool groups switched off, activation
   plugins: parking_lot::RwLock<Option<Weak<crate::plugins::host::PluginHost>>>,
+  /// Computer use: the engine's driver and the per-app approvals
+  computer: parking_lot::RwLock<Option<Arc<crate::computer::ComputerHost>>>,
 }
 
 /// Leaves the pending count when the request line is in (or the connection gave up)
@@ -116,7 +118,7 @@ impl RelayHub {
   pub async fn start(roster: Arc<Roster>, log: LogFn) -> Result<Arc<RelayHub>> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?.to_string();
-    let hub = Arc::new(RelayHub { addr, grants: Default::default(), pending: AtomicUsize::new(0), roster, log, browser: Default::default(), library: Default::default(), plugins: Default::default() });
+    let hub = Arc::new(RelayHub { addr, grants: Default::default(), pending: AtomicUsize::new(0), roster, log, browser: Default::default(), library: Default::default(), plugins: Default::default(), computer: Default::default() });
     let weak = Arc::downgrade(&hub);
     tokio::spawn(async move {
       while let Ok((sock, _)) = listener.accept().await {
@@ -140,6 +142,11 @@ impl RelayHub {
   /// Where the plugin tools come from (the runtime's plugin host)
   pub fn set_plugins(&self, plugins: Weak<crate::plugins::host::PluginHost>) {
     *self.plugins.write() = Some(plugins);
+  }
+
+  /// Where the computer-use tools go (the runtime's driver host)
+  pub fn set_computer(&self, computer: Arc<crate::computer::ComputerHost>) {
+    *self.computer.write() = Some(computer);
   }
 
   pub fn plugin_host(&self) -> Option<Arc<crate::plugins::host::PluginHost>> {
@@ -213,7 +220,8 @@ impl RelayHub {
         // The project tools go to the session's own agent; a summoned child's CLI keeps its own
         let remote_tools = session.as_ref().filter(|_| caller.is_none()).and_then(|s| s.remote_stand()).map(|st| st.alias);
         let plugins_root = self.plugin_host().map(|p| p.store().root().display().to_string());
-        let mut features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools, plugins_root, instructions: None };
+        let computer = acpira_computer::SUPPORTED && self.computer.read().is_some();
+        let mut features = HostFeatures { browser, summoned: caller.is_some(), remote, remote_tools, computer, plugins_root, instructions: None };
         features.instructions = session.as_ref().map(|s| crate::host_mcp::instructions(&s.prompts(), &features));
         let _ = write.write_all(reply(HubReply::Features(features)).as_bytes()).await;
       }
@@ -308,6 +316,18 @@ impl RelayHub {
             }
           }
           (None, _) => HubReply::Error("Plugins are not available in this host.".into()),
+          (_, None) => HubReply::Error("The Acpira session that started this agent is gone.".into()),
+        };
+        let _ = write.write_all(reply(r).as_bytes()).await;
+      }
+      HubOp::Computer { name, arguments } => {
+        // Off unless the user switched the group on, whatever the caller's tool list said when it asked
+        let on = self.plugin_host().is_some_and(|p| p.loaded().state.tool_group_on(acpira_shared::host_tools::COMPUTER_GROUP));
+        let computer = self.computer.read().clone();
+        let r = match (computer, session.upgrade()) {
+          _ if !on => HubReply::Error("Computer use is switched off on Acpira's plugin page.".into()),
+          (Some(c), Some(s)) => c.call(&s, &name, arguments).await,
+          (None, _) => HubReply::Error("Computer use is not available in this host.".into()),
           (_, None) => HubReply::Error("The Acpira session that started this agent is gone.".into()),
         };
         let _ = write.write_all(reply(r).as_bytes()).await;

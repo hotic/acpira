@@ -7,6 +7,7 @@ pub mod agents_cli;
 pub mod bridge_core;
 pub mod bus;
 pub mod cli;
+pub mod computer;
 pub mod devices;
 pub mod file_rank;
 pub mod handoff;

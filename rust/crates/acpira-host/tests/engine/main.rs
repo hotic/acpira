@@ -11,6 +11,8 @@ mod agent_process;
 mod bridge;
 mod builtin_agent;
 mod compaction;
+#[cfg(target_os = "macos")]
+mod computer;
 mod failures;
 mod golden;
 mod harness;

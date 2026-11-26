@@ -197,6 +197,10 @@ impl HostRuntime {
     };
     if let Some(h) = &hub {
       h.set_plugins(Arc::downgrade(&plugins));
+      // Computer use: this binary is also the driver (`acpira computer-use`)
+      if let Some(exe) = bridge_exe.as_deref().filter(|_| acpira_computer::SUPPORTED) {
+        h.set_computer(crate::computer::ComputerHost::new(exe, root.clone(), log.clone()));
+      }
     }
     let host_mcp = bridge_exe.as_deref().map(|exe| {
       let m = crate::host_mcp::HostMcp::new(exe);
