@@ -9,11 +9,13 @@ import './styles/index.css';
 import { App, bootReady } from './App';
 import { BrowserPanel } from './browser/BrowserPanel';
 import { fixSpacedPinyinCommits } from './ui/ime';
+import { fixStaleSelection } from './ui/selection';
 import { watchWindowFocus } from './plugins/motion';
 
 // Register custom properties before any stylesheet transition runs (avoids Chromium < 138 CVE-2025-6555 UAF)
 registerCssProperties();
 fixSpacedPinyinCommits();
+fixStaleSelection();
 watchWindowFocus();
 
 // The browser panel runs the same bundle in its own webview (apps/vscode/src/bridge.ts BrowserPanel)
