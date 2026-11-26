@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, MessageSquarePlus, MessageSquareText, RotateCw, SquareDashedMousePointer, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ExternalLink, Globe, MessageSquarePlus, MessageSquareText, RotateCw, SquareDashedMousePointer } from 'lucide-react';
 import { envelopeOf, MAX_CONTEXT_CALL_ID, normalizePreviewUrl, pickedContext, redactUrl, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@acpira/shared/picker';
 import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage } from '@acpira/shared/protocol';
 import { optionClass } from '../ui/DropdownMenu';
@@ -363,12 +363,6 @@ export function BrowserPanel() {
               </IconButton>
               <IconButton size="sm" className={TOOL} title={t(externalLabel)} aria-label={t(externalLabel)} disabled={!shown} onClick={() => post({ type: 'browserOpenExternal', url: shown })}><ExternalLink strokeWidth={1.5} /></IconButton>
             </div>
-            {pickable === false && frame && (
-              <div className="flex h-row shrink-0 items-center gap-1 border-b border-line px-pad text-3 text-fg-3">
-                <TriangleAlert strokeWidth={1.5} className="size-icon shrink-0" />
-                <span className="truncate">{t('browser.notPickable')}</span>
-              </div>
-            )}
             <div data-sheet={(IN_PANEL && frame && !error) || undefined} className="relative min-h-0 flex-1">
               {error ? (
                 <div className="flex h-full flex-col items-center justify-center gap-gap px-page text-center">
