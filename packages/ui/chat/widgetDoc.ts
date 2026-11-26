@@ -109,14 +109,41 @@ const BOOTSTRAP = `(function () {
     for (var i = 0; i < all.length; i++) rebind(all[i]);
   }
   new MutationObserver(function (records) {
+    var restyled = false;
     for (var i = 0; i < records.length; i++) {
       var r = records[i];
       if (r.type === 'attributes') { if (/^on/i.test(r.attributeName)) rebind(r.target); }
-      else for (var j = 0; j < r.addedNodes.length; j++) walk(r.addedNodes[j]);
+      else {
+        if (r.target && r.target.nodeName === 'STYLE') restyled = true;
+        for (var j = 0; j < r.addedNodes.length; j++) {
+          var n = r.addedNodes[j];
+          walk(n);
+          if (n.nodeName === 'STYLE') restyled = true;
+        }
+      }
     }
+    if (restyled) report();
   }).observe(document, { childList: true, subtree: true, attributes: true });
+  // Models often style a widget like a standalone page (<body class="p-3">), which indents cards inside a transparent
+  // frame off the thread column. Zero out oversized (> 4 px) outer padding / margin on a transparent, borderless body
+  // while leaving tiny shadow buffers (e.g. p-0.5) and opaque card-like bodies intact.
+  function clearColor(c) { return !c || c === 'transparent' || /^rgba\\([^,]+,[^,]+,[^,]+,\\s*0(?:\\.0+)?\\s*\\)$/.test(c) || /\\/\\s*0(?:\\.0+)?%?\\s*\\)$/.test(c); }
+  function trimBody() {
+    var b = document.body;
+    if (!b) return;
+    var cs = getComputedStyle(b);
+    if (!clearColor(cs.backgroundColor) || cs.backgroundImage !== 'none' || cs.boxShadow !== 'none') return;
+    if (parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderRightWidth) > 0 || parseFloat(cs.borderBottomWidth) > 0 || parseFloat(cs.borderLeftWidth) > 0) return;
+    var sides = ['Top', 'Right', 'Bottom', 'Left'];
+    for (var i = 0; i < sides.length; i++) {
+      var s = sides[i], k = s.toLowerCase();
+      if (parseFloat(cs['padding' + s]) > 4) b.style.setProperty('padding-' + k, '0px', 'important');
+      if (parseFloat(cs['margin' + s]) > 4) b.style.setProperty('margin-' + k, '0px', 'important');
+    }
+  }
   var last = 0;
   function report() {
+    trimBody();
     var h = Math.ceil(document.documentElement.getBoundingClientRect().height);
     if (h !== last) { last = h; parent.postMessage({ [KEY]: 'height', height: h }, '*'); }
   }

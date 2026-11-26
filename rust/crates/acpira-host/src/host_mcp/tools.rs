@@ -74,8 +74,9 @@ build step (`<style type=\"text/tailwindcss\">` works too). Follow the conversat
 instead of fixed ones: bg-background, bg-card, bg-muted, text-foreground, text-muted-foreground, border-border, bg-primary with \
 text-primary-foreground, text-primary, ring-ring, and text-success / text-warning / text-danger; the same values are CSS \
 variables (--background, --card, --primary …) for canvas or SVG. The page background is transparent and the font is the \
-editor's. The frame is as wide as the conversation (from about 300 px) and as tall as the content: keep it compact, ideally \
-under 600 px. Forms do not submit and alerts, dialogs and new windows are blocked.";
+editor's. The frame already lines up with the conversation column (from about 300 px wide) and grows to fit its content: \
+keep it compact (ideally under 600 px tall), and leave body without outer padding or margin so cards sit flush with the \
+thread (put padding inside cards instead). Forms do not submit and alerts, dialogs and new windows are blocked.";
 
 /// The groups' part of `ask_agent`'s description: each with its members, and what one call naming it does
 fn group_lines(groups: &[acpira_shared::subagents::SubagentGroup]) -> String {
