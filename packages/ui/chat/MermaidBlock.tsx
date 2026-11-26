@@ -471,7 +471,7 @@ function DiagramLightbox({ svg, chart, size, theme, onClose }: {
             zoom.surfaceRef(el);
           }}
           aria-label={t('diagram.title')}
-          onClick={zoom.onBackdropClick(onClose)}
+          onScrimClick={zoom.onBackdropClick(onClose)}
           className="absolute inset-0 z-40 flex touch-none items-center justify-center overflow-hidden bg-scrim p-page backdrop-blur-xs"
         >
           <DiagramMenu svg={svg} chart={chart} size={size} theme={theme}>

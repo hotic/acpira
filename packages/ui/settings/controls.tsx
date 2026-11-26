@@ -298,7 +298,6 @@ export function SettingsDialog({ title, sub, icon, control, wide, tall, pinTop, 
   footer?: ReactNode;
   children: ReactNode;
 }) {
-  const scrim = (e: MouseEvent) => { if (e.target === e.currentTarget) onClose(); };
   // The top edge the centred dialog opened at, measured as the card attaches (Base UI mounts the popup on its own
   // render, after this component's effects) and before its first paint; it then stays put
   const [top, setTop] = useState<number>();
@@ -307,14 +306,14 @@ export function SettingsDialog({ title, sub, icon, control, wide, tall, pinTop, 
     setTop(prev => prev ?? el.offsetTop - parseFloat(getComputedStyle(el.parentElement!).paddingTop));
   }, [pinTop]);
   const pinned = pinTop && top !== undefined;
-  // The popup covers the whole layer and `scrim` answers clicks beside the card, so base-ui's own outside-press check is
-  // off: it took a click whose target the click itself unmounted (a folder row the picker swaps for its loading line)
-  // as a click outside, and closed the dialog and every dialog under it
+  // The popup covers the whole layer and `onScrimClick` answers clicks beside the card, so base-ui's own outside-press
+  // check is off: it took a click whose target the click itself unmounted (a folder row the picker swaps for its loading
+  // line) as a click outside, and closed the dialog and every dialog under it
   return <Dialog.Root open disablePointerDismissal onOpenChange={next => { if (!next) onClose(); }}>
     <Dialog.Portal>
       {/* acp-settings: the settings measures (dialog widths, row leading) also where the dialog opens outside the
           settings shell, such as the remote folder picker from the session column */}
-      <Dialog.Popup onClick={scrim} className={cn('acp-settings absolute inset-0 z-30 flex justify-center bg-scrim p-pad', pinned ? 'items-start' : 'items-center')}>
+      <Dialog.Popup onScrimClick={onClose} className={cn('acp-settings absolute inset-0 z-30 flex justify-center bg-scrim p-pad', pinned ? 'items-start' : 'items-center')}>
         <div ref={card} style={pinned ? { marginTop: top, maxHeight: `calc(100% - ${top}px)` } : undefined}
           data-settings-dialog className={cn('flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop', wide ? 'w-(--dialog-w-wide)' : 'w-(--dialog-w)', tall && 'h-(--dialog-h)')}>
           <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pr-gap pl-pad">

@@ -51,7 +51,7 @@ export function QuickOpen({
     <Dialog.Root open disablePointerDismissal onOpenChange={open => { if (!open) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Popup
-          onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+          onScrimClick={onClose}
           className="acp-settings absolute inset-0 z-30 flex items-center justify-center bg-scrim p-pad"
         >
           <div

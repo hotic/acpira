@@ -99,7 +99,7 @@ export function SubagentGraph({ nodes, sessionTitle, open, onOpenChange, onInspe
       <Dialog.Popup initialFocus={() => { inspecting.current = false; return closeRef.current; }}
         // Ordinary dismissal restores the opener; inspecting hands focus to the real child session.
         finalFocus={() => !inspecting.current}
-        onClick={event => { if (event.target === event.currentTarget) onOpenChange(false); }}
+        onScrimClick={() => onOpenChange(false)}
         className="absolute inset-0 z-40 flex items-center justify-center bg-scrim p-pad">
         {/* Live activity can be an entire command; keep it from sizing the dialog. */}
         <div className="flex max-h-full w-full min-w-0 max-w-(--content-w) flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop">

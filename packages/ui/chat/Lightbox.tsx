@@ -368,7 +368,7 @@ export function Lightbox({ src, name, mimeType, path, line, openInEditor, onClos
       <Dialog.Popup
         ref={zoom.surfaceRef}
         aria-label={name ?? t('common.image')}
-        onClick={zoom.onBackdropClick(onClose)}
+        onScrimClick={zoom.onBackdropClick(onClose)}
         className="absolute inset-0 z-40 flex touch-none items-center justify-center overflow-hidden bg-scrim p-page"
       >
         <ImageMenu src={src} mimeType={mimeType} path={path} line={line} openInEditor={openInEditor}>

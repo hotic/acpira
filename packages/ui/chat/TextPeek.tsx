@@ -70,9 +70,8 @@ export function TextPeek({ name, text, failed, comment, onClose }: { name: strin
   const parts = useMemo(() => (text != null && !rendered ? rawParts(text) : undefined), [text, rendered]);
   return <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}>
     <Dialog.Portal>
-      <Dialog.Popup aria-label={name} onClick={onClose} className="absolute inset-0 z-40 flex items-center justify-center bg-scrim p-pad">
+      <Dialog.Popup aria-label={name} onScrimClick={onClose} className="absolute inset-0 z-40 flex items-center justify-center bg-scrim p-pad">
         <div
-          onClick={e => e.stopPropagation()}
           className="flex max-h-full w-full max-w-(--content-w) flex-col overflow-hidden rounded-md border border-line bg-bg-1 shadow-pop"
         >
           <div className="flex shrink-0 items-center gap-2 border-b border-line py-1 pr-1 pl-pad">
