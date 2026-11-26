@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { Archive, Check, CircleAlert, Folder, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
@@ -71,6 +71,7 @@ import { Lightbox } from './Lightbox';
 import { OpenToolFileContext, AsyncTaskStopContext, CommandStopContext, BlobUrlContext, WidgetPromptContext, DiffSourceContext, FileStagerContext, OpenBlobContext, OpenSessionContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, resolveSessionPath, type FileStager, type ToolFileActions } from './fileLinks';
 import { skillDescriptions } from './slashCommands';
 import { TurnActionsContext } from './TurnActions';
+import { showsTurnActions } from './turnOutcome';
 import { SharePreviewDialog, type SharePayload } from './SharePreview';
 import { cloneMessageContent, cloneSelectionContent, turnIndexOfNode } from './shareCapture';
 import { turnShareMeta } from './turnActionHelpers';
@@ -1896,9 +1897,61 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
   // The context report's hover or pick lights its calls' rows here and dims the rest (chat/reportLink.ts)
   useReportLink(ref, body, { session, enabled: appearance.reportLink !== 'off', turns, starts, showFrom: window.showFrom, release: () => follow.release() });
   // The prompt "Set as goal" hangs under: the last one the user typed, unless it was a slash command
+  const canFork = Boolean(useContext(TurnActionsContext)?.fork);
   // The fork boundary follows the exchange that holds the last copied turn, as a row of its own: inside that exchange it
   // would stand after the reply's action row, which the exchange spacing keys off
   const forkAfter = forkedFrom ? exchangeSlots.filter(e => e.key <= forkedFrom.turnIndex).length - 1 : -1;
+  // Track explicitly whether each exchange (and the thread tail) ends in TurnActions: WKWebView does not invalidate
+  // `:has(> :last-child > [data-turn-actions]:last-child)` when a sibling (such as an auto `/compact` turn) is appended.
+  const renderedExchanges = exchangeSlots.slice(window.start).map((slot, offset) => {
+    const k = window.start + offset;
+    const messages: ReactNode[] = [];
+    let endsWithActions = false;
+    for (const { ti, index } of slot.items) {
+      const turn = turns[ti]!;
+      const previous = turns[ti - 1];
+      const compacting = previous?.role === 'user' && /^\/compact(?:\s|$)/.test(previous.text.trim());
+      // Fold memory key: the session plus the turn's position and start time, so an edited-away turn at the same index does not inherit a choice
+      const memoryKey = replayKey !== undefined ? `${replayKey}:${ti}:${turn.role === 'agent' ? turn.startedAt ?? '' : ''}` : undefined;
+      // Session-wide nodes only reach turns that announce one; handing the list to every
+      // memoized turn would re-render all of them on each child activity tick.
+      const mine = turn.role === 'agent' ? byTurn.get(ti) : undefined;
+      // An automatic account switch or a Retry continues the cut-off turn: the pair reads as one reply, with the switch
+      // notice or the error row as the only seam, so the cut-off half drops its action row and the continuation joins it
+      const next = turns[ti + 1];
+      // Summoned agents' reports continue the exchange the same way: the reply above, the report rows and the reply they
+      // wake read as one answer, so only the woken reply keeps an action row (one in the middle stood as a blank on
+      // desktop, where it shows on hover, and as a stray bar on phones)
+      const switchedAway = next?.role === 'user' && (isContinue(next) || next.autoReason === 'subagents');
+      // The reply woken by summoned agents' reports hugs the one-line report row above it, like a continuation
+      const switchedIn = previous?.role === 'user' && (isContinue(previous) || previous.autoReason === 'subagents');
+      const afterRows = switchedIn && previous.autoReason === 'subagents' && !isContinue(previous);
+      if (turn.role === 'user' && !turn.auto) {
+        endsWithActions = false;
+        // Plugin buttons under a typed prompt (the prompt.actions slot); nothing renders without one
+        messages.push(
+          <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />,
+          <PromptActions key={`actions${ti}`} session={session} turn={ti} text={turn.text} />,
+        );
+        continue;
+      }
+      const last = ti === turns.length - 1;
+      if (turn.role === 'user') {
+        // Automatic user turns render nothing unless they carry visible subagent handback rows (HistoryMessage.tsx)
+        if (turn.autoReason === 'subagents' && shownReports(turn.text).length > 0) endsWithActions = false;
+        messages.push(<HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />);
+      } else {
+        const turnRunning = running && ti === activeAgentIndex && !turn.stop;
+        endsWithActions = !switchedAway && !turnRunning && !compacting && showsTurnActions(turn, canFork);
+        messages.push(<AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={turnRunning} onPermission={onPermission} memoryKey={memoryKey}
+          turnIndex={ti} last={last} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={afterRows ? 'rows' : switchedIn}
+          subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={last ? onFailureAction : undefined} />);
+      }
+    }
+    return { key: slot.key, k, messages, endsWithActions };
+  });
+  const lastExchange = renderedExchanges.at(-1);
+  const tailEndsWithActions = Boolean(lastExchange?.endsWithActions && !(forkedFrom && lastExchange.k === forkAfter));
   // The right padding gives the scrollbar gutter back, so the transcript's edges line up with the header and the dock.
   // Focusable (tabIndex -1) so a press in the transcript takes focus off the composer: VS Code's webview runs ⌘C as
   // execCommand('copy') after refocusing the last focused element whenever the body holds focus (pre/index.html, 1.143),
@@ -1907,45 +1960,9 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
     <div ref={ref} data-thread tabIndex={-1} className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter outline-none [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it,
           plus the floating connecting row's room when the tail holds no action row (`--thread-tail-room`, chat.css) */}
-      <div key={replayKey} ref={bodyRef} data-thread-body className={cn('pt-(--pad-y) flex flex-col gap-msg pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide ? 'thread-column' : 'mx-auto')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
-        {exchangeSlots.slice(window.start).map((slot, offset) => {
-          const k = window.start + offset;
-          const messages: ReactNode[] = [];
-          for (const { ti, index } of slot.items) {
-            const turn = turns[ti]!;
-            const previous = turns[ti - 1];
-            const compacting = previous?.role === 'user' && /^\/compact(?:\s|$)/.test(previous.text.trim());
-            // Fold memory key: the session plus the turn's position and start time, so an edited-away turn at the same index does not inherit a choice
-            const memoryKey = replayKey !== undefined ? `${replayKey}:${ti}:${turn.role === 'agent' ? turn.startedAt ?? '' : ''}` : undefined;
-            // Session-wide nodes only reach turns that announce one; handing the list to every
-            // memoized turn would re-render all of them on each child activity tick.
-            const mine = turn.role === 'agent' ? byTurn.get(ti) : undefined;
-            // An automatic account switch or a Retry continues the cut-off turn: the pair reads as one reply, with the switch
-            // notice or the error row as the only seam, so the cut-off half drops its action row and the continuation joins it
-            const next = turns[ti + 1];
-            // Summoned agents' reports continue the exchange the same way: the reply above, the report rows and the reply they
-            // wake read as one answer, so only the woken reply keeps an action row (one in the middle stood as a blank on
-            // desktop, where it shows on hover, and as a stray bar on phones)
-            const switchedAway = next?.role === 'user' && (isContinue(next) || next.autoReason === 'subagents');
-            // The reply woken by summoned agents' reports hugs the one-line report row above it, like a continuation
-            const switchedIn = previous?.role === 'user' && (isContinue(previous) || previous.autoReason === 'subagents');
-            const afterRows = switchedIn && previous.autoReason === 'subagents' && !isContinue(previous);
-            if (turn.role === 'user' && !turn.auto) {
-              // Plugin buttons under a typed prompt (the prompt.actions slot); nothing renders without one
-              messages.push(
-                <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />,
-                <PromptActions key={`actions${ti}`} session={session} turn={ti} text={turn.text} />,
-              );
-              continue;
-            }
-            const last = ti === turns.length - 1;
-            messages.push(turn.role === 'user'
-              ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />
-              : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
-                  turnIndex={ti} last={last} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={afterRows ? 'rows' : switchedIn}
-                  subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={last ? onFailureAction : undefined} />);
-          }
-          return <Fragment key={slot.key}>{
+      <div key={replayKey} ref={bodyRef} data-thread-body data-tail-actions={tailEndsWithActions || undefined} className={cn('pt-(--pad-y) flex flex-col gap-msg pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide ? 'thread-column' : 'mx-auto')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
+        {renderedExchanges.map(({ key, k, messages, endsWithActions }) => (
+          <Fragment key={key}>{
             // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
             // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
             // transcript render budget); the clip it brings is pushed out by --hit on the left and bottom, where row hit areas and
@@ -1953,11 +1970,11 @@ const Thread = memo(function Thread({ session, fontSizes, turns, running, wide, 
             // row pulls the next one up until the icons stand as far from the next prompt as from the reply text (TurnActions,
             // --spacing-turn-actions-below). It reads --msg-gap itself: the --spacing-* aliases resolve where the theme declares
             // them, above the element that carries the density, so they keep the default density's value.
-            <section ref={exchangeRef} data-exchange data-exchange-start={slot.key} className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--msg-gap)-var(--spacing-turn-actions-below))]">
+            <section ref={exchangeRef} data-exchange data-exchange-start={key} data-ends-actions={endsWithActions || undefined} className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint data-[ends-actions]:-mb-[calc(var(--spacing-hit)+var(--msg-gap)-var(--spacing-turn-actions-below))]">
               {messages}
             </section>
-          }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>;
-        })}
+          }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>
+        ))}
       </QuietEntranceContext.Provider></FollowContext.Provider></div>
     </div>
   );

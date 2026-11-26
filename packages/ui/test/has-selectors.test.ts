@@ -23,4 +23,15 @@ describe('webview :has() selectors', () => {
       .flatMap((line, i) => /\bgroup-has-/.test(line) ? [`${relative(ROOT, file)}:${i + 1}`] : []));
     expect(hits).toEqual([]);
   });
+
+  // WKWebView fails to invalidate `:has(… :last-child …)` when a later sibling is appended after the matching child,
+  // leaving the ancestor styled as if the old child were still last (e.g. an auto `/compact` turn appended to an exchange).
+  it('no :last-child inside :has() in packages/ui', () => {
+    const hits = sources(ROOT).flatMap(file => readFileSync(file, 'utf8').split('\n')
+      .flatMap((line, i) => {
+        const code = line.replace(/\/\/.*$/, '');
+        return /(?::has\([^)]*:last-child|\bhas-\[[^\]]*:last-child)/.test(code) ? [`${relative(ROOT, file)}:${i + 1}`] : [];
+      }));
+    expect(hits).toEqual([]);
+  });
 });

@@ -302,6 +302,7 @@ function keepReplyBody(root: HTMLElement): boolean {
 
 function cleanShareSubtree(root: HTMLElement, stripRootPad: boolean) {
   root.querySelectorAll('[data-turn-actions], .code-copy, .sr-only').forEach(n => n.remove());
+  root.querySelectorAll('[data-ends-actions]').forEach(n => n.removeAttribute('data-ends-actions'));
   // Chunks of a long process that have no rows yet (chat/ProcessChunks.tsx) would show as blank bands
   root.querySelectorAll('[data-chunk]:empty').forEach(n => n.remove());
   // A whole reply is the agent's answer: only its body text and the media it showed, whatever the reader left open

@@ -25,7 +25,7 @@ export const TurnActionsContext = createContext<{
 // picked from a menu (the session's own first) · open the response statistics card. Hidden until the turn is hovered / focused (the last reply included), always shown without hover (touch).
 // The row keeps its height (hover must not shift the transcript) but stands in for the spacing around it: it hugs the reply
 // (`-mt-gap` cancels the turn's row gap, with padding around the buttons) and the exchange below it starts one row gap
-// after it instead of a message gap (`Thread` in Shell.tsx keys that off `data-turn-actions`)
+// after it instead of a message gap (`Thread` in Shell.tsx marks `data-ends-actions` / `data-tail-actions` for it)
 export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; turnIndex: number; settings?: TurnSettings }) {
   const ctx = useContext(TurnActionsContext);
   const reply = replyMarkdown(turn);

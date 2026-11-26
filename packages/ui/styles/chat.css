@@ -47,8 +47,8 @@
   [data-thread-body] {
     --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--msg-gap));
     /* The action row's own room: its border-box height (`ctl-sm` + `py-1`) after a row gap, less the message gap the
-       exchange gives back, which is all of it but --spacing-turn-actions-below (Shell.tsx) */
-    &:has(> section:last-child > :last-child > [data-turn-actions]:last-child) {
+       exchange gives back, which is all of it but --spacing-turn-actions-below (Shell.tsx `data-tail-actions`) */
+    &[data-tail-actions] {
       --thread-tail-room: calc(var(--row) + var(--gap) * 1.5 - var(--ctl-sm) - var(--spacing) * 2 - var(--spacing-turn-actions-below));
     }
   }
@@ -320,7 +320,7 @@
     margin-block-start: calc(var(--process-prose-gap) - var(--msg-gap));
   }
   /* Match Thread's exchange spacing (Shell.tsx) under a reply's action row when another item follows in the inspector */
-  [data-subagent-thread] [data-part="agent-message"]:has(> [data-turn-actions]:last-child):not(:last-child) {
+  [data-subagent-thread] [data-part="agent-message"]:has(> [data-turn-actions]):not(:last-child) {
     margin-block-end: calc(var(--spacing-turn-actions-below) - var(--msg-gap));
   }
   /* The reply keeps the full prose gap under a steered prompt, result card, or a retired compaction row. */

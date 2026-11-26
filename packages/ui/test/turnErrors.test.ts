@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AgentTurn, NoticeBlock } from '@acpira/shared/transcript';
 import { isContextLengthError } from '@acpira/shared/turnErrors';
-import { absorbedNotices, hasTurnContent, hasTurnStats } from '../chat/turnOutcome';
+import { absorbedNotices, hasTurnContent, hasTurnStats, showsTurnActions } from '../chat/turnOutcome';
 import { NoticeRow } from '../chat/Turns';
 
 // claude-agent-acp, stored transcript 2026-10-04: a session-scoped connection notice offering new_session, then the
@@ -33,6 +33,9 @@ describe('failure notices on an errored turn', () => {
     expect(hasTurnStats(stopped)).toBe(true);
     expect(hasTurnStats({ ...stopped, startedAt: undefined, endedAt: undefined })).toBe(false);
     expect(hasTurnStats({ ...authFailed, startedAt: 0, endedAt: 680 })).toBe(false);
+    expect(showsTurnActions(stopped, false)).toBe(true);
+    expect(showsTurnActions(authFailed, false)).toBe(false);
+    expect(showsTurnActions(authFailed, true)).toBe(true);
   });
 });
 

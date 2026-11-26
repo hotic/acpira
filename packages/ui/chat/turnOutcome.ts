@@ -25,6 +25,12 @@ export function hasTurnStats(turn: AgentTurn): boolean {
   return turn.stop === 'cancelled' && ((turn.startedAt !== undefined && turn.endedAt !== undefined) || turn.usage !== undefined);
 }
 
+// Whether a settled, non-compacting agent turn renders its action row (TurnActions):
+// either it carries stats/content, or a contentless error turn offers Fork when the shell wires one.
+export function showsTurnActions(turn: AgentTurn, canFork: boolean): boolean {
+  return hasTurnStats(turn) || (turn.stop === 'error' && canFork);
+}
+
 // Choosing a plan card's Revise ends the turn as cancelled on claude-agent-acp 0.93.0 ("No, keep planning"), with
 // nothing else to show. The card already says the plan awaits changes, so that end reads as a normal one: no
 // "stopped" row and no stop glyph on the fold head. A stop pressed by hand leaves the plan as it was, never rejected
