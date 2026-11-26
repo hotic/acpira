@@ -302,7 +302,7 @@ const BRAND: [RegExp, string][] = [
   // Doubao's ids name the Seed models too ("doubao-seed-1.6"); bare Seed / UI-TARS ids are ByteDance's
   [/\bdoubao(?![a-z])/, 'doubao'],
   [/\bseed(?![a-z])|\bui-tars\b|\bbytedance\b/, 'bytedance'],
-  [/\bhunyuan(?![a-z])/, 'hunyuan'],
+  [/\bhunyuan(?![a-z])|\bhy[- ]?\d|\btencent\b/, 'hunyuan'],
   [/\bstep-?\d|\bstepfun\b/, 'stepfun'],
   [/\bmimo(?![a-z])/, 'mimo'],
   [/\bbaichuan(?![a-z])/, 'baichuan'],

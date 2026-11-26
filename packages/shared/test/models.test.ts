@@ -283,6 +283,11 @@ describe('modelBrand', () => {
     expect(modelBrand('veo-3.1-generate-preview')).toBe('google');
     expect(modelBrand('ernie-4.5-turbo')).toBe('wenxin');
     expect(modelBrand('ring-flash-2.0')).toBe('antgroup');
+    expect(modelBrand('hunyuan-t1')).toBe('hunyuan');
+    expect(modelBrand('hy4')).toBe('hunyuan');
+    expect(modelBrand('hy-2.0-instruct')).toBe('hunyuan');
+    expect(modelBrand('Tencent Hy4')).toBe('hunyuan');
+    expect(modelBrand('tencent/hy-mt1.5')).toBe('hunyuan');
   });
 
   it('prefers a derived model\'s vendor over its base family', () => {
@@ -301,6 +306,8 @@ describe('modelBrand', () => {
     expect(modelBrand('Sunbeam')).toBeUndefined();
     expect(modelBrand('Beaming')).toBeUndefined();
     expect(modelBrand('Flintlock')).toBeUndefined();
+    expect(modelBrand('hybrid-7b')).toBeUndefined();
+    expect(modelBrand('hydrogen')).toBeUndefined();
   });
 
   it('matches on word boundaries only', () => {

@@ -7,7 +7,7 @@ import type { MsgKey } from '@acpira/shared/i18n/core';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
 import { canRunHere, runsHereOnSsh, setSshLocal } from '@acpira/shared/remote';
 import { familyLabel, isFastControl, isReasoningControl, SIDEKICK_CATEGORY, SIDEKICK_EFFORT_CATEGORY, SIDEKICK_FAST_CATEGORY } from '@acpira/shared/composerControls';
-import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
+import { familyHidden, groupModels, optionBrand, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
 import { Button, IconButton } from '../ui/Button';
 import { AccountLabel } from '../ui/AccountLabel';
@@ -277,7 +277,7 @@ function FastModelField({ state, on }: { state: ProvidersState; on: SettingsHand
       value: m.pick,
       label: names[i]!,
       ...(names.indexOf(names[i]!) !== names.lastIndexOf(names[i]!) ? { description: m.provider.name.trim() || m.provider.id } : {}),
-      icon: <ModelMark family={m.model.id} />,
+      icon: <ModelMark family={names[i]!} brand={optionBrand({ id: m.model.id, name: names[i]! })} />,
       hint: m.pick,
     })),
   ];

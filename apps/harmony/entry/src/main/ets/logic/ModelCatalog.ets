@@ -92,7 +92,7 @@ const BRANDS: BrandRule[] = [
   { pattern: /\bnova(?![a-z])|\bamazon\b/, brand: 'aws' },
   { pattern: /\bdoubao(?![a-z])/, brand: 'doubao' },
   { pattern: /\bseed(?![a-z])|\bui-tars\b|\bbytedance\b/, brand: 'bytedance' },
-  { pattern: /\bhunyuan(?![a-z])/, brand: 'hunyuan' },
+  { pattern: /\bhunyuan(?![a-z])|\bhy[- ]?\d|\btencent\b/, brand: 'hunyuan' },
   { pattern: /\bmimo(?![a-z])/, brand: 'mimo' }
 ];
 

@@ -105,7 +105,7 @@ public enum VendorMarks {
     (#"\bernie(?![a-z])|\bwenxin\b"#, "wenxin"),
     (#"\bdoubao(?![a-z])"#, "doubao"),
     (#"\bseed(?![a-z])|\bui-tars\b|\bbytedance\b"#, "bytedance"),
-    (#"\bhunyuan(?![a-z])"#, "hunyuan"),
+    (#"\bhunyuan(?![a-z])|\bhy[- ]?\d|\btencent\b"#, "hunyuan"),
     (#"\bstep-?\d|\bstepfun\b"#, "stepfun"),
     (#"\bmimo(?![a-z])"#, "mimo"),
     (#"\bbaichuan(?![a-z])"#, "baichuan"),
