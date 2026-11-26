@@ -41,29 +41,7 @@ const SKIPPED: &[&str] = &[".git", "__pycache__", ".DS_Store", ".venv"];
 const SKIPPED_IN_DEPS: &[&str] = &[".bin", ".cache", ".vite"];
 const SKIPPED_SUFFIXES: &[&str] = &[".pyc", ".tmp"];
 
-/// Who made a change: the user on a page, a session's agent through its card, or the command line
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Provenance {
-  /// `user`, `session` or `cli`
-  pub by: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub session: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub agent: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub model: Option<String>,
-}
-
-impl Provenance {
-  pub fn user() -> Provenance {
-    Provenance { by: "user".into(), ..Default::default() }
-  }
-
-  pub fn cli() -> Provenance {
-    Provenance { by: "cli".into(), ..Default::default() }
-  }
-}
+pub use crate::acp::session::ext::Provenance;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,6 +114,9 @@ pub struct State {
   /// the theme enabled last is the skin then (`PluginHost::skin_id`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub skin: Option<String>,
+  /// Display order of tiles on Settings → Plugins (plugin ids and `builtin:<group>` entries); display-only
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub order: Vec<String>,
   /// Fields of a newer engine, written back as they were
   #[serde(flatten)]
   pub extra: Map<String, Value>,
@@ -496,6 +477,7 @@ impl PluginStore {
     let change = self
       .commit(|s| {
         let had = s.plugins.remove(id).is_some() | s.proposals.remove(id).is_some();
+        s.order.retain(|x| x != id);
         let source = self.source(id).exists();
         Ok((had || source).then(|| Change { id: id.to_owned(), action: "remove".into(), provenance, ..Default::default() }))
       })
@@ -553,6 +535,31 @@ impl PluginStore {
         Ok(Some(Change { id: group.to_owned(), action: "toolGroup".into(), on: Some(on), provenance, ..Default::default() }))
       })
       .await
+  }
+
+  /// Persist the display order of tiles on Settings → Plugins without touching the audit log (`changes.jsonl`) or
+  /// bumping `generation`; returns true when the order actually changed
+  pub async fn set_order(&self, ids: Vec<String>) -> Result<bool> {
+    let mut seen = BTreeSet::new();
+    let deduped: Vec<String> = ids.into_iter().filter(|id| seen.insert(id.clone())).collect();
+    std::fs::create_dir_all(&self.root).with_context(|| format!("create {}", self.root.display()))?;
+    let path = self.state_path();
+    let log = self.root.join(CHANGES);
+    let at = path.clone();
+    with_file_lock(&at, move || async move {
+      let mut state = read_state(&path)?;
+      append_missing(&log, state.last.as_ref())?;
+      if state.order == deduped {
+        return Ok(false);
+      }
+      state.schema = STATE_SCHEMA;
+      state.order = deduped;
+      let mut bytes = serde_json::to_vec_pretty(&state)?;
+      bytes.push(b'\n');
+      write_atomic(&path, &bytes, None).await?;
+      Ok(true)
+    })
+    .await
   }
 }
 

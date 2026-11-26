@@ -78,6 +78,21 @@ pub struct PluginInfo {
   /// The plugins it depends on and whether each is in effect at a version its range accepts
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub dependencies: Vec<PluginDependencyInfo>,
+  /// Other loaded plugins whose contributions overlap this one, where tile order decides load precedence
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub overlaps: Vec<PluginOverlap>,
+}
+
+/// An overlap with another loaded plugin where tile order decides which loads or wins first
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginOverlap {
+  pub plugin: String,
+  /// `command`, `provider`, `mcp`, `hook`, `style`, `prompt`, or `skill`
+  pub kind: String,
+  /// Colliding names when known (e.g. `/review`, `prompt`, `[data-session]`)
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub items: Vec<String>,
 }
 
 /// One schedule of a plugin, as the plugin page shows it
@@ -113,6 +128,9 @@ pub struct PluginDependencyInfo {
   /// In effect at a version the range accepts
   pub met: bool,
 }
+
+/// Prefix for built-in tool groups inside `PluginsView::order` so they never collide with user plugin ids
+pub const BUILTIN_ORDER_PREFIX: &str = "builtin:";
 
 /// A built-in tool group of Acpira's MCP server
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +176,9 @@ pub struct PluginsView {
   /// The plugin whose theme is the skin in effect, if any (one at a time)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub skin: Option<String>,
+  /// Plugin load and display order on Settings → Plugins (plugin ids and `builtin:<group>` entries)
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub order: Vec<String>,
 }
 
 /// The plugin page's actions. Its switch is the user's confirmation: `enable` freezes the source folder, checks it and
@@ -181,6 +202,8 @@ pub enum PluginAction {
     id: Option<String>,
   },
   ToolGroup { id: String, on: bool },
+  /// Save the plugin load and display order on Settings → Plugins (plugin ids and `builtin:<group>` entries)
+  Reorder { ids: Vec<String> },
 }
 
 /// The places of the page a plugin's interface may take (`contributes.ui`, docs/dev/plugins.md, Interface): above

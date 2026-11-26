@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { Settings2 } from 'lucide-react';
-import { pluginKinds, PLUGIN_KINDS, type PluginInfo, type PluginKind } from '@acpira/shared/plugins';
+import { BUILTIN_ORDER_PREFIX, pluginKinds, PLUGIN_KINDS, type PluginInfo, type PluginKind } from '@acpira/shared/plugins';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import { inventoryVersion, type AgentInventory } from '@acpira/shared/inventory';
 import type { AgentInstallProgress } from '@acpira/shared/protocol';
@@ -10,12 +10,15 @@ import { Card } from '../ui/Card';
 import { IconButton } from '../ui/Button';
 import { Switch } from '../ui/Switch';
 import { Shimmer } from '../ui/Shimmer';
+import { Tooltip } from '../ui/Tooltip';
 import { UpdateDot } from '../ui/UpdateDot';
 import { cn } from '../ui/cn';
 import { AgentMark } from '../chat/AgentMark';
 import { t } from '../i18n';
-import { ListHead, Note, SearchBox, Section, Tabs } from './controls';
+import { vscodeApi } from '../vscodeApi';
+import { ListHead, Note, SearchBox, Section, Tabs } from '../chrome/controls';
 import { askPluginsView, usePluginsView } from '../plugins/skin';
+import { orderById } from './SortableRows';
 import { ComputerUseTile, SkinPicker, UserPluginTile } from './UserPlugins';
 import { PLUGIN_KIND_LABEL } from './search';
 
@@ -66,13 +69,28 @@ export function ModelsPage({ agents, inventories, onReorder, onDisabled, onOpen,
   const match = (a: AgentInfo) => !q || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q);
   return <>
     <SearchBox value={query} onChange={setQuery} label={t('settings.agents.search')} />
-    <AgentTiles agents={agents} inventories={inventories} filter={q ? match : undefined} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen}
+    <AgentTiles agents={agents} inventories={inventories} filter={q ? match : undefined} resetKey={q} onReorder={onReorder} onDisabled={onDisabled} onOpen={onOpen}
       installs={installs} onUpdate={onUpdate} />
   </>;
 }
 
 type Filter = 'all' | PluginKind;
 const themed = (p: PluginInfo) => p.contributes.includes('theme');
+const COMPUTER_TILE_ID = `${BUILTIN_ORDER_PREFIX}computer`;
+
+type PluginTileItem =
+  | { id: string; kind: 'computer'; on: boolean }
+  | { id: string; kind: 'plugin'; plugin: PluginInfo };
+
+// Merge a reordered visible subset back into the full settled tile list, preserving unseen items' slots and any
+// unlisted saved ids (e.g. a built-in group from another OS or a temporarily absent plugin)
+export function mergeTileOrder(fullIds: readonly string[], visibleIds: readonly string[], savedOrder: readonly string[] = []): string[] {
+  const visible = new Set(visibleIds);
+  let i = 0;
+  const merged = fullIds.map(id => (visible.has(id) ? visibleIds[i++]! : id));
+  const present = new Set(merged);
+  return [...merged, ...savedOrder.filter(id => !present.has(id))];
+}
 
 // `tab`: the open filter, part of the page so the rail's search can land on one
 export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter) => void }) {
@@ -80,6 +98,10 @@ export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter)
   // The user's plugins come from the engine's plugins view, asked for once
   useEffect(() => askPluginsView(), []);
   const view = usePluginsView();
+  // Optimistic full tile order while the engine writes state.json and pushes back the updated view
+  const [pendingOrder, setPendingOrder] = useState<string[]>();
+  useEffect(() => setPendingOrder(undefined), [view]);
+
   const q = query.trim().toLowerCase();
   const matchPlugin = (p: PluginInfo) => !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
   const all = (view?.plugins ?? []).filter(matchPlugin);
@@ -92,10 +114,30 @@ export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter)
   const skins = view ? view.plugins.filter(p => themed(p) && p.loaded && matchPlugin(p)).length : 0;
   const picking = current === 'look' && !!view && (skins > 0 || !!view.skin);
   const tiles = picking ? shown.filter(p => !themed(p)) : shown;
-  // Computer use is built in: its tile leads the list where the engine offers the group (macOS, Windows)
+  // Computer use is built in: by default it leads the list where the engine offers the group (macOS, Windows)
   const computer = view?.toolGroups.find(g => g.id === 'computer');
   const computerShown = !!computer && (current === 'all' || current === 'tools')
     && (!q || `${t('settings.plugins.computer')} ${t('settings.plugins.computerDesc')}`.toLowerCase().includes(q));
+
+  const savedOrder = view?.order ?? [];
+  const defaultFull: PluginTileItem[] = [
+    ...(computer ? [{ id: COMPUTER_TILE_ID, kind: 'computer' as const, on: computer.on }] : []),
+    ...(view?.plugins ?? []).map(plugin => ({ id: plugin.id, kind: 'plugin' as const, plugin })),
+  ];
+  const settledFull = orderById(defaultFull, pendingOrder ?? savedOrder);
+  const loadOrder = settledFull.filter(item => item.kind === 'plugin').map(item => item.id);
+  const pluginNames = new Map((view?.plugins ?? []).map(p => [p.id, p.name] as const));
+  const visibleIds = new Set<string>([...(computerShown ? [COMPUTER_TILE_ID] : []), ...tiles.map(p => p.id)]);
+  const visibleTiles = settledFull.filter(item => visibleIds.has(item.id));
+
+  const reorder = (nextVisibleIds: string[]) => {
+    const fullIds = settledFull.map(x => x.id);
+    const next = mergeTileOrder(fullIds, nextVisibleIds, pendingOrder ?? savedOrder);
+    if (next.join('\n') === fullIds.join('\n')) return;
+    setPendingOrder(next);
+    vscodeApi().postMessage({ type: 'pluginAction', action: { op: 'reorder', ids: next } });
+  };
+
   return <>
     <SearchBox value={query} onChange={setQuery} label={t('settings.plugins.search')} />
     {tabs.length > 1 && <Tabs items={tabs} value={current} onChange={onTab} label={t('settings.plugins.kinds')} />}
@@ -105,11 +147,20 @@ export function PluginsPage({ tab, onTab }: { tab?: string; onTab: (tab: Filter)
       {tiles.length > 0 && <ListHead title={t('settings.plugins.styles')} count={tiles.length} outside />}
     </>}
     {view && !picking && tiles.length === 0 && !computerShown && <Section><Note>{t(q ? 'settings.plugins.noMatch' : 'settings.plugins.none')}</Note></Section>}
-    {(tiles.length > 0 || computerShown) && (
-      <div className="grid grid-cols-2 gap-gap settings-narrow:grid-cols-1">
-        {computerShown && computer && <ComputerUseTile on={computer.on} />}
-        {tiles.map(p => <UserPluginTile key={p.id} plugin={p} safeMode={!!view?.safeMode} />)}
-      </div>
+    {visibleTiles.length > 0 && (
+      <Tooltip.Provider delay={150} closeDelay={100}>
+        <SortableTileGrid
+          items={visibleTiles}
+          canDrag={!q}
+          resetKey={`${current}|${q}`}
+          onReorder={reorder}
+          renderTile={(item, { dragging, canDrag }) => (
+            item.kind === 'computer'
+              ? <ComputerUseTile on={item.on} dragging={dragging} canDrag={canDrag} />
+              : <UserPluginTile plugin={item.plugin} safeMode={!!view?.safeMode} dragging={dragging} canDrag={canDrag} loadOrder={loadOrder} pluginNames={pluginNames} />
+          )}
+        />
+      </Tooltip.Provider>
     )}
   </>;
 }
@@ -126,51 +177,59 @@ function translateOf(el: HTMLElement): { x: number; y: number } {
   return { x, y };
 }
 
-// The agent tiles: drag a tile (or Alt+← / Alt+→ on its gear) to reorder, the switch turns the agent on or off. Both
-// write through the host and come back as a rearranged list; until then the tiles show the local result so nothing
-// snaps back. The last agent on cannot be turned off.
-// A dragged tile follows the pointer (an inline translate over its slot in the previewed order); the others slide into
-// their new slots, and on release the dragged one slides from under the pointer into its own
-function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen, installs, onUpdate }: {
-  agents: AgentInfo[];
-  inventories: Partial<Record<AgentId, AgentInventory>>;
-  installs?: AgentInstallProgress[];
-  onUpdate: (id: AgentId) => void;
-  // A search narrows the tiles; reordering waits until it is cleared
-  filter?: (a: AgentInfo) => boolean;
-  onReorder: (ids: AgentId[]) => void;
-  onDisabled: (ids: AgentId[]) => void;
-  onOpen: (id: AgentId) => void;
+// A 2-column grid of tiles with pointer drag-to-reorder and Alt+arrow keyboard reordering: a dragged tile follows the
+// pointer (an inline translate over its slot in the previewed order), siblings FLIP-slide into their new slots, and on
+// release the dragged tile slides from under the pointer into its own
+function SortableTileGrid<T extends { id: string }>({ items, canDrag, resetKey = '', dataAttr = 'data-sortable-tile', onReorder, renderTile }: {
+  items: readonly T[];
+  canDrag: boolean;
+  // When this changes (e.g. a search filter or tab switch), skip the FLIP slide so tiles settle immediately
+  resetKey?: string;
+  dataAttr?: `data-${string}`;
+  onReorder: (ids: string[]) => void;
+  renderTile: (item: T, state: { dragging: boolean; canDrag: boolean }) => ReactNode;
 }) {
-  const ids = agents.map(a => a.id);
-  const [pending, setPending] = useState<{ order?: AgentId[]; enabled?: Record<AgentId, boolean> }>({});
-  // A fresh list from the host supersedes whatever was shown optimistically
-  useEffect(() => setPending({}), [agents]);
-  const [drag, setDrag] = useState<{ id: AgentId; order: AgentId[] }>();
+  const [drag, setDrag] = useState<{ id: string; order: string[] }>();
   // The tile that looks picked up: from the drag's start until it has slid into its slot after the release
-  const [lifted, setLifted] = useState<AgentId>();
+  const [lifted, setLifted] = useState<string>();
   // The press: where it started and the pointer is now, and the pressed tile's slot then (layout offsets, which a
   // translate does not move)
   const press = useRef<{
-    id: AgentId; x: number; y: number; at: { x: number; y: number }; from: { x: number; y: number };
-    others: { id: AgentId; rect: DOMRect }[];
+    id: string; x: number; y: number; at: { x: number; y: number }; from: { x: number; y: number };
+    others: { id: string; rect: DOMRect }[];
   } | undefined>(undefined);
   const swallowClick = useRef(false);
   const grid = useRef<HTMLDivElement>(null);
-  const tileEls = useRef(new Map<AgentId, HTMLDivElement>());
+  const tileEls = useRef(new Map<string, HTMLDivElement>());
   // Each tile's slot as of the last commit, and what decided the slots then; slides run only when that changed, so a
   // resize or an inventory update never replays one from stale slots
-  const slots = useRef(new Map<AgentId, { x: number; y: number }>());
+  const slots = useRef(new Map<string, { x: number; y: number }>());
   const lastLayout = useRef('');
+  const lastReset = useRef(resetKey);
 
-  // The committed order (host list, or the local result waiting for it); a drag only previews over it
-  const settled = pending.order ?? ids;
-  const order = drag?.order ?? settled;
-  const byId = new Map(agents.map(a => [a.id, a]));
-  const shown = order.map(id => byId.get(id)).filter((a): a is AgentInfo => !!a);
-  const enabled = (a: AgentInfo) => pending.enabled?.[a.id] ?? !a.disabled;
-  const enabledCount = shown.filter(enabled).length;
-  const visible = filter ? shown.filter(filter) : shown;
+  const ids = items.map(x => x.id);
+  const activeDrag = canDrag && items.length > 1;
+  const shown = drag ? orderById(items, drag.order) : items;
+
+  // Cancel any drag in flight if dragging becomes unavailable or the view resets
+  useEffect(() => {
+    if (!activeDrag && drag) {
+      press.current = undefined;
+      setDrag(undefined);
+    }
+  }, [activeDrag, drag]);
+
+  useEffect(() => {
+    if (!drag) return;
+    const onEscape = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      press.current = undefined;
+      setDrag(undefined);
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [drag]);
 
   // Keep the dragged tile under the pointer wherever its slot has moved to
   const follow = () => {
@@ -181,17 +240,24 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
   };
 
   useLayoutEffect(() => {
-    const layout = `${drag?.id ?? ''}|${visible.map(a => a.id).join()}`;
-    const changed = layout !== lastLayout.current;
+    const reset = resetKey !== lastReset.current;
+    lastReset.current = resetKey;
+    const layout = `${drag?.id ?? ''}|${shown.map(x => x.id).join()}`;
+    const changed = !reset && layout !== lastLayout.current;
     lastLayout.current = layout;
     const box = grid.current;
     // A tile filtered out loses its slot, so it comes back without a slide
     for (const id of slots.current.keys()) if (!tileEls.current.has(id)) slots.current.delete(id);
-    const still = !box || !!box.closest('[data-motion="none"]') || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const still = reset || !box || !!box.closest('[data-motion="none"]') || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     for (const [id, el] of tileEls.current) {
       const was = slots.current.get(id);
       const now = { x: el.offsetLeft, y: el.offsetTop };
       slots.current.set(id, now);
+      if (reset) {
+        for (const a of el.getAnimations()) if (a.id === 'tile-slide') a.cancel();
+        el.style.translate = '';
+        continue;
+      }
       if (!changed || id === drag?.id || !was) continue;
       // Only the tile just let go carries an inline translate
       const released = !!el.style.translate;
@@ -202,7 +268,7 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
       el.style.translate = '';
       const dx = was.x + cur.x - now.x;
       const dy = was.y + cur.y - now.y;
-      const land = () => setLifted(l => l === id ? undefined : l);
+      const land = () => setLifted(l => (l === id ? undefined : l));
       if (still || Math.hypot(dx, dy) < 0.5) {
         if (released) land();
         continue;
@@ -214,27 +280,17 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
     if (drag) follow();
   });
 
-  const commit = (next: AgentId[]) => {
-    if (next.join('\n') === settled.join('\n')) return;
-    setPending(p => ({ ...p, order: next }));
-    onReorder(next);
-  };
-  // Built from what the tiles show, so a second switch flipped before the host answered the first keeps both
-  const toggle = (id: AgentId, on: boolean) => {
-    setPending(p => ({ ...p, enabled: { ...p.enabled, [id]: on } }));
-    onDisabled(agents.filter(a => a.id === id ? !on : !enabled(a)).map(a => a.id));
-  };
-
-  const onPointerDown = (e: PointerEvent<HTMLDivElement>, id: AgentId) => {
-    if (filter || e.button !== 0 || (e.target as Element).closest('[data-no-drag]')) return;
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>, id: string) => {
+    // Ignore events bubbling from portaled dialogs (`!contains`) or interactive controls (`data-no-drag`)
+    if (!activeDrag || e.button !== 0 || !e.currentTarget.contains(e.target as Node) || (e.target as Element).closest('[data-no-drag]')) return;
     const el = e.currentTarget;
     // A tile caught mid-slide is picked up from its slot
     for (const a of el.getAnimations()) if (a.id === 'tile-slide') a.cancel();
     // The other tiles where they stand; the drop slot is how many of them come before the pointer in reading order
-    const tiles = [...(grid.current?.querySelectorAll<HTMLElement>('[data-agent-tile]') ?? [])];
+    const tiles = [...(grid.current?.querySelectorAll<HTMLElement>(`[${dataAttr}]`) ?? [])];
     press.current = {
       id, x: e.clientX, y: e.clientY, at: { x: e.clientX, y: e.clientY }, from: { x: el.offsetLeft, y: el.offsetTop },
-      others: tiles.filter(t => t.dataset.agentTile !== id).map(t => ({ id: t.dataset.agentTile!, rect: t.getBoundingClientRect() })),
+      others: tiles.filter(t => t.getAttribute(dataAttr) !== id).map(t => ({ id: t.getAttribute(dataAttr)!, rect: t.getBoundingClientRect() })),
     };
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -257,17 +313,19 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
     press.current = undefined;
     if (!drag) return;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-    // The click that follows a drag's pointerup must not open the dialog
+    // The click that follows a drag's pointerup must not trigger a tile click
     swallowClick.current = true;
     setTimeout(() => { swallowClick.current = false; });
+    const next = drag.order;
     setDrag(undefined);
-    if (drop) commit(drag.order);
+    if (drop && next.join('\n') !== ids.join('\n')) onReorder(next);
   };
-  const onKeyDown = (e: KeyboardEvent<HTMLElement>, id: AgentId) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>, id: string) => {
     const step = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : 0;
-    if (!e.altKey || !step || filter) return;
+    if (!e.altKey || !step || !activeDrag || !e.currentTarget.contains(e.target as Node)) return;
     e.preventDefault();
-    commit(moveAgent(order, id, order.indexOf(id) + step));
+    const next = moveAgent(ids, id, ids.indexOf(id) + step);
+    if (next.join('\n') !== ids.join('\n')) onReorder(next);
   };
 
   return (
@@ -278,7 +336,69 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
       onPointerUp={e => onPointerEnd(e, true)}
       onPointerCancel={e => onPointerEnd(e, false)}
       onClickCapture={e => { if (swallowClick.current) { e.preventDefault(); e.stopPropagation(); } }}>
-      {visible.map(a => {
+      {shown.map(item => (
+        <div
+          key={item.id}
+          ref={el => { if (el) tileEls.current.set(item.id, el); else tileEls.current.delete(item.id); }}
+          {...{ [dataAttr]: item.id }}
+          onPointerDown={e => onPointerDown(e, item.id)}
+          onKeyDown={e => onKeyDown(e, item.id)}
+          className={cn('relative min-w-0', activeDrag && 'touch-none select-none', lifted === item.id && 'z-10')}
+        >
+          {renderTile(item, { dragging: lifted === item.id, canDrag: activeDrag })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// The agent tiles: drag a tile (or Alt+← / Alt+→ on its gear) to reorder, the switch turns the agent on or off. Both
+// write through the host and come back as a rearranged list; until then the tiles show the local result so nothing
+// snaps back. The last agent on cannot be turned off.
+function AgentTiles({ agents, inventories, filter, resetKey, onReorder, onDisabled, onOpen, installs, onUpdate }: {
+  agents: AgentInfo[];
+  inventories: Partial<Record<AgentId, AgentInventory>>;
+  installs?: AgentInstallProgress[];
+  onUpdate: (id: AgentId) => void;
+  // A search narrows the tiles; reordering waits until it is cleared
+  filter?: (a: AgentInfo) => boolean;
+  resetKey: string;
+  onReorder: (ids: AgentId[]) => void;
+  onDisabled: (ids: AgentId[]) => void;
+  onOpen: (id: AgentId) => void;
+}) {
+  const ids = agents.map(a => a.id);
+  const [pending, setPending] = useState<{ order?: AgentId[]; enabled?: Record<AgentId, boolean> }>({});
+  // A fresh list from the host supersedes whatever was shown optimistically
+  useEffect(() => setPending({}), [agents]);
+
+  // The committed order (host list, or the local result waiting for it)
+  const settled = pending.order ?? ids;
+  const byId = new Map(agents.map(a => [a.id, a]));
+  const shown = settled.map(id => byId.get(id)).filter((a): a is AgentInfo => !!a);
+  const enabled = (a: AgentInfo) => pending.enabled?.[a.id] ?? !a.disabled;
+  const enabledCount = shown.filter(enabled).length;
+  const visible = filter ? shown.filter(filter) : shown;
+
+  const commit = (next: AgentId[]) => {
+    if (next.join('\n') === settled.join('\n')) return;
+    setPending(p => ({ ...p, order: next }));
+    onReorder(next);
+  };
+  // Built from what the tiles show, so a second switch flipped before the host answered the first keeps both
+  const toggle = (id: AgentId, on: boolean) => {
+    setPending(p => ({ ...p, enabled: { ...p.enabled, [id]: on } }));
+    onDisabled(agents.filter(a => a.id === id ? !on : !enabled(a)).map(a => a.id));
+  };
+
+  return (
+    <SortableTileGrid
+      items={visible}
+      canDrag={!filter}
+      resetKey={resetKey}
+      dataAttr="data-agent-tile"
+      onReorder={commit}
+      renderTile={(a, { dragging }) => {
         const on = enabled(a);
         const last = on && enabledCount === 1;
         const runningInstall = installs?.find(i => i.status === 'running');
@@ -287,26 +407,18 @@ function AgentTiles({ agents, inventories, filter, onReorder, onDisabled, onOpen
           ? (agents.find(x => x.id === runningInstall.agent)?.name ?? runningInstall.agent)
           : undefined;
         return (
-          <div
-            key={a.id}
-            ref={el => { if (el) tileEls.current.set(a.id, el); else tileEls.current.delete(a.id); }}
-            data-agent-tile={a.id}
-            onPointerDown={e => onPointerDown(e, a.id)}
-            className={cn('relative min-w-0 touch-none select-none', lifted === a.id && 'z-10')}
-          >
-            <AgentTile agent={a} on={on} last={last} dragging={lifted === a.id} inventory={inventories[a.id]}
-              updating={updating} blockedBy={blockedBy} onUpdate={() => onUpdate(a.id)}
-              onToggle={v => toggle(a.id, v)} onOpen={() => onOpen(a.id)} onKeyDown={e => onKeyDown(e, a.id)} />
-          </div>
+          <AgentTile agent={a} on={on} last={last} dragging={dragging} inventory={inventories[a.id]}
+            updating={updating} blockedBy={blockedBy} onUpdate={() => onUpdate(a.id)}
+            onToggle={v => toggle(a.id, v)} onOpen={() => onOpen(a.id)} />
         );
-      })}
-    </div>
+      }}
+    />
   );
 }
 
 // One agent: its mark in a square, name and what it is, the switch; the foot names where the module comes from, the
 // gear and the version or detection state. A click anywhere on the tile but its switch opens the dialog too
-function AgentTile({ agent: a, on, last, dragging, inventory, updating, blockedBy, onUpdate, onToggle, onOpen, onKeyDown }: {
+function AgentTile({ agent: a, on, last, dragging, inventory, updating, blockedBy, onUpdate, onToggle, onOpen }: {
   agent: AgentInfo;
   updating?: boolean;
   blockedBy?: string;
@@ -317,7 +429,6 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, blockedB
   inventory?: AgentInventory;
   onToggle: (on: boolean) => void;
   onOpen: () => void;
-  onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
 }) {
   const builtin = a.id === BUILTIN_AGENT_ID;
   const vendor = VENDOR[a.id] ?? a.vendor;
@@ -367,7 +478,7 @@ function AgentTile({ agent: a, on, last, dragging, inventory, updating, blockedB
               </button>
             )}
           <IconButton size="sm" title={settings} aria-label={settings} aria-haspopup="dialog" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
-            onClick={onOpen} onKeyDown={onKeyDown} className="text-fg-2">
+            onClick={onOpen} className="text-fg-2">
             <Settings2 strokeWidth={1.75} />
           </IconButton>
         </span>

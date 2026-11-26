@@ -70,6 +70,18 @@ export interface PluginInfo {
   schedules?: PluginScheduleInfo[];
   // The plugins it depends on, met when one is in effect at a version the range accepts
   dependencies?: PluginDependencyInfo[];
+  // Other loaded plugins whose contributions overlap this one, where tile order decides load precedence
+  overlaps?: PluginOverlap[];
+}
+
+export type PluginOverlapKind = 'command' | 'provider' | 'mcp' | 'hook' | 'style' | 'prompt' | 'skill';
+
+// An overlap with another loaded plugin where tile order decides which loads or wins first
+export interface PluginOverlap {
+  plugin: string;
+  kind: PluginOverlapKind;
+  // Colliding names when known (e.g. '/review', 'prompt', '[data-session]')
+  items?: string[];
 }
 
 export interface PluginScheduleInfo {
@@ -94,6 +106,8 @@ export interface PluginDependencyInfo {
 
 export type ToolGroupId = 'summon' | 'sessions' | 'display' | 'browser' | 'computer';
 export const TOOL_GROUPS: readonly ToolGroupId[] = ['summon', 'sessions', 'display', 'browser', 'computer'];
+// Prefix for built-in tool groups inside PluginsView.order so they never collide with user plugin ids
+export const BUILTIN_ORDER_PREFIX = 'builtin:';
 
 // A built-in tool group of Acpira's MCP server
 export interface ToolGroupInfo {
@@ -130,6 +144,8 @@ export interface PluginsView {
   changes: PluginChange[];
   // The plugin whose theme is the skin in effect (one at a time)
   skin?: string;
+  // Plugin load and display order on Settings → Plugins (plugin ids and `builtin:<group>` entries)
+  order?: string[];
 }
 
 // The plugin page's actions. Its switch is the user's confirmation: enable freezes the source folder, checks it and
@@ -147,7 +163,9 @@ export type PluginAction =
   | { op: 'safeMode'; on: boolean }
   // Make a theme in effect the skin, or show none (no id)
   | { op: 'skin'; id?: string }
-  | { op: 'toolGroup'; id: ToolGroupId; on: boolean };
+  | { op: 'toolGroup'; id: ToolGroupId; on: boolean }
+  // Save the plugin load and display order on Settings → Plugins (plugin ids and `builtin:<group>` entries)
+  | { op: 'reorder'; ids: string[] };
 
 // The places of the page a plugin's interface may take (contributes.ui, docs/dev/plugins.md, Interface): above the
 // composer, in its toolbar, the session's side panel, the session list's side, the status bar, the start page, the

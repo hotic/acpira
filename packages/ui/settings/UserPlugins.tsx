@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Blocks, Bot, Clock, FolderOpen, LayoutPanelLeft, MousePointerClick, Paintbrush, Palette, PanelTop, Trash2, Undo2, Workflow, Wrench, type LucideIcon } from 'lucide-react';
-import type { PluginAction, PluginContribution, PluginInfo, PluginsView } from '@acpira/shared/plugins';
+import { Blocks, Bot, Clock, FolderOpen, Layers, LayoutPanelLeft, MousePointerClick, Paintbrush, Palette, PanelTop, Trash2, Undo2, Workflow, Wrench, type LucideIcon } from 'lucide-react';
+import type { PluginAction, PluginContribution, PluginInfo, PluginOverlap, PluginOverlapKind, PluginsView } from '@acpira/shared/plugins';
 import { Card } from '../ui/Card';
 import { Button, IconButton } from '../ui/Button';
 import { Switch } from '../ui/Switch';
+import { Tooltip } from '../ui/Tooltip';
 import { cn } from '../ui/cn';
 import { dateFormat, getLocale, t } from '../i18n';
 import { vscodeApi } from '../vscodeApi';
@@ -11,7 +12,7 @@ import { usePluginPieces } from '../pluginSlots';
 import { DefaultLookThumb, SkinThumb } from '../plugins/PluginCard';
 import { SandboxFrame } from '../plugins/SandboxFrame';
 import { backdropsShown, expectReveal, useSkin } from '../plugins/skin';
-import { DialogBody, Note, SettingsDialog } from './controls';
+import { DialogBody, Note, SettingsDialog } from '../chrome/controls';
 
 // Settings → Plugins, the user's plugins (docs/dev/plugins.md): the skin picker heading the Appearance filter, and a tile
 // per plugin. Read from the plugins view (plugins/skin.ts), so the page, every
@@ -89,9 +90,125 @@ const when = (ms: number) => dateFormat(getLocale(), { month: 'numeric', day: 'n
 const scheduleLine = (s: NonNullable<PluginInfo['schedules']>[number]) =>
   `${s.id}: ${s.paused ? t('settings.plugins.schedulePaused') : s.running ? t('settings.plugins.scheduleRunning') : s.next ? t('settings.plugins.scheduleNext', { when: when(s.next) }) : s.cron}`;
 
+const OVERLAP_KIND_KEY: Record<PluginOverlapKind, `settings.plugins.overlap.${PluginOverlapKind}`> = {
+  command: 'settings.plugins.overlap.command',
+  provider: 'settings.plugins.overlap.provider',
+  mcp: 'settings.plugins.overlap.mcp',
+  hook: 'settings.plugins.overlap.hook',
+  style: 'settings.plugins.overlap.style',
+  prompt: 'settings.plugins.overlap.prompt',
+  skill: 'settings.plugins.overlap.skill',
+};
+
+export interface ResolvedOverlapPeer {
+  id: string;
+  name: string;
+  summary: string;
+}
+
+// Format one overlap kind concisely (keep raw CSS hooks out of the label; cap item previews at two names)
+function formatOverlap(o: PluginOverlap): string {
+  const label = t(OVERLAP_KIND_KEY[o.kind]);
+  if (o.kind === 'style' || !o.items?.length) return label;
+  const shown = o.items.slice(0, 2).join(', ');
+  const extra = o.items.length > 2 ? ` +${o.items.length - 2}` : '';
+  return `${label} ${shown}${extra}`;
+}
+
+// Group a loaded plugin's overlaps by peer and split them into peers it loads before vs. after in `loadOrder`
+export function resolvePluginOverlaps(
+  plugin: PluginInfo,
+  loadOrder: readonly string[],
+  pluginNames: ReadonlyMap<string, string>,
+): { before: ResolvedOverlapPeer[]; after: ResolvedOverlapPeer[] } {
+  if (!plugin.loaded || !plugin.overlaps?.length) return { before: [], after: [] };
+  const grouped = new Map<string, string[]>();
+  for (const o of plugin.overlaps) {
+    const list = grouped.get(o.plugin) ?? [];
+    list.push(formatOverlap(o));
+    grouped.set(o.plugin, list);
+  }
+  const rank = (id: string) => {
+    const i = loadOrder.indexOf(id);
+    return i >= 0 ? i : Number.MAX_SAFE_INTEGER;
+  };
+  const selfRank = rank(plugin.id);
+  const before: ResolvedOverlapPeer[] = [];
+  const after: ResolvedOverlapPeer[] = [];
+  const sep = t('common.listSep');
+  const peers = [...grouped.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+  for (const [id, parts] of peers) {
+    const peer: ResolvedOverlapPeer = { id, name: pluginNames.get(id) ?? id, summary: parts.join(sep) };
+    const peerRank = rank(id);
+    if (selfRank < peerRank || (selfRank === peerRank && plugin.id.localeCompare(id) < 0)) before.push(peer);
+    else after.push(peer);
+  }
+  return { before, after };
+}
+
+function OverlapSection({ title, peers, warn = false }: { title: string; peers: ResolvedOverlapPeer[]; warn?: boolean }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className={cn('text-3 font-medium', warn ? 'text-warn' : 'text-fg-2')}>{title}</span>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {peers.map(peer => (
+          <li key={peer.id} className="flex items-baseline justify-between gap-gap text-3">
+            <span className="min-w-0 truncate text-fg-1">{peer.name}</span>
+            <span className="max-w-1/2 shrink-0 truncate text-fg-3">{peer.summary}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Inline footer badge + hover list showing which overlapping plugins this tile loads before or after
+function PluginOverlapBadge({ before, after, canDrag, dragging }: {
+  before: ResolvedOverlapPeer[];
+  after: ResolvedOverlapPeer[];
+  canDrag: boolean;
+  dragging: boolean;
+}) {
+  if (!before.length && !after.length) return null;
+  const shadowed = after.length > 0;
+  return (
+    <Tooltip.Root disabled={dragging}>
+      <Tooltip.Trigger
+        type="button"
+        data-no-drag
+        data-plugin-overlap-trigger
+        onClick={e => e.stopPropagation()}
+        className={cn(
+          'inline-flex h-ctl-sm min-w-0 shrink-0 items-center gap-1 rounded-sm px-1.5 text-3 transition-colors outline-none hover:bg-hover focus-visible:bg-hover',
+          shadowed ? 'text-warn' : 'text-fg-2',
+        )}
+      >
+        <Layers className="size-icon shrink-0" strokeWidth={1.75} aria-hidden />
+        <span className="truncate">{t('settings.plugins.overlapTrigger')}</span>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Positioner side="top" align="start" width="sm">
+          <Tooltip.Popup data-plugin-overlap-popup className="gap-2 p-pad">
+            {before.length > 0 && <OverlapSection title={t('settings.plugins.loadsBefore')} peers={before} />}
+            {after.length > 0 && <OverlapSection title={t('settings.plugins.loadsAfter')} peers={after} warn />}
+            {canDrag && <span className="border-t border-line pt-1.5 text-3 text-fg-3">{t('settings.plugins.overlapHint')}</span>}
+          </Tooltip.Popup>
+        </Tooltip.Positioner>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+}
+
 // One user plugin: what it adds as its mark, name and description (or why it is not in effect), the switch; the foot
 // holds its version and whether the folder has changes not enabled, then its page, the earlier version and its folder
-export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; safeMode: boolean }) {
+export function UserPluginTile({ plugin: p, safeMode, dragging = false, canDrag = false, loadOrder = [], pluginNames }: {
+  plugin: PluginInfo;
+  safeMode: boolean;
+  dragging?: boolean;
+  canDrag?: boolean;
+  loadOrder?: readonly string[];
+  pluginNames?: ReadonlyMap<string, string>;
+}) {
   const Mark = markOf(p);
   const [page, setPage] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -104,12 +221,18 @@ export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; sa
     ?? (missing && t('settings.plugins.missingDependency', { id: missing.id, range: missing.range }))
     ?? (stopped && t('settings.plugins.scheduleStopped', { id: stopped.id, error: stopped.error ?? '' }));
   const schedules = p.enabled && p.loaded ? p.schedules ?? [] : [];
+  const { before, after } = resolvePluginOverlaps(p, loadOrder, pluginNames ?? new Map());
   const openPage = t('settings.plugins.openPage', { name: p.name });
   const rollback = t('settings.plugins.rollback');
   const reveal = t('settings.plugins.reveal');
   const uninstall = t('settings.plugins.uninstall');
   return (
-    <Card data-plugin-tile={p.id} className="flex h-full flex-col shadow-none">
+    <Card data-plugin-tile={p.id}
+      className={cn(
+        'flex h-full flex-col shadow-none transition-[background-color,box-shadow,scale]',
+        canDrag && !dragging && 'cursor-grab hover:bg-hover',
+        dragging && 'scale-102 cursor-grabbing bg-bg-2 shadow-pop',
+      )}>
       <div className="flex items-center gap-gap p-pad">
         <span className={cn('flex size-(--tile-mark) shrink-0 items-center justify-center rounded-lg bg-active text-fg-1', !p.enabled && 'text-fg-3')}>
           <Mark className="size-lead" strokeWidth={1.5} />
@@ -118,12 +241,12 @@ export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; sa
           <span className={cn('truncate text-2 font-medium', p.enabled ? 'text-fg-1' : 'text-fg-2')}>{p.name}</span>
           <span className={cn('truncate text-3', why ? 'text-danger' : 'text-fg-3')} title={why ?? p.description}>{why ?? p.description}</span>
         </span>
-        <span className="flex shrink-0 items-center">
+        <span data-no-drag className="flex shrink-0 items-center">
           <Switch checked={p.enabled} onCheckedChange={toggle} aria-label={t('settings.agent.enabled', { agent: p.name })} title={t('settings.agent.enabled', { agent: p.name })} />
         </span>
       </div>
       <div className="mt-auto flex h-(--tile-foot) items-center justify-between gap-gap border-t border-line px-pad">
-        <span className="flex min-w-0 items-baseline gap-2 text-3 text-fg-3">
+        <span className="flex min-w-0 items-center gap-2 text-3 text-fg-3">
           <span className="truncate font-mono tabular-nums">{p.version}</span>
           {p.changed && <span className="shrink-0">{t('settings.plugins.changed')}</span>}
           {schedules.length > 0 && (
@@ -131,8 +254,9 @@ export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; sa
               <Clock className="size-icon" strokeWidth={1.75} />
             </span>
           )}
+          <PluginOverlapBadge before={before} after={after} canDrag={canDrag} dragging={dragging} />
         </span>
-        <span className="-mr-ctl-sm-bleed flex shrink-0 items-center">
+        <span data-no-drag className="-mr-ctl-sm-bleed flex shrink-0 items-center">
           {backdropsShown && p.loaded && pages.length > 0 && (
             <IconButton size="sm" title={openPage} aria-label={openPage} aria-haspopup="dialog" onClick={() => setPage(true)} className="text-fg-2"><PanelTop strokeWidth={1.75} /></IconButton>
           )}
@@ -167,12 +291,17 @@ export function UserPluginTile({ plugin: p, safeMode }: { plugin: PluginInfo; sa
 
 // Computer use: the built-in tools that read and operate other apps. The one tool group with a tile, since it stays
 // off until the user turns it on here; the engine lists the group only where it can drive apps
-export function ComputerUseTile({ on }: { on: boolean }) {
+export function ComputerUseTile({ on, dragging = false, canDrag = false }: { on: boolean; dragging?: boolean; canDrag?: boolean }) {
   const name = t('settings.plugins.computer');
   const desc = t('settings.plugins.computerDesc');
   const label = t('settings.agent.enabled', { agent: name });
   return (
-    <Card data-plugin-tile="computer" className="flex h-full flex-col shadow-none">
+    <Card data-plugin-tile="computer"
+      className={cn(
+        'flex h-full flex-col shadow-none transition-[background-color,box-shadow,scale]',
+        canDrag && !dragging && 'cursor-grab hover:bg-hover',
+        dragging && 'scale-102 cursor-grabbing bg-bg-2 shadow-pop',
+      )}>
       <div className="flex items-center gap-gap p-pad">
         <span className={cn('flex size-(--tile-mark) shrink-0 items-center justify-center rounded-lg bg-active text-fg-1', !on && 'text-fg-3')}>
           <MousePointerClick className="size-lead" strokeWidth={1.5} />
@@ -181,7 +310,7 @@ export function ComputerUseTile({ on }: { on: boolean }) {
           <span className={cn('truncate text-2 font-medium', on ? 'text-fg-1' : 'text-fg-2')}>{name}</span>
           <span className="truncate text-3 text-fg-3" title={desc}>{desc}</span>
         </span>
-        <span className="flex shrink-0 items-center">
+        <span data-no-drag className="flex shrink-0 items-center">
           <Switch checked={on} onCheckedChange={next => act({ op: 'toolGroup', id: 'computer', on: next })} aria-label={label} title={label} />
         </span>
       </div>

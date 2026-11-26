@@ -3,8 +3,8 @@ import type { PluginSlot } from '@acpira/shared/plugins';
 import type { HostMsg } from '@acpira/shared/protocol';
 import type { Draft } from '@acpira/shared/transcript';
 import { vscodeApi } from './vscodeApi';
-import { FRAME_KIT } from './plugins/kit';
-import type { SessionOutline } from './plugins/outline';
+import { FRAME_KIT } from './chrome/pluginKit';
+import type { SessionOutline } from './chrome/sessionOutline';
 
 // The plugins' interface pieces in effect (HostMsg pluginUi, docs/dev/plugins.md Interface) and the bridge between their
 // sandboxed frames and the engine. A frame is a document of the app's own `/plugin-frame.html` loaded in an
@@ -38,7 +38,7 @@ export function pluginPiece(plugin: string, id: string): PluginSlot | undefined 
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
 
 export function usePluginPieces(slot: PluginSlot['slot']): PluginSlot[] {
-  return useSyncExternalStore(subscribe, () => pluginPieces(slot));
+  return useSyncExternalStore(subscribe, () => pluginPieces(slot), () => pluginPieces(slot));
 }
 
 export function usePluginPiece(plugin: string, id: string): PluginSlot | undefined {

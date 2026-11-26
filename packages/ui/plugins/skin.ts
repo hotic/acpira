@@ -35,7 +35,7 @@ export function askPluginsView() {
 }
 
 export function usePluginsView(): PluginsView | undefined {
-  return useSyncExternalStore(subscribe, () => view);
+  return useSyncExternalStore(subscribe, () => view, () => view);
 }
 
 // Only the desktop serves the frame document a backdrop runs in (`/plugin-frame.html`); elsewhere a skin is its colours

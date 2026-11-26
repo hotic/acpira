@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::plugins::host::Active;
-use crate::plugins::manifest::{CommandDef, RuntimeDef};
+use crate::plugins::manifest::RuntimeDef;
 use crate::store::transcript_store::LogFn;
 
 mod inbound;
@@ -214,11 +214,7 @@ pub struct Contributed {
   pub providers: Vec<acpira_shared::providers::Provider>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct PluginCommand {
-  pub plugin: String,
-  pub def: CommandDef,
-}
+pub use crate::acp::session::ext::PluginCommand;
 
 impl Contributed {
   pub fn of(active: &[Arc<Active>]) -> Contributed {
@@ -229,13 +225,16 @@ impl Contributed {
           out.commands.push(PluginCommand { plugin: a.id.clone(), def: c.clone() });
         }
       }
-      if let Some(dir) = a.manifest.contributes.skills.as_deref().and_then(|p| crate::plugins::manifest::inside(&a.dir, p)).filter(|d| d.is_dir()) {
-        out.skills.push(dir);
-      }
       for p in a.manifest.contributes.providers.iter().filter_map(|raw| crate::plugins::manifest::provider_of(raw, &a.id).ok()) {
         if !out.providers.iter().any(|x| x.id == p.id) {
           out.providers.push(p);
         }
+      }
+    }
+    // `Places::skill_roots` lets later layers override earlier ones, so feed skills in reverse load order so earlier plugins win
+    for a in active.iter().rev() {
+      if let Some(dir) = a.manifest.contributes.skills.as_deref().and_then(|p| crate::plugins::manifest::inside(&a.dir, p)).filter(|d| d.is_dir()) {
+        out.skills.push(dir);
       }
     }
     out
@@ -253,8 +252,10 @@ pub struct HookReply {
 pub const ACCOUNT_REMOVE: &str = "account.remove";
 
 pub struct Runtimes {
-  /// By id: calls go out in id order
+  /// By id; dispatch follows `order` (then id order for any id not listed)
   workers: parking_lot::RwLock<BTreeMap<String, Arc<Worker>>>,
+  /// Active plugin load order; updated on reload without restarting running processes
+  order: parking_lot::RwLock<Vec<String>>,
   /// By plugin: the version whose `accounts/set` list is in effect
   account_lists: parking_lot::Mutex<HashMap<String, String>>,
   /// What should be running, kept for restarts
@@ -296,6 +297,7 @@ impl Runtimes {
   pub fn new(data_root: PathBuf, log: LogFn) -> Arc<Runtimes> {
     Arc::new(Runtimes {
       workers: Default::default(),
+      order: Default::default(),
       account_lists: Default::default(),
       wanted: Default::default(),
       errors: Default::default(),
@@ -616,9 +618,35 @@ impl Runtimes {
     self.errors.read().get(id).cloned()
   }
 
-  /// The ids with a running process, in id order
+  /// Update the dispatch order for hooks and events without restarting plugin processes
+  pub fn set_order(&self, ids: Vec<String>) {
+    *self.order.write() = ids;
+  }
+
+  /// Running workers in saved load order, with any unlisted id following in id order
+  fn ordered_workers(&self) -> Vec<Arc<Worker>> {
+    let workers = self.workers.read();
+    let order = self.order.read();
+    let mut out = Vec::with_capacity(workers.len());
+    let mut seen = std::collections::HashSet::with_capacity(workers.len());
+    for id in order.iter() {
+      if let Some(w) = workers.get(id)
+        && seen.insert(id.as_str())
+      {
+        out.push(w.clone());
+      }
+    }
+    for (id, w) in workers.iter() {
+      if seen.insert(id.as_str()) {
+        out.push(w.clone());
+      }
+    }
+    out
+  }
+
+  /// The ids with a running process, in load order
   pub fn running(&self) -> Vec<String> {
-    self.workers.read().keys().cloned().collect()
+    self.ordered_workers().into_iter().map(|w| w.want.id.clone()).collect()
   }
 
   /// Every hook some running process answers
@@ -634,9 +662,9 @@ impl Runtimes {
     self.workers.read().values().any(|w| w.answers(hook))
   }
 
-  /// Ask every process that answers `hook`, in id order, one after another; each answer as it came
+  /// Ask every process that answers `hook`, in load order, one after another; each answer as it came
   pub async fn hook(&self, hook: &str, payload: &Value) -> Vec<HookReply> {
-    let workers: Vec<Arc<Worker>> = self.workers.read().values().filter(|w| w.answers(hook) && w.serves(payload)).cloned().collect();
+    let workers: Vec<Arc<Worker>> = self.ordered_workers().into_iter().filter(|w| w.answers(hook) && w.serves(payload)).collect();
     let mut out = Vec::with_capacity(workers.len());
     for w in workers {
       let result = w.call(&format!("hook/{hook}"), payload.clone()).await;
@@ -648,11 +676,11 @@ impl Runtimes {
     out
   }
 
-  /// Ask every process that answers `hook` in id order, each seeing the payload as the ones before left it: `step` gets
+  /// Ask every process that answers `hook` in load order, each seeing the payload as the ones before left it: `step` gets
   /// the plugin and its answer (failed calls and null answers are skipped), folds it into the payload and returns false
   /// to stop the chain. The payload as the chain ended
   pub async fn chain(&self, hook: &str, mut payload: Value, mut step: impl FnMut(&str, Value, &mut Value) -> bool) -> Value {
-    let workers: Vec<Arc<Worker>> = self.workers.read().values().filter(|w| w.answers(hook) && w.serves(&payload)).cloned().collect();
+    let workers: Vec<Arc<Worker>> = self.ordered_workers().into_iter().filter(|w| w.answers(hook) && w.serves(&payload)).collect();
     for w in workers {
       match w.call(&format!("hook/{hook}"), payload.clone()).await {
         Ok(Value::Null) => {}
@@ -675,7 +703,7 @@ impl Runtimes {
   /// Send `event` to every process that subscribed to it; `data` is built only when one did. Never waits: a full
   /// queue drops the event and the next one delivered says how many were dropped
   pub fn emit(&self, event: &str, data: impl FnOnce() -> Value) {
-    let workers: Vec<Arc<Worker>> = self.workers.read().values().filter(|w| w.want.def.hears(event)).cloned().collect();
+    let workers: Vec<Arc<Worker>> = self.ordered_workers().into_iter().filter(|w| w.want.def.hears(event)).collect();
     if workers.is_empty() {
       return;
     }
@@ -686,6 +714,57 @@ impl Runtimes {
         w.dropped.fetch_add(1, Ordering::Relaxed);
       }
     }
+  }
+}
+
+impl crate::acp::session::ext::PluginRuntimePort for Runtimes {
+  fn has_hook(&self, hook: &str) -> bool {
+    Runtimes::has_hook(self, hook)
+  }
+
+  fn declared(&self) -> Vec<String> {
+    Runtimes::declared(self)
+  }
+
+  fn hears(&self, event: &str) -> bool {
+    Runtimes::hears(self, event)
+  }
+
+  fn emit_value(&self, event: &str, data: Value) {
+    Runtimes::emit(self, event, || data);
+  }
+
+  fn contributed_commands(&self) -> Vec<PluginCommand> {
+    self.contributed().commands.clone()
+  }
+
+  fn contributed_skills(&self) -> Vec<PathBuf> {
+    self.contributed().skills.clone()
+  }
+
+  fn shipped_skills(&self) -> Option<PathBuf> {
+    Runtimes::shipped_skills(self)
+  }
+
+  fn hook_of<'a>(&'a self, plugin: &'a str, hook: &'a str, payload: Value) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Result<Value, String>>> + Send + 'a>> {
+    Box::pin(Runtimes::hook_of(self, plugin, hook, payload))
+  }
+
+  fn hook_clicked<'a>(&'a self, plugin: &'a str, hook: &'a str, payload: Value) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Result<Value, String>>> + Send + 'a>> {
+    Box::pin(Runtimes::hook_clicked(self, plugin, hook, payload))
+  }
+
+  fn chain<'a>(
+    &'a self,
+    hook: &'a str,
+    payload: Value,
+    step: crate::acp::session::ext::ChainStep<'a>,
+  ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Value> + Send + 'a>> {
+    Box::pin(Runtimes::chain(self, hook, payload, step))
+  }
+
+  fn redirect(&self) -> Option<crate::acp::session::plugin_hooks::RedirectFn> {
+    Runtimes::redirect(self)
   }
 }
 

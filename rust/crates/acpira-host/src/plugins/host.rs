@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 
-use acpira_shared::plugins::{PluginAction, PluginChange, PluginFindings, PluginInfo, PluginProposal, PluginProvenance, PluginsView, ToolGroupInfo};
+use acpira_shared::plugins::{PluginAction, PluginChange, PluginFindings, PluginInfo, PluginOverlap, PluginProposal, PluginProvenance, PluginsView, ToolGroupInfo};
 
 use crate::platform::paths::wire_path;
 use crate::plugins::manifest::{self, Findings, Manifest, ToolDef};
@@ -246,25 +246,48 @@ impl PluginHost {
     let mut active = vec![];
     let mut errors = BTreeMap::new();
     if !safe_mode {
-      for (id, e) in state.plugins.iter().filter(|(_, e)| e.enabled) {
-        match self.store.open(id, &e.snapshot) {
-          Ok((dir, manifest)) => active.push(Arc::new(Active { id: id.clone(), hash: e.snapshot.clone(), dir, manifest })),
+      // Load enabled plugins in the saved tile order, with any unlisted plugin following in id order
+      let mut enabled_ids: BTreeSet<String> = state.plugins.iter().filter(|(_, e)| e.enabled).map(|(id, _)| id.clone()).collect();
+      let mut load_ids = Vec::with_capacity(enabled_ids.len());
+      for id in &state.order {
+        if enabled_ids.remove(id) {
+          load_ids.push(id.clone());
+        }
+      }
+      load_ids.extend(enabled_ids);
+      for id in load_ids {
+        let Some(e) = state.plugins.get(&id) else { continue };
+        match self.store.open(&id, &e.snapshot) {
+          Ok((dir, manifest)) => active.push(Arc::new(Active { id, hash: e.snapshot.clone(), dir, manifest })),
           Err(err) => {
             (self.log)(&format!("plugins: {err:#}"));
-            errors.insert(id.clone(), format!("{err:#}"));
+            errors.insert(id, format!("{err:#}"));
           }
         }
       }
     }
     let next = Loaded { state, safe_mode, active, errors };
-    let same = {
+    let (same, topology_same) = {
       let cur = self.loaded.read();
-      cur.state == next.state && cur.safe_mode == next.safe_mode && cur.errors == next.errors
+      let same = cur.state == next.state && cur.safe_mode == next.safe_mode && cur.errors == next.errors;
+      // Reordering changes dispatch order and contributed precedence without restarting running plugin processes
+      let topology_same = cur.safe_mode == next.safe_mode
+        && cur.errors == next.errors
+        && cur.state.safe_mode == next.state.safe_mode
+        && cur.state.plugins == next.state.plugins
+        && cur.state.proposals == next.state.proposals
+        && cur.state.tool_groups == next.state.tool_groups
+        && cur.state.skin == next.state.skin;
+      (same, topology_same)
     };
-    *self.loaded.write() = Arc::new(next);
+    let next = Arc::new(next);
+    *self.loaded.write() = next.clone();
     if !same {
-      self.runtimes.set_contributed(crate::plugins::runtime::Contributed::of(&self.loaded.read().active));
-      self.sync_runtimes();
+      self.runtimes.set_order(next.active.iter().map(|a| a.id.clone()).collect());
+      self.runtimes.set_contributed(crate::plugins::runtime::Contributed::of(&next.active));
+      if !topology_same {
+        self.sync_runtimes();
+      }
       self.notify();
     }
     !same
@@ -470,14 +493,15 @@ impl PluginHost {
     out
   }
 
-  /// The prompt folders of the plugins in effect, in id order: one more override layer of the built-in agent's system
-  /// prompt, sent when a session opens (`acpira_agent::acp::LAYERS_META`)
+  /// The prompt folders of the plugins in effect, in reverse load order: `Places::prompt_dirs` lets later layers
+  /// override earlier ones, so plugins earlier in the user's tile order win
   pub fn prompt_layers(&self) -> Vec<PathBuf> {
     self.reload();
     self
       .loaded()
       .active
       .iter()
+      .rev()
       .filter_map(|a| a.manifest.contributes.prompts.as_deref().and_then(|p| manifest::inside(&a.dir, p)))
       .filter(|d| d.is_dir())
       .collect()
@@ -645,7 +669,7 @@ impl PluginHost {
       PluginAction::Enable { id } | PluginAction::Confirm { id, .. } | PluginAction::Dismiss { id } | PluginAction::Disable { id } => Some(id),
       PluginAction::Rollback { id } | PluginAction::Remove { id } | PluginAction::Reveal { id } => Some(id),
       PluginAction::Skin { id } => id.as_ref(),
-      PluginAction::SafeMode { .. } | PluginAction::ToolGroup { .. } => None,
+      PluginAction::SafeMode { .. } | PluginAction::ToolGroup { .. } | PluginAction::Reorder { .. } => None,
     };
     if let Some(id) = id.filter(|id| !manifest::valid_id(id)) {
       bail!("`{id}` is not a plugin id");
@@ -685,6 +709,21 @@ impl PluginHost {
         }
         self.store.set_tool_group(&id, on, user).await?
       }
+      PluginAction::Reorder { ids } => {
+        for id in &ids {
+          if !valid_order_id(id) {
+            bail!("`{id}` is not a plugin id");
+          }
+        }
+        if self.store.set_order(ids).await? {
+          *self.stamp.lock() = None;
+          self.reload();
+          if let Some(f) = self.touch.read().clone() {
+            f();
+          }
+        }
+        return Ok(None);
+      }
     };
     self.committed(&change);
     Ok(None)
@@ -706,7 +745,15 @@ impl PluginHost {
     let mut ids: BTreeSet<String> = self.store.sources().into_iter().collect();
     ids.extend(state.plugins.keys().cloned());
     ids.extend(state.proposals.keys().cloned());
-    let plugins = ids.iter().map(|id| self.info(id, &loaded)).collect();
+    let mut ordered = Vec::with_capacity(ids.len());
+    for id in &state.order {
+      if ids.remove(id) {
+        ordered.push(id.clone());
+      }
+    }
+    ordered.extend(ids);
+    let overlaps = compute_overlaps(&loaded.active);
+    let plugins = ordered.iter().map(|id| self.info(id, &loaded, overlaps.get(id).cloned().unwrap_or_default())).collect();
     let tool_groups = acpira_shared::host_tools::GROUPS
       .iter()
       // Computer use is offered only where this engine can drive apps
@@ -724,10 +771,11 @@ impl PluginHost {
       tool_groups,
       changes,
       skin: loaded.skin().map(|a| a.id.clone()),
+      order: state.order.clone(),
     }
   }
 
-  fn info(&self, id: &str, loaded: &Loaded) -> PluginInfo {
+  fn info(&self, id: &str, loaded: &Loaded, overlaps: Vec<PluginOverlap>) -> PluginInfo {
     let source = self.store.source(id);
     let entry = loaded.state.plugins.get(id);
     let active = loaded.active.iter().find(|a| a.id == id);
@@ -782,8 +830,147 @@ impl PluginHost {
       path: wire_path(&source),
       schedules,
       dependencies,
+      overlaps,
     }
   }
+}
+
+/// Pairwise overlaps among loaded plugins where tile order decides precedence (first in order loads / wins first)
+fn compute_overlaps(active: &[Arc<Active>]) -> BTreeMap<String, Vec<PluginOverlap>> {
+  struct Sig {
+    commands: BTreeSet<String>,
+    providers: BTreeSet<String>,
+    mcp: BTreeSet<String>,
+    hooks: BTreeSet<String>,
+    has_style: bool,
+    style_hooks: BTreeSet<String>,
+    prompts: BTreeSet<String>,
+    skills: BTreeSet<String>,
+  }
+
+  let sigs: Vec<Sig> = active
+    .iter()
+    .map(|a| {
+      let c = &a.manifest.contributes;
+      let commands = c.commands.iter().map(|cmd| format!("/{}", cmd.name)).collect();
+      let providers = c.providers.iter().filter_map(|raw| manifest::provider_of(raw, &a.id).ok().map(|p| p.id)).collect();
+      let mcp = c.mcp.as_ref().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+      let mut hooks = BTreeSet::new();
+      if let Some(rt) = &c.runtime
+        && rt.scope.as_deref() != Some(manifest::SCOPE_AGENT)
+      {
+        for h in &rt.hooks {
+          // `command` and `menu` hooks only serve this plugin's own slash commands and buttons
+          if h != "command" && h != "menu" {
+            hooks.insert(h.clone());
+          }
+        }
+      }
+      if let Some(obj) = c.hooks.as_ref().and_then(Value::as_object) {
+        for (k, v) in obj {
+          if !matches!(k.as_str(), "watch" | "rounds") && !v.is_null() {
+            hooks.insert(k.clone());
+          }
+        }
+      }
+      let (has_style, style_hooks) = match c.style.as_deref() {
+        Some(rel) => {
+          let css = manifest::inside(&a.dir, rel).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+          (true, restyled_hooks(&css).into_iter().collect())
+        }
+        None => (false, BTreeSet::new()),
+      };
+      let prompts = c
+        .prompts
+        .as_deref()
+        .and_then(|rel| manifest::inside(&a.dir, rel))
+        .filter(|d| d.is_dir())
+        .map(|d| collect_relative_md(&d))
+        .unwrap_or_default();
+      let skills = c
+        .skills
+        .as_deref()
+        .and_then(|rel| manifest::inside(&a.dir, rel))
+        .filter(|d| d.is_dir())
+        .map(|d| collect_skill_names(&d))
+        .unwrap_or_default();
+      Sig { commands, providers, mcp, hooks, has_style, style_hooks, prompts, skills }
+    })
+    .collect();
+
+  let mut out: BTreeMap<String, Vec<PluginOverlap>> = BTreeMap::new();
+  let mut push = |a: &str, b: &str, kind: &str, items: Vec<String>| {
+    out.entry(a.to_owned()).or_default().push(PluginOverlap { plugin: b.to_owned(), kind: kind.to_owned(), items: items.clone() });
+    out.entry(b.to_owned()).or_default().push(PluginOverlap { plugin: a.to_owned(), kind: kind.to_owned(), items });
+  };
+  let shared = |x: &BTreeSet<String>, y: &BTreeSet<String>| -> Vec<String> { x.intersection(y).cloned().collect() };
+
+  for i in 0..active.len() {
+    for j in (i + 1)..active.len() {
+      let (ai, aj) = (&active[i].id, &active[j].id);
+      let (si, sj) = (&sigs[i], &sigs[j]);
+      for (kind, items) in [
+        ("command", shared(&si.commands, &sj.commands)),
+        ("provider", shared(&si.providers, &sj.providers)),
+        ("mcp", shared(&si.mcp, &sj.mcp)),
+        ("hook", shared(&si.hooks, &sj.hooks)),
+        ("prompt", shared(&si.prompts, &sj.prompts)),
+        ("skill", shared(&si.skills, &sj.skills)),
+      ] {
+        if !items.is_empty() {
+          push(ai, aj, kind, items);
+        }
+      }
+      if si.has_style && sj.has_style {
+        let items = shared(&si.style_hooks, &sj.style_hooks);
+        // Two stylesheets targeting disjoint known hooks do not conflict; otherwise CSS cascade order applies
+        if !items.is_empty() || si.style_hooks.is_empty() || sj.style_hooks.is_empty() {
+          push(ai, aj, "style", items);
+        }
+      }
+    }
+  }
+  out
+}
+
+/// Relative `.md` file paths inside a plugin's `prompts` folder
+fn collect_relative_md(root: &Path) -> BTreeSet<String> {
+  fn walk(root: &Path, dir: &Path, out: &mut BTreeSet<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+      let path = e.path();
+      if path.is_dir() {
+        walk(root, &path, out);
+      } else if path.extension().and_then(|s| s.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        && let Ok(rel) = path.strip_prefix(root)
+      {
+        out.insert(rel.to_string_lossy().replace('\\', "/"));
+      }
+    }
+  }
+  let mut out = BTreeSet::new();
+  walk(root, root, &mut out);
+  out
+}
+
+/// Skill folder names (`<name>/SKILL.md`) inside a plugin's `skills` folder
+fn collect_skill_names(root: &Path) -> BTreeSet<String> {
+  let Ok(entries) = std::fs::read_dir(root) else { return BTreeSet::new() };
+  entries
+    .flatten()
+    .filter_map(|e| {
+      let path = e.path();
+      (path.is_dir() && path.join("SKILL.md").is_file()).then(|| e.file_name().to_string_lossy().into_owned())
+    })
+    .collect()
+}
+
+/// Display-order entries are either user plugin ids or `builtin:<tool-group>` keys
+fn valid_order_id(id: &str) -> bool {
+  manifest::valid_id(id)
+    || id
+      .strip_prefix(acpira_shared::plugins::BUILTIN_ORDER_PREFIX)
+      .is_some_and(|g| acpira_shared::host_tools::GROUPS.iter().any(|(x, _)| *x == g))
 }
 
 /// Each plugin `m` depends on, met when one in effect has a version its range accepts
@@ -848,8 +1035,8 @@ fn theme_css_of(loaded: &Loaded) -> String {
       push_css(&mut out, &a.dir, css);
     }
   }
-  // The styles stack over the skin, each plugin's in turn
-  for a in loaded.active.iter() {
+  // The styles stack over the skin in reverse load order, so plugins earlier in the user's tile order win the CSS cascade
+  for a in loaded.active.iter().rev() {
     if let Some(css) = a.manifest.contributes.style.as_deref() {
       out.push_str(&format!("/* Acpira plugin {} style */\n", a.id));
       push_css(&mut out, &a.dir, css);
@@ -1003,6 +1190,58 @@ fn executable(m: &std::fs::Metadata) -> bool {
   {
     let _ = m;
     true
+  }
+}
+
+impl crate::acp::session::ext::PluginCardPort for PluginHost {
+  fn prepare_offer(self: Arc<Self>, id: String, card_id: String) -> crate::acp::transport::rpc::BoxFuture<crate::acp::session::ext::PluginOfferOutcome> {
+    Box::pin(async move {
+      use crate::acp::session::ext::PluginOfferOutcome;
+      let prepared = {
+        let (host, id) = (self.clone(), id.clone());
+        tokio::task::spawn_blocking(move || host.prepare(&id)).await
+      };
+      let frozen = match prepared {
+        Ok(Ok(f)) => f,
+        Ok(Err(e)) => return PluginOfferOutcome::Error(format!("{e:#}")),
+        Err(e) => return PluginOfferOutcome::Error(format!("the check did not finish: {e}")),
+      };
+      if !frozen.findings.ok() {
+        return PluginOfferOutcome::Error(format!(
+          "The plugin was not offered to the user. Fix these in {} and call plugin_activate again:\n{}",
+          self.store().source(&id).display(),
+          frozen.findings.text()
+        ));
+      }
+      // In effect already: enabled at this version, and the skin when it is a theme
+      let loaded = self.loaded();
+      let enabled = loaded.state.plugins.get(&id).is_some_and(|e| e.enabled && e.snapshot == frozen.hash);
+      let skinned = frozen.manifest.contributes.theme.is_none() || loaded.skin().is_some_and(|a| a.id == id);
+      if enabled && skinned {
+        return PluginOfferOutcome::AlreadyActive(format!("This version of {id} is in effect already."));
+      }
+      PluginOfferOutcome::Offer(Box::new(self.card(&frozen, card_id)))
+    })
+  }
+
+  fn offered(&self) {
+    PluginHost::offered(self);
+  }
+
+  fn apply_card<'a>(
+    &'a self,
+    card: &'a acpira_shared::transcript::PluginCard,
+    provenance: Provenance,
+  ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<acpira_shared::transcript::PluginCardUndo>>> + Send + 'a>> {
+    Box::pin(PluginHost::apply_card(self, card, provenance))
+  }
+
+  fn undo_card<'a>(
+    &'a self,
+    card: &'a acpira_shared::transcript::PluginCard,
+    provenance: Provenance,
+  ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(PluginHost::undo_card(self, card, provenance))
   }
 }
 
@@ -1302,5 +1541,57 @@ mod tests {
     h.action(PluginAction::ToolGroup { id: "computer".into(), on: false }).await.unwrap();
     assert!(!h.loaded().state.tool_groups.contains_key("computer"));
     assert!(h.action(PluginAction::ToolGroup { id: "nope".into(), on: false }).await.is_err());
+  }
+
+  #[tokio::test]
+  async fn reorder_controls_load_order_and_reports_overlaps() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = host(tmp.path());
+    for (id, style_hook, cmd) in [("alpha", "[data-session]", "review"), ("beta", "[data-session]", "review"), ("gamma", "[data-part=\"header\"]", "other")] {
+      let dir = tmp.path().join(id);
+      std::fs::create_dir_all(&dir).unwrap();
+      let m = json!({
+        "schema": 1, "id": id, "version": "1", "description": id,
+        "contributes": {
+          "style": "style.css",
+          "commands": [{ "name": cmd, "description": cmd, "prompt": format!("from {id}") }]
+        }
+      });
+      std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+      std::fs::write(dir.join("style.css"), format!("{style_hook} {{ --{id}: 1; }}")).unwrap();
+    }
+    h.action(PluginAction::Enable { id: "alpha".into() }).await.unwrap();
+    h.action(PluginAction::Enable { id: "beta".into() }).await.unwrap();
+    h.action(PluginAction::Enable { id: "gamma".into() }).await.unwrap();
+    let gen_before = h.view().generation;
+    let changes_before = h.view().changes.len();
+
+    // Default order is alpha, beta, gamma: alpha wins CSS (appended later) and `/review`, and overlaps only with beta
+    let css_before = h.theme_css();
+    assert!(css_before.find("--beta: 1").unwrap() < css_before.find("--alpha: 1").unwrap(), "{css_before}");
+    let view_before = h.view();
+    let alpha_overlaps = &view_before.plugins.iter().find(|p| p.id == "alpha").unwrap().overlaps;
+    assert_eq!(alpha_overlaps.len(), 2, "{alpha_overlaps:?}");
+    assert!(alpha_overlaps.iter().any(|o| o.plugin == "beta" && o.kind == "command" && o.items == ["/review"]));
+    assert!(alpha_overlaps.iter().any(|o| o.plugin == "beta" && o.kind == "style" && o.items == ["[data-session]"]));
+    assert!(h.view().plugins.iter().find(|p| p.id == "gamma").unwrap().overlaps.is_empty());
+
+    // Moving beta ahead of alpha flips active order, CSS cascade precedence, and contributed commands without touching generation/audit log
+    h.action(PluginAction::Reorder { ids: vec!["gamma".into(), "builtin:computer".into(), "beta".into(), "gamma".into()] }).await.unwrap();
+    let view = h.view();
+    assert_eq!(view.order, ["gamma", "builtin:computer", "beta"]);
+    assert_eq!(view.plugins.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["gamma", "beta", "alpha"]);
+    assert_eq!(h.loaded().active.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["gamma", "beta", "alpha"]);
+    let css_after = h.theme_css();
+    assert!(css_after.find("--alpha: 1").unwrap() < css_after.find("--beta: 1").unwrap(), "{css_after}");
+    assert_eq!(h.runtimes().contributed().commands.iter().find(|c| c.def.name == "review").map(|c| c.plugin.as_str()), Some("beta"));
+    assert_eq!((view.generation, view.changes.len()), (gen_before, changes_before));
+    // Invalid ids are rejected
+    assert!(h.action(PluginAction::Reorder { ids: vec!["bad_id".into()] }).await.is_err());
+    assert!(h.action(PluginAction::Reorder { ids: vec!["builtin:nope".into()] }).await.is_err());
+    // Removing a plugin drops it from the saved order and clears its overlaps
+    h.action(PluginAction::Remove { id: "beta".into() }).await.unwrap();
+    assert_eq!(h.view().order, ["gamma", "builtin:computer"]);
+    assert!(h.view().plugins.iter().find(|p| p.id == "alpha").unwrap().overlaps.is_empty());
   }
 }
