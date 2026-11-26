@@ -13,7 +13,7 @@ use windows::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
 use windows::Win32::System::StationsAndDesktops::{CloseDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, OpenInputDesktop};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
 use windows::Win32::UI::WindowsAndMessaging::{
-  EnumWindows, FindWindowExW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, WS_EX_TOOLWINDOW, WS_POPUP,
+  EnumChildWindows, EnumWindows, FindWindowExW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use windows::core::{BOOL, HSTRING, PCWSTR, PWSTR, w};
 
@@ -101,6 +101,14 @@ unsafe extern "system" fn collect(hwnd: HWND, list: LPARAM) -> BOOL {
   let list = unsafe { &mut *(list.0 as *mut Vec<isize>) };
   list.push(hwnd.0 as isize);
   true.into()
+}
+
+/// Every child window of `top`, at any depth.
+pub fn children(top: isize) -> Vec<isize> {
+  let mut handles: Vec<isize> = Vec::new();
+  // SAFETY: the callback only pushes into `handles`, which outlives the call.
+  let _ = unsafe { EnumChildWindows(Some(handle(top)), Some(collect), LPARAM((&raw mut handles) as isize)) };
+  handles
 }
 
 /// Every top-level window on screen, front to back.

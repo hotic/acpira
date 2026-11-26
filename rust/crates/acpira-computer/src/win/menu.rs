@@ -31,16 +31,22 @@ struct Item {
   position: usize,
 }
 
-/// Titles compare without case, surrounding space, or the difference between "…" and "...".
+/// Titles compare without case, surrounding space, or the dots of an item that opens a dialog ("Save As…").
 fn normal(title: &str) -> String {
-  title.trim().replace('…', "...").to_lowercase()
+  title.replace('…', "...").trim().trim_end_matches('.').trim_end().to_lowercase()
 }
 
 /// A menu item's text as its title and its shortcut: `&Save As...\tCtrl+Shift+S`.
 fn split(text: &str) -> (String, String) {
   let (title, shortcut) = text.split_once('\t').unwrap_or((text, ""));
-  // An ampersand marks the access key; two stand for a real one.
-  let title = title.replace("&&", "\u{0}").replace('&', "").replace('\u{0}', "&");
+  // An ampersand marks the access key; two stand for a real one. Chinese, Japanese and Korean menus put the key in
+  // brackets after the title ("文件(&F)"), which goes as a whole.
+  let title = title.replace("&&", "\u{0}");
+  let bracketed = title.split_once("(&").and_then(|(before, after)| {
+    let mut rest = after.chars();
+    (rest.next().is_some() && rest.next() == Some(')')).then(|| format!("{}{}", before.trim_end(), rest.as_str()))
+  });
+  let title = bracketed.unwrap_or(title).replace('&', "").replace('\u{0}', "&");
   (title.trim().to_string(), shortcut.trim().to_string())
 }
 
@@ -163,6 +169,11 @@ mod tests {
     assert_eq!(split("&Save\tCtrl+S"), ("Save".to_string(), "Ctrl+S".to_string()));
     assert_eq!(split("Save &As..."), ("Save As...".to_string(), String::new()));
     assert_eq!(split("Find && Replace"), ("Find & Replace".to_string(), String::new()));
-    assert_eq!(normal(" Save As… "), "save as...");
+    assert_eq!(split("文件(&F)"), ("文件".to_string(), String::new()));
+    assert_eq!(split("另存为(&A)...\tCtrl+Shift+S"), ("另存为...".to_string(), "Ctrl+Shift+S".to_string()));
+    assert_eq!(split("Size (&M)"), ("Size".to_string(), String::new()));
+    assert_eq!(split("A (&&B)"), ("A (&B)".to_string(), String::new()));
+    assert_eq!(normal(" Save As… "), "save as");
+    assert_eq!(normal("关于系统信息..."), normal("关于系统信息"));
   }
 }

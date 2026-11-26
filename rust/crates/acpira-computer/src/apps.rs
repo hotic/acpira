@@ -14,7 +14,7 @@ pub struct App {
   pub path: String,
 }
 
-/// What an app is approved by: its system id, or its path or name when it has none.
+/// What an app is known by: its system id, or its path or name when it has none.
 pub fn identity(app: &App) -> String {
   [&app.bundle, &app.path, &app.name].into_iter().find(|text| !text.is_empty()).cloned().unwrap_or_default()
 }
@@ -70,7 +70,7 @@ mod tests {
   }
 
   #[test]
-  fn apps_are_approved_by_system_id_then_path_then_name() {
+  fn apps_are_known_by_system_id_then_path_then_name() {
     let mut app = app(1, "Tool", "com.example.tool");
     app.path = "/Applications/Tool.app".into();
     assert_eq!(identity(&app), "com.example.tool");

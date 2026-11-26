@@ -187,7 +187,8 @@ impl Mac {
     let rect = overlay::Rect { origin: overlay::Point { x: window.frame.x, y: window.frame.y }, size: overlay::Size { w: window.frame.w, h: window.frame.h } };
     overlay::send(overlay::Command::Frame { window_id, rect, radius });
     if let Some((x, y)) = at {
-      overlay::send(overlay::Command::Pointer { at: overlay::Point { x, y }, click });
+      let at = overlay::Point { x, y };
+      overlay::send(if scene.crowd { overlay::Command::Clone { at, click } } else { overlay::Command::Pointer { at, click } });
     }
   }
 
@@ -377,6 +378,7 @@ impl Mac {
         radius: request["radius"].as_f64().unwrap_or(16.0),
       }),
       Some("pointer") => overlay::send(overlay::Command::Pointer { at: overlay::Point { x: number("x"), y: number("y") }, click: request["click"].as_bool().unwrap_or(false) }),
+      Some("clone") => overlay::send(overlay::Command::Clone { at: overlay::Point { x: number("x"), y: number("y") }, click: request["click"].as_bool().unwrap_or(false) }),
       _ => overlay::send(overlay::Command::Hide),
     }
     json!({"ok": true})
@@ -538,7 +540,7 @@ impl Platform for Mac {
           })
         }))
       }
-      ("frame" | "pointer" | "hide", _) => Some(Ok(Self::overlay_op(request))),
+      ("frame" | "pointer" | "clone" | "hide", _) => Some(Ok(Self::overlay_op(request))),
       _ => None,
     }
   }

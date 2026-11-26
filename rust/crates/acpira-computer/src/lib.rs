@@ -17,6 +17,8 @@ mod apps;
 mod core;
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(any(target_os = "macos", windows, test))]
+mod motion;
 #[cfg(any(windows, test))]
 mod paint;
 #[cfg(any(target_os = "macos", windows, test))]

@@ -7,7 +7,7 @@
 //! - `see`: a picture of a window.
 //!
 //! What a system needs for that is its `Platform`: how it lists apps and windows, reads an element, carries out a
-//! step, pictures a window. Everything a model sees (the texts, the refs, the diff, the approval) is decided here.
+//! step, pictures a window. Everything a model sees (the texts, the refs, the diff) is decided here.
 
 use crate::apps::{self, App, identity};
 use crate::picture::Shot;
@@ -60,6 +60,9 @@ pub struct Scene<'a, E> {
   pub rows: Option<&'a [Row]>,
   /// Pixels per point of the last picture of the target window, which a click `at` is measured in. 1 before any.
   pub scale: f64,
+  /// The step lands somewhere and is not the last such step of its batch: a clone shows it (`motion.rs`), and the
+  /// agent's own pointer waits for the batch's last.
+  pub crowd: bool,
 }
 
 impl<E: Clone + Eq + Hash> Scene<'_, E> {
@@ -121,24 +124,8 @@ pub trait Platform {
   }
 }
 
-/// Why a request was not carried out.
-pub enum Failure {
-  Text(String),
-  /// The app is not on the caller's allow list: the caller asks its user and repeats the request.
-  Approval(App),
-}
-
-impl From<String> for Failure {
-  fn from(text: String) -> Self {
-    Failure::Text(text)
-  }
-}
-
-impl From<&str> for Failure {
-  fn from(text: &str) -> Self {
-    Failure::Text(text.to_string())
-  }
-}
+/// Why a request was not carried out, as the reply's text.
+type Failure = String;
 
 #[derive(Default)]
 struct Seen {
@@ -172,6 +159,7 @@ fn scene<'a, E>(known: &'a HashMap<i32, Known<E>>, target: &'a Target<E>) -> Sce
     refs: known.map(|known| &known.refs),
     rows: seen.and_then(|seen| seen.rows.as_deref()),
     scale: seen.map(|seen| seen.scale).filter(|scale| *scale > 0.0).unwrap_or(1.0),
+    crowd: false,
   }
 }
 
@@ -198,17 +186,11 @@ impl<P: Platform> Driver<P> {
     };
     match result {
       Ok(reply) => reply,
-      Err(Failure::Text(text)) => json!({"ok": false, "text": text}),
-      Err(Failure::Approval(app)) => json!({
-        "ok": false,
-        "text": format!("{} has not been approved for computer use", app.name),
-        "approval": {"name": app.name, "bundle": app.bundle, "identity": identity(&app), "path": app.path},
-      }),
+      Err(text) => json!({"ok": false, "text": text}),
     }
   }
 
-  /// The running apps. Window titles are content (a document's name, a mail's subject): a caller with an allow list
-  /// gets them only for the apps on it, and none of the apps on its deny list.
+  /// The running apps with their window titles, leaving out the apps on the caller's deny list.
   fn list_apps(&mut self, request: &Json) -> Result<Json, Failure> {
     self.platform.ready()?;
     let mut text = String::new();
@@ -222,11 +204,9 @@ impl<P: Platform> Driver<P> {
           line.push_str(&format!(", {word}"));
         }
       }
-      if allowed(request, &app) {
-        let titles = self.platform.titles(&app);
-        let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
-        line.push_str(&if titles.is_empty() { format!(": no window{}", P::ELSEWHERE) } else { format!(": {}", quoted(&titles)) });
-      }
+      let titles = self.platform.titles(&app);
+      let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
+      line.push_str(&if titles.is_empty() { format!(": no window{}", P::ELSEWHERE) } else { format!(": {}", quoted(&titles)) });
       text.push_str(&line);
       text.push('\n');
     }
@@ -260,7 +240,7 @@ impl<P: Platform> Driver<P> {
     if !target.wanted.is_empty() && target.chosen.is_none() {
       let titles: Vec<&str> = target.windows.iter().map(|window| window.title.as_str()).collect();
       let offered = if titles.is_empty() { format!("it has no window{}", P::ELSEWHERE) } else { format!("its windows: {}", quoted(&titles)) };
-      return Err(format!("{} has no window titled \"{}\"; {offered}", target.app.name, target.wanted).into());
+      return Err(format!("{} has no window titled \"{}\"; {offered}", target.app.name, target.wanted));
     }
     Ok(target)
   }
@@ -355,6 +335,8 @@ impl<P: Platform> Driver<P> {
     }
     let (mut acting, mut settling, mut events, mut done) = (Duration::ZERO, Duration::ZERO, 0, 0);
     let (mut failure, mut restless) = (None, false);
+    // The batch's last step that lands somewhere is the agent's own pointer's; the ones before it are clones'.
+    let last_placed = steps.iter().rposition(placed);
     for (index, step) in steps.iter().enumerate() {
       let at = Instant::now();
       if let Step::Wait { ms } = step {
@@ -364,7 +346,9 @@ impl<P: Platform> Driver<P> {
         continue;
       }
       let mark = self.platform.mark(&target.app);
-      let result = self.platform.step(&scene(&self.known, &target), step);
+      let mut shown = scene(&self.known, &target);
+      shown.crowd = placed(step) && Some(index) != last_placed;
+      let result = self.platform.step(&shown, step);
       acting += at.elapsed();
       if let Err(error) = result {
         failure = Some(format!("step {} failed: {error}", index + 1));
@@ -438,7 +422,7 @@ impl<P: Platform> Driver<P> {
     let target = if named { Some(self.target(request)?) } else { None };
     let scene = target.as_ref().map(|target| scene(&self.known, target));
     match self.platform.debug(request, scene.as_ref()) {
-      Some(reply) => reply.map_err(Failure::Text),
+      Some(reply) => reply,
       None => Err("unknown op: use apps, observe, act or see".into()),
     }
   }
@@ -458,13 +442,17 @@ fn same_path(one: &str, other: &str) -> bool {
   if cfg!(windows) { one.eq_ignore_ascii_case(other) } else { one == other }
 }
 
-/// Whether the caller may drive the app: it is on the allow list, or the caller sent none (a test bench).
-fn allowed(request: &Json, app: &App) -> bool {
-  let identity = identity(app);
-  request["allow"].as_array().is_none_or(|allowed| allowed.iter().filter_map(Json::as_str).any(|entry| entry.eq_ignore_ascii_case(&identity)))
+/// Whether a step lands on a place in the window, where a pointer goes to show it.
+fn placed(step: &Step) -> bool {
+  match step {
+    Step::Click { .. } | Step::Set { .. } => true,
+    Step::Type { on, .. } => on.is_some(),
+    Step::Scroll { place, .. } => place.is_some(),
+    Step::Key { .. } | Step::Menu { .. } | Step::Wait { .. } => false,
+  }
 }
 
-/// The app a request names, checked against the request's deny and allow lists.
+/// The app a request names, checked against the request's deny list.
 fn app_of(request: &Json, running: &[App]) -> Result<App, Failure> {
   let query = match (&request["app"], &request["pid"]) {
     (Json::String(name), _) if !name.trim().is_empty() => name.trim().to_string(),
@@ -475,12 +463,8 @@ fn app_of(request: &Json, running: &[App]) -> Result<App, Failure> {
   if app.pid == std::process::id() as i32 {
     return Err("the driver cannot drive itself".into());
   }
-  // The caller's never-list comes before its allow list: an app on both stays out of reach
   if denied(request, &app) {
-    return Err(format!("{} cannot be used through computer use: it holds passwords or system prompts, or it is the app the agent itself runs in", app.name).into());
-  }
-  if !allowed(request, &app) {
-    return Err(Failure::Approval(app));
+    return Err(format!("{} cannot be used through computer use: it holds passwords or system prompts, or it is the app the agent itself runs in", app.name));
   }
   Ok(app)
 }
@@ -536,18 +520,16 @@ mod tests {
   }
 
   #[test]
-  fn the_never_list_comes_before_the_allow_list() {
+  fn apps_on_the_deny_list_stay_out_of_reach() {
     let running = [app("com.example.tool", "/Applications/Tool.app")];
     let ask = |request: Json| app_of(&request, &running);
     assert!(ask(json!({"app": "Tool"})).is_ok());
-    assert!(matches!(ask(json!({"app": "Tool", "allow": []})), Err(Failure::Approval(_))));
-    assert!(ask(json!({"app": "Tool", "allow": ["COM.example.tool"]})).is_ok());
-    assert!(matches!(ask(json!({"app": "Tool", "allow": ["com.example.tool"], "deny": ["com.example.Tool"]})), Err(Failure::Text(_))));
-    assert!(matches!(ask(json!({"app": "Tool", "deny": ["/Applications/Tool.app"]})), Err(Failure::Text(_))));
+    assert!(ask(json!({"app": "Tool", "deny": ["com.example.Tool"]})).is_err());
+    assert!(ask(json!({"app": "Tool", "deny": ["/Applications/Tool.app"]})).is_err());
     // A file name alone, the way a program without a system id is named
-    assert!(matches!(ask(json!({"app": "Tool", "deny": ["tool.APP"]})), Err(Failure::Text(_))));
+    assert!(ask(json!({"app": "Tool", "deny": ["tool.APP"]})).is_err());
     assert!(ask(json!({"app": "Tool", "deny": ["Tool"]})).is_ok());
     assert!(ask(json!({"pid": 7, "deny": [""]})).is_ok());
-    assert!(matches!(ask(json!({})), Err(Failure::Text(_))));
+    assert!(ask(json!({})).is_err());
   }
 }

@@ -14,7 +14,7 @@ use crate::core::{Platform, Scene, Target, Window};
 use crate::picture::Shot;
 use crate::settle::{Settled, Stamp};
 use crate::steps::{Button, Place, Step};
-use crate::tree::{self, Budget, Refs, Row, Snapshot};
+use crate::tree::{self, Budget, Rect, Refs, Row, Snapshot};
 use serde_json::{Value as Json, json};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -55,10 +55,6 @@ fn hwnd_of(window: &Window<Elem>) -> isize {
 }
 
 /// Edit controls of the classic kinds, which take text at their caret by message.
-fn is_edit(class: &str) -> bool {
-  class.eq_ignore_ascii_case("edit") || class.to_ascii_lowercase().contains("richedit")
-}
-
 pub struct Win {
   /// Draw the frame and the agent pointer while acting.
   overlay: bool,
@@ -100,7 +96,8 @@ impl Win {
     let Some(window) = scene.target.window().filter(|window| self.overlay && !window.minimized && window.handle.is_some()) else { return };
     overlay::send(overlay::Command::Frame { target: hwnd_of(window) });
     if let Some((x, y)) = at {
-      overlay::send(overlay::Command::Pointer { at: (x.round() as i32, y.round() as i32), click });
+      let at = (x.round() as i32, y.round() as i32);
+      overlay::send(if scene.crowd { overlay::Command::Clone { at, click } } else { overlay::Command::Pointer { at, click } });
     }
   }
 
@@ -129,16 +126,45 @@ impl Win {
     apps::tops().iter().find(|candidate| !candidate.listed && candidate.thread == thread && inside(candidate)).map(|candidate| candidate.hwnd).unwrap_or(top)
   }
 
+  /// The element a left click at a screen point would press: the smallest row of the last outline there whose role
+  /// takes a press, if it is still there now. `None` over anything else (text, a canvas, a control drawn by the app),
+  /// which gets the click. The outline stands in for a hit test, which would find whatever covers the window.
+  fn pressable_at(&self, scene: &WinScene, at: (f64, f64)) -> Option<String> {
+    const PRESSABLE: [&str; 9] = ["button", "splitbutton", "checkbox", "radiobutton", "link", "menuitem", "tab", "listitem", "treeitem"];
+    let inside = |frame: &Rect| at.0 >= frame.x && at.1 >= frame.y && at.0 < frame.x + frame.w && at.1 < frame.y + frame.h;
+    let row = scene.rows?.iter().filter(|row| PRESSABLE.contains(&row.role.as_str()) && inside(&row.frame)).min_by(|a, b| (a.frame.w * a.frame.h).total_cmp(&(b.frame.w * b.frame.h)))?;
+    let now = self.uia.frame(scene.elem(&row.reference).ok()?)?;
+    inside(&now).then(|| row.reference.clone())
+  }
+
   fn click(&mut self, scene: &WinScene, place: &Place, button: Button, count: u8) -> Result<(), String> {
     let point = self.screen_point(scene, place);
     self.point_out(scene, point.as_ref().ok().copied(), true);
-    if let Place::Ref(reference) = place
+    // A click by position on something that has an action of its own takes that action, as a click by ref does: a
+    // posted click that focuses a control can bring its window forward, and some apps ignore posted pointer input.
+    let pressed = match place {
+      Place::Ref(reference) => Some(reference.clone()),
+      Place::At(..) if button == Button::Left => point.as_ref().ok().and_then(|at| self.pressable_at(scene, *at)),
+      Place::At(..) => None,
+    };
+    if let Some(reference) = pressed.as_ref()
       && count <= 1
     {
       // The element's own action first: it works while the window is covered or in the background.
       let elem = scene.elem(reference)?;
+      if button == Button::Left
+        && let Some((native, class)) = self.uia.native(elem)
+        && class.eq_ignore_ascii_case("button")
+        && input::press_button(native)
+      {
+        return Ok(());
+      }
       let done = match button {
-        Button::Left => self.uia.press(elem, reference)?,
+        // A refusal is the agent's to read only when it named the element; a click by position falls back to the click.
+        Button::Left => match self.uia.press(elem, reference) {
+          Err(error) if matches!(place, Place::Ref(_)) => return Err(error),
+          result => result.unwrap_or(false),
+        },
         Button::Right => self.uia.context_menu(elem),
       };
       if done {
@@ -172,7 +198,7 @@ impl Win {
       self.point_out(scene, self.uia.frame(elem).map(|frame| frame.center()), false);
       // A classic edit control takes text at its caret by message, with neither focus nor keys.
       if let Some((edit, class)) = self.uia.native(elem)
-        && is_edit(&class)
+        && input::is_edit(&class)
         && input::replace_selection(edit, text)
       {
         return Ok(());
@@ -187,7 +213,7 @@ impl Win {
     } else {
       self.point_out(scene, None, false);
     }
-    self.with_keys(scene.target, |window, _| input::post_text(window, text), || input::send_text(text))
+    self.with_keys(scene.target, |window, thread| input::post_text(window, thread, text), || input::send_text(text))
   }
 
   fn key(&mut self, scene: &WinScene, keys: &str, repeat: u16) -> Result<(), String> {
@@ -311,6 +337,13 @@ impl Platform for Win {
       Step::Set { on, value } => {
         let elem = scene.elem(on)?;
         self.point_out(scene, self.uia.frame(elem).map(|frame| frame.center()), false);
+        // A classic edit control by message: its value pattern focuses it first and the window comes to the front.
+        if let Some((edit, class)) = self.uia.native(elem)
+          && input::is_edit(&class)
+          && input::replace_all(edit, value)
+        {
+          return Ok(());
+        }
         self.uia.set(elem, on, value)
       }
       Step::Key { keys, repeat } => self.key(scene, keys, *repeat),
@@ -349,6 +382,10 @@ impl Platform for Win {
       }
       ("pointer", _) => {
         overlay::send(overlay::Command::Pointer { at: (number("x") as i32, number("y") as i32), click: request["click"].as_bool().unwrap_or(false) });
+        Some(Ok(json!({"ok": true})))
+      }
+      ("clone", _) => {
+        overlay::send(overlay::Command::Clone { at: (number("x") as i32, number("y") as i32), click: request["click"].as_bool().unwrap_or(false) });
         Some(Ok(json!({"ok": true})))
       }
       ("hide", _) => {

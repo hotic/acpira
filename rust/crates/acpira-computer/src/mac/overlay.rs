@@ -1,13 +1,17 @@
-//! What the user sees while the agent works: a blue frame around the window being driven and the agent's own pointer.
+//! What the user sees while the agent works: a white frame around the window being driven, the agent's own pointer,
+//! and the clones that show a batch's steps (`crate::motion`).
 //!
 //! One transparent, click-through window covers the target's screen and is ordered directly above the target window,
-//! not above everything: whatever the user has in front of the target also covers the frame and the pointer, so the
-//! overlay never sits on top of their work. Drawing is two Core Animation layers. Moves are fire-and-forget: an action
-//! never waits for the pointer. The overlay fades when the agent has been idle for a while.
+//! not above everything: whatever the user has in front of the target also covers the frame and the pointers, so the
+//! overlay never sits on top of their work. Drawing is Core Animation layers: the frame, click rings, then pointers.
+//! Moves are fire-and-forget: an action never waits for a pointer. The overlay fades when the agent has been idle for
+//! a while.
 
 use objc2::encode::{Encode, Encoding, RefEncode};
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
+
+use crate::motion::{self, Arc as Move};
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -68,6 +72,7 @@ unsafe extern "C" {}
 #[link(name = "QuartzCore", kind = "framework")]
 unsafe extern "C" {
   static kCAMediaTimingFunctionEaseOut: *const AnyObject;
+  static kCAMediaTimingFunctionEaseIn: *const AnyObject;
   static kCAFillModeForwards: *const AnyObject;
   fn CACurrentMediaTime() -> f64;
   fn CGColorCreateGenericRGB(r: f64, g: f64, b: f64, a: f64) -> *mut CGColor;
@@ -85,15 +90,15 @@ unsafe extern "C" {
   static _dispatch_main_q: c_void;
 }
 
-/// Blue of the frame.
-const BLUE: (f64, f64, f64) = (0.04, 0.52, 1.0);
+/// The frame is white with a soft white glow, over a thin dark edge that keeps it visible on a light desktop.
+const FRAME: (f64, f64, f64) = (1.0, 1.0, 1.0);
 /// The agent's pointer is the system's arrow in black and white, a size up so it is not taken for the user's own.
 const POINTER_FILL: (f64, f64, f64) = (0.06, 0.06, 0.07);
 const POINTER_EDGE: (f64, f64, f64) = (1.0, 1.0, 1.0);
 /// The arrow, tip first, in a y-up space with the tip at the origin.
 const ARROW: [(f64, f64); 7] = [(0.0, 0.0), (0.0, -21.0), (4.9, -16.3), (8.9, -25.2), (12.4, -23.7), (8.5, -15.0), (15.0, -15.0)];
-/// Seconds a pointer move takes. It never delays the action it accompanies.
-const GLIDE: f64 = 0.16;
+/// Keyframes along a move's curve; Core Animation draws straight between them.
+const MOVE_FRAMES: usize = 40;
 /// The frame sits this far outside the window edge.
 const FRAME_OUTSET: f64 = 2.0;
 /// Seconds without a command before the overlay fades.
@@ -106,14 +111,24 @@ pub enum Command {
   Frame { window_id: u32, rect: Rect, radius: f64 },
   /// Move the pointer to a screen point; `click` adds a ripple there.
   Pointer { at: Point, click: bool },
+  /// Show one step of a batch with a clone that flies in to a screen point and leaves; `click` adds a ripple.
+  Clone { at: Point, click: bool },
   Hide,
 }
 
 struct Overlay {
   window: *mut AnyObject,
   frame: *mut AnyObject,
+  /// The dark line under the frame's white one.
+  edge: *mut AnyObject,
   pointer: *mut AnyObject,
   root: *mut AnyObject,
+  /// The arrow's outline, shared by the pointer and every clone; kept for the life of the process.
+  arrow: *mut CGPath,
+  /// The framed window's bounds (screen points, top-left origin), where clones set off around.
+  target: Option<crate::tree::Rect>,
+  /// Clones sent so far, which picks the side the next one comes from.
+  clones: usize,
   /// The overlay window's frame, in AppKit's space (bottom-left origin of the primary display).
   bounds: Rect,
   /// Height of the primary display, which both coordinate spaces are anchored to.
@@ -184,7 +199,7 @@ extern "C" fn remove_when_faded(context: *mut c_void) {
 /// Plain Core Graphics create call; the caller releases the colour.
 unsafe fn color(alpha: f64) -> *mut CGColor {
   // SAFETY: no pointers go in.
-  unsafe { CGColorCreateGenericRGB(BLUE.0, BLUE.1, BLUE.2, alpha) }
+  unsafe { CGColorCreateGenericRGB(FRAME.0, FRAME.1, FRAME.2, alpha) }
 }
 
 /// # Safety
@@ -227,6 +242,14 @@ pub fn run_main() -> ! {
     let _: () = msg_send![view, setWantsLayer: true];
     let root: *mut AnyObject = msg_send![view, layer];
 
+    // A slightly wider dark line under the white one shows as a thin rim on both sides of it.
+    let edge: *mut AnyObject = msg_send![class!(CAShapeLayer), layer];
+    let rim = CGColorCreateGenericRGB(0.0, 0.0, 0.0, 0.28);
+    let _: () = msg_send![edge, setFillColor: std::ptr::null_mut::<CGColor>()];
+    let _: () = msg_send![edge, setStrokeColor: rim];
+    let _: () = msg_send![edge, setLineWidth: 3.5f64];
+    let _: () = msg_send![edge, setOpacity: 0.0f32];
+    let _: () = msg_send![root, addSublayer: edge];
     let frame: *mut AnyObject = msg_send![class!(CAShapeLayer), layer];
     let stroke = color(0.95);
     let glow = color(1.0);
@@ -234,7 +257,7 @@ pub fn run_main() -> ! {
     let _: () = msg_send![frame, setStrokeColor: stroke];
     let _: () = msg_send![frame, setLineWidth: 2.5f64];
     let _: () = msg_send![frame, setShadowColor: glow];
-    let _: () = msg_send![frame, setShadowOpacity: 0.55f32];
+    let _: () = msg_send![frame, setShadowOpacity: 0.5f32];
     let _: () = msg_send![frame, setShadowRadius: 7.0f64];
     let _: () = msg_send![frame, setShadowOffset: Size::default()];
     let _: () = msg_send![frame, setOpacity: 0.0f32];
@@ -250,29 +273,14 @@ pub fn run_main() -> ! {
       }
     }
     CGPathCloseSubpath(arrow);
-    let pointer: *mut AnyObject = msg_send![class!(CAShapeLayer), layer];
-    let fill = CGColorCreateGenericRGB(POINTER_FILL.0, POINTER_FILL.1, POINTER_FILL.2, 1.0);
-    let white = CGColorCreateGenericRGB(POINTER_EDGE.0, POINTER_EDGE.1, POINTER_EDGE.2, 1.0);
-    let shade = CGColorCreateGenericRGB(0.0, 0.0, 0.0, 1.0);
-    let _: () = msg_send![pointer, setPath: arrow];
-    let _: () = msg_send![pointer, setFillColor: fill];
-    let _: () = msg_send![pointer, setStrokeColor: white];
-    let _: () = msg_send![pointer, setLineWidth: 1.8f64];
-    // kCALineJoinRound is the NSString @"round".
-    let _: () = msg_send![pointer, setLineJoin: ns_string(c"round")];
-    let _: () = msg_send![pointer, setShadowColor: shade];
-    let _: () = msg_send![pointer, setShadowOpacity: 0.45f32];
-    let _: () = msg_send![pointer, setShadowRadius: 4.0f64];
-    let _: () = msg_send![pointer, setShadowOffset: Size { w: 0.0, h: -2.0 }];
-    let _: () = msg_send![pointer, setOpacity: 0.0f32];
+    let pointer = arrow_layer(arrow);
     let _: () = msg_send![root, addSublayer: pointer];
-    CGPathRelease(arrow);
-    for made in [stroke, glow, fill, white, shade] {
+    for made in [rim, stroke, glow] {
       CGColorRelease(made);
     }
 
     OVERLAY.with(|slot| {
-      *slot.borrow_mut() = Some(Overlay { window, frame, pointer, root, bounds, primary_height: bounds.size.h, placed: false, shown: false });
+      *slot.borrow_mut() = Some(Overlay { window, frame, edge, pointer, root, arrow, target: None, clones: 0, bounds, primary_height: bounds.size.h, placed: false, shown: false });
     });
     let _: () = msg_send![app, run];
   }
@@ -307,6 +315,11 @@ impl Overlay {
     Point { x: at.x - self.bounds.origin.x, y: (self.primary_height - at.y) - self.bounds.origin.y }
   }
 
+  /// A point in the overlay's layer space as a screen point (top-left origin of the primary display).
+  fn screen(&self, local: Point) -> Point {
+    Point { x: local.x + self.bounds.origin.x, y: self.primary_height - (local.y + self.bounds.origin.y) }
+  }
+
   fn apply(&mut self, command: Command) {
     GENERATION.fetch_add(1, Ordering::AcqRel);
     // SAFETY: main thread; the layers and window live for the life of the process.
@@ -331,10 +344,13 @@ impl Overlay {
           let path = CGPathCreateWithRoundedRect(outer, radius, radius, std::ptr::null());
           let _: () = msg_send![class!(CATransaction), begin];
           let _: () = msg_send![class!(CATransaction), setAnimationDuration: 0.18f64];
-          let _: () = msg_send![self.frame, setPath: path];
-          let _: () = msg_send![self.frame, setOpacity: 1.0f32];
+          for layer in [self.edge, self.frame] {
+            let _: () = msg_send![layer, setPath: path];
+            let _: () = msg_send![layer, setOpacity: 1.0f32];
+          }
           let _: () = msg_send![class!(CATransaction), commit];
           CGPathRelease(path);
+          self.target = Some(crate::tree::Rect { x: rect.origin.x, y: rect.origin.y, w: rect.size.w, h: rect.size.h });
           // 1 = NSWindowAbove: directly over the target, under whatever covers it.
           let _: () = msg_send![self.window, orderWindow: 1isize, relativeTo: window_id as isize];
           self.shown = true;
@@ -342,22 +358,29 @@ impl Overlay {
         }
         Command::Pointer { at, click } => {
           let to = self.local(at);
-          let ease: *mut AnyObject = msg_send![class!(CAMediaTimingFunction), functionWithName: kCAMediaTimingFunctionEaseOut];
+          // From where the pointer is on screen right now, which is mid-flight when the last move has not ended.
+          let shown: *mut AnyObject = msg_send![self.pointer, presentationLayer];
+          let from: Point = if shown.is_null() { msg_send![self.pointer, position] } else { msg_send![shown, position] };
+          let travel = self.placed.then(|| {
+            let from = self.screen(from);
+            Move::new((from.x, from.y), (at.x, at.y), 1.0)
+          });
           let _: () = msg_send![class!(CATransaction), begin];
-          if self.placed {
-            let _: () = msg_send![class!(CATransaction), setAnimationDuration: GLIDE];
-            let _: () = msg_send![class!(CATransaction), setAnimationTimingFunction: ease];
-          } else {
-            let _: () = msg_send![class!(CATransaction), setDisableActions: true];
-          }
+          let _: () = msg_send![class!(CATransaction), setDisableActions: true];
           let _: () = msg_send![self.pointer, setPosition: to];
-          let _: () = msg_send![class!(CATransaction), commit];
           let _: () = msg_send![self.pointer, setOpacity: 1.0f32];
-          let glide = if self.placed { GLIDE } else { 0.0 };
+          let _: () = msg_send![class!(CATransaction), commit];
+          if let Some(travel) = &travel {
+            let _: () = msg_send![self.pointer, addAnimation: self.along(travel), forKey: ns_string(c"move")];
+          }
           self.placed = true;
           if click {
-            self.ripple(to, glide);
+            self.ripple(to, travel.map_or(0.0, |travel| travel.seconds));
           }
+          later(IDLE, fade_when_idle);
+        }
+        Command::Clone { at, click } => {
+          self.clone_to(at, click);
           later(IDLE, fade_when_idle);
         }
         Command::Hide => self.hide(),
@@ -370,13 +393,93 @@ impl Overlay {
     unsafe {
       let _: () = msg_send![class!(CATransaction), begin];
       let _: () = msg_send![class!(CATransaction), setAnimationDuration: FADE];
-      let _: () = msg_send![self.frame, setOpacity: 0.0f32];
-      let _: () = msg_send![self.pointer, setOpacity: 0.0f32];
+      for layer in [self.edge, self.frame, self.pointer] {
+        let _: () = msg_send![layer, setOpacity: 0.0f32];
+      }
       let _: () = msg_send![class!(CATransaction), commit];
     }
     // The next appearance starts where it is sent, not from where the pointer faded.
     self.placed = false;
     later(FADE + 0.05, remove_when_faded);
+  }
+
+  /// A move as a position animation: keyframes along its curve, evenly spaced in time, so the curve's speed is the
+  /// move's own and matches every other system's.
+  ///
+  /// # Safety
+  /// Main thread only; the animation is autoreleased.
+  unsafe fn along(&self, travel: &Move) -> *mut AnyObject {
+    // SAFETY: Core Animation and Foundation calls with their declared signatures, on the main thread.
+    unsafe {
+      let values: Vec<*mut AnyObject> = (0..=MOVE_FRAMES)
+        .map(|index| {
+          let (x, y) = travel.at(index as f64 / MOVE_FRAMES as f64);
+          value(self.local(Point { x, y }))
+        })
+        .collect();
+      let values: *mut AnyObject = msg_send![class!(NSArray), arrayWithObjects: values.as_ptr(), count: values.len()];
+      let animation: *mut AnyObject = msg_send![class!(CAKeyframeAnimation), animationWithKeyPath: ns_string(c"position")];
+      let _: () = msg_send![animation, setValues: values];
+      let _: () = msg_send![animation, setDuration: travel.seconds];
+      animation
+    }
+  }
+
+  /// A clone of the pointer that flies in from outside the window to `at`, stays a moment and backs off as it fades;
+  /// it removes itself. Without a framed window yet, the agent's own pointer goes instead.
+  ///
+  /// # Safety
+  /// Main thread only.
+  unsafe fn clone_to(&mut self, at: Point, click: bool) {
+    let Some(frame) = self.target else {
+      self.apply(Command::Pointer { at, click });
+      return;
+    };
+    let start = motion::entry(frame, (at.x, at.y), self.clones, 1.0);
+    self.clones += 1;
+    let travel = Move::new(start, (at.x, at.y), 1.0);
+    let back = motion::retreat(start, (at.x, at.y), 1.0);
+    let (to, back) = (self.local(at), self.local(Point { x: back.0, y: back.1 }));
+    let leave = travel.seconds + motion::CLONE_HOLD;
+    let whole = leave + motion::CLONE_LEAVE;
+    // SAFETY: Core Animation calls with their declared signatures, on the main thread.
+    unsafe {
+      let clone = arrow_layer(self.arrow);
+      // Where it ends, invisible: what is left once the animations are over.
+      let _: () = msg_send![clone, setPosition: back];
+      // Above the agent's own pointer, and above every click ring, which goes under the pointer.
+      let _: () = msg_send![self.root, addSublayer: clone];
+      let arrive = self.along(&travel);
+      let appear = basic(c"opacity", 0.0, 1.0);
+      let _: () = msg_send![appear, setDuration: motion::CLONE_APPEAR];
+      let away: *mut AnyObject = msg_send![class!(CABasicAnimation), animationWithKeyPath: ns_string(c"position")];
+      let _: () = msg_send![away, setFromValue: value(to)];
+      let _: () = msg_send![away, setToValue: value(back)];
+      let fade = basic(c"opacity", 1.0, 0.0);
+      let ease_in: *mut AnyObject = msg_send![class!(CAMediaTimingFunction), functionWithName: kCAMediaTimingFunctionEaseIn];
+      let ease_out: *mut AnyObject = msg_send![class!(CAMediaTimingFunction), functionWithName: kCAMediaTimingFunctionEaseOut];
+      let _: () = msg_send![fade, setTimingFunction: ease_in];
+      let _: () = msg_send![away, setTimingFunction: ease_out];
+      for leaving in [away, fade] {
+        let _: () = msg_send![leaving, setBeginTime: leave];
+        let _: () = msg_send![leaving, setDuration: motion::CLONE_LEAVE];
+      }
+      // Each part holds its last value until the next one starts, and the whole holds the end until removal.
+      for part in [arrive, appear, away, fade] {
+        let _: () = msg_send![part, setFillMode: kCAFillModeForwards];
+      }
+      let parts: *mut AnyObject = msg_send![class!(NSArray), arrayWithObjects: [arrive, appear, away, fade].as_ptr(), count: 4usize];
+      let group: *mut AnyObject = msg_send![class!(CAAnimationGroup), animation];
+      let _: () = msg_send![group, setAnimations: parts];
+      let _: () = msg_send![group, setDuration: whole];
+      let _: () = msg_send![group, setFillMode: kCAFillModeForwards];
+      let _: () = msg_send![group, setRemovedOnCompletion: false];
+      let _: () = msg_send![clone, addAnimation: group, forKey: ns_string(c"clone")];
+      let _: () = msg_send![clone, performSelector: objc2::sel!(removeFromSuperlayer), withObject: std::ptr::null_mut::<AnyObject>(), afterDelay: whole + 0.05];
+      if click {
+        self.ripple(to, travel.seconds);
+      }
+    }
   }
 
   /// A ring that grows from the click point and fades, starting when the pointer arrives.
@@ -402,7 +505,8 @@ impl Overlay {
       CGColorRelease(shade);
       let _: () = msg_send![ring, setPosition: at];
       let _: () = msg_send![ring, setOpacity: 0.0f32];
-      let _: () = msg_send![self.root, addSublayer: ring];
+      // Under the pointer: the pointer presses, the ring is what spreads out from under its tip
+      let _: () = msg_send![self.root, insertSublayer: ring, below: self.pointer];
       CGPathRelease(circle);
       CGColorRelease(stroke);
 
@@ -421,6 +525,45 @@ impl Overlay {
       let _: () = msg_send![ring, performSelector: objc2::sel!(removeFromSuperlayer), withObject: std::ptr::null_mut::<AnyObject>(), afterDelay: delay + 0.45];
     }
   }
+}
+
+/// A pointer layer: the arrow in black with a white edge and a soft shadow, its tip at the layer's position, hidden
+/// until it is shown.
+///
+/// # Safety
+/// Main thread only; `arrow` must stay alive as long as the layer.
+unsafe fn arrow_layer(arrow: *mut CGPath) -> *mut AnyObject {
+  // SAFETY: Core Animation calls with their declared signatures; every colour made here is released here.
+  unsafe {
+    let pointer: *mut AnyObject = msg_send![class!(CAShapeLayer), layer];
+    let fill = CGColorCreateGenericRGB(POINTER_FILL.0, POINTER_FILL.1, POINTER_FILL.2, 1.0);
+    let white = CGColorCreateGenericRGB(POINTER_EDGE.0, POINTER_EDGE.1, POINTER_EDGE.2, 1.0);
+    let shade = CGColorCreateGenericRGB(0.0, 0.0, 0.0, 1.0);
+    let _: () = msg_send![pointer, setPath: arrow];
+    let _: () = msg_send![pointer, setFillColor: fill];
+    let _: () = msg_send![pointer, setStrokeColor: white];
+    let _: () = msg_send![pointer, setLineWidth: 1.8f64];
+    // kCALineJoinRound is the NSString @"round".
+    let _: () = msg_send![pointer, setLineJoin: ns_string(c"round")];
+    let _: () = msg_send![pointer, setShadowColor: shade];
+    let _: () = msg_send![pointer, setShadowOpacity: 0.45f32];
+    let _: () = msg_send![pointer, setShadowRadius: 4.0f64];
+    let _: () = msg_send![pointer, setShadowOffset: Size { w: 0.0, h: -2.0 }];
+    let _: () = msg_send![pointer, setOpacity: 0.0f32];
+    for made in [fill, white, shade] {
+      CGColorRelease(made);
+    }
+    pointer
+  }
+}
+
+/// A point boxed for an animation's values.
+///
+/// # Safety
+/// Must run on a thread with an autorelease pool; the value is autoreleased.
+unsafe fn value(point: Point) -> *mut AnyObject {
+  // SAFETY: NSPoint is CGPoint on 64-bit macOS.
+  unsafe { msg_send![class!(NSValue), valueWithPoint: point] }
 }
 
 /// # Safety

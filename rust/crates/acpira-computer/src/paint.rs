@@ -1,13 +1,15 @@
-//! The overlay's pixels, for a system that gives the driver a bitmap to fill instead of layers (Windows): the blue
+//! The overlay's pixels, for a system that gives the driver a bitmap to fill instead of layers (Windows): the white
 //! frame around the window the agent works in, and the agent's pointer with its click ripple. Sizes are in the points
 //! macOS draws the same things with (`mac/overlay.rs`), times `scale`.
 //!
 //! Shapes are drawn from their distance fields, so edges come out smooth without a rasterizer. Pixels are
 //! premultiplied `0xAARRGGBB`, the layout of a 32-bit device-independent bitmap.
 
-/// Blue of the frame.
-const BLUE: (f64, f64, f64) = (0.04, 0.52, 1.0);
+/// The frame is white with a soft white glow, over a thin dark rim that keeps it visible on a light desktop.
+const FRAME_COLOR: (f64, f64, f64) = (1.0, 1.0, 1.0);
 const FRAME_LINE: f64 = 2.5;
+/// How far the dark rim shows on each side of the white line.
+const FRAME_RIM: f64 = 0.5;
 const FRAME_GLOW: f64 = 7.0;
 /// The frame sits this far outside the window edge.
 const FRAME_OUTSET: f64 = 2.0;
@@ -88,8 +90,9 @@ pub fn frame(window: (usize, usize), radius: f64, scale: f64) -> Bitmap {
         x = width - band;
       }
       let distance = rounded_box(x as f64 + 0.5 - width as f64 / 2.0, y as f64 + 0.5 - height as f64 / 2.0, half, radius).abs();
-      bitmap.over(x, y, BLUE, 0.55 * soft(distance - line, glow));
-      bitmap.over(x, y, BLUE, 0.95 * cover(distance - line));
+      bitmap.over(x, y, FRAME_COLOR, 0.5 * soft(distance - line, glow));
+      bitmap.over(x, y, (0.0, 0.0, 0.0), 0.28 * cover(distance - line - FRAME_RIM * scale));
+      bitmap.over(x, y, FRAME_COLOR, 0.95 * cover(distance - line));
       x += 1;
     }
   }
@@ -122,12 +125,7 @@ pub fn pointer(scale: f64, ripple: Option<f64>) -> Bitmap {
     for x in 0..size.0 {
       // In points, from the tip.
       let (px, py) = ((x as f64 + 0.5) / scale - POINTER_TIP.0, (y as f64 + 0.5) / scale - POINTER_TIP.1);
-      // The shadow falls a little below the arrow.
-      let shadow = polygon(px, py - 2.0, &ARROW) - line;
-      bitmap.over(x, y, (0.0, 0.0, 0.0), 0.45 * soft(shadow.max(0.0), 6.0));
-      let distance = polygon(px, py, &ARROW);
-      bitmap.over(x, y, POINTER_FILL, cover(distance * scale));
-      bitmap.over(x, y, POINTER_EDGE, cover((distance.abs() - line) * scale));
+      // The ring first: it spreads out from under the tip, and the pointer covers it.
       if let Some(progress) = ripple {
         // The ring grows from half its size to a bit over twice, and fades as it goes.
         let grown = 0.5 + 1.7 * progress.clamp(0.0, 1.0);
@@ -137,6 +135,12 @@ pub fn pointer(scale: f64, ripple: Option<f64>) -> Bitmap {
         bitmap.over(x, y, (0.0, 0.0, 0.0), 0.5 * fade * soft(ring.max(0.0), 2.5));
         bitmap.over(x, y, POINTER_EDGE, 0.95 * fade * cover(ring * scale));
       }
+      // The shadow falls a little below the arrow.
+      let shadow = polygon(px, py - 2.0, &ARROW) - line;
+      bitmap.over(x, y, (0.0, 0.0, 0.0), 0.45 * soft(shadow.max(0.0), 6.0));
+      let distance = polygon(px, py, &ARROW);
+      bitmap.over(x, y, POINTER_FILL, cover(distance * scale));
+      bitmap.over(x, y, POINTER_EDGE, cover((distance.abs() - line) * scale));
     }
   }
   bitmap
@@ -151,13 +155,16 @@ mod tests {
   }
 
   #[test]
-  fn the_frame_is_a_blue_line_around_an_empty_middle() {
+  fn the_frame_is_a_white_line_around_an_empty_middle() {
     let bitmap = frame((400, 300), 10.0, 1.0);
     assert_eq!((bitmap.width, bitmap.height), (432, 332));
     let at = |x: usize, y: usize| parts(bitmap.pixels[y * bitmap.width + x]);
     // The line runs two points outside the window's edge, which is 16 pixels in.
     let (a, r, g, b) = at(216, 14);
-    assert!(a > 230 && b > 220 && r < 40 && g > 100, "line pixel {:?}", (a, r, g, b));
+    assert!(a > 230 && r > 220 && g > 220 && b > 220, "line pixel {:?}", (a, r, g, b));
+    // Just outside it, the dark rim: opaque enough to show, darker than the line.
+    let (a, r, _, _) = at(216, 12);
+    assert!(a > 60 && r < 200, "rim pixel {:?}", (a, r));
     assert_eq!(at(216, 166), (0, 0, 0, 0));
     assert_eq!(at(60, 166), (0, 0, 0, 0));
     assert_eq!(at(0, 0), (0, 0, 0, 0));

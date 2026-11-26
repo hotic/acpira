@@ -8,17 +8,17 @@
 //! The one exception is keys for the window the user is already in: those go through the input stream, where every
 //! toolkit takes them.
 
-use super::apps::{handle, owner_of};
+use super::apps::{children, class_of, handle, owner_of};
 use crate::steps::Button;
 use std::thread::sleep;
 use std::time::Duration;
 use windows::Win32::Foundation::{LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{MapWindowPoints, ScreenToClient};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, SetKeyboardState, VIRTUAL_KEY};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetKeyboardState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, SetKeyboardState, VIRTUAL_KEY};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, ChildWindowFromPointEx, GUITHREADINFO, GetGUIThreadInfo, IsChild, IsZoomed, PostMessageW, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_RESTORE, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_CHAR, WM_KEYDOWN,
-  WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSCOMMAND, WM_SYSKEYDOWN, WM_SYSKEYUP,
+  CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, ChildWindowFromPointEx, GUITHREADINFO, GWL_STYLE, GetDlgCtrlID, GetGUIThreadInfo, GetParent, GetWindowLongPtrW, IsChild, IsWindowVisible, IsZoomed, PostMessageW, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_RESTORE, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_CHAR, WM_COMMAND, WM_KEYDOWN,
+  WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSCOMMAND, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_DISABLED,
 };
 
 /// ASCII "ACPR": lets input monitors tell the driver's keys from the user's.
@@ -34,10 +34,16 @@ const NOTCH: i32 = 120;
 const LINES_PER_NOTCH: i32 = 3;
 /// `EM_REPLACESEL`: replaces an edit control's selection, or inserts at its caret.
 const REPLACE_SELECTION: u32 = 0x00C2;
+const SET_SELECTION: u32 = 0x00B1;
+/// `BM_GETCHECK` / `BM_SETCHECK`: a classic check box's or radio button's mark.
+const GET_CHECK: u32 = 0x00F0;
+const SET_CHECK: u32 = 0x00F1;
 
 const VK_SHIFT: u16 = 0x10;
 const VK_CONTROL: u16 = 0x11;
 const VK_ALT: u16 = 0x12;
+/// Every modifier, generic and sided: Shift, Control, Alt, then the left and right ones, then the Windows keys.
+const MODIFIERS: [u16; 11] = [VK_SHIFT, VK_CONTROL, VK_ALT, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C];
 const VK_RETURN: u16 = 0x0D;
 const VK_TAB: u16 = 0x09;
 
@@ -246,7 +252,27 @@ pub fn focus_of(top: isize) -> Option<(isize, u32)> {
   }
   // SAFETY: plain query.
   let inside = focus != 0 && (focus == top || unsafe { IsChild(handle(top), handle(focus)).as_bool() });
-  Some((if inside { focus } else { top }, thread))
+  if inside {
+    return Some((focus, thread));
+  }
+  // A thread in the background may name no focus at all (WinUI windows such as Notepad's do not): a window that holds
+  // a single text editor takes the keys there, where its own top window would drop them.
+  Some((sole_editor(top).unwrap_or(top), thread))
+}
+
+/// Whether a window class is a text editor that takes text by message: the classic edit control or a rich edit one.
+pub fn is_edit(class: &str) -> bool {
+  class.eq_ignore_ascii_case("edit") || class.to_ascii_lowercase().contains("richedit")
+}
+
+/// The one visible text editor among the child windows of `top`, when there is exactly one.
+fn sole_editor(top: isize) -> Option<isize> {
+  // SAFETY: plain query; a window that went away answers false.
+  let editors: Vec<isize> = children(top).into_iter().filter(|child| unsafe { IsWindowVisible(handle(*child)) }.as_bool() && is_edit(&class_of(*child))).collect();
+  match editors.as_slice() {
+    [only] => Some(*only),
+    _ => None,
+  }
 }
 
 fn key_param(combo: &Combo, key: u16, up: bool) -> LPARAM {
@@ -267,9 +293,47 @@ fn key_param(combo: &Combo, key: u16, up: bool) -> LPARAM {
 
 /// Posts a key combination to `window` (see `focus_of`) `repeat` times.
 ///
-/// A posted key carries no modifiers: the app asks the system whether Control is down, and the system answers from
-/// the keyboard state of the app's thread. So for a shortcut this thread joins the app's input state, marks the
-/// modifiers as held there for as long as the app needs to read the keys, and puts the state back.
+/// Runs `send` with the app's keyboard state showing exactly the modifiers in `held`, then puts the state back. A
+/// posted key carries no modifiers: the app asks the system whether Control is down, and the system answers from the
+/// app thread's state, which follows the physical keyboard. So a shortcut needs its modifiers marked there, and a key
+/// the user holds for their own work elsewhere (Control, Shift) would otherwise modify the keys posted here: a posted
+/// Backspace became Control+Backspace and took a whole word. Without either, the state is left alone.
+fn with_modifiers(thread: u32, held: &[u16], send: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+  // SAFETY: plain query.
+  let user_holds = MODIFIERS.iter().any(|key| unsafe { GetAsyncKeyState(i32::from(*key)) } as u16 & 0x8000 != 0);
+  if held.is_empty() && !user_holds {
+    return send();
+  }
+  // SAFETY: plain calls; the keyboard state is a 256-byte table, restored before the threads part again.
+  unsafe {
+    let own = GetCurrentThreadId();
+    let joined = thread != 0 && thread != own && AttachThreadInput(own, thread, true).as_bool();
+    let mut saved = [0u8; 256];
+    let read = GetKeyboardState(&mut saved).is_ok();
+    let mut state = saved;
+    for key in MODIFIERS {
+      state[usize::from(key)] &= !0x80;
+    }
+    for key in held {
+      state[usize::from(*key)] |= 0x80;
+    }
+    if read {
+      let _ = SetKeyboardState(&state);
+    }
+    let sent = send();
+    // The app reads the keys on a later pass of its loop.
+    sleep(HELD);
+    if read {
+      let _ = SetKeyboardState(&saved);
+    }
+    if joined {
+      let _ = AttachThreadInput(own, thread, false);
+    }
+    sent
+  }
+}
+
+/// Posts a key combination to `window`, whose input thread is `thread`.
 pub fn post_keys(window: isize, thread: u32, combo: &Combo, repeat: u16) -> Result<(), String> {
   let held: Vec<u16> = [(combo.ctrl, VK_CONTROL), (combo.shift, VK_SHIFT), (combo.alt, VK_ALT)].into_iter().filter(|(on, _)| *on).map(|(_, key)| key).collect();
   // Alt alone makes a system key; with Control it is an ordinary one (AltGr).
@@ -287,36 +351,15 @@ pub fn post_keys(window: isize, thread: u32, combo: &Combo, repeat: u16) -> Resu
     }
     Ok(())
   };
-  if held.is_empty() {
-    return send();
-  }
-  // SAFETY: plain calls; the keyboard state is a 256-byte table, restored before the threads part again.
-  unsafe {
-    let own = GetCurrentThreadId();
-    let joined = thread != 0 && thread != own && AttachThreadInput(own, thread, true).as_bool();
-    let mut saved = [0u8; 256];
-    let read = GetKeyboardState(&mut saved).is_ok();
-    let mut state = saved;
-    for key in &held {
-      state[usize::from(*key)] |= 0x80;
-    }
-    if read {
-      let _ = SetKeyboardState(&state);
-    }
-    let sent = send();
-    sleep(HELD);
-    if read {
-      let _ = SetKeyboardState(&saved);
-    }
-    if joined {
-      let _ = AttachThreadInput(own, thread, false);
-    }
-    sent
-  }
+  with_modifiers(thread, &held, send)
 }
 
 /// Posts text to `window` as the characters themselves, so the keyboard layout does not matter.
-pub fn post_text(window: isize, text: &str) -> Result<(), String> {
+pub fn post_text(window: isize, thread: u32, text: &str) -> Result<(), String> {
+  with_modifiers(thread, &[], || post_chars(window, text))
+}
+
+fn post_chars(window: isize, text: &str) -> Result<(), String> {
   let plain = Combo { key: 0, ctrl: false, shift: false, alt: false, extended: false };
   let mut posted = 0;
   for c in text.chars() {
@@ -351,6 +394,43 @@ pub fn replace_selection(edit: isize, text: &str) -> bool {
   let wide: Vec<u16> = text.replace("\r\n", "\n").replace('\n', "\r\n").encode_utf16().chain(std::iter::once(0)).collect();
   // The system copies the text across to the control's process for this message; 1 keeps the insertion undoable.
   ask(edit, REPLACE_SELECTION, 1, LPARAM(wide.as_ptr() as isize)).is_some()
+}
+
+/// Replaces the whole text of a classic edit control, without focus: the value pattern's own way focuses the control,
+/// which brings a background window to the front.
+pub fn replace_all(edit: isize, text: &str) -> bool {
+  ask(edit, SET_SELECTION, 0, LPARAM(-1)).is_some() && replace_selection(edit, text)
+}
+
+/// Presses a classic button the way a click ends, without focus or the pointer: a check box changes its mark, then the
+/// dialog is told the button was clicked. The patterns' own press clicks the button, which focuses it and brings a
+/// background window to the front. `false` for a button this does not cover (disabled, a group box, an owner-drawn or
+/// an automatic radio button, whose group only the button's own click keeps right), which then takes the element's
+/// own action.
+pub fn press_button(button: isize) -> bool {
+  // SAFETY: plain queries; a window that went away answers zero or an error.
+  let (style, parent, id) = unsafe { (GetWindowLongPtrW(handle(button), GWL_STYLE) as u32, GetParent(handle(button)), GetDlgCtrlID(handle(button))) };
+  let Ok(parent) = parent else { return false };
+  if style & WS_DISABLED.0 != 0 {
+    return false;
+  }
+  match style & 0x0F {
+    // Push buttons, plain check boxes and radio buttons (the dialog sets their mark), split buttons, command links.
+    0 | 1 | 2 | 4 | 5 | 0xC..=0xF => {}
+    // An automatic check box: on goes off, off goes on.
+    3 => {
+      let Some(mark) = ask(button, GET_CHECK, 0, LPARAM(0)) else { return false };
+      ask(button, SET_CHECK, usize::from(mark == 0), LPARAM(0));
+    }
+    // An automatic three-state one: off, on, mixed, off.
+    6 => {
+      let Some(mark) = ask(button, GET_CHECK, 0, LPARAM(0)) else { return false };
+      ask(button, SET_CHECK, ((mark + 1) % 3) as usize, LPARAM(0));
+    }
+    _ => return false,
+  }
+  // BN_CLICKED is 0, so the word above the control's id stays empty.
+  post(parent.0 as isize, WM_COMMAND, id as u16 as usize, LPARAM(button)).is_ok()
 }
 
 fn key_input(key: u16, unit: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {

@@ -4,12 +4,11 @@ An agent reads and operates the windows of other apps on the user's computer: `c
 
 ## Shape
 
-- `core.rs` is the driver every system shares (requests, approval, refs, diff, reply texts) over the `Platform` trait; `mac/` and `win/` implement it. Everything below up to "Windows" is the macOS side.
+- `core.rs` is the driver every system shares (requests, the deny list, refs, diff, reply texts) over the `Platform` trait; `mac/` and `win/` implement it. Everything below up to "Windows" is the macOS side.
 - The driver is the engine's own binary run as `acpira computer-use serve`, a child process and never an app or bundle of its own: macOS attributes its Accessibility and Screen Recording use to the app that owns the engine, so the grants are that app's and the user sees one name in System Settings.
 - A process of its own, because the overlay needs AppKit's main thread and a hung target app must not hang the engine. One per engine; every session's calls queue for it.
-- The `computer` tool group is the only one off by default (`host_tools::OFF_BY_DEFAULT`). Its tools are not in `host_tools::ALL`: the built-in agent asks for `computer_act` like for any MCP tool, on top of the per-app question.
-- The per-app approval is enforced in the driver, from the `allow` list each request carries: resolving a name to an app and checking it happen in one place. `computer.json` in the data home holds the apps allowed for good. The app list gives window titles only for allowed apps: a title is content.
-- Never driven, whatever the user answers or `computer.json` says: password stores and system prompts (`NEVER`), and the app the engine itself belongs to (its bundle on macOS, the exe itself on Windows), since it shows the approval cards and an agent clicking there would approve itself. A `deny` entry is a system id, a whole path or a program's file name. The engine refuses them before asking and the driver again from the `deny` list. An editor hosting the extension is not covered: approving it gives the agent Acpira's cards inside it.
+- The `computer` tool group is the only one off by default (`host_tools::OFF_BY_DEFAULT`), and its switch is the whole consent: no per-app question, every app may be driven once it is on. Its tools are not in `host_tools::ALL`: the built-in agent asks for `computer_act` like for any MCP tool.
+- Never driven, switch or not: password stores and system prompts (`NEVER`), and the app the engine itself belongs to (its bundle on macOS, the exe itself on Windows), since it shows Acpira's permission cards and settings and an agent clicking there would grant itself more. The driver refuses them from the `deny` list every request carries; an entry is a system id, a whole path or a program's file name. An editor hosting the extension is not covered: the agent can reach Acpira's cards inside it.
 - A request that fails midway is never sent again: its steps may have run.
 
 ## Reading
@@ -47,23 +46,31 @@ All in `private.rs`, resolved at run time. Facts verified on macOS 26 and 27 by 
 
 - A transparent click-through window ordered directly above the target window (`NSWindowAbove` relative to its id), not above everything: what covers the target covers the frame and pointer too.
 - Never drawn for a hidden, minimized or off-Space window.
+- The frame is white over a thin dark rim; a blue one read as another product's look. Click rings sit under the pointers.
+- In one `act`, every step that lands somewhere except the last is shown by a clone flying in from outside the window; the agent's own pointer takes the last. `core.rs` marks the steps, `motion.rs` holds the curve and timing both systems draw with, so macOS and Windows move alike.
+- objc2 cannot send `functionWithControlPoints::::` (unnamed selector parts), so macOS moves are keyframe animations sampled from `motion.rs` rather than a timing function.
 
 ## Windows
 
-Written against the documented behaviour and compiled; only the parts Wine implements have run (see Open).
+Run on Windows 11 26200 with a Chinese UI: Notepad (WinUI), Character Map and System Information in the background, the front never changing.
 
 - Reading is UI Automation with one cache request for the whole subtree: a property read per element is a call into the other process each. An element is known by its runtime id, a window by its handle.
 - An element's own pattern first (Invoke, Toggle, SelectionItem, ExpandCollapse, the legacy default action), on a helper thread with a time limit: Invoke on something that opens a modal dialog returns only when the dialog closes. Never `SetFocus`: it brings the app forward.
+- The system's proxies for classic controls focus them inside their patterns: Invoke on a `Button`, SetValue on an `Edit` bring a background window to the front. Classic buttons are pressed by their `BN_CLICKED` to the dialog (an automatic check box gets its new mark first), classic edits are set by select-all + `EM_REPLACESEL`. Automatic radio buttons still take the pattern: only their own click keeps the group right.
 - Everything else is messages posted to the innermost child window under the point; `SendInput` only for keys when the target already is the user's foreground window, never for the pointer.
+- A left click by position that lands on a row of the last outline taking a press (the smallest there, checked against where it is now) takes that element's action, as a click by ref does: a posted click can focus the control and bring its window forward, and some apps ignore posted pointer input. Not a hit test, which would find whatever covers the window.
+- The driver never activates a window, but an app may ask for the front itself: Notepad (WinUI) does whenever its text changes in the background, by `WM_CHAR` or `EM_REPLACESEL` alike. Windows refuses while the user's app holds the front locked; test runs without the lock saw it granted.
 - A posted key carries no modifiers: the driver attaches to the target's input thread and sets its key state for the length of the key. A shortcut that a classic menu item shows goes as that item's `WM_COMMAND` instead.
+- The target thread's key state follows the physical keyboard: a modifier the user holds while working elsewhere turns a posted Backspace into Ctrl+Backspace and text into capitals. Whenever the user holds one, keys and text go with every modifier cleared but those asked for.
 - A posted key's character is queued by the target when it reads the key, behind whatever was posted meanwhile: the steps of a request rely on the settle wait between them for their order.
 - Text for classic `Edit` / `RichEdit` controls is `EM_REPLACESEL`, for anything else `WM_CHAR`.
-- Only classic menu bars (`HMENU`) are kept by the system and readable from outside; ribbons and drawn menus are elements of the window. Popups (open menus, drop-downs) are windows of their own: the same thread's are read under the window they belong to.
+- A background WinUI window (Notepad) names no focus in `GetGUIThreadInfo`, and its top window drops posted keys: they go to its only visible edit child (`RichEditD2DPT`) when it has exactly one.
+- Only classic menu bars (`HMENU`) are kept by the system and readable from outside; ribbons and drawn menus are elements of the window. Chinese, Japanese and Korean menus write the access key in brackets (`文件(&F)`): titles drop it, and a path matches without an item's trailing dots. Popups (open menus, drop-downs) are windows of their own: the same thread's are read under the window they belong to. A WinUI menu flyout opened in a background window is reported off screen, so it cannot be read.
 - The title bar's buttons take no posted click: `WM_NCHITTEST` says which one a point is and the window gets its `WM_SYSCOMMAND`.
 - A program running as administrator takes no messages from an engine that does not (UIPI): refused with that reason. The secure desktop (UAC, lock screen) is another desktop, seen as "locked".
 - A packaged app's window belongs to `ApplicationFrameHost`; the app is the process of the `CoreWindow` inside. Cloaked windows (other virtual desktops, suspended apps) are not listed.
 - Pictures are `PrintWindow` with full content, which draws covered windows too; a minimized one has no surface. The window's rectangle is wider than what is seen of it by an invisible border: pictures and points use the seen frame.
-- The overlay is two layered click-through windows kept directly above the target in Z-order, drawn in software (`paint.rs`).
+- The overlay is layered click-through windows (the frame, the pointer, one per clone in flight, reused) kept directly above the target in Z-order, drawn in software (`paint.rs`).
 - `cmd` in a shortcut means `ctrl`; the Windows key is refused.
 
 ## Checking
@@ -71,11 +78,14 @@ Written against the documented behaviour and compiled; only the parts Wine imple
 - Live checks need a real, unlocked screen. Use a fixture app, a scratch file in TextEdit and a dedicated Chrome window, and check the front app after every step.
 - A test never types into an app's current window: apps hold the user's open documents. It names its own window in every call.
 - A browser launched for a test brings itself forward when the user is idle, whatever `open -g` says.
+- Windows: SSH runs in session 0, which has no desktop; live checks run as a scheduled task with `/it` in the logged-on session. An app the test starts inherits the right to take the front, and simulated keys (`keybd_event`) do not end it the way the user's own input does, so a front change in such a run may be the harness. The faithful check for covered windows and concurrent typing is the user's app as a process of its own that takes the front and calls `LockSetForegroundWindow`, with the targets started behind it.
+- Notepad brings back every tab it had, unsaved ones included: a test closes its own tab without saving and never kills Notepad.
 
 ## Open
 
 - Under an editor extension the grants are attributed to the editor.
 - Posted events (click by position, scroll, keys) cannot reach a hidden app; only element actions do.
 - Windows on another Space are not listed by `AXWindows`.
-- The Windows driver has not run on Windows. Under Wine (no cache requests in its UI Automation, no cross-process menus) these did: window listing, posted text, keys with modifiers, clicks by position, pictures, the overlay. Reading, element actions, menus, packaged apps and settling wait for a real desktop.
+- Windows, not run yet: `CoreWindow` packaged apps (Calculator, Settings), Chromium / Electron, a program running as administrator, radio button groups.
+- Windows: whether the user's own recent input, without a lock, keeps an app that asks for the front (Notepad on a text change) from getting it, with the default foreground lock timeout.
 - Linux has no driver. AT-SPI could read and press on X11 and Wayland; Wayland gives no background input to a third party.

@@ -32,34 +32,18 @@ mod tools;
 
 use acpira_agent::prompt::{BASE, Library};
 
-use crate::relay::wire::HostFeatures;
 use self::relay_client::{Relay, listing_print};
 use self::tools::{
   ask_tool_def, browser_tool_def, call_show_image, call_show_video, call_show_widget, call_workspace_hooks, caller_tool_def, computer_tool_defs, hooks_tool_def, plugin_activate_def,
   plugin_guide_def, session_tool_defs, tool_def, tool_error, video_tool_def, widget_tool_def,
 };
-pub use self::tools::{video_mime_of, widget_mime_of};
+#[cfg(test)]
+use crate::relay_wire::HostFeatures;
+pub use crate::relay_wire::instructions;
+pub use acpira_shared::host_tools::{has_server, is_host_entry, push_entry, video_mime_of, widget_mime_of, without_server};
 
 /// Answered when the client does not name a protocol version
 const PROTOCOL_VERSION: &str = "2025-06-18";
-
-/// The server's instructions for what the serving engine offers, from the session's prompts (`mcp/*`, composed by the
-/// engine: `AcpSession::prompts`). Server instructions reach the model even where the client defers tools behind a
-/// search, so `@name` is tied to `ask_agent`, sessions to their links and the browser to `open_browser` before the
-/// model goes looking. `plugins_root` is the engine's plugins folder, which a data home other than ~/.acpira moves
-pub fn instructions(prompts: &Library, features: &HostFeatures) -> String {
-  let text = |name: &str| prompts.text(name, BASE);
-  let mut out = vec![text("mcp/base"), text("mcp/relay")];
-  if features.summoned {
-    out.push(text("mcp/caller"));
-  }
-  if features.browser {
-    out.push(text("mcp/browser"));
-  }
-  out.push(text("mcp/sessions"));
-  out.push(prompts.render("mcp/plugins", BASE, &[("root", features.plugins_root.as_deref().unwrap_or("~/.acpira/plugins"))]));
-  out.join("\n\n")
-}
 
 pub use acpira_shared::host_tools::{PLUGIN_ACTIVATE, PLUGIN_GUIDE};
 
@@ -117,38 +101,35 @@ impl HostMcp {
   }
 }
 
+impl crate::acp::session::ext::SessionHostMcp for HostMcp {
+  fn entry_for(&self, agent: &str) -> Option<Value> {
+    HostMcp::entry_for(self, agent)
+  }
+
+  fn entry_for_session(&self, agent: &str, session: &Arc<crate::acp::session::AcpSession>, thread: Option<&str>, depth: u32) -> Option<Value> {
+    HostMcp::entry_for_session(self, agent, session, thread, depth)
+  }
+
+  fn host_stdio_entry(&self, session: &Arc<crate::acp::session::AcpSession>, name: &str) -> Option<Value> {
+    HostMcp::host_stdio_entry(self, session, name)
+  }
+
+  fn refuse(&self, agent: &str) {
+    HostMcp::refuse(self, agent)
+  }
+
+  fn refused(&self, agent: &str) -> bool {
+    HostMcp::refused(self, agent)
+  }
+
+  fn plugin_cards(&self) -> Option<Arc<dyn crate::acp::session::ext::PluginCardPort>> {
+    self.hub.as_ref().and_then(|h| h.plugin_host()).map(|p| p as Arc<dyn crate::acp::session::ext::PluginCardPort>)
+  }
+}
+
 /// The `mcpServers` entry for a session request (ACP stdio server: no `type` field, env as name/value pairs)
 pub fn server_entry(exe: &str) -> Value {
   json!({ "name": SERVER_NAME, "command": exe, "args": ["mcp"], "env": [] })
-}
-
-/// Add the host's entry to a session's `mcpServers`. Its name is the engine's own: a shared server called the same (a
-/// project's .mcp.json) is left out first, or an agent that keeps the first of two names (the built-in agent) would drop
-/// Acpira's server and trust that one's tools as Acpira's. True when one was left out
-pub fn push_entry(servers: &mut Vec<Value>, entry: Option<Value>) -> bool {
-  let Some(entry) = entry else { return false };
-  let before = servers.len();
-  servers.retain(|s| s.get("name").and_then(Value::as_str) != Some(SERVER_NAME));
-  let shadowed = servers.len() < before;
-  servers.push(entry);
-  shadowed
-}
-
-/// True when a session request's `mcpServers` carries the host's own entry
-pub fn has_server(req: &Value) -> bool {
-  req.get("mcpServers").and_then(Value::as_array).is_some_and(|l| l.iter().any(is_host_entry))
-}
-
-/// The same request without the host's entry (for an agent that refuses it)
-pub fn without_server(mut req: Value) -> Value {
-  if let Some(list) = req.get_mut("mcpServers").and_then(Value::as_array_mut) {
-    list.retain(|s| !is_host_entry(s));
-  }
-  req
-}
-
-pub fn is_host_entry(s: &Value) -> bool {
-  s.get("name").and_then(Value::as_str) == Some(SERVER_NAME) && s.get("args").and_then(Value::as_array).is_some_and(|a| a.first().and_then(Value::as_str) == Some("mcp"))
 }
 
 /// `acpira mcp-host`: stand in for a project MCP server on the SSH host of the session's folder. The agent starts this
