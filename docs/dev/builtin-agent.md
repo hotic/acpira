@@ -17,7 +17,7 @@ Acpira's own agent (`acpira`) for models without an official harness: OpenAI-com
 - Trap: an allow narrower than `*` never matches a command with shell structure (`;`, `&`, `|`, redirects, backtick, `$(`, newline; quoting unparsed), so it always asks.
 - `acp::reconcile` (resume, `set_config_option`, turn start) keeps the session on what the picker shows: a remembered effort or a switched-off model never leaves it refusing to run. A broken `providers.json` or no usable model keeps the stored pick.
 - Titles (`title.rs`): a fast-model side call logged as `title`, not `request` — it shares no prefix.
-- Fast on the wire: Anthropic `speed: "fast"` + the fast-mode beta header; Chat / Responses `service_tier: "priority"` (older models and gateways only accept that spelling). A toggle is a `view` change — speed changes invalidate Anthropic's cache.
+- Fast / Ultra Fast on the wire: Anthropic `speed: "fast"` + the fast-mode beta header; Chat / Responses `service_tier: "priority"` for Fast (older models and gateways only accept that spelling) and `service_tier: "ultrafast"` for Ultra Fast. A tier change is a `view` change — speed changes invalidate Anthropic's cache.
 - The tool table stays as first sent: a changed tool definition invalidates the whole Anthropic cache, so a sidekick pick after the first message goes as a `<sidekick>` note. Only a pick while `ask_agent` is absent, or a roster edit, costs a rebuild. Sidekick selects go only to a client declaring `_meta["acpira/sidekick"]`, in custom categories.
 - `available_commands_update` never records (replay would repeat a stale list). `/skill` detection (`skills::sigil_lead`) mirrors the composer's `SIGIL_LEAD`; change both together.
 - Steering (`steer.rs`): waiting messages go before the next model call, behind the round's tool results; a running command or stream is never preempted. Ending the turn and closing intake are one decision under the state lock (`steer::may_end`). Idle, it answers `promptRequired`, never starting a turn.
@@ -90,7 +90,7 @@ Model steps take seconds against ms of tool time, so tools batch work (`todos` r
 ## Model discovery
 
 - `llm/discover.rs`: metadata the endpoint omits is `estimated`, never a limit. A gateway's `default_reasoning_level` is ignored; the family's level wins.
-- `ProviderModel::offered_efforts` is the only scale rule (composer, sidekick, roster, settings). A guessed or empty scale takes the catalogue's. Trap: an empty scale cannot mean "send no level"; thinking off does.
+- `ProviderModel::offered_efforts` governs composer, sidekick, roster and settings. Guessed or empty levels use the catalogue. Turning thinking off disables them. The model select's `_meta["acpira/modelParams"]` previews each provider/model before selection. An entry, even empty, supersedes remembered parameters.
 - A reasoning model with no known levels gets `DEFAULT_EFFORTS`, else thinking stays `auto` (`gemini-4-argon` on a gateway Responses route ran on 0 reasoning tokens).
 - Ollama's `/api/show` context is the trained window, not the served `num_ctx` (always estimated); LM Studio's loaded window wins.
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, findSidekickFamily, isFastControl, isUltraLevel, levelShort, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, sidekickChannel, sidekickClis, sidekickFamilies, thoughtCorrection } from '../composerControls';
+import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, findSidekickFamily, isFastControl, isFastToggle, isUltraLevel, levelShort, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, sidekickChannel, sidekickClis, sidekickFamilies, speedTier, thoughtCorrection } from '../composerControls';
 import { groupModels } from '../models';
 import type { ConfigControl } from '../transcript';
 
@@ -56,12 +56,29 @@ describe('shared composer controls', () => {
     const ultrafast: ConfigControl = { id: 'speed', name: 'Speed', category: 'model_config', value: 'ultrafast', options: [
       { id: 'standard', name: 'Standard' }, { id: 'ultrafast', name: 'Ultrafast' },
     ] };
+    // Three-tier speed select: Standard / Fast / Ultra Fast (built-in agent & future codex-acp)
+    const threeTier: ConfigControl = { id: 'fast', name: 'Fast', category: 'speed', value: 'ultrafast', options: [
+      { id: 'standard', name: 'Off' }, { id: 'fast', name: 'Fast' }, { id: 'ultrafast', name: 'Ultra Fast' },
+    ] };
     expect(composerControls([claude]).modelConfig).toEqual([claude]);
-    for (const c of [fast, claude, speed, ultrafast]) {
+    for (const c of [fast, claude, speed]) {
       expect(isFastControl(c)).toBe(true);
+      expect(isFastToggle(c)).toBe(true);
       expect(fastOn(c)).toBe(true);
+      expect(speedTier(c)).toBe('fast');
       expect(modelConfigChip(c)).toBe('Fast');
     }
+    for (const c of [ultrafast, threeTier]) {
+      expect(isFastControl(c)).toBe(true);
+      expect(isFastToggle(c)).toBe(false);
+      expect(fastOn(c)).toBe(true);
+      expect(speedTier(c)).toBe('ultrafast');
+      expect(modelConfigChip(c)).toBe('Ultra Fast');
+    }
+    expect(speedTier({ ...threeTier, value: 'fast' })).toBe('fast');
+    expect(modelConfigChip({ ...threeTier, value: 'fast' })).toBe('Fast');
+    expect(modelConfigChip({ ...threeTier, value: 'standard' })).toBeUndefined();
+    expect(chipTags(undefined, undefined, [], [threeTier], 'Standard')).toEqual([{ label: 'Ultra Fast', short: '', fast: true, ultraFast: true }]);
     expect(modelConfigChip({ ...fast, value: 'false' })).toBeUndefined();
     expect(modelConfigChip({ ...ultrafast, value: 'standard' })).toBeUndefined();
     expect(fastOn({ ...ultrafast, value: 'standard' })).toBe(false);

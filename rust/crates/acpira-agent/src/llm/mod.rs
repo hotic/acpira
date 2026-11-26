@@ -114,8 +114,8 @@ pub struct Request {
   pub effort: Option<String>,
   /// Groups requests for the provider's prompt cache (the session id; Responses' `prompt_cache_key`)
   pub cache_key: Option<String>,
-  /// Ask for the provider's fast tier (`fast.rs`); set only for a model that offers it
-  pub fast: bool,
+  /// Ask for the provider's fast / ultra-fast tier (`fast.rs`); set only for a model that offers it
+  pub fast: fast::SpeedTier,
 }
 
 /// Token usage of one call. `input` counts every prompt token, cached ones included

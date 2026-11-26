@@ -220,8 +220,11 @@ fn ok(body: Value) -> Reply {
 
 #[test]
 fn service_tiers_flag_the_fast_models_and_absence_leaves_them_undecided() {
-  // Codex-style gateway listings name tiers per model; fast-capable models carry `priority` or `fast`
+  // Codex-style gateway listings name tiers per model; fast-capable models carry `priority` or `fast`, and `ultrafast`
+  let both = listed(json!({ "id": "gpt-6.2-astra", "service_tiers": [{ "id": "default" }, { "id": "priority", "name": "Fast" }, { "id": "ultrafast", "name": "Ultra Fast" }] }));
+  assert_eq!((both.fast, both.ultrafast), (Some(true), Some(true)));
   assert_eq!(listed(json!({ "id": "gpt-6.1-sol", "service_tiers": [{ "id": "default" }, { "id": "priority", "name": "Fast" }] })).fast, Some(true));
+  assert_eq!(listed(json!({ "id": "gpt-6.1-sol", "service_tiers": [{ "id": "default" }, { "id": "priority", "name": "Fast" }] })).ultrafast, Some(false));
   let strings = listed(json!({ "id": "grok-4.7", "service_tiers": ["default", "priority"] }));
   assert_eq!(strings.fast, Some(true));
   // The tier may be spelled out either way, upper case or with padding

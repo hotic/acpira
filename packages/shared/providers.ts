@@ -36,6 +36,11 @@ export interface ProviderModel {
   fast?: boolean | null;
   // Whether the endpoint's model list advertised a fast tier (`service_tiers`); consulted while `fast` is absent
   fastListed?: boolean | null;
+  // Whether sessions also offer the Ultra Fast tier (`service_tier: "ultrafast"`); absent decides from
+  // `ultrafastListed` and the known list (llm/fast.rs)
+  ultrafast?: boolean | null;
+  // Whether the endpoint's model list advertised an `ultrafast` tier (`service_tiers`); consulted while `ultrafast` is absent
+  ultrafastListed?: boolean | null;
   sampling: Sampling;
   // Tool-call rounds per turn before the agent pauses; null = no cap
   maxSteps?: number | null;

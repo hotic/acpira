@@ -259,9 +259,10 @@ pub struct SubagentPersona {
   /// A value of that agent's reasoning-effort select; absent = the default
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub effort: Option<String>,
-  /// Its Fast switch (only the built-in agent's sidekick sets it); absent = left as the CLI has it
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub fast: Option<bool>,
+  /// Its speed tier (`standard` / `fast` / `ultrafast`; only the built-in agent's sidekick sets it); absent = left
+  /// as the CLI has it. Accepts legacy booleans (`true` → `"fast"`, `false` → `"standard"`) on deserialize
+  #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_fast")]
+  pub fast: Option<String>,
   #[serde(default)]
   pub mode: RelayMode,
   /// Tells the model when to summon it
@@ -281,6 +282,16 @@ pub struct SubagentPersona {
 
 fn enabled_default() -> bool {
   true
+}
+
+fn de_opt_fast<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+  let Some(v) = Option::<serde_json::Value>::deserialize(d)? else { return Ok(None) };
+  match v {
+    serde_json::Value::Bool(true) => Ok(Some("fast".into())),
+    serde_json::Value::Bool(false) => Ok(Some("standard".into())),
+    serde_json::Value::String(s) if !s.is_empty() => Ok(Some(s)),
+    _ => Ok(None),
+  }
 }
 
 pub const PERSONA_MAX: usize = 32;

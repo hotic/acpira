@@ -21,7 +21,7 @@ pub(super) fn log_view(session: &Session, s: &Setup, request: &Request) {
     "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
     "tools": request.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
     "toolsDigest": tools_digest(&request.tools),
-    "fast": request.fast,
+    "fast": request.fast.to_state(),
   });
   let prev = session.state.lock().last_view.replace(view.clone());
   if let Some(prev) = prev
@@ -62,8 +62,8 @@ pub(super) fn request_event(s: &Setup) -> Value {
       "compaction": { "auto": s.policy.auto, "threshold": s.policy.threshold(s.model.context.unwrap_or(DEFAULT_CONTEXT), s.model.output) },
     },
   });
-  if s.fast {
-    ev["fast"] = json!({});
+  if s.fast.is_fast() {
+    ev["fast"] = if s.fast == llm::fast::SpeedTier::Ultrafast { json!({ "tier": "ultrafast" }) } else { json!({}) };
   }
   ev
 }
@@ -198,12 +198,26 @@ pub(super) fn log_request(
   reply: Option<&llm::Reply>,
 ) {
   let mut ev = request_event(s);
-  // A fast request is billed at the fast tier unless the provider says it served the standard one
-  let fast_billed = s.fast && reply.and_then(|r| llm::fast::served_fast(r.served.as_deref())).unwrap_or(true);
-  if let Some(served) = reply.and_then(|r| r.served.as_deref()).filter(|_| s.fast) {
+  // A fast / ultra-fast request is billed at the tier the provider says it served (or the requested tier when omitted)
+  let served_tier = if s.fast.is_fast() { reply.and_then(|r| llm::fast::served_tier(r.served.as_deref())).unwrap_or(s.fast) } else { llm::fast::SpeedTier::Standard };
+  if let Some(served) = reply.and_then(|r| r.served.as_deref()).filter(|_| s.fast.is_fast()) {
     ev["fast"]["served"] = Value::from(served);
   }
   ev["ms"] = json!(started.elapsed().as_millis() as u64);
+  let now = std::time::Instant::now();
+  let prev = session.state.lock().last_request_at.replace((s.pick.clone(), now));
+  if let Some((prev_model, prev_end)) = prev
+    && prev_model == s.pick
+  {
+    let gap_ms = started.saturating_duration_since(prev_end).as_millis() as u64;
+    ev["gapMs"] = json!(gap_ms);
+    if let Some(ttl_s) = s.endpoint.family.cache_ttl {
+      ev["cacheTtlS"] = json!(ttl_s);
+      if gap_ms > u64::from(ttl_s) * 1000 {
+        ev["cacheTtlExceeded"] = Value::Bool(true);
+      }
+    }
+  }
   if attempt > 1 {
     ev["attempt"] = json!(attempt);
   }
@@ -214,7 +228,7 @@ pub(super) fn log_request(
     }
     // At list prices: an estimate, not the bill (discounts, tiers and gateways' markups are not known here)
     if let Some(c) = &s.cost {
-      let factor = if fast_billed { llm::fast::PRICE_FACTOR } else { 1.0 };
+      let factor = llm::fast::price_factor(served_tier);
       ev["cost"] = json!(c.estimate(u.input, u.output, u.cache_read, u.cache_write) * factor);
     }
   }

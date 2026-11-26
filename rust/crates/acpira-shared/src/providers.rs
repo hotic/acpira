@@ -19,6 +19,11 @@ pub fn provider_secret_key(id: &str) -> String {
   format!("{PROVIDER_SECRET_PREFIX}{id}")
 }
 
+/// Vault key where a host keeps aside its own source key when an older remote helper merges another machine's source.
+pub fn kept_secret_key(id: &str) -> String {
+  format!("{}/kept", provider_secret_key(id))
+}
+
 /// Vault keys of the web search backends (`web_secret_key`), apart from the model sources' so a source id never meets one
 pub const WEB_SECRET_PREFIX: &str = "acpira.web.";
 
@@ -242,6 +247,14 @@ pub struct ProviderModel {
   /// is `None`
   #[serde(default, rename = "fastListed", skip_serializing_if = "Option::is_none")]
   pub fast_listed: Option<bool>,
+  /// Whether the session also offers the Ultra Fast tier (`service_tier: "ultrafast"`): None decides from the
+  /// endpoint's listing and known models (`acpira_agent::llm::fast`), true / false override both
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub ultrafast: Option<bool>,
+  /// Whether the endpoint's model list advertised an `ultrafast` tier (`service_tiers`) for this model; consulted
+  /// while `ultrafast` is `None`
+  #[serde(default, rename = "ultrafastListed", skip_serializing_if = "Option::is_none")]
+  pub ultrafast_listed: Option<bool>,
   #[serde(default)]
   pub sampling: Sampling,
   /// Tool-call rounds per turn before the agent pauses; None = no cap
@@ -280,6 +293,8 @@ impl ProviderModel {
       family: None,
       fast: None,
       fast_listed: None,
+      ultrafast: None,
+      ultrafast_listed: None,
       sampling: Sampling::default(),
       max_steps: None,
       estimated: vec![],

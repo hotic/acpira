@@ -289,7 +289,7 @@ mod tests {
       thinking: Default::default(),
       effort: None,
       cache_key: None,
-      fast: false,
+      fast: crate::llm::fast::SpeedTier::Standard,
     }
   }
 

@@ -24,7 +24,7 @@ fn request() -> Request {
     thinking: Thinking::Auto,
     effort: None,
     cache_key: None,
-    fast: false,
+    fast: acpira_agent::llm::fast::SpeedTier::Standard,
   }
 }
 

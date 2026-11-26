@@ -89,8 +89,14 @@ pub fn body(req: &Request, family: &Family) -> Value {
     body.insert("top_k".into(), Value::from(k));
   }
   apply_thinking(&mut body, family, req.thinking, req.effort.as_deref());
-  if req.fast {
-    body.insert("service_tier".into(), Value::from(fast::OPENAI_TIER));
+  match req.fast {
+    fast::SpeedTier::Standard => {}
+    fast::SpeedTier::Fast => {
+      body.insert("service_tier".into(), Value::from(fast::OPENAI_TIER));
+    }
+    fast::SpeedTier::Ultrafast => {
+      body.insert("service_tier".into(), Value::from(fast::OPENAI_ULTRAFAST_TIER));
+    }
   }
   Value::Object(body)
 }
@@ -421,7 +427,7 @@ mod tests {
       thinking: Thinking::Auto,
       effort: None,
       cache_key: None,
-      fast: false,
+      fast: fast::SpeedTier::Standard,
     }
   }
 
@@ -497,8 +503,10 @@ mod tests {
   fn a_fast_call_asks_for_the_priority_tier() {
     let mut r = req(vec![Item::User(vec![Part::Text("hi".into())])]);
     assert!(body(&r, &GENERIC).get("service_tier").is_none());
-    r.fast = true;
+    r.fast = fast::SpeedTier::Fast;
     assert_eq!(body(&r, &GENERIC)["service_tier"], "priority");
+    r.fast = fast::SpeedTier::Ultrafast;
+    assert_eq!(body(&r, &GENERIC)["service_tier"], "ultrafast");
     let (events, _) = run(
       &[
         json!({ "service_tier": "default", "choices": [{ "index": 0, "delta": { "content": "ok" } }] }),

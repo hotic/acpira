@@ -98,3 +98,41 @@ async fn the_switch_is_a_boolean_for_a_client_that_takes_them_and_survives_a_reo
   let r = h.conn.request("session/resume", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
   assert_eq!(option(&r, "fast").unwrap()["currentValue"], true);
 }
+
+#[tokio::test]
+async fn ultrafast_model_offers_three_tier_select_and_sends_ultrafast_service_tier() {
+  let h = Harness::start().await;
+  h.conn.request("initialize", json!({ "protocolVersion": 1, "clientCapabilities": { "session": { "configOptions": { "boolean": {} } } } })).await.unwrap();
+  let server = MockModel::start();
+  h.providers(&server.base_url(), json!([{ "id": "gpt-6.2-astra" }, { "id": "gpt-5.6-sol" }]));
+  let s = h.new_session().await;
+  let sid = s["sessionId"].as_str().unwrap().to_owned();
+  // Even for boolean-capable clients, a 3-tier model emits a select with Off / Fast / Ultra Fast
+  let fast = option(&s, "fast").expect("gpt-6.2-astra has fast & ultrafast tiers");
+  assert_eq!((fast["type"].as_str(), fast["currentValue"].as_str()), (Some("select"), Some("standard")));
+  let vals: Vec<&str> = fast["options"].as_array().unwrap().iter().map(|o| o["value"].as_str().unwrap()).collect();
+  assert_eq!(vals, ["standard", "fast", "ultrafast"]);
+
+  let r = set(&h, &sid, "fast", json!("ultrafast")).await.unwrap();
+  assert_eq!(option(&r, "fast").unwrap()["currentValue"], "ultrafast");
+  server.push(mock::text("zoom"));
+  prompt(&h, &sid).await;
+  assert_eq!(server.requests()[0].body["service_tier"], "ultrafast");
+  let reqs = events(&h, &sid, "request");
+  assert_eq!(reqs[0]["fast"]["tier"], "ultrafast");
+
+  // Switching to a Fast-only model shows a boolean switch clamped to Fast (`true`), and rejects `"ultrafast"`
+  let r = set(&h, &sid, "model", json!("mock/gpt-5.6-sol")).await.unwrap();
+  assert_eq!((option(&r, "fast").unwrap()["type"].as_str(), option(&r, "fast").unwrap()["currentValue"].as_bool()), (Some("boolean"), Some(true)));
+  assert!(set(&h, &sid, "fast", json!("ultrafast")).await.is_err());
+
+  // Switching back restores Ultra Fast, and a reopen keeps it
+  let r = set(&h, &sid, "model", json!("mock/gpt-6.2-astra")).await.unwrap();
+  assert_eq!(option(&r, "fast").unwrap()["currentValue"], "ultrafast");
+  let Harness { home, cwd, conn, .. } = h;
+  drop(conn);
+  let h = Harness::start_in(home, cwd).await;
+  h.conn.request("initialize", json!({ "protocolVersion": 1, "clientCapabilities": { "session": { "configOptions": { "boolean": {} } } } })).await.unwrap();
+  let r = h.conn.request("session/resume", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
+  assert_eq!(option(&r, "fast").unwrap()["currentValue"], "ultrafast");
+}

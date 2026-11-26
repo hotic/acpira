@@ -39,6 +39,8 @@ export function SwitchRow({ label, icon, checked, disabled, onChange }: SwitchRo
 
 export interface SelectRowProps<V extends string> {
   label: string;
+  // Leading icon in the same column as SwitchRow (used under a lone model row)
+  icon?: ReactNode;
   // `description` is a second line under the label in the menu (a model's source)
   options: { value: V; label: string; description?: string; disabled?: boolean }[];
   value: V;
@@ -47,13 +49,14 @@ export interface SelectRowProps<V extends string> {
 
 // A --row-tall row with the label on the left and the current value + caret at the end; the whole row opens a radio menu.
 // For dimensions with too many values to lay out as pills (a Fusion lead / sidekick); disabled entries stay listed so the menu keeps its shape
-export function SelectRow<V extends string>({ label, options, value, onChange }: SelectRowProps<V>) {
+export function SelectRow<V extends string>({ label, icon, options, value, onChange }: SelectRowProps<V>) {
   const cur = options.find(o => o.value === value);
   const twoLine = options.some(o => o.description);
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger aria-label={label}
         className="group/chip flex min-h-row w-full items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover">
+        {icon && <span className="flex size-icon shrink-0 items-center justify-center [&_svg]:size-icon">{icon}</span>}
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="min-w-0 truncate text-fg-2">{cur?.label ?? value}</span>
         <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN)} strokeWidth={1.75} />

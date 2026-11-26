@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use acpira_rpc::rpc::RpcError;
 use acpira_shared::model_catalog::Catalog;
+use acpira_shared::providers::{Provider, ProviderModel, model_pick};
 
 use super::{Server, Session, SessionState, str_param};
 use crate::config::Config;
@@ -42,7 +43,7 @@ impl Server {
     json!({ "currentModeId": st.mode, "availableModes": st.sent_modes })
   }
 
-  pub(super) fn set_mode(&self, params: &Value) -> Result<Value, RpcError> {
+  pub(crate) fn set_mode(&self, params: &Value) -> Result<Value, RpcError> {
     let session = self.session(str_param(params, "sessionId")?)?;
     let mode = str_param(params, "modeId")?;
     if !self.offers_mode(mode) {
@@ -60,7 +61,7 @@ impl Server {
     Ok(json!({}))
   }
 
-  pub(super) fn set_config_option(&self, params: &Value) -> Result<Value, RpcError> {
+  pub(crate) fn set_config_option(&self, params: &Value) -> Result<Value, RpcError> {
     let session = self.session(str_param(params, "sessionId")?)?;
     let config_id = str_param(params, "configId")?;
     let raw = params.get("value").unwrap_or(&Value::Null);
@@ -96,16 +97,15 @@ impl Server {
         session.permissions_changed.notify_waiters();
       }
       FAST => {
-        if !st.model.as_deref().and_then(|p| config.find(p)).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)) {
+        let offered = st.model.as_deref().and_then(|p| config.find(p)).map(|(p, m)| crate::llm::fast::offered_tiers(p, m)).unwrap_or_default();
+        if !offered.any() {
           return Err(RpcError::new(-32602, "Fast is not offered for this model"));
         }
-        // A real boolean from a client that takes boolean options, else the select's value
-        st.fast = match (raw.as_bool(), value) {
-          (Some(on), _) => on,
-          (None, "true" | FAST) => true,
-          (None, "false" | STANDARD) => false,
-          _ => return Err(RpcError::new(-32602, format!("Unknown fast value: {raw}"))),
-        };
+        let tier = crate::llm::fast::SpeedTier::from_wire(raw).ok_or_else(|| RpcError::new(-32602, format!("Unknown fast value: {raw}")))?;
+        if !offered.allows(tier) {
+          return Err(RpcError::new(-32602, format!("Speed tier {raw} is not offered for this model")));
+        }
+        st.fast = tier;
       }
       SIDEKICK => {
         let next = match value {
@@ -135,15 +135,14 @@ impl Server {
         st.sidekick_effort = Some(value.to_owned());
       }
       SIDEKICK_FAST => {
-        if sidekick_fast_of(&config, &st).is_none() {
+        let Some((offered, _)) = sidekick_fast_of(&config, &st) else {
           return Err(RpcError::new(-32602, "Fast is not offered for the sidekick's model"));
-        }
-        st.sidekick_fast = match (raw.as_bool(), value) {
-          (Some(on), _) => on,
-          (None, "true" | FAST) => true,
-          (None, "false" | STANDARD) => false,
-          _ => return Err(RpcError::new(-32602, format!("Unknown sidekick fast value: {raw}"))),
         };
+        let tier = crate::llm::fast::SpeedTier::from_wire(raw).ok_or_else(|| RpcError::new(-32602, format!("Unknown sidekick fast value: {raw}")))?;
+        if !offered.allows(tier) {
+          return Err(RpcError::new(-32602, format!("Sidekick speed tier {raw} is not offered for this model")));
+        }
+        st.sidekick_fast = tier;
       }
       other => return Err(RpcError::new(-32602, format!("Unknown config option: {other}"))),
     }
@@ -184,7 +183,7 @@ impl Server {
         Some((st.mode.clone(), modes))
       };
       // The window of the session's model as configured now (edited in the settings, or another model picked)
-      let window = st.model.as_deref().and_then(|p| crate::turn::limits(&config, &catalog, p)).map(|m| m.context.unwrap_or(crate::turn::DEFAULT_CONTEXT));
+      let window = st.model.as_deref().and_then(|p| crate::config::limits(&config, &catalog, p)).map(|m| m.context.unwrap_or(crate::defs::DEFAULT_CONTEXT));
       let usage = match (st.reported, window) {
         (Some((used, size)), Some(w)) if w != size => {
           st.reported = Some((used, w));
@@ -234,9 +233,13 @@ fn efforts_of(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Vec<Str
 
 /// The model family's preferred level when offered, else the last (strongest) level
 pub(crate) fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Option<String> {
-  let efforts = efforts_of(config, catalog, pick);
-  let preferred = pick.and_then(|p| config.find(p)).map(|(p, m)| crate::llm::family::resolve(p, m).effort);
-  efforts.iter().find(|e| Some(e.as_str()) == preferred).or(efforts.last()).cloned()
+  let (provider, model) = config.find(pick?)?;
+  preferred_effort(provider, model, &model.offered_efforts(catalog)).cloned()
+}
+
+fn preferred_effort<'a>(provider: &Provider, model: &ProviderModel, efforts: &'a [String]) -> Option<&'a String> {
+  let preferred = crate::llm::family::resolve(provider, model).effort;
+  efforts.iter().find(|e| e.as_str() == preferred).or(efforts.last())
 }
 
 /// Bring the session's model and effort in line with what `config_options` shows: a session opened before any model
@@ -325,15 +328,32 @@ fn sidekick_effort_of(config: &Config, catalog: &Catalog, st: &SessionState) -> 
   st.sidekick_effort.clone().filter(|e| efforts.contains(e)).or_else(|| default_effort(config, catalog, Some(&pick)))
 }
 
-/// The sidekick's Fast as the switch shows it. None while there is no sidekick or its model has no fast tier
-fn sidekick_fast_of(config: &Config, st: &SessionState) -> Option<bool> {
+/// The sidekick's offered speed tiers and current value. None while there is no sidekick or its model has no fast tier
+fn sidekick_fast_of(config: &Config, st: &SessionState) -> Option<(crate::llm::fast::Offered, crate::llm::fast::SpeedTier)> {
   let pick = sidekick_of(config, st)?;
-  config.find(&pick).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)).then_some(st.sidekick_fast)
+  let (p, m) = config.find(&pick)?;
+  let offered = crate::llm::fast::offered_tiers(p, m);
+  offered.any().then_some((offered, st.sidekick_fast))
 }
 
-/// A Fast switch: a boolean, or a Standard / Fast select for a client that does not take booleans
-fn fast_option(id: &str, name: &str, category: &str, on: bool, booleans: bool) -> Value {
+/// Speed control: a boolean switch when only Standard / Fast are offered and the client takes booleans, a Standard /
+/// Fast select for non-boolean clients, or a multi-tier select (`standard` / `fast` / `ultrafast`) whenever the model
+/// offers Ultra Fast
+fn fast_option(id: &str, name: &str, category: &str, offered: crate::llm::fast::Offered, tier: crate::llm::fast::SpeedTier, booleans: bool) -> Value {
   let description = "The provider's faster tier, billed at a higher rate";
+  let effective = offered.effective(tier);
+  if offered.ultrafast {
+    let mut options = vec![json!({ "value": STANDARD, "name": "Off" })];
+    if offered.fast {
+      options.push(json!({ "value": FAST, "name": "Fast" }));
+    }
+    options.push(json!({ "value": "ultrafast", "name": "Ultra Fast" }));
+    return json!({
+      "id": id, "name": name, "description": description, "category": category, "type": "select",
+      "currentValue": effective.id(), "options": options,
+    });
+  }
+  let on = effective.is_fast();
   if booleans {
     json!({ "id": id, "name": name, "description": description, "category": category, "type": "boolean", "currentValue": on })
   } else {
@@ -345,6 +365,23 @@ fn fast_option(id: &str, name: &str, category: &str, on: bool, booleans: bool) -
   }
 }
 
+/// Both the picker preview and the selected model use these exact controls.
+fn model_params(provider: &Provider, model: &ProviderModel, catalog: &Catalog, st: &SessionState, offers: Offers) -> Vec<Value> {
+  let mut params = Vec::new();
+  let efforts = model.offered_efforts(catalog);
+  if let Some(value) = efforts.iter().find(|e| Some(*e) == st.effort.as_ref()).or_else(|| preferred_effort(provider, model, &efforts)) {
+    params.push(json!({
+      "id": "effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": value,
+      "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
+    }));
+  }
+  let speed = crate::llm::fast::offered_tiers(provider, model);
+  if speed.any() {
+    params.push(fast_option(FAST, "Fast", "model_config", speed, st.fast, offers.booleans));
+  }
+  params
+}
+
 /// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
 /// the current model offers levels, the Fast switch when it has a fast tier (a boolean, or a Standard / Fast select
 /// for a client that does not take booleans; the composer shows either as its Fast toggle), and for a client that runs
@@ -354,28 +391,26 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, off
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());
   if let Some(current) = current {
-    let options: Vec<Value> = config
-      .providers
-      .usable()
-      .map(|(p, m)| json!({ "value": acpira_shared::providers::model_pick(&p.id, &m.id), "name": m.display_name(), "description": p.display_name() }))
-      .collect();
+    let mut options = Vec::new();
+    let mut previews = serde_json::Map::new();
+    let mut selected = Vec::new();
+    for (provider, model) in config.providers.usable() {
+      let id = model_pick(&provider.id, &model.id);
+      options.push(json!({ "value": id, "name": model.display_name(), "description": provider.display_name() }));
+      let params = model_params(provider, model, catalog, st, offers);
+      if id == current {
+        selected = params.clone();
+      }
+      previews.insert(id, Value::Array(params));
+    }
     let sidekicks = offers.sidekick.then(|| {
       let mut list = vec![json!({ "value": NO_SIDEKICK, "name": "None" })];
       list.extend(options.iter().cloned());
       list
     });
-    out.push(json!({ "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": current, "options": options }));
-    let efforts = efforts_of(config, catalog, Some(&current));
-    if !efforts.is_empty() {
-      let value = st.effort.clone().filter(|e| efforts.contains(e)).or_else(|| default_effort(config, catalog, Some(&current))).unwrap_or_default();
-      out.push(json!({
-        "id": "effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": value,
-        "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
-      }));
-    }
-    if config.find(&current).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)) {
-      out.push(fast_option(FAST, "Fast", "model_config", st.fast, offers.booleans));
-    }
+    out.push(json!({ "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": current, "options": options,
+      "_meta": { "acpira/modelParams": previews } }));
+    out.extend(selected);
     if let Some(list) = sidekicks {
       let value = sidekick_of(config, st).unwrap_or_else(|| NO_SIDEKICK.to_owned());
       out.push(json!({
@@ -389,8 +424,8 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, off
           "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
         }));
       }
-      if let Some(on) = sidekick_fast_of(config, st) {
-        out.push(fast_option(SIDEKICK_FAST, "Sidekick fast", SIDEKICK_FAST_CATEGORY, on, offers.booleans));
+      if let Some((offered, tier)) = sidekick_fast_of(config, st) {
+        out.push(fast_option(SIDEKICK_FAST, "Sidekick fast", SIDEKICK_FAST_CATEGORY, offered, tier, offers.booleans));
       }
     }
   }

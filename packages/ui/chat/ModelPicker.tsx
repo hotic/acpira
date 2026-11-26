@@ -1,9 +1,9 @@
-import { Fragment, useCallback, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Fragment, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { Ban, Brain, Check, ChevronRight, Plus, Zap } from 'lucide-react';
 import type { ConfigControl } from '@acpira/shared/transcript';
 import { shapeFor, type ModelMemory, type ModelShapes } from '@acpira/shared/modelShapes';
 import { findFusionVariant, findVariant, fusionLabel, fusionSidekick, groupModels, modelBrand, optionBrand, parseModelName, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
-import { chipTags, composerControls, fastOn, fastValue, findSidekickFamily, isFastControl, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible, sidekickClis, sidekickFamilies, type SidekickCli } from '@acpira/shared/composerControls';
+import { chipTags, composerControls, fastOn, fastValue, findSidekickFamily, isFastControl, isFastToggle, isUltraLevel, levelShort, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible, sidekickClis, sidekickFamilies, speedTier, type SidekickCli } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
 import { Chip, ChipTag, CORNER_CHIP } from '../ui/Button';
 import { SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
@@ -108,11 +108,12 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
     ? chipTags(skPicked.family, skPicked.variant, sidekickEffort ? [sidekickEffort] : [], sidekickFast ? [sidekickFast] : [], t('composer.standard'))
     : [];
   const skLevel = skTags.find(tag => !tag.fast)?.label;
-  const skFast = skTags.some(tag => tag.fast);
+  const skFastTag = skTags.find(tag => tag.fast);
+  const skFast = skFastTag ? (skFastTag.ultraFast ? 'ultrafast' as const : 'fast' as const) : undefined;
   const tail = fusion
-    ? { name: fusion.name, brand: modelBrand(fusion.name), level: fusion.effort || undefined, fast: false }
+    ? { name: fusion.name, brand: modelBrand(fusion.name), level: fusion.effort || undefined, fast: undefined }
     : skPicked && { name: skPicked.family.name, brand: skPicked.family.brand, level: skLevel, fast: skFast };
-  const skLabel = tail && [tail.name, tail.level, tail.fast ? 'Fast' : undefined].filter(Boolean).join(' ');
+  const skLabel = tail && [tail.name, tail.level, tail.fast === 'ultrafast' ? 'Ultra Fast' : tail.fast ? 'Fast' : undefined].filter(Boolean).join(' ');
   const leadName = curVar?.lead ?? cur?.name ?? c.name;
   const lead = [leadName, tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
   const pair = skLabel ? `${lead} + ${skLabel}` : lead;
@@ -128,7 +129,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const at = (stage: number, ref?: typeof fit.item) => {
     const on = CHIP_STAGES[stage]!;
     return <Chip ref={ref} data-land="models" data-part={ref ? 'composer-model' : undefined} narrow="text" title={chip.title} caret={on.caret} data-compact={on.compact ? '' : undefined} icon={<ModelMark family={chip.family} brand={chip.brand} />}
-      trail={tail && <SidekickTail live={!!sidekickLive} name={tail.name} brand={tail.brand} named={on.names} level={on.levels ? tail.level : undefined} fast={on.levels && tail.fast} />}
+      trail={tail && <SidekickTail live={!!sidekickLive} name={tail.name} brand={tail.brand} named={on.names} level={on.levels ? tail.level : undefined} fast={on.levels ? tail.fast : undefined} />}
       tags={on.levels && chip.tags.length ? chip.tags.map((tag, i) => <ChipParam key={i} tag={tag} />) : undefined}>
       {on.names ? chip.name : null}
     </Chip>;
@@ -167,8 +168,8 @@ const CHIP_STAGES = [
 // A parameter on the model chip, read as part of the name: the level as faint text a word space after it, Fast as its
 // bolt alone. No box and no motion: a pick changes the words in place. The short form takes over below the sm container
 // tier and on a chip stepping down to fit (`data-compact`, useFitStage)
-function ChipParam({ tag }: { tag: { label: string; short?: string; fast?: boolean; ultra?: boolean } }) {
-  if (tag.fast) return <FastIcon />;
+function ChipParam({ tag }: { tag: { label: string; short?: string; fast?: boolean; ultraFast?: boolean; ultra?: boolean } }) {
+  if (tag.fast) return <FastIcon ultra={tag.ultraFast} />;
   const compact = tag.short !== undefined;
   return <span className={cn('shrink-0', tag.ultra ? 'text-ultra' : 'text-fg-3')}>
     <span className={cn(compact && '@max-sm:hidden group-data-[compact]/chip:hidden')}>{tag.label}</span>
@@ -178,7 +179,7 @@ function ChipParam({ tag }: { tag: { label: string; short?: string; fast?: boole
 
 // The sidekick's part of the model chip: + and its mark in the icon tone, then its name and level like the lead's.
 // While it works a round its mark takes its vendor's colour with a breathing dot and its name the chip's strong text
-function SidekickTail({ live, name, brand, named, level, fast }: { live: boolean; name: string; brand?: string; named: boolean; level?: string; fast?: boolean }) {
+function SidekickTail({ live, name, brand, named, level, fast }: { live: boolean; name: string; brand?: string; named: boolean; level?: string; fast?: 'fast' | 'ultrafast' }) {
   return (
     <span className="sidekick-tail flex shrink-0" style={brandStyle(brand)} data-live={live ? '' : undefined}>
       <span className="flex items-center gap-1 whitespace-nowrap">
@@ -188,14 +189,37 @@ function SidekickTail({ live, name, brand, named, level, fast }: { live: boolean
           {named && <span className="sidekick-tail-name whitespace-nowrap">{name}</span>}
         </span>
         {level && <ChipParam tag={{ label: level, short: levelShort(level), ultra: isUltraLevel(level) }} />}
-        {fast && <FastIcon />}
+        {fast && <FastIcon ultra={fast === 'ultrafast'} />}
       </span>
     </span>
   );
 }
 
-function FastIcon() {
-  return <Zap className="size-3 shrink-0 fill-current text-fast" strokeWidth={2} aria-hidden />;
+// Exact Lucide Zap geometry stacked with a clean knockout gap so Fast (one bolt) and Ultra Fast (two stacked bolts)
+// share the same rounded silhouette in --fast amber, keeping --ultra purple reserved for the Ultra reasoning level
+const LUCIDE_ZAP_D =
+  'M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z';
+
+function DoubleZap({ className, filled = true, label }: { className?: string; filled?: boolean; label?: string }) {
+  const maskId = useId();
+  return (
+    <svg viewBox="0 0 33.5 24" className={cn('h-3 w-auto shrink-0', className)} fill={filled ? 'currentColor' : 'none'}
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden={label ? undefined : true} aria-label={label}>
+      <defs>
+        <mask id={maskId}>
+          <rect width="33.5" height="24" fill="white" />
+          <path d={LUCIDE_ZAP_D} transform="translate(9.5 0)" fill="black" stroke="black" strokeWidth={5.6} strokeLinejoin="round" />
+        </mask>
+      </defs>
+      <path d={LUCIDE_ZAP_D} mask={`url(#${maskId})`} />
+      <path d={LUCIDE_ZAP_D} transform="translate(9.5 0)" />
+    </svg>
+  );
+}
+
+function FastIcon({ ultra, className, label }: { ultra?: boolean; className?: string; label?: string }) {
+  if (ultra) return <DoubleZap className={cn('text-fast', className)} label={label} />;
+  return <Zap className={cn('size-3 shrink-0 fill-current text-fast', className)} strokeWidth={2} aria-hidden={label ? undefined : true} aria-label={label} />;
 }
 
 // Agents without a model selector still use the same reasoning field and labels.
@@ -253,6 +277,24 @@ function FastRow({ fast }: { fast: FastState }) {
   return <SwitchRow label="Fast" icon={<Zap className={cn(fast.on && 'fill-current text-fast')} strokeWidth={1.75} aria-hidden />}
     checked={fast.on} disabled={fast.disabled} onChange={fast.set} />;
 }
+
+// Multi-tier speed (or Devin's Off / Ultrafast) as a plain SelectRow; `withIcon` aligns it under a lone model row
+function SpeedRow({ control, hidden, withIcon, onChange }: { control: ConfigControl; hidden?: string[]; withIcon?: boolean; onChange: (value: string) => void }) {
+  const options = visibleOptions(control.options, hidden, control.value);
+  const tier = speedTier(control);
+  const icon = withIcon
+    ? (tier === 'ultrafast'
+      ? <DoubleZap className="text-fast" />
+      : <Zap className={cn(tier === 'fast' && 'fill-current text-fast')} strokeWidth={1.75} aria-hidden />)
+    : undefined;
+  const optionLabel = (o: ConfigControl['options'][number]) => {
+    if (o.id === 'ultrafast') return 'Ultra Fast';
+    if (o.id === 'standard' || o.id === 'default') return 'Off';
+    return o.name;
+  };
+  return <SelectRow label="Fast" icon={icon} value={control.value ?? ''} onChange={onChange}
+    options={options.map(o => ({ value: o.id, label: optionLabel(o) }))} />;
+}
 const thinkingIcon = <Brain strokeWidth={1.75} aria-hidden />;
 
 function ModelPanel(props: ModelPanelProps) {
@@ -304,11 +346,9 @@ function isLone({ families, cur, curVar, reasoning = [], modelConfig = [], fold 
 }
 
 // What a model row stands for: the variant a click on it picks and the parameters it would run with. The current model
-// reads the live controls; another one reads the shape the engine remembers of it, or, never seen yet, borrows the live
-// reasoning levels as a guess (`guessed`: menu only, no level on the row). A guessed level the model turns out not to take
-// is dropped by the engine once the switch has landed (protocol-gotchas: queued picks validate after the model answer)
+// reads the live controls. Another one offers its advertised or learned parameters and its embedded variants.
 // `recent`: the variant is one this model last ran, not one carried over from the model in use
-interface FamilyView { variant: ModelVariant; reasoning: ConfigControl[]; modelConfig: ConfigControl[]; live: boolean; guessed?: boolean; recent?: boolean; picks?: Record<string, string> }
+interface FamilyView { variant: ModelVariant; reasoning: ConfigControl[]; modelConfig: ConfigControl[]; live: boolean; recent?: boolean; picks?: Record<string, string> }
 
 function familyView(f: ModelFamily, { cur, curVar, reasoning = [], modelConfig = [], model, memory, shapes }: ModelPanelProps): FamilyView {
   if (f === cur && curVar) return { variant: curVar, reasoning: reasoning.filter(reasoningVisible), modelConfig, live: true };
@@ -321,13 +361,13 @@ function familyView(f: ModelFamily, { cur, curVar, reasoning = [], modelConfig =
     : curVar && findVariant(f, curVar.effort, curVar.fast, false);
   const variant = recent ?? carried ?? f.variants[0]!;
   const picks = memory?.picks[variant.id];
-  const known = model ? shapeFor(shapes, model, variant.id) : undefined;
-  const shape = known ?? reasoning;
+  const shape = model && shapeFor(shapes, model, variant.id);
+  if (!shape) return { variant, reasoning: [], modelConfig: [], live: false, recent: !!recent };
   // The value a switch lands on: the model's own remembered pick, else the live value carried over, else the shape's
   const live = new Map([...reasoning, ...modelConfig].map(c => [c.id, c.value]));
   const landed = (c: ConfigControl) => [picks?.[c.id], live.get(c.id)].find(v => v !== undefined && c.options.some(o => o.id === v));
   const kept = composerControls(shape.map(c => { const value = landed(c); return value === undefined ? c : { ...c, value }; }));
-  return { variant, reasoning: kept.reasoning.filter(reasoningVisible), modelConfig: kept.modelConfig, live: false, guessed: !known, recent: !!recent, picks };
+  return { variant, reasoning: kept.reasoning.filter(reasoningVisible), modelConfig: kept.modelConfig, live: false, recent: !!recent, picks };
 }
 
 const viewHasParams = (f: ModelFamily, v: FamilyView) => f.variants.length > 1 || v.reasoning.length > 0 || v.modelConfig.length > 0;
@@ -340,13 +380,13 @@ function RowParams({ family: f, view }: { family: ModelFamily; view: FamilyView 
     return <span className="min-w-0 truncate text-3 text-fg-3">{fusionLabel(level ? { ...view.variant, effort: level } : view.variant)}</span>;
   }
   // Another model's row spells out only its own settings: a level carried over from the model in use (what a switch would
-  // land on) stays in the menu, else every never-picked row would follow the live effort. A guessed shape has none
-  const own = (c: ConfigControl) => view.live || (!view.guessed && view.picks?.[c.id] === c.value);
+  // land on) stays in the menu, else every never-picked row would follow the live effort.
+  const own = (c: ConfigControl) => view.live || view.picks?.[c.id] === c.value;
   const tags = chipTags(f, view.live || view.recent ? view.variant : undefined, view.reasoning.filter(own), view.modelConfig.filter(own), t('composer.standard'));
   if (!tags.length) return null;
   return <span className="flex shrink-0 items-baseline gap-0.5 text-3 text-fg-3">
     {tags.map((tag, i) => (tag.fast
-      ? <Zap key={i} className="inline size-3 shrink-0 self-center fill-current text-fast" strokeWidth={2} aria-label="Fast" />
+      ? <FastIcon key={i} ultra={tag.ultraFast} className="inline self-center" label={tag.label} />
       : <span key={i} className={tag.ultra ? 'text-ultra' : undefined}>{tag.label}</span>))}
   </span>;
 }
@@ -390,10 +430,14 @@ function ParamsMenu({ anchor, onClose, children }: { anchor: HTMLElement; onClos
 }
 
 // An ordinal single-select as rows, the current level checked: the levels in a model row's own menu
-function LevelList({ options, value, onChange }: { options: { value: string; label: string; ultra?: boolean }[]; value: string; onChange: (value: string) => void }) {
+function LevelList({ options, value, onChange, pickModel }: {
+  options: { value: string; label: string; ultra?: boolean }[]; value: string; onChange: (value: string) => void; pickModel: boolean;
+}) {
   return (
     <RadioGroup.Root value={value} onValueChange={v => onChange(v as string)} aria-label={t('composer.effort')} className="flex flex-col">
-      {options.map(o => <RadioGroup.Item key={o.value} value={o.value} className={o.ultra ? 'text-ultra' : undefined}>
+      {/* A checked radio emits no value change. Its level can still select the model being previewed. */}
+      {options.map(o => <RadioGroup.Item key={o.value} value={o.value} className={o.ultra ? 'text-ultra' : undefined}
+        onClick={pickModel && o.value === value ? () => onChange(value) : undefined}>
         <OptionContent checked={o.value === value} checkSlot>{o.label}</OptionContent>
       </RadioGroup.Item>)}
     </RadioGroup.Root>
@@ -408,19 +452,22 @@ function FamilyParams({ family: f, view, hidden, onSelect, setParam }: {
 }) {
   const v = view.variant;
   const embedded = f.variants.length > 1;
-  const nativeFast = view.modelConfig.find(isFastControl);
+  const nativeToggle = view.modelConfig.find(isFastToggle);
+  const nativeSpeed = !nativeToggle ? view.modelConfig.find(isFastControl) : undefined;
   const fast: FastState | undefined = embedded && f.hasFast
     ? (f.fusion ? fusionFast(f, v, onSelect) : variantFast(f, v, onSelect))
-    : nativeFast && nativeFastState(nativeFast, hidden?.[nativeFast.id], value => setParam(nativeFast.id, value));
-  const rest = view.modelConfig.filter(control => control !== (fast && !(embedded && f.hasFast) ? nativeFast : undefined));
+    : nativeToggle && nativeFastState(nativeToggle, hidden?.[nativeToggle.id], value => setParam(nativeToggle.id, value));
+  const usedNative = fast && !(embedded && f.hasFast) ? nativeToggle : undefined;
+  const speedSelect = !fast ? nativeSpeed : undefined;
+  const rest = view.modelConfig.filter(control => control !== usedNative && control !== speedSelect);
   const pickEffort = (e: string) => { const hit = findVariant(f, e, v.fast, false); if (hit) onSelect(hit.id); };
   const levels = <>
     {embedded && f.fusion && <FusionParams family={f} variant={v} onSelect={onSelect} />}
-    {embedded && !f.fusion && variantScale(f) && <LevelList options={f.efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={pickEffort} />}
+    {embedded && !f.fusion && variantScale(f) && <LevelList options={f.efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={pickEffort} pickModel={!view.live} />}
     {view.reasoning.map(control => {
       const p = presentReasoning(control);
       return p.efforts.length > 1 && <LevelList key={control.id} options={p.efforts.map(o => ({ value: o.id, label: o.name, ultra: isUltraLevel(o.name) }))}
-        value={p.off ? '' : (p.value ?? '')} onChange={value => setParam(control.id, value)} />;
+        value={p.off ? '' : (p.value ?? '')} onChange={value => setParam(control.id, value)} pickModel={!view.live} />;
     })}
   </>;
   const switches = <>
@@ -432,6 +479,7 @@ function FamilyParams({ family: f, view, hidden, onSelect, setParam }: {
       return p.offId && <SwitchRow key={control.id} label="Thinking" checked={!p.off} onChange={on => { if (on) { if (turnOn) setParam(control.id, turnOn); } else setParam(control.id, p.offId!); }} />;
     })}
     {fast && <SwitchRow label="Fast" checked={fast.on} disabled={fast.disabled} onChange={fast.set} />}
+    {speedSelect && <SpeedRow control={speedSelect} hidden={hidden?.[speedSelect.id]} onChange={value => setParam(speedSelect.id, value)} />}
     {rest.map(control => <ModelConfigParams key={control.id} control={control} hidden={hidden?.[control.id]} onChange={value => setParam(control.id, value)} />)}
   </>;
   // The hairline only stands between the two groups
@@ -556,7 +604,7 @@ function LeadPanel(props: ModelPanelProps & { searchable?: boolean }) {
           </Command.List>
         </Command.Root>
       </div>
-      {opened && openedView && menu.row.isConnected && <ParamsMenu anchor={menu.row} onClose={closeMenu}>
+      {opened && openedView && viewHasParams(opened, openedView) && menu.row.isConnected && <ParamsMenu anchor={menu.row} onClose={closeMenu}>
         <FamilyParams family={opened} view={openedView} hidden={hiddenConfig}
           // Another model's parameter is picked together with the model: the engine sets it once the model has landed
           onSelect={onSelect}
@@ -571,13 +619,15 @@ function LeadPanel(props: ModelPanelProps & { searchable?: boolean }) {
 function LoneParams({ cur, curVar, onSelect, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig }: ModelPanelProps) {
   const shown = reasoning.filter(reasoningVisible);
   const showParams = !!(cur && curVar && cur.variants.length > 1);
-  const nativeFast = modelConfig.find(isFastControl);
+  const nativeToggle = modelConfig.find(isFastToggle);
+  const nativeSpeed = !nativeToggle ? modelConfig.find(isFastControl) : undefined;
   const fast: FastState | undefined = showParams && cur!.hasFast
     ? (cur!.fusion ? fusionFast(cur!, curVar!, onSelect) : variantFast(cur!, curVar!, onSelect))
-    : nativeFast && nativeFastState(nativeFast, hiddenConfig?.[nativeFast.id], value => onSetConfig?.(nativeFast.id, value));
-  const usedNative = fast && !(showParams && cur!.hasFast) ? nativeFast : undefined;
-  const rest = modelConfig.filter(control => control !== usedNative);
-  const inline = (showParams ? 1 : 0) + shown.length + rest.length + (fast ? 1 : 0) === 1;
+    : nativeToggle && nativeFastState(nativeToggle, hiddenConfig?.[nativeToggle.id], value => onSetConfig?.(nativeToggle.id, value));
+  const usedNative = fast && !(showParams && cur!.hasFast) ? nativeToggle : undefined;
+  const speedSelect = !fast ? nativeSpeed : undefined;
+  const rest = modelConfig.filter(control => control !== usedNative && control !== speedSelect);
+  const inline = (showParams ? 1 : 0) + shown.length + rest.length + (fast || speedSelect ? 1 : 0) === 1;
   return (
     <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
       {showParams && (cur!.fusion
@@ -585,6 +635,7 @@ function LoneParams({ cur, curVar, onSelect, reasoning = [], modelConfig = [], h
         : <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} inline={inline} />)}
       {shown.map(control => <ReasoningParams key={control.id} control={control} onChange={value => onSetConfig?.(control.id, value)} inline={inline} />)}
       {fast && <FastRow fast={fast} />}
+      {speedSelect && <SpeedRow control={speedSelect} hidden={hiddenConfig?.[speedSelect.id]} withIcon onChange={value => onSetConfig?.(speedSelect.id, value)} />}
       {rest.map(control => <ModelConfigParams key={control.id} control={control} hidden={hiddenConfig?.[control.id]} onChange={value => onSetConfig?.(control.id, value)} />)}
     </div>
   );
@@ -651,9 +702,12 @@ const fusionEfforts = (f: ModelFamily, v: ModelVariant) => {
 // Fast never reaches here when the panel already shows its toggle
 function ModelConfigParams({ control, hidden, onChange }: { control: ConfigControl; hidden?: string[]; onChange: (value: string) => void }) {
   const options = visibleOptions(control.options, hidden, control.value);
-  if (isFastControl(control)) {
+  if (isFastToggle(control)) {
     const fast = nativeFastState(control, hidden, onChange);
     return <FastRow fast={fast} />;
+  }
+  if (isFastControl(control)) {
+    return <SpeedRow control={control} hidden={hidden} onChange={onChange} />;
   }
   // An ACP boolean arrives as a synthetic Off/On pair; the panel shows it as the switch it really is
   if (control.type === 'boolean') {

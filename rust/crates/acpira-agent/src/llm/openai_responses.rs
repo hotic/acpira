@@ -97,8 +97,14 @@ pub fn body(req: &Request, origin: &str) -> Value {
   if let Some(p) = req.sampling.top_p {
     body.insert("top_p".into(), Value::from(p));
   }
-  if req.fast {
-    body.insert("service_tier".into(), Value::from(fast::OPENAI_TIER));
+  match req.fast {
+    fast::SpeedTier::Standard => {}
+    fast::SpeedTier::Fast => {
+      body.insert("service_tier".into(), Value::from(fast::OPENAI_TIER));
+    }
+    fast::SpeedTier::Ultrafast => {
+      body.insert("service_tier".into(), Value::from(fast::OPENAI_ULTRAFAST_TIER));
+    }
   }
   Value::Object(body)
 }
@@ -388,7 +394,7 @@ mod tests {
       thinking: Thinking::Auto,
       effort: Some("high".into()),
       cache_key: Some("session-1".into()),
-      fast: false,
+      fast: fast::SpeedTier::Standard,
     }
   }
 
@@ -464,8 +470,10 @@ mod tests {
   fn a_fast_call_asks_for_the_priority_tier() {
     let mut r = req(vec![Item::User(vec![Part::Text("hi".into())])]);
     assert!(body(&r, ORIGIN).get("service_tier").is_none());
-    r.fast = true;
+    r.fast = fast::SpeedTier::Fast;
     assert_eq!(body(&r, ORIGIN)["service_tier"], "priority");
+    r.fast = fast::SpeedTier::Ultrafast;
+    assert_eq!(body(&r, ORIGIN)["service_tier"], "ultrafast");
     let (events, r) = run(&[
       json!({ "type": "response.output_text.delta", "output_index": 0, "delta": "ok" }),
       json!({ "type": "response.completed", "response": { "output": [], "service_tier": "priority" } }),

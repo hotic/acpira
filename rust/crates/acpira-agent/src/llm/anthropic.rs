@@ -135,7 +135,7 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
     body.insert("tools".into(), req.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.parameters })).collect());
   }
   body.insert("stream".into(), Value::Bool(true));
-  if req.fast {
+  if req.fast.is_fast() {
     body.insert("speed".into(), Value::from("fast"));
   }
   let thinking = apply_thinking(&mut body, family, req.thinking, req.effort.as_deref(), max_tokens);
@@ -451,7 +451,7 @@ pub fn stream(http: &ureq::Agent, endpoint: &Endpoint, req: &Request, tx: &mpsc:
   let origin = origin(&endpoint.url, &req.model);
   let payload = body(req, &endpoint.family, &origin);
   let mut call = http.post(&endpoint.url);
-  for (k, v) in headers(endpoint, req.fast) {
+  for (k, v) in headers(endpoint, req.fast.is_fast()) {
     call = call.header(k.as_str(), v.as_str());
   }
   let res = call.send(payload.to_string()).map_err(|e| LlmError::Network(e.to_string()))?;
@@ -521,7 +521,7 @@ mod tests {
       thinking: Thinking::Auto,
       effort: None,
       cache_key: None,
-      fast: false,
+      fast: fast::SpeedTier::Standard,
     }
   }
 
@@ -718,7 +718,7 @@ mod tests {
   fn a_fast_call_asks_for_the_speed_and_reports_what_was_served() {
     let mut r = req(vec![Item::User(vec![Part::Text("hi".into())])]);
     assert!(body(&r, &claude(), ORIGIN).get("speed").is_none());
-    r.fast = true;
+    r.fast = fast::SpeedTier::Fast;
     assert_eq!(body(&r, &claude(), ORIGIN)["speed"], "fast");
     let mut e = Endpoint {
       format: acpira_shared::providers::ApiFormat::Anthropic,

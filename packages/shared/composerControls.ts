@@ -93,33 +93,61 @@ export function reasoningChip(control: ConfigControl): string | undefined {
   return p.efforts.find(o => o.id === p.value)?.name;
 }
 
-const FAST_OPTION_IDS = ['fast', 'ultrafast'] as const;
+export type SpeedTier = 'standard' | 'fast' | 'ultrafast';
 
-function fastOptionId(control: ConfigControl): string | undefined {
-  if (control.type === 'boolean' || control.options.length !== 2) return;
-  if (!control.options.some(option => option.id === 'standard')) return;
-  return control.options.find(option => (FAST_OPTION_IDS as readonly string[]).includes(option.id))?.id;
+const STANDARD_OPTION_IDS = ['standard', 'default', 'off'] as const;
+const FAST_OPTION_IDS = ['fast', 'priority', 'ultrafast'] as const;
+
+function speedOptions(control: ConfigControl): { standard: string; fast?: string; ultrafast?: string } | undefined {
+  if (control.type === 'boolean' || control.options.length < 2) return;
+  const standard = control.options.find(o => (STANDARD_OPTION_IDS as readonly string[]).includes(o.id))?.id;
+  if (!standard) return;
+  const fast = control.options.find(o => o.id === 'fast' || o.id === 'priority')?.id;
+  const ultrafast = control.options.find(o => o.id === 'ultrafast')?.id;
+  if (!fast && !ultrafast) return;
+  const allKnown = control.options.every(o =>
+    (STANDARD_OPTION_IDS as readonly string[]).includes(o.id) || (FAST_OPTION_IDS as readonly string[]).includes(o.id));
+  return allKnown ? { standard, fast, ultrafast } : undefined;
 }
 
-// One "Fast" switch whatever the wire shape: Devin's native Standard / Fast (or SWE-2's Standard / Ultrafast) select
-// (`speed`), the codex / claude adapters' boolean (`fast-mode` "Fast mode", `fast`), and the embedded model-name
-// variant all read the same.
+// Any speed control whatever the wire shape: boolean Fast (`fast-mode`, `fast`), 2-option Standard / Fast select,
+// Devin's 2-option Standard / Ultrafast select, or 3-option Standard / Fast / Ultra Fast select
 export function isFastControl(control: ConfigControl): boolean {
   if (control.type === 'boolean') return /(^|[\s_-])fast($|[\s_-])/i.test(control.id) || /^fast( mode)?$/i.test(control.name);
-  return !!fastOptionId(control);
+  return !!speedOptions(control);
+}
+
+// Pure on/off Fast renders as a switch row; controls with Ultra Fast (3-tier or Devin's Off / Ultrafast) render as a select row
+export function isFastToggle(control: ConfigControl): boolean {
+  if (control.type === 'boolean') return isFastControl(control);
+  const s = speedOptions(control);
+  return !!s && !s.ultrafast && control.options.length === 2;
+}
+
+export function speedTier(control: ConfigControl): SpeedTier {
+  if (!isFastControl(control)) return 'standard';
+  if (control.type === 'boolean') return control.value === 'true' ? 'fast' : 'standard';
+  if (control.value === 'ultrafast') return 'ultrafast';
+  if (control.value === 'fast' || control.value === 'priority') return 'fast';
+  return 'standard';
 }
 
 export function fastOn(control: ConfigControl): boolean {
-  return control.value === (control.type === 'boolean' ? 'true' : (fastOptionId(control) ?? 'fast'));
+  return speedTier(control) !== 'standard';
 }
 
 // The wire value that turns a Fast control on or off
 export function fastValue(control: ConfigControl, on: boolean): string {
-  return control.type === 'boolean' ? String(on) : on ? (fastOptionId(control) ?? 'fast') : 'standard';
+  if (control.type === 'boolean') return String(on);
+  const s = speedOptions(control);
+  return on ? (s?.fast ?? s?.ultrafast ?? 'fast') : (s?.standard ?? 'standard');
 }
 
 export function modelConfigChip(control: ConfigControl): string | undefined {
-  if (isFastControl(control)) return fastOn(control) ? 'Fast' : undefined;
+  if (isFastControl(control)) {
+    const tier = speedTier(control);
+    return tier === 'ultrafast' ? 'Ultra Fast' : tier === 'fast' ? 'Fast' : undefined;
+  }
   // A boolean shows its name only while on — an off toggle adds no chip clutter
   if (control.type === 'boolean') return control.value === 'true' ? control.name : undefined;
   return control.options.find(option => option.id === control.value)?.name;
@@ -127,7 +155,7 @@ export function modelConfigChip(control: ConfigControl): string | undefined {
 
 // A badge's compact form on a narrow toolbar. `short` is what replaces the label there: '' leaves only the icon (Fast's
 // bolt); absent keeps the label as is (1M, an unknown parameter value)
-export interface ChipTagItem { label: string; short?: string; ultra?: boolean; fast?: boolean }
+export interface ChipTagItem { label: string; short?: string; ultra?: boolean; fast?: boolean; ultraFast?: boolean }
 
 // One letter where the scale allows it; Minimal / Medium / Max share an M, so the outer two keep a short word
 const LEVEL_SHORT: Record<string, string> = { None: 'N', Minimal: 'Min', Low: 'L', Medium: 'M', High: 'H', XHigh: 'XH', Max: 'Max', Ultra: 'U', Thinking: 'T' };
@@ -142,6 +170,7 @@ function levelTag(label: string): ChipTagItem {
 export function chipTags(cur: ModelFamily | undefined, curVar: ModelVariant | undefined, reasoning: ConfigControl[], modelConfig: ConfigControl[], standard: string): ChipTagItem[] {
   const tags: ChipTagItem[] = [];
   const fast: ChipTagItem = { label: 'Fast', short: '', fast: true };
+  const ultraFast: ChipTagItem = { label: 'Ultra Fast', short: '', fast: true, ultraFast: true };
   // Devin 3000.12 bakes one lead level into each Fusion id ("Claude Fable 5.2 Medium + …") next to its own thought_level
   // select: the select is the effort that runs, so the baked level stays in the pair's tooltip, not on the chip
   const nativeLevel = reasoning.some(control => !!reasoningChip(control));
@@ -159,7 +188,7 @@ export function chipTags(cur: ModelFamily | undefined, curVar: ModelVariant | un
   }
   for (const control of modelConfig) {
     const label = modelConfigChip(control);
-    if (label) tags.push(isFastControl(control) ? fast : { label });
+    if (label) tags.push(isFastControl(control) ? (speedTier(control) === 'ultrafast' ? ultraFast : fast) : { label });
   }
   return tags;
 }

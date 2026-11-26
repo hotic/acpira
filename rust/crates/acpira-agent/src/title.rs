@@ -62,7 +62,7 @@ pub fn spawn(server: &Arc<Server>, session: &Arc<Session>, prompt: &Value) -> bo
     effort: None,
     cache_key: None,
     // A side job: never billed at the fast tier
-    fast: false,
+    fast: crate::llm::fast::SpeedTier::Standard,
   };
   let (server, session, http) = (server.clone(), session.clone(), server.http.clone());
   tokio::spawn(async move {

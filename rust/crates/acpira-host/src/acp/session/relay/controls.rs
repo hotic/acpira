@@ -242,14 +242,14 @@ pub(super) async fn relay_controls(proc: &AgentProcess, sid: &str, opened: &mut 
       None => notes.push(format!("{} offers no reasoning effort {e:?} for this model; its default applies", persona.agent)),
     }
   }
-  if let Some(on) = persona.fast {
-    match fast_value(opened.get("configOptions"), on) {
+  if let Some(tier) = persona.fast.as_deref() {
+    match fast_value(opened.get("configOptions"), tier) {
       Some((id, value)) => {
         if let Err(e) = set_config(proc, sid, opened, &id, &value).await {
           notes.push(format!("Fast was refused ({e})"));
         }
       }
-      None if on => notes.push(format!("{} offers no Fast for this model; it runs at the standard tier", persona.agent)),
+      None if tier != "standard" => notes.push(format!("{} offers no Fast for this model; it runs at the standard tier", persona.agent)),
       None => {}
     }
   }
@@ -269,16 +269,22 @@ pub(super) async fn relay_approval(proc: &AgentProcess, sid: &str, opened: &mut 
   }
 }
 
-/// `(config id, value)` that turns the session's own Fast switch on or off (the built-in agent's `fast`: a boolean, or
-/// a Standard / Fast select for a client without booleans). None when the model has no fast tier
-fn fast_value(options: Option<&Value>, on: bool) -> Option<(String, String)> {
+/// `(config id, value)` that sets the session's own speed tier (the built-in agent's `fast`: a boolean, or a
+/// Standard / Fast / Ultra Fast select). None when the model has no speed control
+fn fast_value(options: Option<&Value>, tier: &str) -> Option<(String, String)> {
   let o = options?.as_array()?.iter().find(|o| o.get("id").and_then(Value::as_str) == Some("fast"))?;
   let select = o.get("type").and_then(Value::as_str) == Some("select");
-  let value = match (select, on) {
-    (true, true) => "fast",
-    (true, false) => "standard",
-    (false, true) => "true",
-    (false, false) => "false",
+  let value = if select {
+    let has = |id: &str| o.get("options").and_then(Value::as_array).is_some_and(|opts| opts.iter().any(|opt| opt.get("value").and_then(Value::as_str) == Some(id)));
+    match tier {
+      "ultrafast" if has("ultrafast") => "ultrafast",
+      "ultrafast" | "fast" if has("fast") => "fast",
+      _ => "standard",
+    }
+  } else if tier != "standard" {
+    "true"
+  } else {
+    "false"
   };
   Some(("fast".to_owned(), value.to_owned()))
 }

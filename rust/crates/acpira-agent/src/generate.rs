@@ -53,7 +53,7 @@ pub async fn generate(home: &Path, pick: Option<&str>, system: &str, prompt: &st
     thinking: Thinking::Off,
     effort: None,
     cache_key: None,
-    fast: false,
+    fast: crate::llm::fast::SpeedTier::Standard,
   };
   let name = model_pick(&provider.id, &model.id);
   let call = async {

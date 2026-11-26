@@ -7,7 +7,7 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
-import { DangerAction, Field, fieldTone, FormField, FormGrid, FormRows, inputBox, ItemRow, SettingsDialog, Select, Switch } from './controls';
+import { DangerAction, Field, fieldTone, FormField, FormGrid, FormRows, inputBox, ItemRow, SettingsDialog, Select, Switch } from '../chrome/controls';
 
 // Token counts as the page writes them, in whichever base gives the round number: 128000 → 128k, 131072 → 128k,
 // 1000000 → 1M, 1048576 → 1M, 393216 → 384k
@@ -152,7 +152,9 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
   const [images, setImages] = useState(model.input.includes('image'));
   const [thinking, setThinking] = useState<Thinking>(model.thinking);
   const [levels, setLevels] = useState(model.efforts);
-  const [fast, setFast] = useState<'auto' | 'on' | 'off'>(model.fast == null ? 'auto' : model.fast ? 'on' : 'off');
+  const [fast, setFast] = useState<'auto' | 'on' | 'ultrafast' | 'off'>(
+    model.ultrafast === true ? 'ultrafast' : model.fast === false ? 'off' : model.fast === true ? 'on' : 'auto',
+  );
   const ok = [context, output].every(v => v.trim() === '' || parseTokens(v) !== undefined);
   const draft = (): ProviderModel => ({
     ...model,
@@ -162,13 +164,14 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
     input: images ? ['text', 'image'] : ['text'],
     thinking,
     efforts: thinking === 'off' ? [] : levels,
-    // Automatic leaves the field out, so the agent's list decides
-    fast: fast === 'auto' ? undefined : fast === 'on',
+    // Automatic leaves both fields out, so the endpoint listing / known list decides
+    fast: fast === 'auto' ? undefined : fast !== 'off',
+    ultrafast: fast === 'ultrafast' ? true : fast === 'on' ? false : undefined,
     estimated: [],
   });
   // Enter in a text field saves; a list or a button keeps its own Enter, and Escape is the dialog's close
   const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && ok && e.target instanceof HTMLInputElement) onSave(draft()); };
-  const fastOptions = (['auto', 'on', 'off'] as const).map(v => ({ value: v, label: t(`settings.providers.model.fast.${v}`) }));
+  const fastOptions = (['auto', 'on', 'ultrafast', 'off'] as const).map(v => ({ value: v, label: t(`settings.providers.model.fast.${v}`) }));
   const outcome = test?.outcome;
   const levelsHint = t(levels.length ? 'settings.providers.model.efforts.hint' : 'settings.providers.model.efforts.none');
   return (
