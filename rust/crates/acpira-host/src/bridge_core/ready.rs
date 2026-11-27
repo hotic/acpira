@@ -105,6 +105,7 @@ impl BridgeCore {
     spawn_on(self.wire, async move {
       me.push_theme().await;
       me.push_ui().await;
+      me.push_provider_marks().await;
     });
     let mut sub = self.theme_sub.lock();
     if sub.is_none() {
@@ -114,6 +115,8 @@ impl BridgeCore {
           spawn_on(c.wire, async move {
             c.push_theme().await;
             c.push_ui().await;
+            // A plugin's model source carries its own logo: its start or stop moves the chat surface's marks
+            c.push_provider_marks().await;
           });
         }
       })));
@@ -133,6 +136,14 @@ impl BridgeCore {
 
   pub fn push_appearance(&self) {
     self.post_now(HostMsg::Appearance { appearance: (self.appearance)() });
+  }
+
+  /// The sources that carry a logo of their own, pushed on init, when plugins change and after a provider action:
+  /// unlike the settings-only `Providers` view, the chat surface needs them to give a private model its mark without
+  /// the page opening Settings
+  pub(super) async fn push_provider_marks(self: &Arc<Self>) {
+    let marks = self.settings.provider_marks(self.plugins.runtimes().sources()).await;
+    self.post_now(HostMsg::ProviderMarks { marks });
   }
 
   /// The plugin page's view, built off the runtime threads (it reads and hashes the source folders)

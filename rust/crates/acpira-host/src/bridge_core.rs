@@ -580,6 +580,8 @@ impl BridgeCore {
         let error = self.settings.provider_action(action).await.err().map(|e| format!("{e:#}"));
         let view = self.settings.providers_view().await;
         self.post_now(HostMsg::Providers { view, error });
+        // A saved, switched or removed source may add or drop a logo the chat surface draws
+        self.push_provider_marks().await;
       }
       // Network round trips (a test call takes seconds): off the message loop, answered by id
       W::ProviderProbe { id, probe } => {

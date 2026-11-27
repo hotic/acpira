@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 use crate::model_catalog::Catalog;
@@ -161,6 +161,51 @@ impl ApiFormat {
   }
 }
 
+/// A provider's logo as the page draws it: its id (the wire-id prefix `optionBrand` matches) and its SVG path data.
+/// A resident push (`HostMsg::ProviderMarks`) so the chat surface sees it without opening Settings
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderMark {
+  pub id: String,
+  pub mark: Vec<String>,
+}
+
+/// Most paths and bytes per path a mark may carry
+pub const MARK_MAX_PATHS: usize = 16;
+pub const MARK_MAX_PATH_BYTES: usize = 8192;
+
+/// A mark's path data as the page will draw it, or why it cannot be: only SVG path commands and numbers, so nothing
+/// but a shape ever reaches the page. Shared with the agent marks (`acpira-host` `registry.rs`)
+pub fn mark_paths(raw: &Value) -> Result<Vec<String>, String> {
+  let Some(items) = raw.as_array().filter(|a| !a.is_empty()) else { return Err("`mark` is a non-empty array of SVG path data".into()) };
+  if items.len() > MARK_MAX_PATHS {
+    return Err(format!("`mark` holds more than {MARK_MAX_PATHS} paths"));
+  }
+  items
+    .iter()
+    .map(|v| {
+      let d = v.as_str().map(str::trim).filter(|d| !d.is_empty()).ok_or("`mark` paths are non-empty strings")?;
+      if d.len() > MARK_MAX_PATH_BYTES {
+        return Err(format!("a `mark` path is over {MARK_MAX_PATH_BYTES} bytes"));
+      }
+      if !d.chars().all(|c| c.is_ascii_digit() || " ,.-+eE\n\t".contains(c) || "MmLlHhVvCcSsQqTtAaZz".contains(c)) {
+        return Err("a `mark` path holds characters other than SVG path commands and numbers".into());
+      }
+      Ok(d.to_owned())
+    })
+    .collect()
+}
+
+/// A provider's `mark` read through [`mark_paths`]: a mark that fails validation is dropped (the source kept), the same
+/// way a bad agent mark is, so a hand-written `providers.json` cannot push markup to the page
+fn mark_field<'de, D>(d: D) -> Result<Option<Vec<String>>, D::Error>
+where
+  D: Deserializer<'de>,
+{
+  let Some(raw) = Option::<Value>::deserialize(d)? else { return Ok(None) };
+  Ok(mark_paths(&raw).ok())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Provider {
@@ -188,6 +233,10 @@ pub struct Provider {
   pub headers: BTreeMap<String, String>,
   #[serde(default)]
   pub models: Vec<ProviderModel>,
+  /// The provider's own logo (SVG path data on a 24 x 24 box) for a model the page has no mark of its own for; drawn
+  /// when the model's wire id carries this source's prefix. Checked by [`mark_paths`]; an invalid mark is dropped
+  #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "mark_field")]
+  pub mark: Option<Vec<String>>,
   #[serde(flatten)]
   pub extra: Map<String, Value>,
 }
@@ -598,6 +647,16 @@ pub enum ProviderAction {
 mod tests {
   use super::*;
   use serde_json::json;
+
+  #[test]
+  fn a_mark_that_is_not_path_data_is_dropped_and_the_source_kept() {
+    let read = |mark: Value| serde_json::from_value::<Provider>(json!({ "id": "gw", "baseUrl": "https://a", "models": [{ "id": "m" }], "mark": mark })).unwrap();
+    assert_eq!(read(json!(["M2 2h20v20H2z"])).mark, Some(vec!["M2 2h20v20H2z".to_owned()]));
+    let bad = read(json!(["<script>alert(1)</script>"]));
+    assert_eq!((bad.id.as_str(), bad.mark), ("gw", None));
+    // Dropped for good: not left in `extra` for a later write to carry back
+    assert!(!bad.extra.contains_key("mark"));
+  }
 
   #[test]
   fn the_fast_model_is_picked_when_none_is_set_and_stays_off_when_turned_off() {

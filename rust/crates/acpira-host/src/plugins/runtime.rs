@@ -436,12 +436,9 @@ impl Runtimes {
 
   /// `plugins/providers.json` beside the plugin folders: the manifests' sources, then the processes', first id wins.
   /// Only an engine writes it, and only when its content changes, so the agent's stamp check stays quiet
-  fn write_providers(&self) {
-    if !self.enabled() {
-      return;
-    }
-    let Some(dir) = self.data_root.parent() else { return };
-    let _one = self.providers_write.lock();
+  /// Every model source the plugins in effect contribute: the manifests' first, then what their processes published
+  /// (`providers/set`), an id taken earlier skipped. What `write_providers` hands the built-in agent
+  pub fn sources(&self) -> Vec<acpira_shared::providers::Provider> {
     let mut providers = self.contributed.read().providers.clone();
     let wanted: Vec<String> = self.wanted.lock().iter().map(|w| w.id.clone()).collect();
     for p in self.live_providers.read().iter().filter(|(id, _)| wanted.contains(id)).flat_map(|(_, list)| list) {
@@ -449,6 +446,16 @@ impl Runtimes {
         providers.push(p.clone());
       }
     }
+    providers
+  }
+
+  fn write_providers(&self) {
+    if !self.enabled() {
+      return;
+    }
+    let Some(dir) = self.data_root.parent() else { return };
+    let _one = self.providers_write.lock();
+    let providers = self.sources();
     let path = dir.join(acpira_shared::providers::PROVIDERS_FILE);
     let file = acpira_shared::providers::ProvidersFile { version: acpira_shared::providers::PROVIDERS_VERSION, providers, ..Default::default() };
     let Ok(text) = serde_json::to_string_pretty(&file) else { return };

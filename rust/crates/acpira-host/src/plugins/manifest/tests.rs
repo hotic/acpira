@@ -238,11 +238,12 @@ fn providers_need_a_usable_source_and_never_a_key() {
     { "id": "n", "baseUrl": "http://x", "models": [] },
     { "id": "e", "baseUrl": "http://x", "keyEnv": "lower", "models": [{ "id": "m" }] },
     { "id": "h", "baseUrl": "http://x", "headers": { "Authorization": "Bearer sk" }, "models": [{ "id": "m" }] },
+    { "id": "logo", "baseUrl": "http://x", "mark": ["<path/>"], "models": [{ "id": "m" }] },
   ]));
   let (m, mut f) = manifest(bad);
   check(&m, "gw", dir.path(), &|_| false, &mut f);
   let text = f.text();
-  for needle in ["`gw-claude` is declared twice", "`a/b`: the id", "`apiKey` is not allowed", "format `gemini`", "`baseUrl` is needed", "at least one model", "environment variable name", "header `Authorization` is a credential"] {
+  for needle in ["`gw-claude` is declared twice", "`a/b`: the id", "`apiKey` is not allowed", "format `gemini`", "`baseUrl` is needed", "at least one model", "environment variable name", "header `Authorization` is a credential", "provider `logo`: a `mark` path holds"] {
     assert!(text.contains(needle), "{needle} missing in\n{text}");
   }
 }

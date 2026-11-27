@@ -8,6 +8,7 @@ use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use serde_json::Value;
 
+use acpira_shared::providers::mark_paths;
 use acpira_shared::transcript::{AgentId, AgentInfo, AgentInstall, SessionOption, StrMap};
 
 use crate::acp::agents::launch::{Env, ProcessEnv, resolve_executable};
@@ -104,32 +105,6 @@ pub struct AccessLevel {
 /// CLI's own judgement of what is safe
 fn access(levels: &[(&str, &str, bool)]) -> Option<Vec<AccessLevel>> {
   Some(levels.iter().map(|(id, wire, host)| AccessLevel { id: s(id), wire: s(wire), host: *host }).collect())
-}
-
-/// Most paths and bytes per path a mark may carry
-pub const MARK_MAX_PATHS: usize = 16;
-pub const MARK_MAX_PATH_BYTES: usize = 8192;
-
-/// A mark's path data as the page will draw it, or why it cannot be: only SVG path commands and numbers, so nothing
-/// but a shape ever reaches the page
-pub fn mark_paths(raw: &serde_json::Value) -> std::result::Result<Vec<String>, String> {
-  let Some(items) = raw.as_array().filter(|a| !a.is_empty()) else { return Err("`mark` is a non-empty array of SVG path data".into()) };
-  if items.len() > MARK_MAX_PATHS {
-    return Err(format!("`mark` holds more than {MARK_MAX_PATHS} paths"));
-  }
-  items
-    .iter()
-    .map(|v| {
-      let d = v.as_str().map(str::trim).filter(|d| !d.is_empty()).ok_or("`mark` paths are non-empty strings")?;
-      if d.len() > MARK_MAX_PATH_BYTES {
-        return Err(format!("a `mark` path is over {MARK_MAX_PATH_BYTES} bytes"));
-      }
-      if !d.chars().all(|c| c.is_ascii_digit() || " ,.-+eE\n\t".contains(c) || "MmLlHhVvCcSsQqTtAaZz".contains(c)) {
-        return Err("a `mark` path holds characters other than SVG path commands and numbers".into());
-      }
-      Ok(d.to_owned())
-    })
-    .collect()
 }
 
 fn s(v: &str) -> String {

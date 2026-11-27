@@ -14,6 +14,8 @@ import { LocaleContext, setLocale, t, whenLocale } from './i18n';
 import { loadLocale } from '@acpira/shared/i18n/load';
 import { Shell, type ShellHandlers } from './shell/Shell';
 import { setAgentMarks } from './chat/AgentMark';
+import { setProviderMarks } from './chrome/marks';
+import { setProviderBrands } from '@acpira/shared/models';
 import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
 import { settleProject } from './panel/api';
@@ -399,6 +401,14 @@ export function App() {
         // A reply without the review lists (a plain refresh) keeps the ones already shown: a review always re-asks on open
         case 'storage': setStorage(s => ({ outcome: m.outcome, error: m.error, view: { ...m.view, sessions: m.view.sessions ?? s?.view.sessions, residue: m.view.residue ?? s?.view.residue } })); break;
         case 'usage': setUsageView(m.view); break;
+        case 'providerMarks':
+          if (!setProviderMarks(m.marks)) break;
+          setProviderBrands(m.marks.map(x => x.id));
+          // A private provider's logo may change a model's brand key (the provider registered after the list was first
+          // grouped): nudge every agent's controls so ModelPicker re-groups with the new key
+          // A new object (not the old) makes every memo over controls re-run; the arrays themselves stay as they are
+          setControls(c => ({ ...c }));
+          break;
         case 'providers': {
           const settled = providerWrites.receive();
           const drafts = providerWrites.drafts;

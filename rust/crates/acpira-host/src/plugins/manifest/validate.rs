@@ -300,7 +300,14 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     match provider_of(raw, &m.id) {
       Err(e) => err(findings, e),
       Ok(p) if !sources.insert(p.id.clone()) => err(findings, format!("provider `{}` is declared twice", p.id)),
-      Ok(_) => {}
+      // Loading drops a bad mark and keeps the source, so the check is the only place its author hears why
+      Ok(p) => {
+        if let Some(mark) = raw.get("mark")
+          && let Err(e) = acpira_shared::providers::mark_paths(mark)
+        {
+          err(findings, format!("provider `{}`: {e}", p.id));
+        }
+      }
     }
   }
   if let Some(agent) = &m.contributes.agent {
@@ -327,7 +334,7 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
       }
     }
     if let Some(mark) = agent.get("mark")
-      && let Err(e) = crate::acp::agents::registry::mark_paths(mark)
+      && let Err(e) = acpira_shared::providers::mark_paths(mark)
     {
       err(findings, format!("agent: {e}"));
     }

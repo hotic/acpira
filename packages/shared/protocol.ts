@@ -12,7 +12,7 @@ import type { SharedAction, SharedView } from './sharedConfig';
 import type { PluginAction, PluginCardOp, PluginSkin, PluginSlot, PluginsView } from './plugins';
 import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from './storage';
 import type { UsageView } from './usage';
-import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
+import type { ProbeOutcome, ProviderAction, ProviderMark, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
 import type { SessionEarlier } from './sessionWindow';
 import type { PageContextOp } from './picker';
@@ -351,6 +351,9 @@ export type HostMsg =
   // `commands`: what the agent's newest session advertised, for a page with no session yet (the phone's new session page)
   // `cwd`: the request's, echoed; the answer is for a new session in that folder
   | { type: 'controls'; agent: AgentId; controls: ConfigControl[]; shapes?: ModelShapes; commands?: SlashCommand[]; cwd?: string }
+  // The sources that carry a logo of their own, on every page (unlike Providers, which Settings alone pulls):
+  // optionBrand reads these to give a private model its mark, MarkSvg to draw it
+  | { type: 'providerMarks'; marks: ProviderMark[] }
   // The built-in agent's model sources; error when the action that triggered this reply failed
   | { type: 'providers'; view: ProvidersView; error?: string }
   // The answer to the providerProbe with the same id

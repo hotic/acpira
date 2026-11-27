@@ -1,4 +1,5 @@
-import { useId } from 'react';
+import { useId, useSyncExternalStore } from 'react';
+import type { ProviderMark } from '@acpira/shared/providers';
 import { brandLayers } from '@acpira/shared/models';
 import { cn } from '../ui/cn';
 
@@ -240,12 +241,35 @@ const MARK_ALIAS: Record<string, string> = {
   llama: 'meta',
 };
 
+// A provider's own logo, keyed by its id (the wire-id prefix optionBrand resolves a private model to). Kept outside
+// React so every MarkSvg finds it without the list being passed down; replaced, never mutated, so a change re-renders
+// through useSyncExternalStore whatever memo sits above
+let providerMarks: ReadonlyMap<string, string[]> = new Map();
+const listeners = new Set<() => void>();
+
+// Whether anything changed: the engine sends the list again on every plugin event, mostly the same
+export function setProviderMarks(marks: ProviderMark[]): boolean {
+  const next = new Map(marks.filter(m => m.mark?.length).map(m => [m.id, m.mark] as const));
+  const same = next.size === providerMarks.size && [...next].every(([id, m]) => providerMarks.get(id)?.join('\n') === m.join('\n'));
+  if (same) return false;
+  providerMarks = next;
+  for (const l of listeners) l();
+  return true;
+}
+
+const subscribeMarks = (l: () => void) => {
+  listeners.add(l);
+  return () => { listeners.delete(l); };
+};
+const snapshotMarks = () => providerMarks;
+
 // Brand logo by key, or the name's initial in a rounded square when the key is unknown — every caller gets an icon,
 // so menu rows with and without a known brand stay left-aligned
 // `colored`: a colour logo's washes over the mark (brandLayers), as where the mark stands for its vendor in that colour
 // `own`: the agent's own path data (AgentInfo.mark, checked by the engine), drawn when no built-in mark has the key
 export function MarkSvg({ id, name, className, colored, own }: { id: string | undefined; name?: string; className?: string; colored?: boolean; own?: string[] }) {
-  const paths = (id ? MARKS[MARK_ALIAS[id] ?? id] : undefined) ?? own;
+  const marks = useSyncExternalStore(subscribeMarks, snapshotMarks, snapshotMarks);
+  const paths = (id ? MARKS[MARK_ALIAS[id] ?? id] : undefined) ?? (id ? marks.get(id) : undefined) ?? own;
   const cls = cn('size-icon shrink-0', className);
   const uid = useId();
   if (paths) {

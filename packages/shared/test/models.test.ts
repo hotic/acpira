@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyModelSources } from '../modelSources';
 import type { SessionOption } from '../transcript';
-import { agentBrand, familyHidden, findFusionVariant, findVariant, fusionLabel, groupModels, modelBrand, optionBrand, parseFusionName, parseModelName, setFamilyVisible, variantLabel, visibleOptions } from '../models';
+import { agentBrand, familyHidden, findFusionVariant, findVariant, fusionLabel, groupModels, modelBrand, optionBrand, parseFusionName, parseModelName, setFamilyVisible, setProviderBrands, variantLabel, visibleOptions } from '../models';
 
 // Real name samples issued by Devin (measured via pnpm probe devin), covering all suffix combinations
 const DEVIN = [
@@ -298,6 +298,31 @@ describe('modelBrand', () => {
     expect(modelBrand('doubao-seed-1.6')).toBe('doubao');
     expect(modelBrand('bytedance-seed/seed-oss-36b')).toBe('bytedance');
     expect(modelBrand('Cursor Grok 4.6')).toBe('grok');
+  });
+
+  it('resolves a wire id whose provider prefix is a registered private provider to that prefix', () => {
+    setProviderBrands(['acme', 'internal-gw']);
+    expect(modelBrand('acme/asga-1')).toBe('acme');
+    expect(modelBrand('acme/asga-1-xhigh')).toBe('acme');
+    expect(modelBrand('internal-gw/asga')).toBe('internal-gw');
+    expect(modelBrand('acme/anything')).toBe('acme');
+    // optionBrand reaches it too (its id is checked first): a pick like "acme/asga-1" keeps the prefix even when the
+    // display name alone would not resolve to any built-in brand
+    expect(optionBrand({ id: 'acme/asga-1', name: 'Asga 1' })).toBe('acme');
+    // A vendor rule wins over the source's logo: a gateway that also serves Claude or Qwen keeps those vendors' marks
+    expect(modelBrand('acme/claude-opus')).toBe('claude');
+    expect(modelBrand('acme/Qwen3.8-27B')).toBe('qwen');
+    // A model id that merely contains the prefix word is not a registered provider
+    expect(modelBrand('acme-ish/model')).toBeUndefined();
+    // A registered prefix with no slash in the id at all still resolves by the whole id as its own prefix
+    expect(modelBrand('acme')).toBe('acme');
+  });
+
+  it('leaves an unregistered provider prefix to the built-in rules', () => {
+    setProviderBrands([]);
+    expect(modelBrand('acme/asga-1')).toBeUndefined();
+    // A name whose prefix collides with a built-in brand still follows the built-in rule once no provider is registered
+    expect(modelBrand('acme/gpt-6-astra')).toBe('openai');
   });
 
   it('returns undefined for unbranded names', () => {

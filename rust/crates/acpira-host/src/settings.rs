@@ -223,6 +223,20 @@ impl SettingsCenter {
     self.deps.providers.view().await
   }
 
+  /// The sources that carry a logo of their own, for every page's model marks (`HostMsg::ProviderMarks`): the user's
+  /// `providers.json` and then `plugin_sources`, merged the way the built-in agent merges them (a plugin's source
+  /// whose id the user's file already holds is not used, mark or not). A switched-off source draws no mark
+  pub async fn provider_marks(&self, plugin_sources: Vec<acpira_shared::providers::Provider>) -> Vec<acpira_shared::providers::ProviderMark> {
+    let own: Vec<_> = self.providers_view().await.providers.into_iter().map(|pv| pv.provider).collect();
+    let plugins: Vec<_> = plugin_sources.into_iter().filter(|p| !own.iter().any(|o| o.id == p.id)).collect();
+    own
+      .into_iter()
+      .chain(plugins)
+      .filter(|p| p.enabled)
+      .filter_map(|p| p.mark.map(|mark| acpira_shared::providers::ProviderMark { id: p.id, mark }))
+      .collect()
+  }
+
   pub async fn provider_action(&self, action: ProviderAction) -> Result<()> {
     self.deps.providers.apply(action).await
   }

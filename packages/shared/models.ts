@@ -323,10 +323,22 @@ const BRAND: [RegExp, string][] = [
   [/\bllama(?![a-z])/, 'llama'],
 ];
 
+// Providers that carry a logo of their own (HostMsg::ProviderMarks): a wire id whose provider prefix is in this set
+// resolves to that prefix as its brand key, so MarkSvg can look it up in the runtime mark table
+let providerBrands: ReadonlySet<string> = new Set();
+
+export function setProviderBrands(ids: readonly string[]): void {
+  providerBrands = new Set(ids);
+}
+
 export function modelBrand(family: string): string | undefined {
   const t = family.toLowerCase();
   for (const [re, brand] of BRAND) if (re.test(t)) return brand;
-  return undefined;
+  // A source's own logo is the fallback for the models no vendor rule knows: a gateway or local server that also
+  // serves Claude or Qwen keeps those vendors' marks, only its private models take the source's
+  const slash = family.indexOf('/');
+  const prefix = slash < 0 ? family : family.slice(0, slash);
+  return providerBrands.has(prefix) ? prefix : undefined;
 }
 
 // A vendor's own colour (@lobehub/icons' COLOR_PRIMARY, the backdrop of its official avatar), for a mark that should read

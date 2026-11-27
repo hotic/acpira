@@ -63,6 +63,9 @@ export interface Provider {
   enabled: boolean;
   headers?: Record<string, string>;
   models: ProviderModel[];
+  // The provider's own logo (SVG path data on a 24 x 24 box, checked by mark_paths): drawn when the model's wire id
+  // carries this source's prefix. An invalid mark is dropped before it reaches the page
+  mark?: string[];
   [extra: string]: unknown;
 }
 
@@ -255,6 +258,13 @@ export function syncListedModels(models: ProviderModel[], listed?: ProviderModel
     return copy;
   });
   return changed ? next : undefined;
+}
+
+// A provider's logo on the wire: its id and its SVG path data, sent as a resident push (HostMsg::ProviderMarks)
+// so the chat surface sees it without opening Settings
+export interface ProviderMark {
+  id: string;
+  mark: string[];
 }
 
 // The built-in agent's id in the registry (`SELF_AGENT_ID` in rust/crates/acpira-host/src/acp/agents/registry.rs)

@@ -9,7 +9,7 @@ use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
 use crate::model_shapes::ModelShapes;
 use crate::plugins::{PluginAction, PluginCardOp, PluginSkin, PluginSlot, PluginsView};
-use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
+use crate::providers::{ProbeOutcome, ProviderAction, ProviderMark, ProviderProbe, ProvidersView};
 use crate::remote::{ConnectionOp, ConnectionView, RemoteDirEntry, SshHost};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::shared_config::{SharedAction, SharedView};
@@ -414,6 +414,11 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The providers that carry a logo of their own, on every page (unlike `Providers`, which Settings alone pulls):
+  /// `optionBrand` reads these to give a private model its mark, `MarkSvg` to draw it
+  ProviderMarks {
+    marks: Vec<ProviderMark>,
+  },
   /// The built-in agent's model sources; `error` when the action that triggered this reply failed
   Providers {
     view: ProvidersView,
@@ -654,6 +659,7 @@ impl HostMsg {
       HostMsg::PluginUi { .. } => "pluginUi",
       HostMsg::PluginPost { .. } => "pluginPost",
       HostMsg::PluginComposer { .. } => "pluginComposer",
+      HostMsg::ProviderMarks { .. } => "providerMarks",
       HostMsg::Providers { .. } => "providers",
       HostMsg::ProviderProbed { .. } => "providerProbed",
       HostMsg::Controls { .. } => "controls",
