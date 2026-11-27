@@ -72,8 +72,8 @@ export interface ComposerProps {
   revisePlan?: boolean;
   // Inline history editors keep their draft until the host accepts the resend.
   // Outside-dismiss editors omit the cancel button; `attachments` are bare chip items (with their own removal controls)
-  // that open the draft row, `hasAttachments` says whether any are still retained.
-  edit?: { text: string; attachments?: ReactNode; hasAttachments: boolean; onCancel: () => void; dismissOnOutside?: boolean };
+  // that open the draft row, `hasAttachments` says whether any are still retained, and `pillLead` marks whether they lead with a pill.
+  edit?: { text: string; attachments?: ReactNode; hasAttachments: boolean; pillLead?: boolean; onCancel: () => void; dismissOnOutside?: boolean };
   // Where the unsent draft (text + attachments) is parked while another session is shown; the session id. Absent: nothing is kept across remounts
   draftKey?: string;
   // The session the main composer belongs to: the field (draft, chips, menus) starts over when it changes, while the frame
@@ -492,9 +492,10 @@ const ComposerField = memo(function ComposerField({ onBeam, ...p }: ComposerProp
       onDrop={onDrop}
     >
       {/* Kept attachments of an edited prompt lead the same wrapping row as freshly pasted ones; inline editors match
-          UserMessage's py-gap top inset so opening or closing an edit never shifts the thumbnails */}
+          UserMessage's py-gap top inset while keeping px-draft-chip / px-pad so opening or closing an edit never shifts pills or thumbnails */}
       <DraftChips drafts={drafts} before={p.edit?.hasAttachments ? p.edit.attachments : undefined}
-        className={p.edit ? 'px-pad pt-gap' : undefined}
+        beforePill={p.edit?.hasAttachments ? p.edit.pillLead : undefined}
+        className={p.edit ? 'pt-gap' : undefined}
         onRemove={gone => setDrafts(d => d.filter((_, j) => !gone.includes(j)))}
         onUpdate={(i, next) => setDrafts(d => d.map((x, j) => (j === i ? next : x)))} />
       <PromptInput

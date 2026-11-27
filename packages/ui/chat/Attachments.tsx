@@ -139,7 +139,7 @@ const chipTitle = (a: Named) => {
 };
 
 // Quotes and everything else, each with its index in the original list
-function split<T extends Attachment | Draft>(items: T[], indices?: number[]) {
+function split<T extends Attachment | Draft>(items: readonly T[], indices?: readonly number[]) {
   const quotes: { item: Quote; index: number }[] = [];
   const named: { item: Exclude<T, { kind: 'quote' }>; index: number }[] = [];
   (indices ?? items.map((_, i) => i)).forEach(index => {
@@ -149,17 +149,25 @@ function split<T extends Attachment | Draft>(items: T[], indices?: number[]) {
   return { quotes, named };
 }
 
+// Whether an attachment row leads with a rounded pill (annotations or non-image file tag) rather than an image thumbnail
+export function attachmentsPillLead(items: readonly (Attachment | Draft)[], indices?: readonly number[]): boolean {
+  const { quotes, named } = split(items, indices);
+  return quotes.length > 0 || (named.length > 0 && !isImage(named[0]!.item));
+}
+
 // Composer images use individual thumbnails; other attachments keep compact file labels.
 // An inline editor's retained attachments (`before`) share this one wrapping row, so a newly pasted image lands beside them instead of on a second row.
 // Quotes from the transcript lead the row as one annotations chip; its corner button drops them all, the card edits or removes one
-export function DraftChips({ drafts, before, onRemove, onUpdate, className }: {
+export function DraftChips({ drafts, before, beforePill, onRemove, onUpdate, className }: {
   drafts: Draft[];
   before?: ReactNode;
+  // Whether `before` leads with a rounded pill (so retained attachments keep the same --spacing-draft-chip alignment)
+  beforePill?: boolean;
   onRemove?: (indices: number[]) => void;
   onUpdate?: (index: number, draft: Draft) => void;
   // Replaces the composer's padding (a question card passes p-0 to align with its own px-card-pad; inline editors pass
-  // px-pad pt-gap to match UserMessage). Pill-led draft rows (annotations / files) use square draft-chip corners (pad - 4px)
-  // while image-led rows stay on the --pad content spine
+  // pt-gap to match UserMessage's py-gap while keeping px-draft-chip / px-pad). Pill-led rows align with leading
+  // /command and @summon pills (--pad - --mark-overhang) while image-led rows stay on the --pad content spine
   className?: string;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -167,7 +175,7 @@ export function DraftChips({ drafts, before, onRemove, onUpdate, className }: {
   const openFile = useContext(OpenToolFileContext);
   if (!drafts.length && !before) return null;
   const { quotes, named } = split(drafts);
-  const pillLead = !before && (quotes.length > 0 || (named.length > 0 && !isImage(named[0]!.item)));
+  const pillLead = before ? !!beforePill : (quotes.length > 0 || (named.length > 0 && !isImage(named[0]!.item)));
   return (
     <div className={cn('flex flex-wrap items-start gap-chip-gap', pillLead ? 'px-draft-chip pt-draft-chip' : 'px-pad pt-3', className)}>
       {before}
@@ -206,8 +214,9 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
   const openFile = useContext(OpenToolFileContext);
   const openBlob = useContext(OpenBlobContext);
   const { quotes, named } = split(attachments);
+  const pillLead = quotes.length > 0 || (named.length > 0 && !isImage(named[0]!.item));
   return (
-    <div className="flex shrink-0 flex-wrap items-start gap-chip-gap">
+    <div className={cn('flex shrink-0 flex-wrap items-start gap-chip-gap', pillLead && '-mx-mark-overhang')}>
       {quotes.length > 0 && <QuoteChip quotes={quotes.map(q => q.item)} />}
       {named.map(({ item: a, index: i }) => (
         <AttachmentTag

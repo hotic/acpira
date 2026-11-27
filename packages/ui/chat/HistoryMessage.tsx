@@ -5,7 +5,7 @@ import { captureTurnSettings, editTurnConfig, openTurnControls, refreshTurnContr
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
-import { EditAttachments } from './Attachments';
+import { attachmentsPillLead, EditAttachments } from './Attachments';
 import { dropDraft, parkedDraft } from './useComposerDraft';
 import { UserMessage } from './Turns';
 import { cssTimeVar } from '../ui/cssTime';
@@ -168,7 +168,7 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onSubmitting, onS
       controls={controls} usage={undefined} draftKey={key}
       onSetMode={modeId => setControls(cur => ({ ...refreshTurnControls(cur, composer.controls, c.shapes), modeId }))}
       onSetConfig={(id, value) => setControls(cur => editTurnConfig(refreshTurnControls(cur, composer.controls, c.shapes), composer.controls, id, value, c.shapes))}
-      edit={{ text: turn.text, hasAttachments: retained.length > 0, onCancel: () => { discard(); onClose(); }, dismissOnOutside: true,
+      edit={{ text: turn.text, hasAttachments: retained.length > 0, pillLead: attachmentsPillLead(turn.attachments ?? [], retained), onCancel: () => { discard(); onClose(); }, dismissOnOutside: true,
         attachments: <EditAttachments attachments={turn.attachments ?? []} retained={retained} blobUrl={blobUrl} disabled={pending} onRemove={i => setRetained(r => r.filter(n => n !== i))} />,
       }}
       onSend={send}

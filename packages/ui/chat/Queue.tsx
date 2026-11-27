@@ -7,7 +7,7 @@ import { Row, RowTarget } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { surfaceVariants } from '../ui/Surface';
 import { Composer, type ComposerProps } from './Composer';
-import { AttachmentTiles, EditAttachments } from './Attachments';
+import { attachmentsPillLead, AttachmentTiles, EditAttachments } from './Attachments';
 
 export interface QueueHandlers {
   remove: (id: string) => void;
@@ -82,7 +82,7 @@ function QueuedEditor({ item, composer, blobUrl, onSave, onClose }: {
     <div className="fade-in min-w-0">
       <Composer {...composer} running={false} disabled={false} controls={NO_CONTROLS} hidden={undefined} usage={undefined} turns={[]}
         onSetMode={noop} onSetConfig={noop}
-        edit={{ text: item.text, hasAttachments: retained.length > 0, onCancel: onClose,
+        edit={{ text: item.text, hasAttachments: retained.length > 0, pillLead: attachmentsPillLead(item.attachments, retained), onCancel: onClose,
           attachments: <EditAttachments attachments={item.attachments} retained={retained} blobUrl={blobUrl} onRemove={i => setRetained(r => r.filter(n => n !== i))} /> }}
         onSend={(text, drafts) => { onSave(text, retained, drafts); onClose(); }}
       />

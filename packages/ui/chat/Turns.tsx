@@ -34,7 +34,7 @@ import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
 import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from '../markdown/fileLinks';
 import { PlanDocument } from './PlanDocument';
-import { TurnAttachments } from './Attachments';
+import { attachmentsPillLead, TurnAttachments } from './Attachments';
 import { clockStart, elapsedDuration, splitCodexBlocks, visibleSteps } from './folding';
 import { GoalRow } from './Goal';
 import { rememberFold, rememberedFold } from './foldMemory';
@@ -69,6 +69,7 @@ export function UserMessage({ turn, blobUrl, onEdit, commands, summons }: {
   const marks = promptMarks(commands ?? [], summons ?? [], shown);
   if (turn.command && shown.startsWith(`/${turn.command}`) && marks[0]?.start !== 0)
     marks.unshift({ start: 0, name: turn.command });
+  const pillLead = !!turn.attachments?.length && attachmentsPillLead(turn.attachments);
   return (
     <div className={cn('flex w-full min-w-0 flex-col', userMessage === 'bubble' && 'self-end max-w-[88%]')}>
       <Surface
@@ -88,10 +89,11 @@ export function UserMessage({ turn, blobUrl, onEdit, commands, summons }: {
         )}
       >
         {/* Attachments and text share one scrollport, so thumbnails scroll away instead of holding a fixed share of the cap;
-            when marks are present, expand the scrollport box by 2px without shifting content so overhanging pills are never clipped */}
+            expand the scrollport by --mark-overhang without shifting content so overhanging command / attachment pills are never clipped */}
         <div ref={fade} className={cn(
           'scroll-fade scroll-thin flex max-h-(--user-message-max) min-h-0 flex-col gap-gap overflow-y-auto [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
-          marks.length > 0 && '-mx-0.5 -my-0.5 px-0.5 py-0.5',
+          (marks.length > 0 || pillLead) && '-mx-mark-overhang px-mark-overhang',
+          marks.length > 0 && '-my-0.5 py-0.5',
         )}>
           {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
           {shown && <div className="shrink-0 whitespace-pre-wrap">{marks.length ? commandSegments(shown, marks) : shown}</div>}

@@ -619,9 +619,10 @@
   /* Trailing padding of the composer toolbar: mirrors the leading quiet chip's hover edge (pad - 6px, 8px floor)
      so the send button sits symmetrically in the bottom-right corner across all densities */
   --spacing-composer-end: max(8px, calc(var(--pad) - 6px));
-  /* Top and side inset of a composer DraftChips row when led by a grey pill chip (annotations / file tag): 4px less than
-     --pad so rounded pill chips sit in a square corner (12/10/8px) while bare image thumbnails stay on --pad */
-  --spacing-draft-chip: calc(var(--pad) - 4px);
+  /* Top and side inset of pill-led attachment rows (annotations / file tags): aligns pill left edges with
+     leading /command and @summon pills (--pad - --mark-overhang = 14/12/10px) while bare image thumbnails stay on --pad */
+  --spacing-mark-overhang: var(--mark-overhang);
+  --spacing-draft-chip: calc(var(--pad) - var(--mark-overhang));
   --spacing-card-corner: var(--card-corner);
   /* Leading content padding inside a bordered dock card: --pad less its 1px border, so card text, icons and option keys
      line up on the --pad column with the composer below (reads the shell's density) */
