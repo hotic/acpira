@@ -335,6 +335,8 @@ impl<P: Platform> Driver<P> {
     }
     let (mut acting, mut settling, mut events, mut done) = (Duration::ZERO, Duration::ZERO, 0, 0);
     let (mut failure, mut restless) = (None, false);
+    // Named from the outline the steps were written against, before they change it
+    let did = did_line(scene(&self.known, &target).rows, &steps);
     // The batch's last step that lands somewhere is the agent's own pointer's; the ones before it are clones'.
     let last_placed = steps.iter().rposition(placed);
     for (index, step) in steps.iter().enumerate() {
@@ -363,7 +365,7 @@ impl<P: Platform> Driver<P> {
 
     let at = Instant::now();
     self.refresh(&mut target);
-    let mut text = format!("# {done}/{} steps, {:.0} ms\n", steps.len(), ms(started.elapsed()));
+    let mut text = format!("# {done}/{} steps, {:.0} ms\n{did}", steps.len(), ms(started.elapsed()));
     if let Some(error) = &failure {
       text.push_str(&format!("! {error}\n"));
     }
@@ -443,6 +445,49 @@ fn same_path(one: &str, other: &str) -> bool {
 }
 
 /// Whether a step lands on a place in the window, where a pointer goes to show it.
+/// What the steps did, one line for the agent and for the transcript row (the engine reads it back): each step's verb with
+/// what it acted on, the element's title for a ref, the text, the keys or the menu path as a JSON string.
+/// `> click "Select", type "hello", key "ctrl+a"`
+fn did_line(rows: Option<&[Row]>, steps: &[Step]) -> String {
+  const MAX: usize = 40;
+  let quoted = |text: &str| {
+    let flat: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let clipped = if flat.chars().count() > MAX { format!("{}…", flat.chars().take(MAX).collect::<String>()) } else { flat };
+    Json::from(clipped).to_string()
+  };
+  let named = |reference: &str| rows.and_then(|rows| rows.iter().find(|row| row.reference == reference)).and_then(|row| row_title(&row.text)).map(|title| quoted(&title));
+  let parts: Vec<String> = steps
+    .iter()
+    .map(|step| {
+      let (verb, what) = match step {
+        Step::Click { place, button, count } => {
+          let verb = match (button, count) {
+            (steps::Button::Right, _) => "right_click",
+            (_, 2..) => "double_click",
+            _ => "click",
+          };
+          (verb, if let steps::Place::Ref(reference) = place { named(reference) } else { None })
+        }
+        Step::Type { text, .. } => ("type", Some(quoted(text))),
+        Step::Set { value, .. } => ("set", Some(quoted(value))),
+        Step::Key { keys, .. } => ("key", Some(quoted(keys))),
+        Step::Scroll { .. } => ("scroll", None),
+        Step::Menu { path } => ("menu", Some(quoted(path))),
+        Step::Wait { .. } => ("wait", None),
+      };
+      what.map_or_else(|| verb.to_string(), |what| format!("{verb} {what}"))
+    })
+    .collect();
+  format!("> {}\n", parts.join(", "))
+}
+
+/// The title of an outline row (`button "Save" (focused)` → `Save`), or its role when it has none.
+fn row_title(text: &str) -> Option<String> {
+  let (role, rest) = text.split_once(' ').unwrap_or((text, ""));
+  let title = rest.strip_prefix('"').map(|rest| rest.split_once("\" ").map_or_else(|| rest.strip_suffix('"').unwrap_or(rest), |(title, _)| title).to_string());
+  title.filter(|title| !title.is_empty()).or_else(|| (!role.is_empty()).then(|| role.to_string()))
+}
+
 fn placed(step: &Step) -> bool {
   match step {
     Step::Click { .. } | Step::Set { .. } => true,
@@ -513,6 +558,17 @@ pub fn refuse(why: &str) {
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn the_did_line_names_what_each_step_acted_on() {
+    let row = |reference: &str, text: &str| Row { reference: reference.into(), depth: 0, text: text.into(), frame: Rect::default(), role: String::new() };
+    let rows = [row("b1", "button \"Select\" (focused)"), row("e2", "statictext = \"1\""), row("t1", "textfield \"Say \"hi\"\"")];
+    let steps = steps::parse_steps(&json!([["click", "b1"], ["click", "e2"], {"do": "double_click", "at": [1, 2]}, ["click", "t1"], ["type", "a\nb"], {"do": "key", "keys": "ctrl+a"}, ["menu", "File > Save"], ["click", "gone"]])).unwrap();
+    assert_eq!(
+      did_line(Some(&rows), &steps),
+      "> click \"Select\", click \"statictext\", double_click, click \"Say \\\"hi\\\"\", type \"a b\", key \"ctrl+a\", menu \"File > Save\", click\n"
+    );
+  }
+
   use super::*;
 
   fn app(bundle: &str, path: &str) -> App {
