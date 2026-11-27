@@ -5,7 +5,7 @@ import { AgentMark, Lucide } from '../Glyphs';
 import { Bean, BeanGlyph, GooChoice } from './Beans';
 import { FastGlyph, SidekickMark } from './ComposerBits';
 
-// What the screen draws over an open picker (apps/ios Design/Goo.swift gooLayer, apps/android ui/Composer.kt GooLayer):
+// What the screen draws over an open picker (apps/ios Design/Goo.swift gooLayer, apps/android ui/GooLayer.kt):
 // the beans rising out of their chip with their values beside them, and a bean's panel resting on the column's
 // bottom-left corner. Drawn over the whole screen, the composer included, so a tall card never hides a bean; the page
 // under it blurs and dims (ChatPage). A tap on the open chip goes one level back, anywhere else closes.

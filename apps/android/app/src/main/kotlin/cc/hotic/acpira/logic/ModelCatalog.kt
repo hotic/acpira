@@ -477,7 +477,7 @@ class Toggle(val on: Boolean, val disabled: Boolean, val set: (Boolean) -> Unit)
 class Effort(val levels: List<Pair<String, String>>, val value: String, val pick: (String) -> Unit, val fast: Toggle?, val thinking: Toggle?)
 
 /**
- * What the composer's model chip offers, read from the session's controls (Goo.swift ModelChoices): the model
+ * What the composer's model chip offers, read from the session's controls (ModelChoices.swift): the model
  * families, the reasoning levels with Fast, the modes, the working mode, the approval level, a Fusion pair's lead and
  * sidekick, and the built-in agent's sidekick. [standard] names the level-less variant (composer.standard)
  */

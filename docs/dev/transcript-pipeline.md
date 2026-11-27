@@ -56,7 +56,7 @@ ACP updates → transcript blocks, prompts out. Normalization: `rust/crates/acpi
 
 ## Cross-harness subagents
 
-`acp/session/relay.rs`, `relay/`; roster and hub: `host-agents.md`. Fake-agent-verified (`tests/engine/relay.rs`) unless stated.
+`acp/session/relay.rs`, `relay/`; roster and hub: `host-agents.md`. Fake-agent-verified (`tests/engine/relay/`) unless stated.
 
 - Start admission and node creation share one lock, so two prompts never both start a thread. Close waits for `Relays.starting` to drain, so shutdown kills every child.
 - Devin 3000.11.205 as a child refuses its own credentials over ACP ("ACP host has not authenticated").

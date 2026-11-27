@@ -1,7 +1,7 @@
 import { ListMetrics, Metrics } from '../design/Tokens';
 import { Lucide } from './Glyphs';
 
-// The desktop list's state marks (packages/ui chat/SessionList.tsx StateMark, motion in styles/motion.css; apps/ios
+// The desktop list's state marks (packages/ui chat/SessionRows.tsx StateMark, motion in styles/motion.css; apps/ios
 // SessionListScreen StateMark), one slot each so they share a centre line. Working: the spinning ring, which keeps
 // turning with motion off. Waiting: an amber dot beating like a heart. Error: a red dot that double-flashes every few
 // seconds. Unread: a dot with a halo rippling out of it. Background: the ring with a dot orbiting it slowly, lit with a

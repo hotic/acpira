@@ -12,7 +12,7 @@ import { openTextPrompt, PromptArgs } from './Dialogs';
 // The session list's rows (pages/SessionList.ets; apps/ios Sessions/SessionRows.swift, apps/android
 // ui/SessionRows.kt): a session, a project header and its menu, a section caption
 
-/** `text` with a search's terms in the strong ink and weight (SessionList.tsx Marked) */
+/** `text` with a search's terms in the strong ink and weight (SessionRows.tsx Marked) */
 @Builder
 function marked(text: string, terms: string[], size: number, color: ResourceColor, lines: number) {
   Text() {

@@ -182,7 +182,9 @@ fun SummonMark(persona: MentionPersona, size: androidx.compose.ui.unit.Dp = Metr
 private fun imageFile(path: String): Boolean =
   path.substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "svg")
 
-/** `+`'s summon bean (Goo.swift LiquidAttach): the personas in a panel, a pick writes `@name ` at the caret */
+/**
+ * `+`'s summon bean (LiquidControls.swift LiquidAttach): the personas in a panel, a pick writes `@name ` at the caret
+ */
 @Composable
 fun summonBeans(personas: List<MentionPersona>, goo: Goo, onSummon: (MentionPersona) -> Unit): List<Bean> {
   if (personas.isEmpty()) return emptyList()

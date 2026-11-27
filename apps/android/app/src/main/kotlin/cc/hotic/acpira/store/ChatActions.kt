@@ -46,9 +46,9 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import java.util.UUID
 
-// What the chat's interactive surfaces do (apps/ios Store/AppModel.swift "Cards in the transcript", "Queue", "Short
-// stops", "Plans", "Session state", Store/AppModel+Turns.swift): with an engine each posts its message; the demo plays
-// the engine's answer locally.
+// What the chat's interactive surfaces do (apps/ios Store/AppModel+Cards.swift "Cards in the transcript", "Queue",
+// "Short stops", "Plans", "Session state", Store/AppModel+Turns.swift): with an engine each posts its message; the demo
+// plays the engine's answer locally.
 
 private fun AppModel.edit(id: String, change: (SessionView) -> SessionView) {
   views[id]?.let { views[id] = change(it) }

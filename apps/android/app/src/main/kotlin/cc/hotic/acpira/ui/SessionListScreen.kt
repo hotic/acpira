@@ -685,7 +685,7 @@ fun sessionTime(iso: String, now: Instant): String {
   }
 }
 
-/** [text] with a search's terms in the strong ink and weight (SessionList.tsx Marked) */
+/** [text] with a search's terms in the strong ink and weight (SessionRows.tsx Marked) */
 @Composable
 internal fun marked(text: String, terms: List<String>): AnnotatedString {
   if (terms.isEmpty()) return AnnotatedString(text)

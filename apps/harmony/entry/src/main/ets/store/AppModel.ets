@@ -958,8 +958,8 @@ export class AppModel implements ListHost {
   }
 
   // composer: the drafts, the @ search and the liquid picker, and what the composer and the dock do (apps/ios
-  // Store/AppModel.swift "Queue", "Short stops", "Controls", Store/AppModel+Turns.swift, Store/AppModel+Composer.swift).
-  // With an engine each posts its message; the demo plays the answer locally
+  // Store/AppModel.swift "Controls", Store/AppModel+Cards.swift "Queue", "Short stops", Store/AppModel+Turns.swift,
+  // Store/AppModel+Composer.swift). With an engine each posts its message; the demo plays the answer locally
 
   private drafts: Map<string, ComposerDraft> = new Map<string, ComposerDraft>();
   /** The `@` list's file search (`searchFiles` → `files`) */

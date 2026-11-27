@@ -457,7 +457,7 @@ private fun rememberChoices(controls: SessionControls, hidden: Map<String, List<
 internal fun brandOf(context: Context, o: SessionOption): String? = IconStore.brandOf(context, o.id) ?: IconStore.brandOf(context, o.name)
 
 /**
- * The model chip's beans (Goo.swift LiquidControls): the model, a Fusion pair's lead, the reasoning level, Fast, the
+ * The model chip's beans (LiquidControls.swift): the model, a Fusion pair's lead, the reasoning level, Fast, the
  * working mode, the agent's modes, the approval level, then the sidekick, each with its value beside it. A pick folds
  * the panel back into its bean. While the sidekick's level is out ([Goo.deeper]) the beans are the sidekick's own
  */

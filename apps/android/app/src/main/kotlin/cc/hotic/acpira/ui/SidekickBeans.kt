@@ -46,7 +46,7 @@ import cc.hotic.acpira.logic.ModelFamily
 import cc.hotic.acpira.model.ConfigControl
 import cc.hotic.acpira.model.SessionOption
 
-// The model chip's Fusion and sidekick beans (apps/ios Design/Goo.swift LiquidControls `fusionModelBean`,
+// The model chip's Fusion and sidekick beans (apps/ios Design/LiquidControls.swift `fusionModelBean`,
 // `sidekickBean`, `sidekickBeans`, SidekickMark, SidekickPulse). The sidekick is the chip's last bean: a tap pulls the
 // beans home and squeezes out the sidekick's own (Goo.enter), its model, its level and its Fast; the chip (‹) trades
 // them back. A Fusion pair's sidekick takes the same path, with the pair's sidekick list as its one bean.

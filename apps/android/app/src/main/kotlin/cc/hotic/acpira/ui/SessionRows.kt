@@ -290,7 +290,7 @@ internal fun RemoteFolderGlyph(open: Boolean) {
   }
 }
 
-/** A host folder's header end (SessionList.tsx GroupHeader): the host's alias, then its connection as a dot */
+/** A host folder's header end (SessionListSections.tsx GroupHeader): the host's alias, then its connection as a dot */
 @Composable
 private fun HostTag(alias: String, view: ConnectionView?) {
   Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Metrics.s1_5)) {
@@ -319,9 +319,9 @@ private fun Breathing(on: Boolean, content: @Composable () -> Unit) {
 }
 
 /**
- * SessionList.tsx MoreRow, under an open project's latest few: how many the rest holds, the agents among them and the
- * most urgent state inside. A tap brings out the next page above it; with all of them out it reads "show less", the
- * chevron turned over, and a tap folds them away
+ * SessionListSections.tsx MoreRow, under an open project's latest few: how many the rest holds, the agents among them
+ * and the most urgent state inside. A tap brings out the next page above it; with all of them out it reads "show less",
+ * the chevron turned over, and a tap folds them away
  */
 @Composable
 internal fun MoreRow(rest: List<SessionSummary>, nameOf: (String) -> String, tag: String, modifier: Modifier = Modifier, nested: Boolean = true, onClick: () -> Unit) {
@@ -359,7 +359,10 @@ internal fun MoreRow(rest: List<SessionSummary>, nameOf: (String) -> String, tag
   }
 }
 
-/** The empty chats group's only row (SessionList.tsx EmptyProjectRow, flush): a faint plus in the marks' column and "New chat" */
+/**
+ * The empty chats group's only row (SessionListSections.tsx EmptyProjectRow, flush): a faint plus in the marks' column
+ * and "New chat"
+ */
 @Composable
 internal fun NewChatRow(onClick: () -> Unit) {
   Row(
@@ -374,7 +377,10 @@ internal fun NewChatRow(onClick: () -> Unit) {
   }
 }
 
-/** The end of a pinned run: the desktop's short faded rule (SessionList.tsx `PinDivider`) instead of a pin on each row */
+/**
+ * The end of a pinned run: the desktop's short faded rule (SessionListSections.tsx `PinDivider`) instead of a pin on
+ * each row
+ */
 @Composable
 internal fun PinRule() {
   val line = Palette.line
@@ -388,7 +394,7 @@ internal fun PinRule() {
 }
 
 /**
- * The desktop list's state marks (packages/ui chat/SessionList.tsx StateMark, motion in styles/motion.css), one slot
+ * The desktop list's state marks (packages/ui chat/SessionRows.tsx StateMark, motion in styles/motion.css), one slot
  * each so they share a centre line. Working: the spinning ring, which keeps turning with motion off. Waiting: an amber
  * dot beating like a heart. Error: a red dot that double-flashes every few seconds. Unread: a dot with a halo rippling
  * out of it. Background: the ring with a dot orbiting it slowly, lit with a dot inside once a reply came in meanwhile.

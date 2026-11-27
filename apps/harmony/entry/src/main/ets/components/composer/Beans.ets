@@ -9,9 +9,9 @@ import { MentionPersona } from '../../logic/SlashCommands';
 import { AttachSource, Goo } from '../../store/Composing';
 import { t } from '../../store/L10n';
 
-// What each liquid chip pulls out (apps/ios Design/Goo.swift LiquidAttach / LiquidControls): one bean per setting with
-// its value beside it, and the rows its panel holds. Described as data, so the screen's layer (GooLayer) draws every
-// bean and panel the same way.
+// What each liquid chip pulls out (apps/ios Design/LiquidControls.swift LiquidAttach / LiquidControls): one bean per
+// setting with its value beside it, and the rows its panel holds. Described as data, so the screen's layer (GooLayer)
+// draws every bean and panel the same way.
 
 /** A bean's or a row's glyph: a lucide icon, a vendor mark, the sidekick's badged mark, or the Fast bolt */
 export interface BeanGlyph {

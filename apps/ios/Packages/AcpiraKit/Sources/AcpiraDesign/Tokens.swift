@@ -293,7 +293,7 @@ public enum Metrics {
   public static let widgetMax: CGFloat = 900
   public static let hit: CGFloat = 6
   public static var indent: CGFloat { lead + gap }
-  /// A project's sessions sit this far in from its folder row, the desktop app's step (SessionList.tsx Item `nudge`:
+  /// A project's sessions sit this far in from its folder row, the desktop app's step (SessionRows.tsx Item `nudge`:
   /// pl-6 against the folder row's pl-2), so the list reads as folders over their sessions
   public static var nest: CGFloat { s6 - s2 }
   public static let railWidth: CGFloat = 1
@@ -302,7 +302,7 @@ public enum Metrics {
   public static let railFade: CGFloat = 14
   public static let scrollFade: CGFloat = 28
   public static let unreadDot: CGFloat = 7
-  /// The session list's state marks (SessionList.tsx StateMark): one slot for every mark so they share a centre line,
+  /// The session list's state marks (SessionRows.tsx StateMark): one slot for every mark so they share a centre line,
   /// the ring drawn smaller than the slot. About half again the desktop's sizes, since the marks stand there without a
   /// label
   public static let stateSlot: CGFloat = 18

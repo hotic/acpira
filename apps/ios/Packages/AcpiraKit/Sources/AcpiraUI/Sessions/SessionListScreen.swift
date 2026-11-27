@@ -571,7 +571,7 @@ func sessionTime(_ iso: String, now: Date = Date()) -> String {
   return date.formatted(Date.FormatStyle(locale: locale).month(.defaultDigits).day(.defaultDigits))
 }
 
-/// `text` with a search's terms in the strong ink and weight (SessionList.tsx Marked)
+/// `text` with a search's terms in the strong ink and weight (SessionRows.tsx Marked)
 func marked(_ text: String, terms: [String], size: CGFloat) -> AttributedString {
   var out = AttributedString()
   for (i, part) in SessionSearch.parts(text, terms: terms).enumerated() where !part.isEmpty {

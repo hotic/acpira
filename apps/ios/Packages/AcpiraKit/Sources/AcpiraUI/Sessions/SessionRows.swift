@@ -425,9 +425,9 @@ struct RemoteFolderGlyph: View {
   }
 }
 
-/// A host folder's header end (SessionList.tsx GroupHeader): the host's alias, then its connection as a dot: green
-/// connected, amber failed, breathing while connecting, faint when off. No dot until the engine has said how the host
-/// is (an older gateway keeps the hosts from devices)
+/// A host folder's header end (SessionListSections.tsx GroupHeader): the host's alias, then its connection as a dot:
+/// green connected, amber failed, breathing while connecting, faint when off. No dot until the engine has said how the
+/// host is (an older gateway keeps the hosts from devices)
 struct HostTag: View {
   let alias: String
   let view: ConnectionView?
@@ -483,9 +483,10 @@ private struct Breathing: ViewModifier {
   }
 }
 
-/// SessionList.tsx MoreRow, under an open project's latest few. It tells what the rest holds: how many, the agents among
-/// them (their marks, the first few) and the most urgent state inside, on the rows' state column. A tap brings out the
-/// next page above it; with all of them out it reads "show less", the chevron turned over, and a tap folds them away
+/// SessionListSections.tsx MoreRow, under an open project's latest few. It tells what the rest holds: how many, the
+/// agents among them (their marks, the first few) and the most urgent state inside, on the rows' state column. A tap
+/// brings out the next page above it; with all of them out it reads "show less", the chevron turned over, and a tap
+/// folds them away
 struct MoreRow: View {
   /// The sessions still hidden, in list order
   let rest: [SessionSummary]
@@ -539,8 +540,8 @@ struct MoreRow: View {
   }
 }
 
-/// The empty chats group's only row (SessionList.tsx EmptyProjectRow, flush): a faint plus in the marks' column and
-/// "New chat"
+/// The empty chats group's only row (SessionListSections.tsx EmptyProjectRow, flush): a faint plus in the marks' column
+/// and "New chat"
 struct NewChatRow: View {
   var action: () -> Void
 
@@ -563,8 +564,8 @@ struct NewChatRow: View {
   }
 }
 
-/// The end of a pinned run: the desktop's short faded rule (SessionList.tsx `PinDivider`) instead of a pin on each row,
-/// which pushed the row's title off the text line
+/// The end of a pinned run: the desktop's short faded rule (SessionListSections.tsx `PinDivider`) instead of a pin on
+/// each row, which pushed the row's title off the text line
 struct PinRule: View {
   var body: some View {
     LinearGradient(colors: [.clear, Palette.line, .clear], startPoint: .leading, endPoint: .trailing)
@@ -592,7 +593,7 @@ struct ListRowStyle: ButtonStyle {
   }
 }
 
-/// The desktop list's state marks (packages/ui chat/SessionList.tsx StateMark, motion in styles/motion.css), one slot
+/// The desktop list's state marks (packages/ui chat/SessionRows.tsx StateMark, motion in styles/motion.css), one slot
 /// each so they share a centre line. Working: the spinning ring, which keeps turning with motion off (a list row has no
 /// verb to shimmer). Waiting: an amber dot beating like a heart. Error: a red dot that double-flashes every few seconds.
 /// Unread (a turn finished unwatched): a white dot with a halo rippling out of it. Background (the turn ended, a task it

@@ -593,8 +593,8 @@ export struct SessionList {
   }
 
   /**
-   * SessionList.tsx MoreRow, under an open project's latest few: how many the rest holds, the agents among them and
-   * the most urgent state inside; with all of them out it reads "show less", the chevron turned over
+   * SessionListSections.tsx MoreRow, under an open project's latest few: how many the rest holds, the agents among them
+   * and the most urgent state inside; with all of them out it reads "show less", the chevron turned over
    */
   @Builder
   moreRow(e: ListEntry) {

@@ -39,7 +39,7 @@
 
 - A window too short for a page (a 326 dp square cover screen, a phone on its side, split-screen) squashes nothing: pieces give way in an order shared with iOS and HarmonyOS, then the page scrolls (`ui/Welcome.kt` `YieldColumn`, `ui/NewSessionScreen.kt` `HeroColumn`, `ui/Pairing.kt` `PairHeroPlacement`, the pair form's camera card). `wm size 652x652` with `wm density 320` is that square; the AVD's status and gesture bars take 76 dp of it.
 - A scroller laid over a tappable backdrop takes its taps (hit testing stops at the first sibling hit): the new session's hero column folds the open ring itself.
-- Open: at that square the composer's pickers (`ui/Composer.kt` `GooLayer`) have room for one bean between the top bar and the composer, and a second column starts outside the window, so the beans still rise over the bar and a fourth is out of reach.
+- Open: at that square the composer's pickers (`ui/GooLayer.kt`) have room for one bean between the top bar and the composer, and a second column starts outside the window, so the beans still rise over the bar and a fourth is out of reach.
 
 ## Composer
 
