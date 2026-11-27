@@ -561,7 +561,19 @@ async fn accept_loop(listener: TcpListener, state: Arc<BridgeState>, mut stop: w
     tokio::select! {
       _ = stop.changed() => return,
       conn = listener.accept() => {
-        let Ok((sock, _)) = conn else { continue };
+        let sock = match conn {
+          Ok((sock, _)) => sock,
+          Err(e) => {
+            if matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::Interrupted) {
+              continue;
+            }
+            (state.log)(&format!("local_run mcp bridge: accept failed: {e}"));
+            tokio::select! {
+              _ = stop.changed() => return,
+              _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => continue,
+            }
+          }
+        };
         let _ = sock.set_nodelay(true);
         let (state, mut stop) = (state.clone(), stop.clone());
         tokio::spawn(async move {

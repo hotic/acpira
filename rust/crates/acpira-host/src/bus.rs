@@ -710,7 +710,15 @@ async fn route(_lock: std::fs::File, listener: tokio::net::UnixListener, _socket
   // Connection tasks end with the router (its engine dropping the bus aborts this task, and the set aborts them)
   let mut conns = tokio::task::JoinSet::new();
   loop {
-    let Ok((stream, _)) = listener.accept().await else { continue };
+    let stream = match listener.accept().await {
+      Ok((stream, _)) => stream,
+      Err(e) => {
+        if !matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::Interrupted) {
+          tokio::time::sleep(RETRY).await;
+        }
+        continue;
+      }
+    };
     next += 1;
     serve_client(&router, next, stream, &mut conns);
   }

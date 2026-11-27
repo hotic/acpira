@@ -157,6 +157,8 @@ pub fn run(args: Vec<String>) -> i32 {
   if args.first().map(String::as_str) == Some(acpira_agent::tools::pdf::CHILD_COMMAND) {
     return acpira_agent::tools::pdf::run_child(args.get(1..).unwrap_or_default());
   }
+  #[cfg(unix)]
+  raise_nofile_limit();
   let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
     Ok(rt) => rt,
     Err(e) => {
@@ -713,6 +715,31 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
   code
 }
 
+/// Target soft open-file limit for long-lived engine processes on Unix (matches macOS's `OPEN_MAX`, avoiding
+/// launchd's default 256 cap without exceeding `kern.maxfilesperproc`)
+#[cfg(unix)]
+const MIN_NOFILE_LIMIT: libc::rlim_t = 10_240;
+
+/// Raises the process soft `RLIMIT_NOFILE` to at least `MIN_NOFILE_LIMIT` (clamped to the hard limit), so a
+/// LaunchAgent-started engine and its spawned agent / plugin children do not hit macOS's 256-FD default
+#[cfg(unix)]
+fn raise_nofile_limit() {
+  let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+  // SAFETY: `lim` is a valid mutable `rlimit` struct populated by the kernel
+  if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) } != 0 {
+    return;
+  }
+  let target = if lim.rlim_max == libc::RLIM_INFINITY { MIN_NOFILE_LIMIT } else { MIN_NOFILE_LIMIT.min(lim.rlim_max) };
+  if lim.rlim_cur >= target {
+    return;
+  }
+  lim.rlim_cur = target;
+  // SAFETY: `lim` holds a valid soft/hard `RLIMIT_NOFILE` pair with `rlim_cur <= rlim_max`
+  if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lim) } != 0 {
+    stderr(&format!("serve: raise RLIMIT_NOFILE to {target} failed: {}", std::io::Error::last_os_error()));
+  }
+}
+
 /// Set on the engine `serve --service` hands over to (`exec_landed`), so it never hands over again
 #[cfg(unix)]
 const LANDED_ENV: &str = "ACPIRA_SERVICE_LANDED";
@@ -850,5 +877,16 @@ mod tests {
     assert_eq!(idle_grace(Some("1"), true), std::time::Duration::from_secs(1));
     assert_eq!(idle_grace(Some("5"), false), std::time::Duration::from_secs(5));
     assert_eq!(idle_grace(Some(""), true), REMOTE_IDLE_GRACE);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn raise_nofile_limit_lifts_soft_cap_up_to_target() {
+    raise_nofile_limit();
+    let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    // SAFETY: `lim` is a valid mutable `rlimit` struct populated by the kernel
+    assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) }, 0);
+    let expected = if lim.rlim_max == libc::RLIM_INFINITY { MIN_NOFILE_LIMIT } else { MIN_NOFILE_LIMIT.min(lim.rlim_max) };
+    assert!(lim.rlim_cur >= expected, "rlim_cur={} expected>={expected} rlim_max={}", lim.rlim_cur, lim.rlim_max);
   }
 }

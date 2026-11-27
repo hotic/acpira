@@ -652,7 +652,21 @@ impl Tunnels {
     });
     let weak = Arc::downgrade(&tunnel);
     let accept = tokio::spawn(async move {
-      while let Ok((sock, _)) = listener.accept().await {
+      loop {
+        let sock = match listener.accept().await {
+          Ok((sock, _)) => sock,
+          Err(e) => {
+            let Some(t) = weak.upgrade() else { return };
+            if matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::Interrupted) {
+              continue;
+            }
+            if let Some(c) = t.connections.upgrade() {
+              c.log_line(&format!("remote: codex tunnel accept for {} failed: {e}", t.alias));
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            continue;
+          }
+        };
         let Some(t) = weak.upgrade() else { return };
         tokio::spawn(async move {
           let (alias, connections) = (t.alias.clone(), t.connections.clone());

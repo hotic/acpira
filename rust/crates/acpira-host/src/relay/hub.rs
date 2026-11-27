@@ -34,6 +34,9 @@ const REQUEST_WITHIN: Duration = Duration::from_secs(10);
 /// Connections that have not sent their request line yet; more are closed at once
 const MAX_PENDING: usize = 32;
 
+/// How long the accept loop backs off after a resource error (such as EMFILE) so it neither dies nor spins
+const ACCEPT_RETRY_WAIT: Duration = Duration::from_millis(100);
+
 /// How long the agent's machine gets to accept a connection to the page before `open_browser` reports nothing listening
 const LISTEN_CHECK: Duration = Duration::from_secs(2);
 
@@ -100,12 +103,8 @@ impl RelayHub {
     let addr = listener.local_addr()?.to_string();
     let hub = Arc::new(RelayHub { addr, grants: Default::default(), pending: AtomicUsize::new(0), roster, log, browser: Default::default(), library: Default::default(), plugins: Default::default(), computer: Default::default() });
     let weak = Arc::downgrade(&hub);
-    tokio::spawn(async move {
-      while let Ok((sock, _)) = listener.accept().await {
-        let Some(hub) = weak.upgrade() else { break };
-        tokio::spawn(hub.serve(sock));
-      }
-    });
+    let accept_log = hub.log.clone();
+    tokio::spawn(accept_loop(listener, weak, accept_log, ACCEPT_RETRY_WAIT));
     Ok(hub)
   }
 
@@ -527,6 +526,39 @@ async fn read_request_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut tokio::
   Ok(Some(line))
 }
 
+/// Stream of accepted loopback connections for `accept_loop` (real `TcpListener`, or a scripted source in tests)
+trait AcceptStream: Send + 'static {
+  fn accept_one(&mut self) -> impl Future<Output = std::io::Result<TcpStream>> + Send;
+}
+
+impl AcceptStream for TcpListener {
+  async fn accept_one(&mut self) -> std::io::Result<TcpStream> {
+    self.accept().await.map(|(sock, _)| sock)
+  }
+}
+
+/// Accepts loopback connections until the owning `RelayHub` is dropped, surviving transient and EMFILE errors
+async fn accept_loop(mut source: impl AcceptStream, weak: Weak<RelayHub>, log: LogFn, backoff: Duration) {
+  loop {
+    match source.accept_one().await {
+      Ok(sock) => {
+        let Some(hub) = weak.upgrade() else { break };
+        tokio::spawn(hub.serve(sock));
+      }
+      Err(e) => {
+        if weak.strong_count() == 0 {
+          break;
+        }
+        if matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::Interrupted) {
+          continue;
+        }
+        log(&format!("relay: accept failed: {e}"));
+        tokio::time::sleep(backoff).await;
+      }
+    }
+  }
+}
+
 /// The MCP server's side of one request (blocking: `acpira mcp` is synchronous); `on_line` sees every reply line
 pub fn call(addr: &str, req: &HubRequest, mut on_line: impl FnMut(HubReply) -> bool) -> std::io::Result<()> {
   use std::io::{BufRead, Write};
@@ -585,5 +617,61 @@ mod tests {
     let over = b"0123456789abcdef0\n";
     let mut r_over = BufReader::new(&over[..]).take(17);
     assert_eq!(read_request_line(&mut r_over, 16).await.unwrap(), None);
+  }
+
+  #[tokio::test]
+  async fn accept_loop_survives_transient_and_resource_errors() {
+    struct FlakyListener {
+      errors: std::collections::VecDeque<std::io::Error>,
+      inner: TcpListener,
+    }
+
+    impl AcceptStream for FlakyListener {
+      async fn accept_one(&mut self) -> std::io::Result<TcpStream> {
+        if let Some(err) = self.errors.pop_front() {
+          return Err(err);
+        }
+        self.inner.accept().await.map(|(sock, _)| sock)
+      }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let logged = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+    let sink = logged.clone();
+    let log: LogFn = Arc::new(move |msg: &str| sink.lock().push(msg.to_owned()));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let hub = Arc::new(RelayHub {
+      addr: addr.clone(),
+      grants: Default::default(),
+      pending: AtomicUsize::new(0),
+      roster: Arc::new(Roster::new(dir.path())),
+      log: log.clone(),
+      browser: Default::default(),
+      library: Default::default(),
+      plugins: Default::default(),
+      computer: Default::default(),
+    });
+    let flaky = FlakyListener {
+      errors: std::collections::VecDeque::from([
+        std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "aborted"),
+        std::io::Error::other("Too many open files"),
+      ]),
+      inner: listener,
+    };
+    tokio::spawn(accept_loop(flaky, Arc::downgrade(&hub), log, Duration::from_millis(5)));
+
+    // After surviving both injected errors, a real connection still reaches the hub instead of getting ConnectionRefused
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    let mut body = serde_json::to_string(&HubRequest { token: "missing".into(), op: HubOp::List }).unwrap();
+    body.push('\n');
+    sock.write_all(body.as_bytes()).await.unwrap();
+    let mut resp = String::new();
+    let _ = BufReader::new(sock).read_line(&mut resp).await.unwrap();
+
+    let logs = logged.lock();
+    assert!(logs.iter().any(|l| l.contains("relay: accept failed: Too many open files")), "{logs:?}");
+    assert!(logs.iter().any(|l| l.contains("unknown token")), "{logs:?}");
   }
 }

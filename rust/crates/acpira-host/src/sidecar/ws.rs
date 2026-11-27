@@ -83,7 +83,18 @@ pub async fn start_harness(opts: HarnessOpts, on_wire: Arc<dyn Fn(WsWire) + Send
   (opts.log)(&format!("harness listening on http://127.0.0.1:{port}{q}"));
   let opts = Arc::new(opts);
   tokio::spawn(async move {
-    while let Ok((stream, _)) = listener.accept().await {
+    loop {
+      let stream = match listener.accept().await {
+        Ok((stream, _)) => stream,
+        Err(e) => {
+          if matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::Interrupted) {
+            continue;
+          }
+          (opts.log)(&format!("harness: accept failed: {e}"));
+          tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+          continue;
+        }
+      };
       let (opts, on_wire) = (opts.clone(), on_wire.clone());
       tokio::spawn(async move {
         let _ = connection(stream, &opts, port, on_wire).await;
