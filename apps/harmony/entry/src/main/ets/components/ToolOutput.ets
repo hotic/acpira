@@ -16,7 +16,6 @@ export function shellCommand(b: Block): string {
   return b.kind === 'execute' && b.targetMono === true && b.verbKey === undefined && target.length > 0 ? (b.target ?? '') : '';
 }
 
-/** An async task's state on its row: done in the ok tone, failed in danger */
 // Code cards
 
 /** What a code card shows (one shape for every card, so the sheet can draw it whole): terminal, diff, wrap, plain */

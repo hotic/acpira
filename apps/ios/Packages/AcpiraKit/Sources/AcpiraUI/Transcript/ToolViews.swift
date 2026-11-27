@@ -712,4 +712,3 @@ struct EditEntry: View {
     }
   }
 }
-

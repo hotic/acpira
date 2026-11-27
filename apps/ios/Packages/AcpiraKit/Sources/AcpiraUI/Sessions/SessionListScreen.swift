@@ -584,4 +584,3 @@ func marked(_ text: String, terms: [String], size: CGFloat) -> AttributedString 
   }
   return out
 }
-

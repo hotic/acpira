@@ -34,7 +34,7 @@ import { aggregate, RowIndent, ROW_INDENT_CLASS, Item, RenameInput, RowActions }
 import { PinDivider, SECTION_ACT, ROW_ACT, Section, FOLDED_KEY, storedFolds, SectionLabel, SectionActions, EmptyProjectRow, pages, MoreRow, GroupHeader, MORE_MARKS, MORE_PAGE } from './SessionListSections';
 import { ImportSessions } from './ImportSessions';
 // Other modules have always read the project name from here
-export { projectName };
+export { ImportSessions, projectName };
 
 // Titles and agent names match locally on every key; the conversation search runs host-side once typing pauses
 const SEARCH_DEBOUNCE = 180;
@@ -1046,4 +1046,3 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     </div>
   );
 });
-

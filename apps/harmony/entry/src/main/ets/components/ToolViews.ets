@@ -17,6 +17,7 @@ function running(b: Block): boolean {
   return b.status === 'pending' || b.status === 'in_progress';
 }
 
+/** An async task's state on its row: done in the ok tone, failed in danger */
 function taskKey(state: string): string {
   switch (state) {
     case 'paused':
