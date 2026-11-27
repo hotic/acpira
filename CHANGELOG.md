@@ -11,6 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.10] - 2026-11-27
+
+### Added
+
+- Built-in agent: a critic on another model family checks a plan before its card opens and a draft after edits, and the lead revises once. Read-only turns skip it. From the second round on, the turn-end gate asks the same critic why the work is stuck, and when retries run out it hands off with a summary. It runs when a configured provider has a strong model from another family. `ACPIRA_CRITIC_ENABLED=0` turns it off.
+- Built-in agent: models that serve an ultrafast tier offer Ultra Fast next to Fast, billed at the tier served. Speed controls with more than one tier, Devin's Ultrafast included, are a select with stacked bolt glyphs in the composer and the sidekick picker. Boolean Fast stays a switch.
+- Antigravity: `/swarm` members and `invoke_subagent` children open as child sessions. Their names, briefs, board posts and completion are read from agy's own records, and an idle child wakes up again on a later turn.
+- Antigravity quota refreshes on demand from a button in the account panel and on the agent's settings page. The button stays disabled through a cooldown, since agy reads usage outside ACP.
+- Plugin tiles in Settings → Plugins reorder by dragging or Alt+arrow to set load order. Tiles whose commands, model sources, MCP servers, hooks, styles, prompts or skills collide show what loads before and after them.
+- SSH hosts under local run: the host `Write` tool can copy a file the CLI produced locally to the host byte for byte, so images and other binary files never pass through the model as base64. Symlink escapes and the engine's private state files are refused, and workspace `beforeEdit` hooks still apply.
+
+### Changed
+
+- **Computer use.** Switching computer use on is the consent: the per-app approval card is gone. The driven window gets a white frame with the agent's own pointer, and clones show the steps of a batch. The overlay sits below anything covering the target and fades once the agent goes idle. Each act's reply names what every step acted on, and the transcript shows the four computer tools as rows on the target app, with each act's steps on a second line. The Windows driver has now run on a real Windows 11 desktop.
+- Built-in agent: `bash` folds repetitive build, test and install progress for the model, keeping diagnostics, their context and the summary after saving the raw output to disk. `read` uses compact line-number prefixes. A finished background job is delivered once on the next tool result and dropped on cancel or rewind.
+- The composer, inline editors, sent messages and dock cards share one card fill and border. Light themes use a wider luminance step so cards read on both off-white and pure white canvases.
+- The composer, question cards and inline editors start their text on the same padding line, so clicking a message to edit no longer nudges the text. The working mode chip is a borderless removable token.
+- Mermaid diagrams and images zoom on the GPU in the lightbox and redraw sharp once a zoom settles, both inline and in the lightbox. A pinch on a touch display zooms the diagram under the finger instead of the whole window.
+- iOS and Android show a running `/compact` as one compacting row and hide automatic prompts that show nothing.
+
+### Fixed
+
+- Opening a prompt for editing from a card stuck at the top opens the editor where it stands, and the submitted text stays shown until the new turn lands, so the old text no longer flashes back.
+- Zoomed Mermaid diagrams render in the mono font instead of Courier in the zoom overlay, the lightbox and Copy image.
+- Codex no longer splits streaming prose with config notices re-sent when native subagents spawn.
+- The model select's preview of a model never picked before matches what picking it gives, instead of following the live effort.
+- After a finished `/compact` the engine waits for fresh usage before compacting again.
+- iOS: a long-press menu no longer hides the whole thread behind black. Looping animations on iOS and Android resume in phase when a view returns to screen.
+
 ## [2.1.9] - 2026-11-26
 
 ### Added

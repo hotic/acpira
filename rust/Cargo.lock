@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acpira-agent"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-agent",
  "acpira-rpc",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-computer"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "base64 0.22.1",
  "core-foundation",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-desktop"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-host",
  "acpira-host-base",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-gateway"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-host",
  "acpira-host-base",
@@ -92,7 +92,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-host"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-agent",
  "acpira-computer",
@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-host-base"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-shared",
  "anyhow",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-mobile"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-gateway",
  "acpira-host",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-mobile-ohos"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-gateway",
  "acpira-host",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-net"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-shared",
  "anyhow",
@@ -205,7 +205,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-plugin-build"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-host-base",
  "base64 0.22.1",
@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-rpc"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "parking_lot",
  "serde_json",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-shared"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "miniz_oxide 0.8.9",
  "regex",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-store"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-host-base",
  "acpira-shared",

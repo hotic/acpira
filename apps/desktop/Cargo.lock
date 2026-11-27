@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acpira-agent"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-rpc",
  "acpira-shared",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-computer"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "base64 0.22.1",
  "core-foundation",
@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-desktop"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-host-base",
  "acpira-shared",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-desktop-tauri"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-desktop",
  "acpira-host",
@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-gateway"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-host-base",
  "acpira-net",
@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-host"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-agent",
  "acpira-computer",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-host-base"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-shared",
  "anyhow",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-net"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-shared",
  "anyhow",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-plugin-build"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-host-base",
  "base64 0.22.1",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-rpc"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "parking_lot",
  "serde_json",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-shared"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "miniz_oxide 0.8.9",
  "regex",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-store"
-version = "2.1.9"
+version = "2.1.10"
 dependencies = [
  "acpira-host-base",
  "acpira-shared",
