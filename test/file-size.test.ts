@@ -32,7 +32,6 @@ const ALLOWED: Record<string, string> = {
   'rust/crates/acpira-shared/src/transcript.rs': 'split pending',
   'packages/ui/chat/SessionList.tsx': 'split pending',
   'packages/ui/shell/Shell.tsx': 'split pending',
-  'rust/crates/acpira-host/tests/engine/builtin_agent.rs': 'split pending',
   'rust/crates/acpira-host/src/plugins/host.rs': 'split pending',
   'rust/crates/acpira-host/tests/engine/normalize.rs': 'split pending',
   'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'split pending',
