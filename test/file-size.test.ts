@@ -22,6 +22,8 @@ const ALLOWED: Record<string, string> = {
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraModels/Protocol.swift': 'contract enums',
   // One turn lifecycle (Staging, Accepted, OpenTurn, Settled); splitting it widens every phase struct's fields
   'rust/crates/acpira-host/src/acp/session/prompt.rs': 'single lifecycle',
+  // What is left is the shell's wiring and its provider tree; the thread and the self-contained hooks already moved out
+  'packages/ui/shell/Shell.tsx': 'composition root',
   // Under the limit without its inline tests, one topic
   'rust/crates/acpira-host/src/acp/session/hooks.rs': 'single topic',
   // Bundled by esbuild, run by plain node and typechecked by tsc; its prompt branches fall through with shared state.
@@ -30,7 +32,6 @@ const ALLOWED: Record<string, string> = {
 
   // Split pending
   'packages/ui/chat/SessionList.tsx': 'split pending',
-  'packages/ui/shell/Shell.tsx': 'split pending',
   'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Design/Goo.swift': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Transcript/ToolViews.swift': 'split pending',
