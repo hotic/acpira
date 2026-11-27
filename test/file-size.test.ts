@@ -32,7 +32,6 @@ const ALLOWED: Record<string, string> = {
 
   // Split pending
   'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'split pending',
-  'apps/harmony/entry/src/main/ets/pages/Usage.ets': 'split pending',
 };
 
 function lineCount(file: string): number {
