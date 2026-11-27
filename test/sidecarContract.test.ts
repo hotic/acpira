@@ -183,7 +183,7 @@ describe('sidecar session contract', () => {
     await s.hostMsg('V', 'session', idle(2));
     expect((await ask('sessionChanges')).files).toEqual([{ path: '/repo/a.ts', add: 0, del: 3, gone: true }]);
     // An agent that does not split its context (the fake one) gets the engine's estimate from the transcript
-    // (context_estimate.rs; the built-in agent's own split: rust/crates/acpira-host/tests/engine/builtin_agent.rs)
+    // (context_estimate.rs; the built-in agent's own split: rust/crates/acpira-host/tests/engine/builtin_agent/turns.rs)
     const { report } = await ask('sessionContext', { detail: true }) as { report?: { estimated?: boolean; rev: string; categories: { id: string }[] } };
     expect(report).toMatchObject({ estimated: true, rev: expect.stringMatching(/^tx:/) });
     expect(report!.categories.map(c => c.id)).toContain('chat');

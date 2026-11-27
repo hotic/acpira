@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { AccountStore, FileVault, MemoryVault, accountSecretKey, type SecretVault } from '../src/accounts/AccountStore';
 
 // The TypeScript account store survives only for the VS Code shell's one-time migration of legacy accounts (SecretStorage is
-// readable there alone); the engine's own store is covered in rust/crates/acpira-host/tests/engine/accounts.rs
+// readable there alone); the engine's own store is covered in rust/crates/acpira-host/tests/engine/accounts/store.rs
 
 function tmp() { return mkdtempSync(join(tmpdir(), 'acpira-acc-')); }
 
