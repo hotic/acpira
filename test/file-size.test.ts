@@ -29,7 +29,6 @@ const ALLOWED: Record<string, string> = {
   'test/fake\u002dagent.ts': 'test fixture',
 
   // Split pending
-  'rust/crates/acpira-shared/src/transcript.rs': 'split pending',
   'packages/ui/chat/SessionList.tsx': 'split pending',
   'packages/ui/shell/Shell.tsx': 'split pending',
   'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'split pending',
