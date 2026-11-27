@@ -34,7 +34,6 @@ const ALLOWED: Record<string, string> = {
   'packages/ui/shell/Shell.tsx': 'split pending',
   'rust/crates/acpira-host/src/plugins/host.rs': 'split pending',
   'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'split pending',
-  'rust/crates/acpira-host/src/accounts/account_manager.rs': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Design/Goo.swift': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Transcript/ToolViews.swift': 'split pending',
   'apps/android/app/src/main/kotlin/cc/hotic/acpira/ui/Composer.kt': 'split pending',
