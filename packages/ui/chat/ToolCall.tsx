@@ -22,6 +22,7 @@ import { ShownWidget } from './AgentWidget';
 import { ShownVideos } from './AgentVideo';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { isSkillTool, isWorkflowRun, toolTarget } from './folding';
+import { computerApp, computerStepParts, computerSteps, isComputerTool } from './computerTools';
 import { ToolLabel } from './ToolLabel';
 import { AsyncTaskStopContext, CommandStopContext, OpenToolFileContext, SessionTitleContext, SkillDescriptionContext, ToolFileActionsContext, WorkflowProgressContext } from '../markdown/fileLinks';
 import { isSessionTool, splitSessionTarget } from '@acpira/shared/sessionLinks';
@@ -150,7 +151,8 @@ function ToolCallRows({ block, grouped, continuing, externalResult }: { block: T
   const span = block.kind === 'edit' ? editSpan([block]) : undefined;
   const editFile = block.kind === 'edit' ? editReference([block]) : undefined;
   const targetName = toolTarget(block);
-  const target = isSessionTool(block) ? <SessionToolTarget block={block} /> : isSkillTool(block) ? <SkillTarget block={block} /> : <RowTarget mono={block.targetMono}>{targetName}</RowTarget>;
+  const target = isSessionTool(block) ? <SessionToolTarget block={block} /> : isSkillTool(block) ? <SkillTarget block={block} />
+    : isComputerTool(block) ? <ComputerTarget block={block} /> : <RowTarget mono={block.targetMono}>{targetName}</RowTarget>;
   const label = <>
     <ToolLabel block={block} continuing={continuing} />
     {command
@@ -386,6 +388,25 @@ function SessionToolTarget({ block }: { block: ToolCallBlock }) {
       {rest && <Aside>{rest}</Aside>}
     </span>
   );
+}
+
+// A computer row: the app, then for an act what its steps did, which truncates first
+function ComputerTarget({ block }: { block: ToolCallBlock }) {
+  const steps = block.verbKey === 'verb.computerAct' && computerSteps(block).length > 0;
+  return (
+    <span className="flex min-w-0 items-baseline gap-1">
+      <RowTarget className="shrink-0">{computerApp(block)}</RowTarget>
+      {steps && <RowTarget className="text-fg-2"><ComputerSteps block={block} /></RowTarget>}
+    </span>
+  );
+}
+
+// An act's steps without quotes: the verbs in the row's dim ink, what they acted on a step brighter
+export function ComputerSteps({ block }: { block: ToolCallBlock }) {
+  const sep = t('turns.nameSep');
+  return <>{computerSteps(block).map(computerStepParts).map((part, i) => <span key={i}>
+    {i > 0 && sep}{part.verb}{part.what !== undefined && <> <span className="text-fg-1">{part.what}</span></>}
+  </span>)}</>;
 }
 
 // A skill row's name: hover tells what the skill does (the description its slash command was advertised with), a click

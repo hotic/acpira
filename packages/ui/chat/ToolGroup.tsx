@@ -1,5 +1,5 @@
 import { memo, useContext, useState, type ReactNode } from 'react';
-import { MessagesSquare, Terminal } from 'lucide-react';
+import { MessagesSquare, MousePointerClick, Terminal } from 'lucide-react';
 import { splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { toolImages } from '@acpira/shared/imageTools';
 import type { ToolCallBlock } from '@acpira/shared/transcript';
@@ -11,12 +11,13 @@ import { t, useLocale } from '../i18n';
 import { TOOL_ICON } from './icons';
 import { DiffBlock } from '../markdown/CodeBlock';
 import { ToolOutput } from './Terminal';
-import { Aside, DiffStat, FileRef, ResultList } from './ToolCall';
+import { Aside, ComputerSteps, DiffStat, FileRef, ResultList } from './ToolCall';
 import { sessionReadLabel, toolVerb } from './folding';
 import { ToolLabel } from './ToolLabel';
 import { SessionTitleContext } from '../markdown/fileLinks';
 import { diffIndex, toolFiles, visibleToolContents } from './toolDetails';
 import { useAutoFold } from './autoFold';
+import { computerApp, computerEntryLabel, computerIcon } from './computerTools';
 import { diffStatOf, editEntries, editReference, editSpan, fileName, filePath, groupNames, itemEntrance, sessionEntries, type GroupKind, type SessionEntry } from './processGroups';
 
 const live = (block: ToolCallBlock) => block.status === 'pending' || block.status === 'in_progress';
@@ -41,12 +42,14 @@ export const ToolGroup = memo(function ToolGroup({ kind, blocks, continuing = fa
   const lead = useLead(kind);
   const titleOf = useContext(SessionTitleContext);
   const session = kind === 'session' ? splitSessionTarget(blocks[0]!.target).id : undefined;
-  const names = kind === 'session' ? (session ? [titleOf?.(session) ?? session] : []) : kind === 'wait' ? [] : groupNames(blocks);
+  const names = kind === 'session' ? (session ? [titleOf?.(session) ?? session] : []) : kind === 'wait' || kind === 'computer' ? [] : groupNames(blocks);
   const stat = kind === 'edit' ? diffStatOf(blocks) : undefined;
   const reads = kind === 'session' ? sessionEntries(blocks) : undefined;
   // The count holds only when every turn read is listed; an open or long range leaves it out
   const turns = reads && reads.entries.every(e => e.read.type === 'turns' || e.read.type === 'outline') ? reads.turns : 0;
-  const body = kind === 'wait' ? <WaitOutputs blocks={blocks} /> : <div className="tool-results flex flex-col">{kind === 'read'
+  const body = kind === 'wait' ? <WaitOutputs blocks={blocks} /> : <div className="tool-results flex flex-col">{kind === 'computer'
+    ? blocks.map(block => <EntranceOnce key={block.id} id={itemEntrance(block.id)}><ComputerEntry block={block} /></EntranceOnce>)
+    : kind === 'read'
     ? blocks.map(block => <EntranceOnce key={block.id} id={itemEntrance(block.id)}><ReadEntry block={block} /></EntranceOnce>)
     : kind === 'session'
       ? reads!.entries.map(entry => <EntranceOnce key={entry.key} id={`${itemEntrance(entry.blocks[0]!.id)}:${entry.key}`}><SessionReadEntry entry={entry} /></EntranceOnce>)
@@ -57,8 +60,10 @@ export const ToolGroup = memo(function ToolGroup({ kind, blocks, continuing = fa
   return (
     <div data-calls={blocks.map(b => b.id).join(' ')} className="contents"><Disclosure className="action-details" bodyClassName="pt-0" tone="action" lead={lead} trailing={stat && <DiffStat {...stat} />}
       indent={kind === 'wait'} rail={kind === 'wait' ? 'body' : 'rows'} open={fold?.open} onToggle={fold?.onToggle} body={body}>
-      <ToolLabel block={current} continuing={continuing} />
+      {/* A computer run reads as work on the app whichever call is current: 正在操作 记事本 */}
+      <ToolLabel block={kind === 'computer' ? { ...current, verbKey: 'verb.computerAct' } : current} continuing={continuing} />
       {kind === 'wait' && current.target && <RowTarget mono>{current.target}</RowTarget>}
+      {kind === 'computer' && <span className="flex min-w-0 items-baseline gap-1"><RowTarget>{computerApp(current)}</RowTarget><Aside>{t('computer.steps', { n: blocks.length })}</Aside></span>}
       {turns > 0 ? <TurnsTarget title={names[0]!} n={turns} /> : names.length > 0 && <RowTarget mono={kind !== 'session'}>{namesLabel(names)}</RowTarget>}
     </Disclosure></div>
   );
@@ -77,7 +82,7 @@ function TurnsTarget({ title, n }: { title: string; n: number }) {
 }
 
 function useLead(kind: GroupKind) {
-  const Icon = kind === 'session' ? MessagesSquare : kind === 'wait' ? Terminal : TOOL_ICON[kind];
+  const Icon = kind === 'session' ? MessagesSquare : kind === 'wait' ? Terminal : kind === 'computer' ? MousePointerClick : TOOL_ICON[kind];
   return <Icon className="size-icon" strokeWidth={1.5} />;
 }
 
@@ -87,6 +92,14 @@ function ReadEntry({ block }: { block: ToolCallBlock }) {
   const files = toolFiles(block);
   if (files.length) return <ResultList items={files} kind="read" rail={false} images={toolImages(block)} />;
   return <Row tone="action" dense lead={lead}><RowTarget mono className="text-fg-2"><Shimmer active={live(block)}>{block.target ?? toolVerb(block)}</Shimmer></RowTarget></Row>;
+}
+
+// One call of a computer run: what it did, under its own icon
+function ComputerEntry({ block }: { block: ToolCallBlock }) {
+  const Icon = computerIcon(block);
+  return <Row tone="action" dense lead={<Icon className="size-icon" strokeWidth={1.5} />}>
+    <RowTarget className="text-fg-2"><Shimmer active={live(block)}>{computerEntryLabel(block) ?? <ComputerSteps block={block} />}</Shimmer></RowTarget>
+  </Row>;
 }
 
 // A wait group's body: what the checks printed, in call order, as one output card like a single command's, since each

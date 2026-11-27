@@ -21,7 +21,7 @@ use super::content::{
 };
 use super::tool_kind::{
   ASK_TITLE, named_tool, NAMED_TOOL_VERBS, IMAGE_GEN, IMAGE_GEN_TITLE, IMAGE_GEN_VERB, READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, SHOW_VIDEO_VERB, SHOW_WIDGET_VERB,
-  JOB_INPUT, SKILL_VERB, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_video_call, is_show_widget_call, mcp_identity, mcp_label, drop_server_prefix, session_tool_target,
+  JOB_INPUT, SKILL_VERB, COMPUTER_ACT_VERB, COMPUTER_VERBS, computer_did, computer_tool_target, computer_tool_verb, TODO_TITLE, WEB_SEARCH_VERB, WebTool, infer_kind, is_show_image_call, is_show_video_call, is_show_widget_call, mcp_identity, mcp_label, drop_server_prefix, session_tool_target,
   session_tool_verb, shell_verb, show_image_args, skill_load, verb_of, wakeup_time, wakeup_verb, web_search_query, web_tool, WAKEUP_STOP_VERB,
   WAKEUP_VERBS,
 };
@@ -193,6 +193,11 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     set_verb(b, &key);
     b.kind = ToolKind::Other;
   }
+  // Acpira's computer tools read as what they do to which app, not "Call acpira"
+  if let Some(key) = b.verb_key.as_deref().filter(|k| COMPUTER_VERBS.contains(k)).map(str::to_owned).or_else(|| computer_tool_verb(u, title, raw).map(str::to_owned)) {
+    set_verb(b, &key);
+    b.kind = ToolKind::Other;
+  }
   // Any other MCP call reads "Call <server>" with the tool's title as its target, whichever naming it came in
   let mut mcp_target = None;
   if b.verb_key.is_none()
@@ -279,7 +284,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
         | READ_SESSION_VERB
         | SKILL_VERB
     )
-  ) || b.verb_key.as_deref().is_some_and(|k| NAMED_TOOL_VERBS.contains(&k));
+  ) || b.verb_key.as_deref().is_some_and(|k| NAMED_TOOL_VERBS.contains(&k) || COMPUTER_VERBS.contains(&k));
   // A tool named by its bare-name title shows the target it picked; a packet without its input keeps the earlier one
   let target = if let Some(tg) = named_tool.and_then(|tool| tool.target) {
     Some(tg)
@@ -301,6 +306,8 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     show_widget_target(show_image_args(raw), b.locations.as_deref())
   } else if let Some(key @ (SEARCH_SESSIONS_VERB | READ_SESSION_VERB)) = b.verb_key.as_deref() {
     session_tool_target(key, show_image_args(raw))
+  } else if let Some(key) = b.verb_key.as_deref().filter(|k| COMPUTER_VERBS.contains(k)) {
+    computer_tool_target(key, show_image_args(raw))
   } else if b.mcp_server.is_some() {
     // Set once from the call's identity; a later update's arguments do not replace it
     mcp_target.map(|text| Target { text, mono: false, from_title: false })
@@ -467,6 +474,14 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     if entries.is_some() {
       b.todo_entries = entries;
     }
+  }
+  // A computer_act reply says which elements the steps acted on: the row names them in place of what the call sent
+  if b.verb_key.as_deref() == Some(COMPUTER_ACT_VERB)
+    && let Some(ToolContent::Text { text }) = &b.content
+    && let Some(did) = computer_did(text)
+    && let Some((app, _)) = b.target.as_deref().and_then(|t| t.split_once('\n'))
+  {
+    b.target = Some(format!("{app}\n{did}"));
   }
   // A skill load is one row naming the skill, its SKILL.md as the location: the receipt ("Launching skill: …") or the
   // instructions it printed are for the model. A failure keeps its message. Re-applied on every packet, since a later

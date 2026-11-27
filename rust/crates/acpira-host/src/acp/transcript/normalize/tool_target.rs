@@ -228,4 +228,38 @@ mod tests {
     assert_eq!(check_known, Some((Some("verb.wait"), Some("cargo test"), Some(true))));
     assert_eq!(check_unknown, Some((Some("verb.wait"), Some("9"), Some(true))));
   }
+
+  #[test]
+  fn computer_act_names_the_app_then_the_steps_and_the_reply_names_the_elements() {
+    let mut s = NormalizeState::new(vec![]);
+    apply_update(
+      &mut s,
+      &json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "cu-1",
+        "title": "mcp__acpira__computer_act",
+        "kind": "other",
+        "status": "in_progress",
+        "rawInput": { "app": "C:\\Windows\\notepad.exe", "steps": [["click", "b1"], ["type", "hi"], { "do": "key", "keys": "ctrl+a" }] },
+      }),
+    );
+    let row = |s: &NormalizeState| match s.turns.first() {
+      Some(Turn::Agent(t)) => match t.blocks.first() {
+        Some(AgentBlock::ToolCall(b)) => Some((b.verb_key.clone(), b.target.clone(), b.mcp_server.clone())),
+        _ => None,
+      },
+      _ => None,
+    };
+    assert_eq!(row(&s), Some((Some("verb.computerAct".into()), Some("notepad\nclick, type \"hi\", key \"ctrl+a\"".into()), None)));
+    apply_update(
+      &mut s,
+      &json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "cu-1",
+        "status": "completed",
+        "content": [{ "type": "content", "content": { "type": "text", "text": "# 3/3 steps, 80 ms\n> click \"Select\", type \"hi\", key \"ctrl+a\"\n~ t1 textfield" } }],
+      }),
+    );
+    assert_eq!(row(&s), Some((Some("verb.computerAct".into()), Some("notepad\nclick \"Select\", type \"hi\", key \"ctrl+a\"".into()), None)));
+  }
 }

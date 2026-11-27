@@ -4,10 +4,12 @@ import { isTodoTool } from '@acpira/shared/todoTools';
 import { isImageGenTool, isShowImageTool, isShowVideoTool, isShowWidgetTool } from '@acpira/shared/imageTools';
 import { isSessionTool } from '@acpira/shared/sessionLinks';
 import { isSkillTool } from './folding';
+import { computerIcon, isComputerTool } from './computerTools';
 
 export function toolIcon(block: ToolCallBlock): LucideIcon {
   if (isSkillTool(block)) return BookOpen;
   if (isSessionTool(block)) return block.verbKey === 'verb.readSession' ? MessagesSquare : History;
+  if (isComputerTool(block)) return computerIcon(block);
   return isTodoTool(block) ? ListTodo : isImageGenTool(block) ? ImagePlus : isShowImageTool(block) ? Image : isShowVideoTool(block) ? FileVideo : isShowWidgetTool(block) ? AppWindow : TOOL_ICON[block.kind];
 }
 

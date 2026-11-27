@@ -3,6 +3,7 @@ import { displayFileName, toolFiles, visibleToolContents } from './toolDetails';
 import { parseFileLink, type FileLink } from '../markdown/fileLinks';
 import { sessionRead, splitSessionTarget, type SessionRead } from '@acpira/shared/sessionLinks';
 import { isImageGenTool, isImageResultBlock, isShowVideoTool, isShowWidgetTool, toolImages, toolVideos, toolWidget } from '@acpira/shared/imageTools';
+import { computerApp, isComputerTool } from './computerTools';
 
 // One item of a turn's process list: a block on its own, or a run of consecutive reads / edits / session reads / checks
 // of one background command under one head.
@@ -11,7 +12,7 @@ import { isImageGenTool, isImageResultBlock, isShowVideoTool, isShowWidgetTool, 
 export type ProcessItem =
   | { type: 'block'; id: string; block: AgentBlock }
   | { type: 'group'; id: string; kind: GroupKind; blocks: ToolCallBlock[] };
-export type GroupKind = 'read' | 'edit' | 'session' | 'wait';
+export type GroupKind = 'read' | 'edit' | 'session' | 'wait' | 'computer';
 
 // Failed and cancelled calls stay visible on their own row; a completed read without a file reference has nothing
 // to list. Running calls join, so a group grows as the agent works instead of a live row trailing it.
@@ -26,6 +27,8 @@ function groupKind(block: AgentBlock): GroupKind | undefined {
   if (block.verbKey === 'verb.wait') return block.status === 'cancelled' ? undefined : 'wait';
   if (block.status === 'failed' || block.status === 'cancelled') return;
   if (block.verbKey === 'verb.readSession') return 'session';
+  // Reads, steps and pictures of one app in a row are one piece of work on it; listing apps names none
+  if (isComputerTool(block) && block.verbKey !== 'verb.computerApps') return 'computer';
   if (block.kind === 'read') return block.status !== 'completed' || toolFiles(block).length ? 'read' : undefined;
   if (block.kind === 'edit') return 'edit';
 }
@@ -192,7 +195,7 @@ export function groupNames(blocks: ToolCallBlock[]): string[] {
 
 // What a run must share to stay one group: a session group's session, a wait group's command
 function runKey(kind: GroupKind, block: ToolCallBlock): string {
-  return kind === 'session' ? sessionOf(block) : kind === 'wait' ? block.target ?? '' : '';
+  return kind === 'session' ? sessionOf(block) : kind === 'wait' ? block.target ?? '' : kind === 'computer' ? computerApp(block) ?? '' : '';
 }
 
 // The session a read_session call read: its id, else the raw target of a call that named no link
@@ -265,6 +268,7 @@ export function itemRows(item: ProcessItem, open: boolean): number {
     if (!open || item.kind === 'wait') return 1;
     return 1 + (item.kind === 'read' ? item.blocks.reduce((n, block) => n + Math.max(1, toolFiles(block).length), 0)
       : item.kind === 'session' ? sessionEntries(item.blocks).entries.length
+        : item.kind === 'computer' ? item.blocks.length
         : editEntries(item.blocks).length);
   }
   const block = item.block;

@@ -11,6 +11,8 @@ An agent reads and operates the windows of other apps on the user's computer: `c
 - Never driven, switch or not: password stores and system prompts (`NEVER`), and the app the engine itself belongs to (its bundle on macOS, the exe itself on Windows), since it shows Acpira's permission cards and settings and an agent clicking there would grant itself more. The driver refuses them from the `deny` list every request carries; an entry is a system id, a whole path or a program's file name. An editor hosting the extension is not covered: the agent can reach Acpira's cards inside it.
 - A request that fails midway is never sent again: its steps may have run.
 
+- Transcript rows: the four tools are not shown as MCP calls. The target is the app, and an act's second line is the driver's `> ` line (`did_line` in `core.rs`), read back from the reply (`computer_did` in the engine's normalizer) so clicks name elements instead of refs; the webview parses the same format (`chat/computerTools.ts`). Changing it means changing all three.
+
 ## Reading
 
 - One `AXUIElementCopyMultipleAttributeValues` per element; per-attribute reads are what makes other drivers slow.

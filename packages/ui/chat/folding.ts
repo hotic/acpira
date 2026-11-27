@@ -7,6 +7,7 @@ import { planApprovalTitle } from './permissionOptions';
 import { visibleToolContents } from './toolDetails';
 import { isImageResultBlock } from '@acpira/shared/imageTools';
 import type { Appearance } from '@acpira/shared/appearance';
+import { computerApp, isComputerTool } from './computerTools';
 
 // The kinds of process step the reader can leave out of a turn (Appearance `show*`). Everything else always shows:
 // plans, questions, notices, steered prompts, delegations, and a call whose result is a picture or a widget
@@ -140,6 +141,8 @@ export function toolTarget(block: ToolCallBlock): string | undefined {
     if (paths.length) return paths.map(path => path.split(/[\\/]/).pop()).join(', ');
   }
   if (isWorkflowRun(block)) return block.asyncTask!.name ?? block.target;
+  // A computer row names the app; an act's steps sit beside it (ToolCall ComputerTarget)
+  if (isComputerTool(block)) return computerApp(block);
   // A session tool's session shows as its title on the row (ToolCall SessionToolTarget); this is the rest: a read's turns, a search's query
   if (isSessionTool(block)) {
     const { rest } = splitSessionTarget(block.target);

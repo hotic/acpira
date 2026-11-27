@@ -200,6 +200,72 @@ pub(super) fn session_tool_verb(u: &Value, title: Option<&str>, raw: Option<&Map
   Some(if tool == "search_sessions" { SEARCH_SESSIONS_VERB } else { READ_SESSION_VERB })
 }
 
+/// Acpira's computer-use tools (`host_mcp/tools.rs`), in the same namings as show_image
+static COMPUTER_TOOL: LazyLock<Regex> = LazyLock::new(|| acpira_shared::re::compile(r"(?i)(?:^|acpira[_.:/-]{1,2}(?:[0-9a-f]{8}_)?)computer_(apps|observe|act|see)$"));
+pub const COMPUTER_APPS_VERB: &str = "verb.computerApps";
+pub const COMPUTER_OBSERVE_VERB: &str = "verb.computerObserve";
+pub const COMPUTER_ACT_VERB: &str = "verb.computerAct";
+pub const COMPUTER_SEE_VERB: &str = "verb.computerSee";
+pub const COMPUTER_VERBS: [&str; 4] = [COMPUTER_APPS_VERB, COMPUTER_OBSERVE_VERB, COMPUTER_ACT_VERB, COMPUTER_SEE_VERB];
+
+pub(super) fn computer_tool_verb(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<&'static str> {
+  let tool = [title, str_of(u, "name"), raw.and_then(|r| r.get("tool")).and_then(Value::as_str)]
+    .into_iter()
+    .flatten()
+    .find_map(|x| COMPUTER_TOOL.captures(x.trim()).map(|c| c[1].to_ascii_lowercase()))?;
+  Some(match tool.as_str() {
+    "apps" => COMPUTER_APPS_VERB,
+    "observe" => COMPUTER_OBSERVE_VERB,
+    "act" => COMPUTER_ACT_VERB,
+    _ => COMPUTER_SEE_VERB,
+  })
+}
+
+/// A computer tool's target, which the webview reads back (`chat/computerTools.ts`): the app as the agent named it (a
+/// path or bundle id cut to its last part), and for `act` a second line with what the steps do, in the driver's `> `
+/// line format (`click "Select", type "hello"`). Refs mean nothing on a row, so a click names its element only once the
+/// driver's reply has said which one it was (`computer_did`)
+pub(super) fn computer_tool_target(key: &str, args: Option<&Map<String, Value>>) -> Option<Target> {
+  let args = args?;
+  let app = args.get("app").and_then(Value::as_str).map(str::trim).filter(|a| !a.is_empty())?;
+  let app = app.rsplit(['/', '\\']).next().unwrap_or(app);
+  let app = app.strip_suffix(".exe").or_else(|| app.strip_suffix(".app")).unwrap_or(app);
+  let text = match (key, args.get("steps").and_then(Value::as_array)) {
+    (COMPUTER_ACT_VERB, Some(steps)) => format!("{app}\n{}", steps.iter().map(step_label).collect::<Vec<_>>().join(", ")),
+    _ => app.to_owned(),
+  };
+  Some(Target { text, mono: false, from_title: false })
+}
+
+/// One step as the driver's `> ` line writes it, from the step the agent sent (object or short array form)
+fn step_label(step: &Value) -> String {
+  let field = |object: &str, index: usize| match step {
+    Value::Array(parts) => parts.get(index).and_then(Value::as_str),
+    _ => step.get(object).and_then(Value::as_str),
+  };
+  let verb = field("do", 0).or_else(|| step.get("action").and_then(Value::as_str)).unwrap_or("").trim();
+  let what = match verb {
+    // The short form `["type", text]` has no target; `["type", ref, text]` has one
+    "type" => match step {
+      Value::Array(parts) if parts.len() > 2 => field("text", 2),
+      _ => field("text", 1),
+    },
+    "set" => field("value", 2),
+    "key" => field("keys", 1),
+    "menu" => field("path", 1),
+    _ => None,
+  };
+  match what {
+    Some(what) => format!("{verb} {}", Value::from(what.chars().map(|c| if c.is_control() { ' ' } else { c }).take(40).collect::<String>())),
+    None => verb.to_owned(),
+  }
+}
+
+/// The driver's `> ` line in a computer_act reply (`acpira-computer` `did_line`): what each step did, with the elements named
+pub(super) fn computer_did(reply: &str) -> Option<&str> {
+  reply.lines().take(3).find_map(|line| line.strip_prefix("> ")).map(str::trim).filter(|line| !line.is_empty())
+}
+
 /// A session tool's target, which the webview reads back (`splitSessionTarget`): the session as its canonical link first
 /// when the call names one, then the turn range (`3-5`, `3-`, `-5`) of a read or the query of a search
 pub(super) fn session_tool_target(key: &str, args: Option<&Map<String, Value>>) -> Option<Target> {
