@@ -29,9 +29,9 @@ const ALLOWED: Record<string, string> = {
   // Bundled by esbuild, run by plain node and typechecked by tsc; its prompt branches fall through with shared state.
   // Escaped so test/globalSetup.ts, which greps suites for the fixture's name, does not build the sidecar for this one
   'test/fake\u002dagent.ts': 'test fixture',
-
-  // Split pending
-  'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'split pending',
+  // One @ObservedV2 class whose methods all read its state; ArkTS has no extensions, so it cannot span files the way
+  // the iOS AppModel+X.swift files and the Android extension functions do
+  'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'single observed class',
 };
 
 function lineCount(file: string): number {
