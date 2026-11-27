@@ -33,7 +33,6 @@ const ALLOWED: Record<string, string> = {
   // Split pending
   'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Store/AppModel.swift': 'split pending',
-  'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Sessions/SessionListScreen.swift': 'split pending',
   'apps/harmony/entry/src/main/ets/pages/Usage.ets': 'split pending',
 };
 
