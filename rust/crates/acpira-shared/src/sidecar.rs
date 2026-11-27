@@ -318,6 +318,10 @@ pub enum ShellMsg {
     /// The successor is a local build installed on purpose, which may replace a release (`machine_engine::policy`)
     #[serde(default)]
     allow_dev: bool,
+    /// The caller runs outside SSH with an unlocked keychain and may replace a same-or-newer engine stuck on a locked
+    /// SSH keychain (`ProbeOk::keychain_locked_ssh`)
+    #[serde(default)]
+    replace_locked: bool,
   },
 }
 
@@ -376,6 +380,10 @@ pub enum SidecarMsg {
     protocol_min: i64,
     /// Drain was asked of it already: the endpoint is about to change hands
     draining: bool,
+    /// Runs under an SSH login whose macOS keychain is locked: a desktop shell or the login service may drain it even
+    /// at the same version so the replacement starts in the user's GUI session
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    keychain_locked_ssh: bool,
   },
   DrainOk {
     request_id: String,

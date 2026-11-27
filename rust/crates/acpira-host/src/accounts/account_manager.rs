@@ -870,8 +870,9 @@ impl AccountManager {
 
   /// Unlock the agent's credential store: the provider's unlock command runs in a terminal where the user types the
   /// password (it never passes through Acpira), and the store is polled until it opens. Then the local login and the
-  /// quotas are read again. Ok(false) when the provider has nothing to unlock or the terminal was left unfinished
-  pub async fn unlock(self: &Arc<Self>, agent: &str) -> Result<bool> {
+  /// quotas are read again. Ok(false) when the provider has nothing to unlock, a newer attempt superseded this one, or
+  /// the terminal was left unfinished
+  pub async fn unlock(self: &Arc<Self>, agent: &str, cancel: Cancel) -> Result<bool> {
     let p = self.provider(agent)?;
     let Some((command, args)) = p.unlock_command() else { return Ok(false) };
     let locked = || {
@@ -885,20 +886,33 @@ impl AccountManager {
     };
     if locked().await {
       self.set_locked(agent, true);
-      (self.run_in_terminal)(tp("host.unlockTerminalTitle", &[("agent", agent)]), command, args, None);
-      (self.toast)("info", &t("host.finishUnlockInTerminal"));
-      let cancel = Cancel::new();
-      let timer = cancel_after(UNLOCK_TIMEOUT, cancel.clone());
-      let opened = poll_until(&cancel, || {
-        let still = locked();
-        async move { (!still.await).then_some(()) }
-      })
-      .await;
+      let waiting = Cancel::new();
+      let timer = cancel_after(UNLOCK_TIMEOUT, waiting.clone());
+      if !cancel.is_cancelled() {
+        (self.run_in_terminal)(tp("host.unlockTerminalTitle", &[("agent", agent)]), command, args, None);
+        (self.toast)("info", &t("host.finishUnlockInTerminal"));
+      }
+      let opened = tokio::select! {
+        opened = poll_until(&waiting, || {
+          let still = locked();
+          async move { (!still.await).then_some(()) }
+        }) => opened,
+        _ = cancel.cancelled() => {
+          waiting.cancel();
+          None
+        }
+      };
       timer.abort();
+      if cancel.is_cancelled() {
+        return Ok(false);
+      }
       if opened.is_none() {
         (self.toast)("info", &t("host.unlockIncomplete"));
         return Ok(false);
       }
+    }
+    if cancel.is_cancelled() {
+      return Ok(false);
     }
     self.set_locked(agent, false);
     self.sync_local(Some(agent)).await;

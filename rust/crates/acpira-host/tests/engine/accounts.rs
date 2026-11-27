@@ -898,12 +898,14 @@ async fn a_locked_credential_store_is_reported_and_unlocking_it_reconnects_sessi
   m.m.new_session_for(&m.v, Some("fake".into()), Some(one.id.clone()), None, None).await.unwrap();
   assert_eq!(m.active().unwrap()["status"], "auth_required");
 
-  let unlock = m.spawn_handle(json!({ "type": "unlockCredentials", "agent": "fake" }));
-  until(|| s.terminals.lock().unwrap().iter().any(|c| c == "unlock-fake"), 2000).await;
+  let first_unlock = m.spawn_handle(json!({ "type": "unlockCredentials", "agent": "fake" }));
+  until(|| s.terminals.lock().unwrap().len() == 1 && s.terminals.lock().unwrap()[0] == "unlock-fake", 2000).await;
   assert_eq!(actions(m), json!([{ "agent": "fake", "via": "unlock", "status": "pending" }]));
-  // A second click while the terminal is open does not open another one
-  m.handle(json!({ "type": "unlockCredentials", "agent": "fake" })).await;
-  assert_eq!(s.terminals.lock().unwrap().len(), 1);
+  // A second click while waiting supersedes the first attempt and opens a fresh terminal (in case the first was closed)
+  let unlock = m.spawn_handle(json!({ "type": "unlockCredentials", "agent": "fake" }));
+  until(|| s.terminals.lock().unwrap().len() == 2, 2000).await;
+  first_unlock.await.unwrap();
+  assert_eq!(actions(m), json!([{ "agent": "fake", "via": "unlock", "status": "pending" }]));
   // The password typed in the terminal
   s.provider.locked.store(false, Ordering::SeqCst);
   unlock.await.unwrap();

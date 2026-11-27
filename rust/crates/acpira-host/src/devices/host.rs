@@ -254,6 +254,21 @@ pub async fn before_service(socket: &Path, root: &Path, wait: Duration, log: &(d
           }
         };
       }
+      // On desktop login, replace an SSH-started engine stuck on a locked keychain unless a newer build already runs
+      Ok(Some(p))
+        if p.keychain_locked_ssh
+          && !policy::takes_over(&p.version, acpira_shared::version::VERSION, true)
+          && ensure::can_replace_locked_ssh().await =>
+      {
+        log(&format!("serve: engine {} (pid {}) runs under SSH with a locked keychain: taking over", p.version, p.pid));
+        return match ensure::drain_locked(socket, true).await {
+          Ok(()) => None,
+          Err(e) => {
+            log(&format!("serve: {e:#}"));
+            Some(1)
+          }
+        };
+      }
       Ok(Some(p)) => return Some(confirm_gateway(root, Some(p.pid), deadline, log).await),
       Err(e) => log(&format!("serve: {}: {e:#}", socket.display())),
     }
@@ -324,6 +339,10 @@ mod tests {
 
   /// An engine of `version` on the machine's socket; the flag is set once it is asked to drain
   fn engine(root: &Path, version: &'static str) -> (PathBuf, Arc<AtomicBool>) {
+    engine_with(root, version, false)
+  }
+
+  fn engine_with(root: &Path, version: &'static str, keychain_locked_ssh: bool) -> (PathBuf, Arc<AtomicBool>) {
     let socket = crate::machine_engine::ensure::socket_path(root);
     let drained = Arc::new(AtomicBool::new(false));
     let flag = drained.clone();
@@ -332,7 +351,13 @@ mod tests {
         flag.store(true, Ordering::Release);
         json!({ "type": "drainOk", "requestId": m["requestId"] })
       }
-      _ => json!({ "type": "probeOk", "requestId": m["requestId"], "version": version, "pid": PID }),
+      _ => json!({
+        "type": "probeOk",
+        "requestId": m["requestId"],
+        "version": version,
+        "pid": PID,
+        "keychainLockedSsh": keychain_locked_ssh,
+      }),
     });
     (socket, drained)
   }
@@ -378,5 +403,17 @@ mod tests {
     gateway(other.path(), Some(PID));
     assert_eq!(before_service(&socket, other.path(), Duration::from_secs(5), &quiet).await, Some(0));
     assert!(!drained.load(Ordering::Acquire));
+  }
+
+  #[tokio::test]
+  async fn the_service_takes_over_from_an_ssh_engine_with_a_locked_keychain() {
+    if !crate::machine_engine::ensure::can_replace_locked_ssh().await {
+      return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let (socket, drained) = engine_with(root.path(), acpira_shared::version::VERSION, true);
+    gateway(root.path(), Some(PID));
+    assert_eq!(before_service(&socket, root.path(), Duration::from_secs(5), &quiet).await, None);
+    assert!(drained.load(Ordering::Acquire));
   }
 }

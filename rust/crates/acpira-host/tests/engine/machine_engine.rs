@@ -12,6 +12,11 @@ use acpira_host::machine_engine::ensure::socket_path;
 /// Answers probes as `version`; a drain is recorded, answered, and the socket given up like a real engine does
 #[cfg(unix)]
 fn stand_in(socket: &Path, version: &'static str) -> Arc<Mutex<Vec<Value>>> {
+  stand_in_with(socket, version, false)
+}
+
+#[cfg(unix)]
+fn stand_in_with(socket: &Path, version: &'static str, keychain_locked_ssh: bool) -> Arc<Mutex<Vec<Value>>> {
   std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
   let listener = tokio::net::UnixListener::bind(socket).unwrap();
   let drains = Arc::new(Mutex::new(vec![]));
@@ -25,7 +30,16 @@ fn stand_in(socket: &Path, version: &'static str) -> Arc<Mutex<Vec<Value>>> {
       let msg: Value = serde_json::from_str(&line).unwrap();
       match msg["type"].as_str() {
         Some("probe") => {
-          let ok = json!({ "type": "probeOk", "requestId": msg["requestId"], "version": version, "pid": 1, "protocolVersion": 1, "protocolMin": 1, "draining": false });
+          let ok = json!({
+            "type": "probeOk",
+            "requestId": msg["requestId"],
+            "version": version,
+            "pid": 1,
+            "protocolVersion": 1,
+            "protocolMin": 1,
+            "draining": false,
+            "keychainLockedSsh": keychain_locked_ssh,
+          });
           write.write_all(format!("{ok}\n").as_bytes()).await.unwrap();
         }
         Some("drain") => {
@@ -45,6 +59,11 @@ fn stand_in(socket: &Path, version: &'static str) -> Arc<Mutex<Vec<Value>>> {
 /// asked on for a while, as an engine keeps its wires until the successor answers: the successor joins the pipe meanwhile
 #[cfg(windows)]
 fn stand_in(socket: &Path, version: &'static str) -> Arc<Mutex<Vec<Value>>> {
+  stand_in_with(socket, version, false)
+}
+
+#[cfg(windows)]
+fn stand_in_with(socket: &Path, version: &'static str, keychain_locked_ssh: bool) -> Arc<Mutex<Vec<Value>>> {
   use tokio::net::windows::named_pipe::ServerOptions;
   let name = socket.to_path_buf();
   let mut server = ServerOptions::new().first_pipe_instance(true).create(&name).unwrap();
@@ -63,7 +82,16 @@ fn stand_in(socket: &Path, version: &'static str) -> Arc<Mutex<Vec<Value>>> {
       let msg: Value = serde_json::from_str(&line).unwrap();
       match msg["type"].as_str() {
         Some("probe") => {
-          let ok = json!({ "type": "probeOk", "requestId": msg["requestId"], "version": version, "pid": 1, "protocolVersion": 1, "protocolMin": 1, "draining": false });
+          let ok = json!({
+            "type": "probeOk",
+            "requestId": msg["requestId"],
+            "version": version,
+            "pid": 1,
+            "protocolVersion": 1,
+            "protocolMin": 1,
+            "draining": false,
+            "keychainLockedSsh": keychain_locked_ssh,
+          });
           conn.write_all(format!("{ok}\n").as_bytes()).await.unwrap();
         }
         Some("drain") => {
@@ -166,6 +194,32 @@ async fn a_newer_engine_is_left_running() {
   let reached = ensure(&home).await;
   assert_eq!(reached["version"], "999.0.0");
   assert!(drains.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_local_shell_replaces_an_ssh_engine_stuck_on_a_locked_keychain() {
+  let (_dir, home) = home();
+  let drains = stand_in_with(&socket_path(&home), acpira_shared::version::VERSION, true);
+  let out = tokio::process::Command::new(env!("CARGO_BIN_EXE_acpira"))
+    .args(["engine", "--home"])
+    .arg(&home)
+    .args(["--idle-grace", "1"])
+    .env_remove("ACPIRA_HOME")
+    .env_remove("SSH_CONNECTION")
+    .env_remove("SSH_CLIENT")
+    .env("ACPIRA_CATALOG_REFRESH", "0")
+    .env("ACPIRA_LOGIN_PATH", "0")
+    .output()
+    .await
+    .unwrap();
+  assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+  let reached: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+  let asked = drains.lock().unwrap().clone();
+  assert_eq!(asked.len(), 1);
+  assert_eq!(asked[0]["replaceLocked"], json!(true));
+  let pid = reached["pid"].as_u64().unwrap();
+  assert_ne!(pid, 1);
+  stop(pid);
 }
 
 /// The macOS launcher (machine_engine/launcher.rs) exits as its child did, and a stop signal reaches the child, so

@@ -87,7 +87,7 @@ export type ShellMsg =
   | { type: 'shutdown' }
   // `acpira engine` only (machine_engine/ensure.rs): who serves the machine's endpoint, and handing it to a newer build
   | { type: 'probe'; requestId: string }
-  | { type: 'drain'; requestId: string; version: string; allowDev?: boolean };
+  | { type: 'drain'; requestId: string; version: string; allowDev?: boolean; replaceLocked?: boolean };
 
 export type PlatformEvent =
   | { type: 'windowFocus' }
@@ -108,7 +108,7 @@ export type SidecarMsg =
   // The proxied address of a previewed page and the token its picker stamps messages with, or why not
   | { type: 'previewOpened'; requestId: string; url?: string; token?: string; error?: string }
   | { type: 'shutdownOk' }
-  | { type: 'probeOk'; requestId: string; version: string; pid: number; protocolVersion: number; protocolMin: number; draining: boolean }
+  | { type: 'probeOk'; requestId: string; version: string; pid: number; protocolVersion: number; protocolMin: number; draining: boolean; keychainLockedSsh?: boolean }
   | { type: 'drainOk'; requestId: string }
   | { type: 'drainRefused'; requestId: string; reason: string };
 

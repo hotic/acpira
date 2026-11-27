@@ -43,6 +43,8 @@ pub struct Probed {
   pub version: String,
   pub pid: u32,
   pub draining: bool,
+  /// Runs inside an SSH login whose macOS keychain is locked (`ProbeOk::keychain_locked_ssh`)
+  pub keychain_locked_ssh: bool,
 }
 
 /// The machine's socket for `home`: `<home>/run/engine.sock`, or a private one under the temp dir when that path is
@@ -162,6 +164,13 @@ async fn ensure_with(home: &Path, allow_dev: bool, serve_args: &[String], log: &
         drain(&socket, allow_dev).await?;
         started = Some(start(&exe, &socket, home, serve_args).await?);
       }
+      Ok(Some(p)) if p.keychain_locked_ssh && drained != Some(p.pid) && can_replace_locked_ssh().await => {
+        log(&format!("engine {} (pid {}) runs under SSH with a locked keychain: taking over", p.version, p.pid));
+        drained = Some(p.pid);
+        drain_locked(&socket, allow_dev).await?;
+        let pick = pick_replacement(&exe, home, allow_dev);
+        started = Some(start(&pick, &socket, home, serve_args).await?);
+      }
       Ok(Some(p)) => {
         let keep = vec![exe.clone()];
         let h = home.to_path_buf();
@@ -178,10 +187,7 @@ async fn ensure_with(home: &Path, allow_dev: bool, serve_args: &[String], log: &
           None => true,
         };
         if ended {
-          let pick = match stage::newest_release(home) {
-            Some((v, landed)) if policy::takes_over(&v, VERSION, false) || (policy::is_dev(VERSION) && !allow_dev) => landed,
-            _ => exe.clone(),
-          };
+          let pick = pick_replacement(&exe, home, allow_dev);
           started = Some(start(&pick, &socket, home, serve_args).await?);
         }
       }
@@ -196,6 +202,21 @@ async fn ensure_with(home: &Path, allow_dev: bool, serve_args: &[String], log: &
   }
 }
 
+/// Pick the newest of this build and landed releases when starting a fresh or replacement engine
+fn pick_replacement(exe: &Path, home: &Path, allow_dev: bool) -> PathBuf {
+  match stage::newest_release(home) {
+    Some((v, landed)) if policy::takes_over(&v, VERSION, false) || (policy::is_dev(VERSION) && !allow_dev) => landed,
+    _ => exe.to_path_buf(),
+  }
+}
+
+/// Whether this caller runs outside SSH with an unlocked credential store, so a replacement engine it starts can read
+/// the macOS keychain where an SSH-started engine cannot
+pub(crate) async fn can_replace_locked_ssh() -> bool {
+  !crate::platform::engine_layout::over_ssh()
+    && (!cfg!(target_os = "macos") || !crate::accounts::keychain::default_keychain_locked().await)
+}
+
 /// Who answers on `socket`: None when nothing listens there
 pub async fn probe(socket: &Path) -> Result<Option<Probed>> {
   let Some(answer) = ask(socket, json!({ "type": "probe", "requestId": "probe" }), &["probeOk"]).await? else { return Ok(None) };
@@ -203,12 +224,25 @@ pub async fn probe(socket: &Path) -> Result<Option<Probed>> {
     version: answer.get("version").and_then(Value::as_str).unwrap_or_default().to_owned(),
     pid: answer.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()).unwrap_or(0),
     draining: answer.get("draining").and_then(Value::as_bool).unwrap_or(false),
+    keychain_locked_ssh: answer.get("keychainLockedSsh").and_then(Value::as_bool).unwrap_or(false),
   }))
 }
 
 /// Asks the engine on `socket` to hand it over to this build
 pub(crate) async fn drain(socket: &Path, allow_dev: bool) -> Result<()> {
-  let msg = json!({ "type": "drain", "requestId": "drain", "version": VERSION, "allowDev": allow_dev });
+  drain_with(socket, allow_dev, false).await
+}
+
+/// Asks an SSH-started engine with a locked keychain to hand the endpoint over to a desktop-session replacement
+pub(crate) async fn drain_locked(socket: &Path, allow_dev: bool) -> Result<()> {
+  drain_with(socket, allow_dev, true).await
+}
+
+async fn drain_with(socket: &Path, allow_dev: bool, replace_locked: bool) -> Result<()> {
+  let mut msg = json!({ "type": "drain", "requestId": "drain", "version": VERSION, "allowDev": allow_dev });
+  if replace_locked {
+    msg["replaceLocked"] = json!(true);
+  }
   match ask(socket, msg, &["drainOk", "drainRefused"]).await? {
     None => Ok(()),
     Some(a) if a.get("type").and_then(Value::as_str) == Some("drainOk") => Ok(()),

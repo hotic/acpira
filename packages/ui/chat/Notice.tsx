@@ -153,8 +153,8 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   const takeOver = status === 'error' || status === 'readonly' ? onTakeOver : undefined;
   const installCommand = status === 'error' && !takeOver && agent.available === false && onInstall ? agent.install?.command : undefined;
   const installing = !!installCommand && install?.status === 'running';
-  // Terminal waits outlive a closed terminal and page reloads. Keep the ways out usable: another login or import
-  // supersedes the old login wait; duplicate imports and unlocks are still ignored by the host.
+  // Terminal waits outlive a closed terminal and page reloads. Keep the ways out usable: another login, import or
+  // unlock supersedes the old terminal wait; duplicate imports are still ignored by the host.
   const busy = (action?.status === 'pending' && action.via === 'import') || installing;
   const unlockFeedback = (a: AccountAction) => a.status === 'pending' ? t('notice.unlockWaiting')
     : a.status === 'error' ? t('notice.unlockFailed', { error: a.error ?? t('notice.error.unknown') })

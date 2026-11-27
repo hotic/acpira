@@ -417,21 +417,39 @@ impl Engine {
     self.draining.load(Ordering::Acquire)
   }
 
-  /// A newer build (`machine_engine::ensure`) takes the machine's endpoint over. Refused unless it is newer by the same
-  /// rule the asker applied (`policy::takes_over`), so a confused older client cannot end a newer engine. The endpoint
-  /// goes at once; the wires go once the successor answers there (so a shell reconnecting meanwhile does not start
-  /// another engine), and the engine ends when its running turns have (`idle`)
-  pub fn drain(self: &Arc<Self>, successor: &str, allow_dev: bool) -> Result<(), String> {
+  /// Whether this engine runs inside an SSH login whose credential store (macOS keychain) is locked right now
+  async fn keychain_locked_ssh(&self) -> bool {
+    if self.ssh_connection.is_none() && !crate::platform::engine_layout::over_ssh() {
+      return false;
+    }
+    if let Some(rt) = self.runtime() {
+      return rt.credentials_locked().await;
+    }
+    cfg!(target_os = "macos") && crate::accounts::keychain::default_keychain_locked().await
+  }
+
+  /// A newer build (`machine_engine::ensure`), or a desktop shell replacing an SSH-started engine with a locked
+  /// keychain (`replace_locked`), takes the machine's endpoint over. Refused unless it is newer by the same rule the
+  /// asker applied (`policy::takes_over`) or this engine actually sits on a locked SSH keychain, so a confused older
+  /// client cannot end a healthy engine. The endpoint goes at once; the wires go once the successor answers there (so a
+  /// shell reconnecting meanwhile does not start another engine), and the engine ends when its running turns have (`idle`)
+  pub async fn drain(self: &Arc<Self>, successor: &str, allow_dev: bool, replace_locked: bool) -> Result<(), String> {
     if !self.persistent {
       return Err("this engine is not the machine's".into());
     }
-    if !crate::machine_engine::policy::takes_over(successor, &self.opts.version, allow_dev) {
+    let newer = crate::machine_engine::policy::takes_over(successor, &self.opts.version, allow_dev);
+    let locked_handover = replace_locked && self.keychain_locked_ssh().await;
+    if !newer && !locked_handover {
       return Err(format!("{successor} does not replace {}", self.opts.version));
     }
     if self.draining.swap(true, Ordering::AcqRel) {
       return Ok(());
     }
-    self.log(&format!("draining: {successor} takes the endpoint over"));
+    if newer {
+      self.log(&format!("draining: {successor} takes the endpoint over"));
+    } else {
+      self.log("draining: handing over from SSH session with locked keychain");
+    }
     self.release_endpoint();
     let (engine, path) = (self.clone(), self.endpoint_path.lock().clone());
     tokio::spawn(async move {
@@ -553,19 +571,21 @@ impl Engine {
     }
   }
 
-  /// A window from another SSH login (or a peer on macOS when the user's `gui/<uid>` session can run the engine instead
-  /// of an SSH session) joins a persistent engine whose keychain is locked. Unlock state belongs to the security
-  /// session: with no other wire on it and no turn running it retires, so the next connection starts the engine in the
-  /// window's or `gui/<uid>`'s session. Called under `init`, before the wire joins.
+  /// A window from another SSH login, a local desktop window, or a peer on macOS when the user's `gui/<uid>` session
+  /// can run the engine instead of an SSH session joins a persistent engine whose keychain is locked. Unlock state
+  /// belongs to the security session: with no other wire on it and no turn running it retires, so the next connection
+  /// starts the engine in the window's or `gui/<uid>`'s session. Called under `init`, before the wire joins.
   /// Observed 2026-10-10 on acpira 1.9.0 over Remote-SSH: an engine left by an earlier connection stayed locked while
   /// the window's terminal unlocked the keychain, and the unlock notice waited out its 5 minutes
   async fn retires_for(&self, hello: &Hello, rt: &HostRuntime) -> bool {
-    // Retiring would take the gateway, and with it every device, down with nothing to start it again
-    if !self.persistent || self.hosting() {
+    if !self.persistent {
       return false;
     }
     let another_session = if hello.client.is_peer() {
       self.ssh_connection.is_some() && crate::platform::launchd::can_use_gui(&self.opts.home).await
+    } else if self.ssh_connection.is_some() && hello.client.ssh_connection.is_none() {
+      // A local window (desktop app or local IDE) runs in Aqua (`gui/<uid>`), never in this SSH security session
+      crate::platform::launchd::can_use_gui(&self.opts.home).await
     } else {
       other_login(self.ssh_connection.as_deref(), hello.client.ssh_connection.as_deref())
     };
@@ -578,9 +598,16 @@ impl Engine {
       return false;
     }
     inner.sealed = true;
+    let was_hosting = self.hosting();
     drop(inner);
-    self.log("retiring: a window or peer joined while the keychain is locked for this engine's SSH login");
-    self.changed.notify_waiters();
+    if was_hosting {
+      // Release the endpoint and gateway at once; the rejected shell reconnects and starts the replacement engine,
+      // and `left_devices` has `serve` kick the login service if no shell comes back
+      self.retire("a window or peer joined while the keychain is locked for this engine's SSH login");
+    } else {
+      self.log("retiring: a window or peer joined while the keychain is locked for this engine's SSH login");
+      self.changed.notify_waiters();
+    }
     true
   }
 
@@ -665,6 +692,7 @@ impl Wire {
       }
       // `acpira engine`: answered without joining, so asking never starts the runtime or counts as a window
       ShellMsg::Probe { request_id } => {
+        let keychain_locked_ssh = self.engine.keychain_locked_ssh().await;
         self.send(SidecarMsg::ProbeOk {
           request_id,
           version: self.engine.opts.version.clone(),
@@ -676,11 +704,12 @@ impl Wire {
             let inner = self.engine.inner.lock();
             inner.done || inner.sealed
           },
+          keychain_locked_ssh,
         });
         return Flow::Continue;
       }
-      ShellMsg::Drain { request_id, version, allow_dev } => {
-        self.send(match self.engine.drain(&version, allow_dev) {
+      ShellMsg::Drain { request_id, version, allow_dev, replace_locked } => {
+        self.send(match self.engine.drain(&version, allow_dev, replace_locked).await {
           Ok(()) => SidecarMsg::DrainOk { request_id },
           Err(reason) => SidecarMsg::DrainRefused { request_id, reason },
         });

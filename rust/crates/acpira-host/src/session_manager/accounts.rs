@@ -28,8 +28,9 @@ impl SessionManager {
     let actions = {
       let mut st = self.state.lock();
       let pending = st.account_actions.iter().find(|a| a.agent == agent && a.status == AccountActionStatus::Pending);
-      // A key check is short and stores on success: a second action meanwhile would race it, not replace it
-      if pending.is_some_and(|a| matches!(a.via, AccountActionVia::Import | AccountActionVia::Unlock | AccountActionVia::Key)) {
+      // A key check or import is short and non-interactive: a second action meanwhile would race it, not replace it.
+      // Terminal waits (login and unlock) supersede the old wait instead, because the user may close or miss the terminal
+      if pending.is_some_and(|a| matches!(a.via, AccountActionVia::Import | AccountActionVia::Key)) {
         return None;
       }
       // A terminal may have been closed without notifying this engine. Never make its wait an exclusive lock.
@@ -159,7 +160,11 @@ impl SessionManager {
     let Some(accounts) = self.deps.accounts.clone() else { return Ok(()) };
     let Some(cancel) = self.begin_account_action(agent, AccountActionVia::Unlock) else { return Ok(()) };
     let action = |status, error| AccountAction { agent: agent.to_owned(), via: AccountActionVia::Unlock, status, error };
-    match accounts.unlock(agent).await {
+    let result = accounts.unlock(agent, cancel.clone()).await;
+    if cancel.is_cancelled() {
+      return Ok(());
+    }
+    match result {
       Ok(false) => self.set_account_action(action(AccountActionStatus::Cancelled, None), &cancel),
       Ok(true) => {
         self.pool.invalidate(Some(agent));
