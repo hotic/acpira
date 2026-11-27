@@ -683,8 +683,9 @@ sealed interface WebviewMsg {
   data class SearchSessions(val query: String, val seq: Int) : WebviewMsg
   /** Rebind the session to this account (also the agent's default account from then on) */
   data class SelectAccount(val sessionId: String?, val id: String) : WebviewMsg
-  /** An account list came into view: refresh that agent's quotas */
-  data class RefreshQuota(val agent: AgentId, val sessionId: String? = null) : WebviewMsg
+  /** An account list came into view: refresh that agent's quotas. [manual]: an explicit refresh, the only one an agent
+   *  with AgentInfo.manualQuota answers */
+  data class RefreshQuota(val agent: AgentId, val sessionId: String? = null, val manual: Boolean? = null) : WebviewMsg
   data class Compact(val sessionId: String?) : WebviewMsg
   /**
    * SessionView.canTakeOver: end the agent another engine left holding the session, or ask the engine that has this
@@ -922,7 +923,7 @@ sealed interface WebviewMsg {
       is SetSessionUnread -> { put("id", m.id); put("unread", m.unread) }
       is SearchSessions -> { put("query", m.query); put("seq", m.seq) }
       is SelectAccount -> { opt("sessionId", m.sessionId); put("id", m.id) }
-      is RefreshQuota -> { put("agent", m.agent); opt("sessionId", m.sessionId) }
+      is RefreshQuota -> { put("agent", m.agent); opt("sessionId", m.sessionId); m.manual?.let { put("manual", it) } }
       is Compact -> opt("sessionId", m.sessionId)
       is TakeOverSession -> opt("sessionId", m.sessionId)
       is Dequeue -> { put("sessionId", m.sessionId); put("id", m.id) }

@@ -135,6 +135,10 @@ public struct AgentInfo: Codable, Hashable, Sendable, Identifiable {
   public var accounts: Bool?
   /// The account layer also takes a pasted API key as an account (settings on the desktop only)
   public var accountKeys: Bool?
+  /// Quota is read only on an explicit refresh (`refreshQuota` with `manual`), never automatically
+  public var manualQuota: Bool?
+  /// Minimum seconds between manual quota refreshes
+  public var quotaCooldown: Double?
   public var credentialsLocked: Bool?
   public var localAccount: LocalAccountInfo?
   public var available: Bool?

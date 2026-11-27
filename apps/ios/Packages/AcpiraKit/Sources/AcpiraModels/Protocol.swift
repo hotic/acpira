@@ -653,8 +653,9 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
   case forkSession(sessionId: String, turnIndex: Int, agent: AgentId? = nil)
   /// Rebind the session to this account (also the agent's default account from then on)
   case selectAccount(sessionId: String?, id: String)
-  /// An account list came into view: refresh that agent's quotas
-  case refreshQuota(agent: AgentId, sessionId: String? = nil)
+  /// An account list came into view: refresh that agent's quotas. `manual`: an explicit refresh, the only one an agent with
+  /// AgentInfo.manualQuota answers
+  case refreshQuota(agent: AgentId, sessionId: String? = nil, manual: Bool? = nil)
   case compact(sessionId: String?)
   case retry(sessionId: String?)
   /// SessionView.canTakeOver: end the agent another engine left holding the session, or ask the engine that has this
@@ -845,7 +846,7 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case type, patches, listPatches, window, sessionId, text, attachments, steer, blockId, optionId, answers, images, skip, planId, model, id, configId
     case value, agent, category, cwd, chat, title, pinned, archived, unread, query, seq, turnIndex, retainedAttachments, clientId
     case file, via, methodId, requestId, edit, subagentId, taskId, action, objective, key, fresh, dir, path, base
-    case toolCallId, nth, cols, rows, data, binary, chars, format, shown, probe, also
+    case toolCallId, nth, cols, rows, data, binary, chars, format, shown, probe, also, manual
   }
 
   public init(from decoder: Decoder) throws {
@@ -897,7 +898,8 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
     case "forkSession":
       self = .forkSession(sessionId: try str(.sessionId), turnIndex: try c.decode(Int.self, forKey: .turnIndex), agent: try opt(.agent))
     case "selectAccount": self = .selectAccount(sessionId: try opt(.sessionId), id: try str(.id))
-    case "refreshQuota": self = .refreshQuota(agent: try str(.agent), sessionId: try opt(.sessionId))
+    case "refreshQuota":
+      self = .refreshQuota(agent: try str(.agent), sessionId: try opt(.sessionId), manual: try c.decodeIfPresent(Bool.self, forKey: .manual))
     case "compact": self = .compact(sessionId: try opt(.sessionId))
     case "retry": self = .retry(sessionId: try opt(.sessionId))
     case "takeOverSession": self = .takeOverSession(sessionId: try opt(.sessionId))
@@ -1033,7 +1035,11 @@ public enum WebviewMsg: Codable, Hashable, Sendable {
       try c.encode(sessionId, forKey: .sessionId)
       try c.encode(turnIndex, forKey: .turnIndex)
       try c.encodeIfPresent(agent, forKey: .agent)
-    case let .refreshQuota(agent, sessionId), let .unlockCredentials(agent, sessionId):
+    case let .refreshQuota(agent, sessionId, manual):
+      try c.encode(agent, forKey: .agent)
+      try c.encodeIfPresent(sessionId, forKey: .sessionId)
+      try c.encodeIfPresent(manual, forKey: .manual)
+    case let .unlockCredentials(agent, sessionId):
       try c.encode(agent, forKey: .agent)
       try c.encodeIfPresent(sessionId, forKey: .sessionId)
     case let .dequeue(sessionId, id), let .sendQueued(sessionId, id):

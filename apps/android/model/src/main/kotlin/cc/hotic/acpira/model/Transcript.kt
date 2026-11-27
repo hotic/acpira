@@ -144,6 +144,10 @@ data class AgentInfo(
   val accounts: Boolean? = null,
   /** The account layer also takes a pasted API key as an account (settings on the desktop only) */
   val accountKeys: Boolean? = null,
+  /** Quota is read only on an explicit refresh (`refreshQuota` with `manual`), never automatically */
+  val manualQuota: Boolean? = null,
+  /** Minimum seconds between manual quota refreshes */
+  val quotaCooldown: Double? = null,
   val credentialsLocked: Boolean? = null,
   val localAccount: LocalAccountInfo? = null,
   val available: Boolean? = null,

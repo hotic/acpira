@@ -14,8 +14,20 @@ struct ContractTests {
   static let sidecarSource = root.appending(path: "packages/shared/sidecar.ts")
   static var readable: Bool { FileManager.default.fileExists(atPath: sidecarSource.path) }
 
+  /// A contract file with every local module it re-exports (`export type * from './x'`, `export type { A } from './x'`)
+  /// appended, so a type moved behind a re-export is still found where the contract names it
   static func source(_ file: String) throws -> String {
-    TS.stripComments(try String(contentsOf: root.appending(path: "packages/shared/\(file)"), encoding: .utf8))
+    var seen = Set<String>()
+    func load(_ file: String) throws -> String {
+      guard seen.insert(file).inserted else { return "" }
+      let raw = try String(contentsOf: root.appending(path: "packages/shared/\(file)"), encoding: .utf8)
+      var text = TS.stripComments(raw)
+      for match in raw.matches(of: /export\s+type\s+(?:\*|\{[^}]*\})\s+from\s+'\.\/([\w\/]+)'/) {
+        text += "\n" + (try load("\(match.1).ts"))
+      }
+      return text
+    }
+    return try load(file)
   }
 
   @Test(.enabled(if: readable))
@@ -586,7 +598,7 @@ enum ContractSamples {
     .searchSessions(query: "zebracorn", seq: 3),
     .forkSession(sessionId: "s1", turnIndex: 1, agent: "codex"),
     .selectAccount(sessionId: "s1", id: "acc-1"),
-    .refreshQuota(agent: "claude", sessionId: "s1"),
+    .refreshQuota(agent: "claude", sessionId: "s1", manual: true),
     .compact(sessionId: "s1"),
     .retry(sessionId: "s1"),
     .takeOverSession(sessionId: "s1"),

@@ -24,7 +24,15 @@ import kotlin.test.assertTrue
  */
 class ContractTest {
   private val root = File(System.getProperty("acpira.root") ?: "../..")
-  private fun source(path: String) = File(root, path).readText()
+  /** A file with every local module it re-exports (`export type * from './x'`, `export type { A } from './x'`) appended,
+   *  so a type moved behind a re-export is still found where the contract names it */
+  private fun source(path: String, seen: MutableSet<String> = mutableSetOf()): String {
+    if (!seen.add(path)) return ""
+    val raw = File(root, path).readText()
+    val dir = path.substringBeforeLast('/', "")
+    return Regex("""export\s+type\s+(?:\*|\{[^}]*\})\s+from\s+'\./([\w/]+)'""").findAll(raw)
+      .fold(raw) { text, m -> text + "\n" + source("$dir/${m.groupValues[1]}.ts", seen) }
+  }
   private fun shared(file: String) = TS.stripComments(source("packages/shared/$file"))
 
   @Test fun protocolVersionMatchesTheSidecarContract() {
@@ -427,7 +435,7 @@ private object Samples {
     WebviewMsg.SearchSessions("zebracorn", 3),
     WebviewMsg.ForkSession("s1", 1, "codex"),
     WebviewMsg.SelectAccount("s1", "acc-1"),
-    WebviewMsg.RefreshQuota("claude", "s1"),
+    WebviewMsg.RefreshQuota("claude", "s1", manual = true),
     WebviewMsg.Compact("s1"),
     WebviewMsg.Retry("s1"),
     WebviewMsg.TakeOverSession("s1"),

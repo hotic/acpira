@@ -733,6 +733,8 @@ mod tests {
     client.close();
   }
 
+  // The helper takes POSIX absolute paths (it runs on the SSH host); a Windows temp dir is not one
+  #[cfg(unix)]
   #[tokio::test]
   async fn write_stream_writes_multi_chunk_binary_files_atomically() {
     let dir = tempfile::tempdir().unwrap();
