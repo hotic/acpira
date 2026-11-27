@@ -6,7 +6,7 @@ import { Cmp, ListMetrics, Metrics, Type } from '../design/Tokens';
 import { AppModel } from '../store/AppModel';
 import { t } from '../store/L10n';
 import { canEditPrompts, dockPlan, goalHeadActions, openQuestion, pendingPlanReview, shortStop } from '../logic/Composing';
-import { ModelChoices } from '../logic/ModelCatalog';
+import { ModelChoices } from '../logic/ModelChoices';
 import { MentionPersona, SlashCommands } from '../logic/SlashCommands';
 import { Lucide } from '../components/Glyphs';
 import { AgentMessage, UserBubble } from '../components/TurnViews';

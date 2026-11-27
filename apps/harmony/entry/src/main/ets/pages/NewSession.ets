@@ -12,7 +12,7 @@ import { MenuBack, MenuCard, MenuGap, MenuRow, menuOptions } from '../components
 import { openTextPrompt, PromptArgs } from '../components/Dialogs';
 import { Attachment } from '../wire/Wire';
 import { Cmp } from '../design/Tokens';
-import { ModelChoices } from '../logic/ModelCatalog';
+import { ModelChoices } from '../logic/ModelChoices';
 import { attachBeans, Bean, modelBeans } from '../components/composer/Beans';
 import { GooLayer } from '../components/composer/GooLayer';
 

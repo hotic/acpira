@@ -1,8 +1,10 @@
 import { SessionOption } from '../../wire/Wire';
 import {
-  accessIcon, accessLabel, ComposerControls, EffortLevel, FamilyChannelGroup, ModelChoices, SidekickCli, ModelFamily, ModelVariant, modeIcon, modeLabel, optionBrand, Toggle, vendorBrand,
-  workLabel
+  ComposerControls, EffortLevel, FamilyChannelGroup, SidekickCli, ModelFamily, ModelVariant, optionBrand, Toggle,
+  vendorBrand
 } from '../../logic/ModelCatalog';
+import { accessIcon, accessLabel, modeIcon, modeLabel, workLabel } from '../../logic/Modes';
+import { ModelChoices } from '../../logic/ModelChoices';
 import { MentionPersona } from '../../logic/SlashCommands';
 import { AttachSource, Goo } from '../../store/Composing';
 import { t } from '../../store/L10n';

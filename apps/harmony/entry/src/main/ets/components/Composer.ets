@@ -1,7 +1,9 @@
 import { Attachment, FileHit, SessionControls, SessionOption, SlashCommand, Usage } from '../wire/Wire';
 import { Cmp, Metrics, Type } from '../design/Tokens';
 import { draftBytes, MESSAGE_BYTES, PastedText } from '../logic/Composing';
-import { ComposerControls, ModelChoices, modeIcon, modeName } from '../logic/ModelCatalog';
+import { ComposerControls } from '../logic/ModelCatalog';
+import { ModelChoices } from '../logic/ModelChoices';
+import { modeIcon, modeName } from '../logic/Modes';
 import { MentionPersona, PromptEdit, SigilSpan, SlashCommands } from '../logic/SlashCommands';
 import { AttachSource, ComposerDraft, FileSearch, Goo } from '../store/Composing';
 import { pickFiles, pickPhotos, takePhoto } from '../store/AttachPickers';

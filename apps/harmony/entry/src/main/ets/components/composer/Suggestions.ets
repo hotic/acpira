@@ -1,5 +1,5 @@
 import { FileHit, SessionOption, SlashCommand } from '../../wire/Wire';
-import { modeHint, modeIcon, modeName } from '../../logic/ModelCatalog';
+import { modeHint, modeIcon, modeName } from '../../logic/Modes';
 import { Cmp, Metrics, Type } from '../../design/Tokens';
 import { MentionPersona, SlashCommands } from '../../logic/SlashCommands';
 import { AgentMark, Lucide } from '../Glyphs';
