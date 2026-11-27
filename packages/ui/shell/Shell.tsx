@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Archive, Check, CircleAlert, Folder, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, ImageDraft, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
@@ -19,7 +19,7 @@ import { useStableList } from '../ui/useStableList';
 import { Header } from '../chat/Header';
 import { SessionList, projectName } from '../chat/SessionList';
 import { isChatFolder, type MoveTarget } from '../chat/sessionTree';
-import { HistoryComposerContext, HistoryContext, HistoryMessage } from '../chat/HistoryMessage';
+import { HistoryComposerContext, HistoryContext } from '../chat/HistoryMessage';
 import { QuoteToolbar } from '../chat/QuoteToolbar';
 import { Composer, type ComposerProps } from '../chat/Composer';
 import type { MentionPersona } from '../chat/Mention';

@@ -31,7 +31,6 @@ const ALLOWED: Record<string, string> = {
   'test/fake\u002dagent.ts': 'test fixture',
 
   // Split pending
-  'packages/ui/chat/SessionList.tsx': 'split pending',
   'apps/harmony/entry/src/main/ets/store/AppModel.ets': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Design/Goo.swift': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Transcript/ToolViews.swift': 'split pending',
