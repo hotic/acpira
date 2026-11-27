@@ -290,7 +290,8 @@ async function main() {
     say(`fresh home on ${ORIGIN} shows the empty state and starts no session`);
 
     await page.click('the empty state button', `[...document.querySelectorAll('button')].find(b => b.innerText.includes('Open folder'))`);
-    await page.waitFor('the first project', `document.body.innerText.includes('smoke-alpha')`);
+    // Wait for the new session's start page, not just the sidebar's project entry (categories can land before newSession)
+    await page.waitFor('the first project\'s start page', `document.body.innerText.includes('smoke-alpha') && !document.body.innerText.includes('Open a folder to start')`);
     const a = await roundTrip('smoke alpha');
     say(`project smoke-alpha: session ${a}, one round trip`);
 
@@ -853,9 +854,18 @@ document.addEventListener('securitypolicyviolation', () => { seen.blocked = true
     console.error(`smoke: FAILED: ${e instanceof SmokeError ? e.message : e?.stack ?? e}`);
     if (page) {
       try { await page.shot(join(root, 'failure.png')); console.error(`smoke: screenshot ${join(root, 'failure.png')}`); } catch { /* the page may be gone */ }
+      try {
+        const state = await page.eval(`JSON.stringify({ text: document.body.innerText.slice(0, 600), composer: (() => { const t = document.querySelector('[data-start-dock] textarea'); return t ? { disabled: t.disabled, value: t.value, height: Math.round(t.getBoundingClientRect().height) } : null; })() })`);
+        if (state) console.error(`smoke: page state: ${state}`);
+      } catch { /* the page may be gone */ }
     }
     const tail = appLog.trim().split('\n').slice(-25).join('\n');
     if (tail) console.error(`smoke: app log tail (${logFile}):\n${tail}`);
+    const engineLog = join(data, 'run', 'engine.log');
+    if (existsSync(engineLog)) {
+      const eTail = readFileSync(engineLog, 'utf8').trim().split('\n').slice(-25).join('\n');
+      if (eTail) console.error(`smoke: engine log tail (${engineLog}):\n${eTail}`);
+    }
     process.exitCode = 1;
   } finally {
     page?.close();
@@ -974,8 +984,10 @@ function records() {
   return [...ids];
 }
 
+const VISIBLE_COMPOSER = `(() => { const t = document.querySelector('[data-start-dock] textarea:not([disabled])'); return !!t && t.getBoundingClientRect().height > 0; })()`;
+
 async function roundTrip(text) {
-  await page.waitFor('an enabled composer', `!!document.querySelector('[data-start-dock] textarea:not([disabled])')`);
+  await page.waitFor('an enabled composer', VISIBLE_COMPOSER);
   await page.type('[data-start-dock] textarea', text);
   await page.key('[data-start-dock] textarea', 'Enter');
   await page.waitFor(`the reply to "${text}"`, `document.body.innerText.includes(${JSON.stringify(text)}) && document.body.innerText.includes('hello world')`);
@@ -985,7 +997,7 @@ async function roundTrip(text) {
 
 async function mentions() {
   const query = '@notes';
-  await page.waitFor('an enabled composer', `!!document.querySelector('[data-start-dock] textarea:not([disabled])')`);
+  await page.waitFor('an enabled composer', VISIBLE_COMPOSER);
   await page.type('[data-start-dock] textarea', query);
   const names = await page.waitFor('file suggestions', `(() => {
     const names = [...document.querySelectorAll('[role=listbox]:not([aria-label]) [role=option]')].map(o => o.innerText.trim());

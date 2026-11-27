@@ -714,7 +714,8 @@ export function Shell(p: ShellProps) {
   const summons = useMemo(() => p.personas?.map(x => x.name), [p.personas]);
   const recalledPrompts = useStableList(useMemo(() => promptHistory(p.turns, p.queued), [p.turns, p.queued]));
   const composerProps: ComposerProps = useMemo(() => ({
-    running: p.running, stoppable, steer: steering, revisePlan: !!reviseChoice, disabled: p.status !== 'ready' && p.status !== 'starting',
+    // Empty home keeps the chat pane mounted but hidden while no session exists; its composer stays disabled until a session lands
+    running: p.running, stoppable, steer: steering, revisePlan: !!reviseChoice, disabled: !!p.noProject || (p.status !== 'ready' && p.status !== 'starting'),
     controlsLocked: p.status !== 'ready',
     theme: p.theme, turnCount, compacting: isCompacting, controls: p.controls, hidden: p.hidden?.[p.agent.id],
     usage: p.usage, commands: p.commands, compactAt: p.compactAt, cwd: p.cwd ?? '',
@@ -733,7 +734,7 @@ export function Shell(p: ShellProps) {
         p.onOpenSettings!({ kind: 'agent', id, tab: id === BUILTIN_AGENT_ID ? 'sources' : 'models' });
       }
       : undefined,
-  }), [p.running, stoppable, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings, p.modelMemory, p.modelShapes, p.sidekickShapes]);
+  }), [p.running, stoppable, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.noProject, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings, p.modelMemory, p.modelShapes, p.sidekickShapes]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const plans = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PlanDocumentBlock => b.type === 'plan_document') : []), [p.turns]));
@@ -1089,7 +1090,7 @@ export function Shell(p: ShellProps) {
               {/* The thread's toast stack is hidden with the thread: the start page shows the shell's own (an unknown session link) */}
               {desktop && p.noProject && <ShellToasts open={on.revealPath} />}
               {/* The overlay inspector replaces this block visually; it stays mounted (scroll + draft survive) but inert */}
-              <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className={cn('flex min-h-0 flex-1 flex-col', desktop && p.noProject && 'hidden')}>
+              <div inert={overlayInspect || (desktop && p.noProject) || undefined} aria-hidden={overlayInspect || (desktop && p.noProject) || undefined} className={cn('flex min-h-0 flex-1 flex-col', desktop && p.noProject && 'hidden')}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
                   {chatFind && (
                     <ChatFind
