@@ -131,8 +131,15 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   }
   let mut named_tool = named_tool(u, meta, title, raw);
   if let Some(tool) = named_tool.as_mut() {
-    set_verb(b, tool.verb);
+    // An input-less completion of `schedule` keeps its recurring cron identity once established
+    let keep_cron = b.verb_key.as_deref() == Some("verb.scheduleCron") && tool.verb == "verb.schedule" && tool.meta.is_none();
+    if !keep_cron {
+      set_verb(b, tool.verb);
+    }
     b.kind = ToolKind::Other;
+    if let Some(m) = tool.meta.take() {
+      b.meta = Some(m);
+    }
     if let Some(steps) = tool.steps.take() {
       b.todo_entries = Some(steps);
     }

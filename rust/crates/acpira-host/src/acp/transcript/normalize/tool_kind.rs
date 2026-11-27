@@ -369,12 +369,13 @@ pub(super) fn strip_verb(title: &str) -> String {
 pub(super) struct NamedTool {
   pub(super) verb: &'static str,
   pub(super) target: Option<Target>,
+  pub(super) meta: Option<String>,
   /// `update_steps` always sends the whole list and answers a bare `OK`, so its input is the resulting list
   pub(super) steps: Option<Vec<PlanEntry>>,
 }
 
 /// The verb keys `named_tool` gives besides the shared ones (`verb.todo` / `ask` / `wait` / `kill`)
-pub(super) const NAMED_TOOL_VERBS: [&str; 11] = [
+pub(super) const NAMED_TOOL_VERBS: [&str; 13] = [
   "verb.awaitSubagent",
   "verb.stopSubagent",
   "verb.readBoard",
@@ -382,6 +383,8 @@ pub(super) const NAMED_TOOL_VERBS: [&str; 11] = [
   "verb.subagentStatus",
   "verb.swarmTitle",
   "verb.listTasks",
+  "verb.schedule",
+  "verb.scheduleCron",
   "verb.loadTools",
   "verb.monitor",
   "verb.listSessions",
@@ -434,7 +437,7 @@ fn claude_tool(u: &Value, meta: Option<&Map<String, Value>>, raw: Option<&Map<St
     "PushNotification" => ("verb.notify", prose(arg("message"))),
     _ => return None,
   };
-  Some(NamedTool { verb, target, steps: None })
+  Some(NamedTool { verb, target, meta: None, steps: None })
 }
 
 /// The command a `TaskStop` result names (`{ message, task_id, task_type, command }`, as JSON text or blocks of it)
@@ -466,25 +469,39 @@ fn agy_tool(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) ->
   let arg = |k: &str| str_arg(raw, k);
   // `<conversation>/task-<n>`: the conversation half repeats the session id
   let task = || arg("TaskId").map(|id| Target { mono: true, ..plain(id.rsplit('/').next().unwrap_or(id)) });
-  let (verb, target) = match (name, arg("action").or_else(|| arg("Action"))) {
-    ("update_steps", _) => ("verb.todo", None),
+  let (verb, target, meta) = match (name, arg("action").or_else(|| arg("Action"))) {
+    ("update_steps", _) => ("verb.todo", None, None),
     // Its questions go over `elicitation/create`; the row is only the call
-    ("ask_question", _) => ("verb.ask", first_question(raw)),
-    ("swarm_wait", _) => ("verb.awaitSubagent", None),
-    ("read_board", _) => ("verb.readBoard", None),
-    ("post_message", _) => ("verb.sendMessage", prose(arg("text"))),
-    ("send_message", _) => ("verb.sendMessage", prose(arg("Message"))),
-    ("swarm", Some("status")) | ("manage_subagents", Some("list")) => ("verb.subagentStatus", None),
-    ("swarm", Some("title")) => ("verb.swarmTitle", arg("title").map(plain)),
-    ("manage_subagents", Some("kill")) => ("verb.stopSubagent", None),
+    ("ask_question", _) => ("verb.ask", first_question(raw), None),
+    ("swarm_wait", _) => ("verb.awaitSubagent", None, None),
+    ("read_board", _) => ("verb.readBoard", None, None),
+    ("post_message", _) => ("verb.sendMessage", prose(arg("text")), None),
+    ("send_message", _) => ("verb.sendMessage", prose(arg("Message")), None),
+    ("swarm", Some("status")) | ("manage_subagents", Some("list")) => ("verb.subagentStatus", None, None),
+    ("swarm", Some("title")) => ("verb.swarmTitle", arg("title").map(plain), None),
+    ("manage_subagents", Some("kill")) => ("verb.stopSubagent", None, None),
     // `status` answers with the task's latest output, like Devin's `get_output`
-    ("manage_task", Some("status")) => ("verb.wait", task()),
-    ("manage_task", Some("kill")) => ("verb.kill", task()),
-    ("manage_task", Some("list")) => ("verb.listTasks", None),
+    ("manage_task", Some("status")) => ("verb.wait", task(), None),
+    ("manage_task", Some("kill")) => ("verb.kill", task(), None),
+    ("manage_task", Some("list")) => ("verb.listTasks", None, None),
+    // One-shot timer (`DurationSeconds`) or recurring cron (`CronExpression`); separate from Claude's `verb.wakeup`
+    ("schedule", _) => {
+      let target = prose(arg("Prompt"));
+      if let Some(cron) = arg("CronExpression") {
+        ("verb.scheduleCron", target, Some(cron.to_owned()))
+      } else {
+        let secs = raw
+          .and_then(|r| r.get("DurationSeconds"))
+          .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+          .filter(|n| n.is_finite() && *n > 0.0)
+          .map(|n| format!("{}s", n.round() as u64));
+        ("verb.schedule", target, secs)
+      }
+    }
     _ => return None,
   };
   let steps = (name == "update_steps").then(|| raw.and_then(|r| r.get("steps")).and_then(agy_steps)).flatten();
-  Some(NamedTool { verb, target, steps })
+  Some(NamedTool { verb, target, meta, steps })
 }
 
 /// `[{ title, status: pending | in_progress | done }]`, as an array or its JSON text

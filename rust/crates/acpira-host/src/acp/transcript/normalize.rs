@@ -723,6 +723,17 @@ mod retitled_row_tests {
     // `swarm add` is the subagent tree's delegation row
     apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "a", "title": "Run swarm", "kind": "other", "rawInput": { "action": "add", "name": "core" } }));
     assert_eq!(row(&mut s, "a").verb_key, None);
+
+    // `schedule`: one-shot timer and recurring cron keep their prompt summary and schedule meta across input-less updates
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "sch1", "title": "Run schedule", "kind": "other", "rawInput": { "DurationSeconds": 300, "Prompt": "Check v2 corpus progress\ndetails" } }));
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "sch1", "title": "Run schedule", "status": "completed" }));
+    let b = row(&mut s, "sch1");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref(), b.meta.as_deref()), (Some("verb.schedule"), Some("Check v2 corpus progress"), Some("300s")));
+
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "sch2", "title": "Run schedule", "kind": "other", "rawInput": { "CronExpression": "*/5 * * * *", "Prompt": "Poll GPU training" } }));
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "sch2", "title": "Run schedule", "status": "completed" }));
+    let b = row(&mut s, "sch2");
+    assert_eq!((b.verb_key.as_deref(), b.target.as_deref(), b.meta.as_deref()), (Some("verb.scheduleCron"), Some("Poll GPU training"), Some("*/5 * * * *")));
   }
 
   // claude-agent-acp 0.111.0 titles its agent-control tools with the bare name and names them in `_meta.claudeCode`

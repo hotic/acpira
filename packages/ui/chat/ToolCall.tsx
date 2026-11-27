@@ -31,6 +31,7 @@ import { diffIndex, fileReference, rowImage, splitHit, toolFiles, visibleToolCon
 import { useToolSeconds } from './useToolSeconds';
 import { CommandOutcome } from './CommandOutcome';
 import { commandDuration } from './commandDuration';
+import { formatScheduleMeta, isScheduleTool } from './scheduleTime';
 import { useAutoFold } from './autoFold';
 import { editReference, editSpan } from './processGroups';
 
@@ -125,6 +126,13 @@ function ToolCallRows({ block, grouped, continuing, externalResult }: { block: T
 
   // The diff stat is not decoration — every harness shows it — so it escapes the toolLine axis; 'rich' adds the rest of the meta
   const stat = block.diffStat && <DiffStat {...block.diffStat} />;
+  // Schedule rows align their timer / cadence into the same right-hand time track as command durations
+  const scheduleMeta = isScheduleTool(block) && block.meta ? formatScheduleMeta(block.meta) : undefined;
+  const scheduleTag = scheduleMeta && (
+    <span className={cn(scheduleMeta.mono && 'font-mono text-mono')} title={scheduleMeta.text !== scheduleMeta.raw ? scheduleMeta.raw : undefined}>
+      {scheduleMeta.text}
+    </span>
+  );
   // Commands always end their row with the outcome and run time; an async task's state tag stands in for the glyph.
   // A live command ticks in whole seconds, a finished one reads its host timestamps, and no timer means no duration
   const duration = seconds === undefined ? undefined
@@ -140,12 +148,12 @@ function ToolCallRows({ block, grouped, continuing, externalResult }: { block: T
       </>
     : toolLine === 'rich'
       ? <>
-          {stat || (block.meta && <span>{block.meta}</span>)}
+          {stat || scheduleTag || (block.meta && <span>{block.meta}</span>)}
           {taskTag}
           {taskStop}
           <CommandOutcome status={block.status} />
         </>
-      : (stat || taskTag || taskStop ? <>{stat}{taskTag}{taskStop}</> : undefined);
+      : (stat || scheduleTag || taskTag || taskStop ? <>{stat}{scheduleTag}{taskTag}{taskStop}</> : undefined);
 
   // An edit names where it landed, first to last changed line, the way a read names its range
   const span = block.kind === 'edit' ? editSpan([block]) : undefined;
