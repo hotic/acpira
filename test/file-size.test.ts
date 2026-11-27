@@ -35,7 +35,6 @@ const ALLOWED: Record<string, string> = {
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Design/Goo.swift': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Transcript/ToolViews.swift': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Chat/TranscriptCollection.swift': 'split pending',
-  'apps/android/app/src/main/kotlin/cc/hotic/acpira/ui/SessionListScreen.kt': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Store/AppModel.swift': 'split pending',
   'apps/ios/Packages/AcpiraKit/Sources/AcpiraUI/Sessions/SessionListScreen.swift': 'split pending',
   'apps/harmony/entry/src/main/ets/pages/Usage.ets': 'split pending',
