@@ -365,7 +365,10 @@ async fn the_gate_gives_up_after_its_rounds_and_says_so() {
   assert_eq!(turns_in(&vw), 4, "{vw}");
   let n = notices(&vw);
   expect_match(&n[0], json!({ "severity": "warning", "details": "nope" }));
-  expect_match(&n[1], json!({ "severity": "error", "details": "nope" }));
+  // The give-up notice keeps the report and adds a handoff suggestion with a new-session action
+  expect_match(&n[1], json!({ "severity": "error", "actions": ["new_session"] }));
+  let details = n[1]["details"].as_str().unwrap_or_default();
+  assert!(details.starts_with("nope\n\nHandoff suggestion:"), "{details}");
   assert!(!s.is_running());
 }
 
@@ -691,7 +694,7 @@ async fn a_plugin_s_hooks_run_after_the_project_s_in_its_own_folder() {
   // The project gates nothing after a turn, the plugin does: its block goes back to the agent and the gate gives up
   until(|| count(&h, "hooks: gate gave up") == 1, 30_000).await;
   let n = notices(&view(&s));
-  assert!(n.iter().all(|x| x["details"] == "plugin says no"), "{n:?}");
+  assert!(n.iter().all(|x| x["details"].as_str().is_some_and(|d| d.starts_with("plugin says no"))), "{n:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

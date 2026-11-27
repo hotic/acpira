@@ -427,7 +427,9 @@ impl AcpSession {
       () = stop.cancelled() => return Output::error("Cancelled."),
     };
     let written = if bytes.len() <= INLINE_WRITE_LIMIT {
-      let req = json!({ "path": dest, "b": crate::remote::wire::b64(&bytes), "mkdirs": true });
+      // Standard base64, as the helper's `write` reads it (encoded here so the session layer does not reach up into remote)
+      let b = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+      let req = json!({ "path": dest, "b": b, "mkdirs": true });
       tokio::select! {
         r = client.call("write".into(), req) => r.map(|reply| reply.value),
         () = stop.cancelled() => return Output::error("Cancelled."),
