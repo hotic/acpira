@@ -9,9 +9,8 @@ import { takeArrival } from './arrivals';
 import { playWhoosh } from '../effects/whoosh';
 import { backdropsShown } from './skin';
 
-// The interface slots a plugin piece fills with a frame of its own (docs/dev/plugins.md Interface). Only the desktop
-// serves the frame document, so elsewhere these slots stay empty; `message.actions`, `prompt.actions` and `selection.actions` are native
-// buttons (MessageActions) and `panel.tab` lives in the tool panel's tabs
+// The interface slots a plugin piece fills with a frame of its own (docs/dev/plugins.md Interface). `message.actions`,
+// `prompt.actions` and `selection.actions` are native buttons (MessageActions) and `panel.tab` lives in the tool panel's tabs
 
 // A piece applied from a card arrives by flight: unseen until the stand-in from the card's thumbnail (arrivals.ts) lands
 // on its box. Returns whether it is in place

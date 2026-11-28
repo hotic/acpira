@@ -2,7 +2,6 @@ import { useSyncExternalStore } from 'react';
 import { flushSync } from 'react-dom';
 import type { PluginSkin, PluginsView } from '@acpira/shared/plugins';
 import type { HostMsg } from '@acpira/shared/protocol';
-import { desktopShell } from '../desktop';
 import { motionOff, revealKeepsOld, revealSkin, type Point } from '../effects/magic';
 import { playWhoosh } from '../effects/whoosh';
 import { applyPluginTheme } from '../pluginTheme';
@@ -38,8 +37,8 @@ export function usePluginsView(): PluginsView | undefined {
   return useSyncExternalStore(subscribe, () => view, () => view);
 }
 
-// Only the desktop serves the frame document a backdrop runs in (`/plugin-frame.html`); elsewhere a skin is its colours
-export const backdropsShown = desktopShell();
+// Every webview host runs sandboxed plugin frames: desktop via `/plugin-frame.html`, IDE / browser hosts via nonce'd srcDoc
+export const backdropsShown = typeof window !== 'undefined';
 
 export interface SkinState {
   // On screen: its tokens are in the theme layer and its backdrop is the visible one

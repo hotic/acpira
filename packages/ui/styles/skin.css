@@ -68,11 +68,14 @@
   /* A narrow window's list is a page over the sheet: it stays all but opaque */
   .acp-shell[data-backdrop] > [data-session-panel][data-docked="false"] { background: color-mix(in srgb, var(--bg-0) 94%, transparent); }
   .acp-shell[data-backdrop][data-desktop]:not([data-caption]) [data-sheet] { background: color-mix(in srgb, var(--bg-0) var(--glass-sheet), transparent); }
+  /* Non-desktop hosts (VS Code, IntelliJ) paint the conversation on the shell itself rather than a raised [data-sheet] */
+  .acp-shell.acp-shell[data-backdrop]:not([data-desktop]) { background: color-mix(in srgb, var(--bg-0) var(--glass-sheet), transparent); }
   /* A page-drawn caption (Windows, Linux) draws the sheet's card on ::before, as it does the docked subagent pane's */
   .acp-shell[data-backdrop][data-desktop][data-caption] [data-sheet]::before,
   .acp-shell[data-backdrop][data-desktop] > [data-subagent-panel="docked"]::before { background: color-mix(in srgb, var(--bg-0) var(--glass-sheet), transparent); }
   .acp-shell[data-backdrop] [data-tool-panel-wrap] { --panel-bg: color-mix(in srgb, var(--bg-0) var(--glass-sheet), transparent); }
   .acp-shell[data-backdrop][data-glass="frost"] > [data-session-panel],
+  .acp-shell[data-backdrop][data-glass="frost"]:not([data-desktop]),
   .acp-shell[data-backdrop][data-glass="frost"][data-desktop]:not([data-caption]) [data-sheet],
   .acp-shell[data-backdrop][data-glass="frost"][data-desktop][data-caption] [data-sheet]::before,
   .acp-shell[data-backdrop][data-glass="frost"][data-desktop] > [data-subagent-panel="docked"]::before,

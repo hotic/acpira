@@ -40,7 +40,7 @@ function packageFiles() {
   return files;
 }
 
-for (const f of [join(app, 'dist/extension.cjs'), join(root, 'dist/picker.js'), join(root, 'dist/webview/main.js')]) {
+for (const f of [join(app, 'dist/extension.cjs'), join(root, 'dist/picker.js'), join(root, 'dist/webview/main.js'), join(root, 'dist/webview/plugin-ui.js')]) {
   if (!existsSync(f)) throw new Error(`${f} is missing: run \`pnpm build\` first`);
 }
 

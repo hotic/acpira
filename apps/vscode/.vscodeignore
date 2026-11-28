@@ -5,6 +5,7 @@
 !bin/acpira.exe
 !dist/webview/main.js
 !dist/webview/main.css
+!dist/webview/plugin-ui.js
 !dist/webview/assets/**
 !media/icon.png
 !media/icon.svg

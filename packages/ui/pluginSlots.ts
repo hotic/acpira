@@ -48,8 +48,21 @@ export function usePluginPiece(plugin: string, id: string): PluginSlot | undefin
 // The frames on screen, by their window: the only sources whose messages are read. A frame of a document the page holds
 // itself (a skin's backdrop, a card's thumbnail) brings `html` and the `options` it starts with, and hears its first
 // frame. Such a document may be a version nobody confirmed (a card's thumbnail), so it neither calls the plugin's
-// methods nor hears its runtime: those belong to the version in effect
-interface Frame { plugin: string; piece: string; snapshot?: string; reloadUntil?: number; css: () => string; html?: () => string; options?: unknown; state?: () => unknown; drawn?: () => void }
+// methods nor hears its runtime: those belong to the version in effect. `inline` marks a srcdoc frame (non-desktop
+// hosts), whose document already carries the piece and runtime; its `ready` only asks for the latest live theme / state
+interface Frame {
+  plugin: string;
+  piece: string;
+  snapshot?: string;
+  reloadUntil?: number;
+  inline?: boolean;
+  css: () => string;
+  html?: () => string;
+  options?: unknown;
+  state?: () => unknown;
+  drawn?: () => void;
+  ready?: () => void;
+}
 const frames = new Map<Window, Frame>();
 // Calls in flight: the engine's answer goes back to the frame that asked, under the frame's own id
 const calls = new Map<string, { win: Window; id: unknown }>();
@@ -64,6 +77,15 @@ function onMessage(e: MessageEvent) {
   const m = e.data as { acpira?: unknown; id?: unknown; method?: unknown; params?: unknown; turn?: unknown } | null;
   if (!m || typeof m !== 'object') return;
   if (m.acpira === 'ready') {
+    if (f.inline) {
+      // A srcdoc frame already carries the piece and runtime; sync live theme / state / session in case anything moved while it mounted
+      win.postMessage({ acpira: 'theme', css: f.css() }, '*');
+      const state = f.state?.();
+      if (state !== undefined) win.postMessage({ acpira: 'state', state }, '*');
+      if (!f.html && outline) win.postMessage({ acpira: 'session', session: outline }, '*');
+      f.ready?.();
+      return;
+    }
     // Read when sent, so state, theme and session that changed while the runtime was fetched are not sent stale
     const send = (lib?: string) => {
       // The frame may have gone meanwhile, or registered again with new callbacks
@@ -77,7 +99,7 @@ function onMessage(e: MessageEvent) {
     };
     // A component piece gets the React runtime with it; without one (an older build, a failed fetch) its loader says so
     const first = f.html ? f.html() : pluginPiece(f.plugin, f.piece)?.html ?? '';
-    if (first.includes(RUNTIME_MARK)) pluginRuntime().then(lib => send(lib), () => send());
+    if (first.includes(RUNTIME_MARK)) loadPluginRuntime().then(lib => send(lib), () => send());
     else send();
   } else if (m.acpira === 'scrollTo' && typeof m.turn === 'number' && !f.html) {
     scrollToExchange?.(m.turn);
@@ -125,17 +147,24 @@ function onMessage(e: MessageEvent) {
 }
 
 // What a document carries to ask for the runtime: every piece the engine compiles from an `entry` (plugins/build.rs)
-const RUNTIME_MARK = '<meta name="acpira-runtime" content="react">';
+export const RUNTIME_MARK = '<meta name="acpira-runtime" content="react">';
 // Built beside main.js by packages/ui's build (packages/plugin-ui/lib.ts); a variable so the bundler leaves the URL alone
 const RUNTIME_FILE = 'plugin-ui.js';
 let runtime: Promise<string> | undefined;
+let runtimeText: string | undefined;
+
+export const cachedPluginRuntime = (): string | undefined => runtimeText;
 
 // The runtime's text, fetched once per page; a `</script` inside it would end the frame's script element early and a
 // `<!--` change how the rest is read (the same escapes as the engine's documents, plugins/build.rs `script_safe`)
-function pluginRuntime(): Promise<string> {
+export function loadPluginRuntime(): Promise<string> {
   runtime ??= fetch(new URL(RUNTIME_FILE, import.meta.url))
     .then(r => (r.ok ? r.text() : Promise.reject(new Error(`plugin runtime: ${r.status}`))))
-    .then(t => t.replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--'))
+    .then(t => {
+      const safe = t.replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--');
+      runtimeText = safe;
+      return safe;
+    })
     .catch(e => {
       runtime = undefined;
       throw e;
@@ -145,7 +174,7 @@ function pluginRuntime(): Promise<string> {
 
 // A frame of `plugin`'s piece; `css` gives the page's theme tokens as declarations for the frame's root; `own` for a
 // document the page holds rather than a piece in effect
-export function registerPluginFrame(win: Window, plugin: string, piece: string, css: () => string, own?: Pick<Frame, 'html' | 'options' | 'state' | 'drawn' | 'snapshot'>): () => void {
+export function registerPluginFrame(win: Window, plugin: string, piece: string, css: () => string, own?: Pick<Frame, 'html' | 'options' | 'state' | 'drawn' | 'snapshot' | 'inline' | 'ready'>): () => void {
   if (!listening) { listening = true; window.addEventListener('message', onMessage); }
   frames.set(win, { plugin, piece, css, ...own });
   return () => {
@@ -194,6 +223,7 @@ export function deliverPluginCalled(m: Extract<HostMsg, { type: 'pluginCalled' }
 // that adds no tool call costs a string compare
 let outline: SessionOutline | undefined;
 let outlineText = '';
+export const currentSessionOutline = (): SessionOutline | undefined => outline;
 export function publishSessionOutline(next: SessionOutline | undefined) {
   const text = next ? JSON.stringify(next) : '';
   if (text === outlineText) return;

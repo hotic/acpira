@@ -113,8 +113,8 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 
 ## Interface
 
-- Pieces go to `UI_SLOTS` (`acpira-shared`); an empty push and safe mode remove them. Desktop only, where the frame document is served.
-- A piece runs in `<iframe sandbox="allow-scripts">` without `allow-same-origin`, loading `/plugin-frame.html`, not `srcdoc`: a srcdoc frame inherits the page's nonce-only script policy, so inline code never runs. `document.open` keeps the no-network policy and the `acpira` object in WKWebView.
+- Pieces go to `UI_SLOTS` (`acpira-shared`); an empty push and safe mode remove them.
+- A piece runs in `<iframe sandbox="allow-scripts">` without `allow-same-origin`: desktop loads `/plugin-frame.html` (`document.open` keeps the no-network policy and `acpira` in WKWebView); non-desktop webview hosts (VS Code, IntelliJ, browser harness) render a self-contained `srcdoc` (`plugins/pluginFrameDoc.ts`) that stamps inline scripts with the page's CSP nonce under a stricter no-network CSP and rebinds inline `on*` attributes, keeping external scripts blocked.
 - The host-message handler (`App.tsx`) ignores child frames, so a piece cannot forge `pluginUi` and borrow another plugin's methods. The bridge accepts only registered frames whose origin reads `null`. The outline sent to frames carries counts, never text, paths or commands.
 - Page-held documents (backdrop, thumbnails) may be unconfirmed versions, so they neither call methods nor hear `ui/post`. Thumbnails run 2D: a page has few WebGL contexts.
 - The sandbox keeps page state and sessions out of a piece's reach, not the plugin out of anything.
