@@ -63,6 +63,24 @@ async fn an_exhausted_account_hands_the_turn_to_the_next_account_which_continues
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn antigravitys_reply_quota_hands_the_turn_to_the_next_account() {
+  let fake = fake_or_skip!();
+  let s = setup_env_as(&fake, "antigravity", json!({}));
+  let (one, two) = exhausted_session_as(&s, "antigravity").await;
+  s.m.handle(json!({ "type": "send", "text": "antigravity-quota" })).await;
+  until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && turns_in(&a) == 4 && a["turns"][3]["stop"] == "end_turn"), 10_000).await;
+  let a = s.m.active().unwrap();
+  expect_match(&a, json!({ "accountId": two }));
+  assert!(a["turns"][1]["error"].is_null(), "{}", a["turns"][1]);
+  assert_eq!(a["turns"][1]["stop"], "end_turn");
+  let notice = a["turns"][1]["blocks"].as_array().unwrap().iter().find(|b| b["type"] == "notice").cloned().unwrap();
+  expect_match(&notice, json!({ "severity": "warning", "category": "limit" }));
+  expect_match(&a["turns"][2], json!({ "role": "user", "auto": true, "autoReason": "accountSwitch" }));
+  assert_ne!(one, two);
+  s.m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn with_every_account_exhausted_or_the_switch_off_the_error_stays() {
   let fake = fake_or_skip!();
   let s = setup_env(&fake, json!({ "FAKE_EXHAUSTED_KEYS": "good-key,good-key-2" }));

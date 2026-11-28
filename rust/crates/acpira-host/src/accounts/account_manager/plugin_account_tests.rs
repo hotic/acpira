@@ -87,6 +87,18 @@ async fn the_same_quota_read_again_tells_nobody() {
 }
 
 #[tokio::test]
+async fn quota_exhaustion_of_a_saved_account_may_move_to_a_plugin_account() {
+  let dir = tempfile::tempdir().unwrap();
+  let m = manager(dir.path()).await;
+  let own = m.store.add("codex", AccountDraft { label: "own@x.io".into(), detail: None, secret: "s".into(), meta: None }).await.unwrap();
+  m.set_plugin_accounts("demo", "Demo", &[rented("/a")], false).unwrap();
+  m.set_switch_policy(Arc::new(|_: &str| SwitchStrategy::ListOrder));
+  assert_eq!(m.fallback("codex", Some(&own.id)).await.map(|a| a.id), Some("plugin:demo:r1".to_owned()));
+  // The reverse does not silently spend the user's own login: a plugin account moves only inside its plugin
+  assert!(m.fallback("codex", Some("plugin:demo:r1")).await.is_none());
+}
+
+#[tokio::test]
 async fn a_removed_account_hands_its_sessions_to_the_strategy_pick() {
   let dir = tempfile::tempdir().unwrap();
   let m = manager(dir.path()).await;

@@ -788,6 +788,7 @@ impl AcpSession {
       if let Some(e) = failed {
         let error = self.reply_error(&mut c, e);
         self.log(&format!("prompt failed in the reply: {}", error.message));
+        exhausted = self.reserve_switch(&mut c, &error);
         self.reserve_reauth(&mut c, &error, accepted.compacting);
         self.settle(&mut c, TurnStop::Cancelled, Some(error));
         return Some(Settled { stop: TurnStop::Cancelled, exhausted });

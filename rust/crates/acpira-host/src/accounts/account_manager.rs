@@ -222,7 +222,13 @@ impl AccountManager {
       self.parked.lock().insert(cur.to_owned(), parked_until(q.as_ref(), now_ms()));
     }
     self.refresh_quotas(Some(agent), false).await;
-    let list = self.store.list(Some(agent)).into_iter().map(|a| self.with_quota(a)).collect::<Vec<_>>();
+    let mut list = self.store.list(Some(agent)).into_iter().map(|a| self.with_quota(a)).collect::<Vec<_>>();
+    // Quota exhaustion may overflow a saved login onto accounts a plugin lists for the same agent. The reverse stays
+    // inside the plugin above: picking a leased or otherwise separate account must not silently spend the user's own login.
+    // `current` is none only when a removed account is being replaced, which keeps its saved-account replacement rules.
+    if current.is_some() {
+      list.extend(self.plugin_infos(Some(agent)));
+    }
     let id = pick_fallback(&list, current, strategy, &self.parked.lock(), now_ms())?;
     (self.log)(&format!("account fallback ({strategy:?}): {} → {id}", current.unwrap_or("-")));
     list.into_iter().find(|a| a.id == id)

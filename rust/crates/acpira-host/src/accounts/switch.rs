@@ -1,4 +1,4 @@
-//! Which saved account takes over when the bound one runs out of quota (acpira.accountSwitch, global). Pure: the account
+//! Which account takes over when the bound one runs out of quota (acpira.accountSwitch, global). Pure: the account
 //! manager feeds it the list, the parked (known exhausted) accounts and the clock
 
 use std::collections::HashMap;

@@ -874,6 +874,12 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `model=${config.model}` } });
       return { stopReason: 'end_turn' };
     }
+    // agy acp's quota failure: the prompt still answers end_turn, with the failure as the reply's last warning line
+    if (text === 'antigravity-quota') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial work' } });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n⚠ Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 53m32s.\n' } });
+      return { stopReason: 'end_turn' };
+    }
     if (apiKey && process.env.FAKE_EXHAUSTED_KEYS?.split(',').includes(apiKey)) {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial work' } });
       if (text.includes('quota-air') && airCaps.includes('sessionFailure'))

@@ -164,8 +164,11 @@ pub fn auth_hint_of(line: &str) -> Option<String> {
   AUTH_WORDS.is_match(text).then(|| text.to_owned())
 }
 
-static QUOTA_TEXT: LazyLock<Regex> =
-  LazyLock::new(|| acpira_shared::re::compile(r"(?i)usage (?:quota|limit) has been (?:exhausted|reached)|usage limit reached|^You've (?:hit|reached) your|out of usage"));
+static QUOTA_TEXT: LazyLock<Regex> = LazyLock::new(|| {
+  acpira_shared::re::compile(
+    r"(?i)usage (?:quota|limit) has been (?:exhausted|reached)|usage limit reached|^You've (?:hit|reached) your|out of usage|individual quota reached",
+  )
+});
 
 /// The account behind the session ran out of allowance, so another account can carry on: Devin's typed
 /// `resource_exhausted` (-32011), the AIR `quota_exhausted` failure codex-acp / claude-agent-acp send (category limit with no
@@ -315,6 +318,16 @@ mod tests {
     assert!(!is_auth(&rpc("Internal error", Some(json!({ "details": "429 Too Many Requests" })))));
     assert!(!is_auth(&rpc("Invalid JSON: unexpected token in authorization header parser", None)));
     assert!(!is_auth(&rpc("tool failed: OAuth flow for MCP server x timed out", None)));
+  }
+
+  #[test]
+  fn antigravitys_quota_line_counts_as_exhaustion() {
+    let quota = TurnError {
+      message: "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 53m32s.".into(),
+      ..Default::default()
+    };
+    assert!(is_quota_exhausted(&quota));
+    assert!(!is_quota_exhausted(&TurnError { message: "Individual results may vary".into(), ..Default::default() }));
   }
 
   #[test]
