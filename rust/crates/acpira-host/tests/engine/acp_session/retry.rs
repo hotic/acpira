@@ -191,8 +191,8 @@ async fn a_rotated_credential_reopens_before_the_next_prompt_even_while_backgrou
   let answered = logs.iter().rposition(|l| l.contains("prompt done")).unwrap();
   assert!(respawn < answered, "{logs:#?}");
   assert_eq!(s.to_record().acp_session_id, native);
-  expect_match(&turn_at(&view(&s), -2), json!({ "role": "user", "text": "after renewal" }));
-  expect_match(&last_turn(&view(&s)), json!({ "stop": "end_turn" }));
+  expect_match(turn_at(&view(&s), -2), json!({ "role": "user", "text": "after renewal" }));
+  expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn" }));
   assert_eq!(bg_task(&s)["canStop"], false, "the task went with the old process");
 }
 
@@ -217,8 +217,8 @@ async fn a_prompt_queued_over_a_rotated_credential_goes_to_a_new_process() {
   let respawn = logs.iter().rposition(|l| l.contains("spawn ")).unwrap();
   let answered = logs.iter().rposition(|l| l.contains("prompt done")).unwrap();
   assert!(respawn < answered, "{logs:#?}");
-  expect_match(&turn_at(&view(&s), -2), json!({ "role": "user", "text": "queued" }));
-  expect_match(&last_turn(&view(&s)), json!({ "stop": "end_turn" }));
+  expect_match(turn_at(&view(&s), -2), json!({ "role": "user", "text": "queued" }));
+  expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn" }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
