@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [2.1.11] - 2026-11-28
+
+### Added
+
+- Plugin interface pieces, composer pieces and skin backdrops now show in VS Code and IntelliJ too, not just the desktop app. Hosts without the plugin frame page render a self-contained frame under a stricter no-network policy.
+- Plugins: a click in a plugin's own settings page can reload that plugin from its local source with `reloadPlugin` from `@acpira/plugin-ui`. The authorization is bound to the active snapshot and used once.
+- SSH hosts under local run: the host's skills for the folder are offered to the stand-in CLI, listed in its note and in the composer's slash menu. A prompt that calls one with `/name` carries its instructions along and is not steered into a running turn.
+- Antigravity `schedule` calls show as timer rows (`DurationSeconds`) or recurring schedule rows (`CronExpression`), with the delay or cadence in plain words in every locale.
+- A model source in `providers.json` or a plugin can carry its own logo, drawn on its private models. Models a vendor rule already knows keep their vendor's mark, so a gateway serving Claude still shows Claude's.
+- The desktop file tree folds a chain of single-folder directories into one row (`main/kotlin/com`).
+
+### Changed
+
+- Settled process chunks in long chats skip style, layout and paint, and dragging the inspector pane no longer re-renders the window until release.
+- Attachment pills line up with leading `/command` and `@summon` pills in the composer, sent prompts, queued items and inline editors.
+
+### Fixed
+
+- Antigravity's "Individual quota reached" reply now counts as exhaustion and switches to the next account. An exhausted saved login may overflow onto a plugin's accounts.
+- A session kept busy by background work (such as a `tail -f` monitor) reopens on a rotated plugin credential before the next prompt instead of failing its first request after the old ticket lapsed. An automatic `/compact` that hits an expired sign-in does the same.
+- An engine started over SSH whose macOS keychain is locked is taken over by the local desktop app or login service, and repeated unlock clicks reopen the unlock terminal instead of being ignored for minutes.
+- The engine keeps accepting connections when it runs out of file descriptors, and raises its own open-file limit at start so a LaunchAgent-started engine leaves launchd's low default.
+- The desktop app's hidden empty-home composer stays disabled, so a prompt cannot fire before a session lands.
+- Wrapping text fields no longer grow a horizontal scrollbar when the page is zoomed in.
+
 ## [2.1.10] - 2026-11-27
 
 ### Added
