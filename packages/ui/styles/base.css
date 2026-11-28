@@ -8,7 +8,10 @@
   ::highlight(acpira-find) { background: color-mix(in srgb, var(--warn) 28%, transparent); }
   ::highlight(acpira-find-active) { background: color-mix(in srgb, var(--warn) 62%, transparent); color: var(--fg-strong); }
   .acp-shell summary::-webkit-details-marker { display: none; }
-  .acp-shell textarea { field-sizing: content; }
+  /* Wrapping textareas never scroll sideways: at pageZoom > 1, WebKit double-zooms the shadow placeholder's width and
+     subpixel rounding can push scrollWidth 1px past clientWidth, mounting a horizontal scrollbar under overflow-x: auto. */
+  .acp-shell textarea { field-sizing: content; overflow-x: hidden; }
+  .acp-shell textarea::placeholder { max-width: 100%; }
   /* WebView2 / Edge add their own reveal and clear buttons to inputs; password fields carry an own toggle (ui/KeyBox, ProvidersSection) */
   .acp-shell input::-ms-reveal, .acp-shell input::-ms-clear { display: none; }
   /* Native scrollbars and form controls follow the shell theme, not the host's. */
