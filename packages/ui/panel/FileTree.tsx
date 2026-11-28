@@ -106,25 +106,43 @@ interface BranchCtx {
 // Stuck folders stack with the outer ones on top: a deeper folder whose rows have scrolled by is pushed up out of its
 // slot and has to slide under its ancestors (an equal z-index painted it over them, later in the DOM, in reverse order)
 const STUCK_Z = 50;
+// Only the outer levels stick: every open folder of a deep path stuck left a few rows of the list free, and the middle
+// of the list, where a revealed file goes, lay under them
+const STUCK_MAX = 7;
+
+// A folder holding nothing but one folder shares its row with it (`main/kotlin/com`), as far down as that goes: a package
+// path otherwise costs a level, and a stuck row, per segment. The row is the last folder's (its path, mark and menu) and
+// only opening and closing go to the first one. Known as far as the folders were read, so FileTree reads on down the chain
+const CHAIN_MAX = 12;
+const onlyFolder = (l: DirListing | undefined) => (l && !l.error && l.entries.length === 1 && l.entries[0]!.dir ? l.entries[0]!.name : undefined);
+function chainEnd(path: string, dirs: Record<string, DirListing | undefined>): string {
+  // The cap ends a folder that links to itself
+  for (let n = 1, only = onlyFolder(dirs[path]); only !== undefined && n < CHAIN_MAX; n++, only = onlyFolder(dirs[path])) path = `${path}/${only}`;
+  return path;
+}
 
 const AT_ICON = <AtSign strokeWidth={1.5} className="size-3.5" />;
 const FOLDER_CLOSED = <Folder strokeWidth={1.5} className="size-icon" />;
 const FOLDER_OPEN = <FolderOpen strokeWidth={1.5} className="size-icon" />;
 
-function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: string; dir: boolean }; depth: number; open: boolean; ctx: BranchCtx }) {
+// `name` is what the row reads: a folder sharing its row with the ones above it (chainEnd) is named from `head`, the first
+// of them, down to itself
+function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: string; dir: boolean; head?: string }; depth: number; open: boolean; ctx: BranchCtx }) {
   const mark = ctx.mark(node.path, node.dir);
   const ignored = mark === 'I';
   const selected = !node.dir && ctx.active === node.path;
   const renaming = ctx.editing?.kind === 'rename' && ctx.editing.path === node.path;
+  const stuck = node.dir && open && depth < STUCK_MAX;
+  const parts = node.name.split('/');
   return (
-    <Row role="treeitem" aria-expanded={node.dir ? open : undefined} aria-selected={selected} data-path={node.path} data-dir={node.dir || undefined} data-sticky={(node.dir && open) || undefined}
+    <Row role="treeitem" aria-expanded={node.dir ? open : undefined} aria-selected={selected} data-path={node.path} data-dir={node.dir || undefined} data-depth={depth} data-sticky={stuck || undefined}
       data-menu-open={ctx.menu === node.path || renaming || undefined}
-      style={{ ...indent(depth), ...(node.dir && open ? { top: `calc(${depth} * var(--row))`, zIndex: STUCK_Z - depth } : {}) }}
-      onClick={() => (node.dir ? ctx.toggle(node.path) : ctx.open(node.path))}
+      style={{ ...indent(depth), ...(stuck ? { top: `calc(${depth} * var(--row))`, zIndex: STUCK_Z - depth } : {}) }}
+      onClick={() => (node.dir ? ctx.toggle(node.head ?? node.path) : ctx.open(node.path))}
       // `sticky` as a class: the rows' `relative` utility outranks a position set in panel.css's components layer, which
       // left open folders relative and pushed each one down by its own sticky offset over its first child. An ignored row
       // dims its content, not itself: a stuck one has to stay opaque over the rows scrolling under it
-      className={cn(TREE_ROW, node.dir && open && 'sticky', selected ? 'text-fg-1' : 'hover:text-fg-1', ignored && '*:opacity-50')}
+      className={cn(TREE_ROW, stuck && 'sticky', selected ? 'text-fg-1' : 'hover:text-fg-1', ignored && '*:opacity-50')}
       lead={node.dir ? (open ? FOLDER_OPEN : FOLDER_CLOSED) : <FileGlyph name={node.name} />}
       trailing={
         // At rest the git mark; on hover the row's one action, @ into the composer
@@ -148,10 +166,14 @@ function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: strin
           <ChevronRight strokeWidth={1.5} className={cn('size-3 transition-transform duration-(--dur-open) ease-out', open && 'rotate-90')} />
         </span>
       )}
-      {node.dir && open && <span aria-hidden data-stuck-edge className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-line opacity-0" />}
+      {stuck && <span aria-hidden data-stuck-edge className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-line opacity-0" />}
+      {/* A shared row renames its last folder: the ones above it stay beside the field */}
+      {renaming && parts.length > 1 && <span className="shrink-0 text-fg-3">{parts.slice(0, -1).join('/')}/</span>}
       {renaming
-        ? <NameInput initial={node.name} file={!node.dir} onDone={ctx.commit} />
-        : <span className={cn('min-w-0 truncate', mark && !node.dir && !ignored && MARK_TEXT[mark], mark === 'D' && 'line-through')}><Highlighted text={node.name} query={ctx.query} /></span>}
+        ? <NameInput initial={parts[parts.length - 1]!} file={!node.dir} onDone={ctx.commit} />
+        : <span className={cn('min-w-0 truncate', mark && !node.dir && !ignored && MARK_TEXT[mark], mark === 'D' && 'line-through')}>
+            {parts.map((part, i) => <Fragment key={i}>{i > 0 && <span className="text-fg-3">/</span>}<Highlighted text={part} query={ctx.query} /></Fragment>)}
+          </span>}
     </Row>
   );
 }
@@ -190,11 +212,12 @@ function Branch({ dir, depth, ctx }: { dir: string; depth: number; ctx: BranchCt
     {folders.map(e => {
       const path = dir ? `${dir}/${e.name}` : e.name;
       const open = ctx.expanded.has(path);
-      const listed = !!ctx.dirs[path];
+      const end = chainEnd(path, ctx.dirs);
+      const listed = !!ctx.dirs[end];
       return (
         <div key={path}>
-          <TreeRow node={{ name: e.name, path, dir: true }} depth={depth} open={open} ctx={ctx} />
-          <Fold open={open && listed}>{(open || ctx.seen.has(path)) && <Branch dir={path} depth={depth + 1} ctx={ctx} />}</Fold>
+          <TreeRow node={{ name: end.slice(path.length - e.name.length), path: end, dir: true, head: path }} depth={depth} open={open} ctx={ctx} />
+          <Fold open={open && listed}>{(open || ctx.seen.has(path)) && <Branch dir={end} depth={depth + 1} ctx={ctx} />}</Fold>
         </div>
       );
     })}
@@ -215,12 +238,17 @@ function Branch({ dir, depth, ctx }: { dir: string; depth: number; ctx: BranchCt
 
 // The filter's matches with the folders above them, all open
 function Matches({ nodes, depth, ctx }: { nodes: TreeNode[]; depth: number; ctx: BranchCtx }) {
-  return <>{nodes.map(n => (
-    <Fragment key={n.path}>
-      <TreeRow node={n} depth={depth} open={n.dir} ctx={{ ...ctx, toggle: () => {} }} />
-      {n.dir && <Matches nodes={n.children} depth={depth + 1} ctx={ctx} />}
-    </Fragment>
-  ))}</>;
+  return <>{nodes.map(n => {
+    // Folders with one folder among the matches share a row, as in the tree
+    let end = n;
+    while (end.dir && end.children.length === 1 && end.children[0]!.dir) end = end.children[0]!;
+    return (
+      <Fragment key={n.path}>
+        <TreeRow node={{ name: end.path.slice(n.path.length - n.name.length), path: end.path, dir: n.dir }} depth={depth} open={n.dir} ctx={{ ...ctx, toggle: () => {} }} />
+        {n.dir && <Matches nodes={end.children} depth={depth + 1} ctx={ctx} />}
+      </Fragment>
+    );
+  })}</>;
 }
 
 // Revealing a row follows the folds above it until the list's height holds for this many frames, for at most this long
@@ -341,6 +369,17 @@ export function FileTree(p: FileTreeProps) {
     }
     for (const dir of missing) load(dir);
   }, [p.expanded, p.sessionId]);
+  // A folder read here that holds only a folder shares its row with it (chainEnd): that one is read too, and so on down
+  useEffect(() => {
+    // How many folders above `dir` already share its row
+    const above = (dir: string) => { let n = 0; for (let at = dir; at && onlyFolder(dirs[dirOf(at)]) !== undefined; at = dirOf(at)) n++; return n; };
+    for (const [dir, l] of Object.entries(dirs)) {
+      const only = onlyFolder(l);
+      if (only === undefined || !asked.current.has(dir)) continue;
+      const child = joinPath(dir, only);
+      if (!asked.current.has(child) && above(dir) < CHAIN_MAX - 1) load(child);
+    }
+  }, [dirs]);
   // A turn ended: what is listed is read again (a listing stays shown until its fresh one arrives)
   useEffect(() => {
     if (!p.refresh) return;
@@ -381,8 +420,10 @@ export function FileTree(p: FileTreeProps) {
       const row = el.querySelector<HTMLElement>(`[data-path="${CSS.escape(targetPath)}"]`);
       // Not listed yet: the folders above it are still being read, `dirs` runs this again as they arrive
       if (!row) return;
+      // The folders above it stick to the list's top (STUCK_MAX of them at most): the middle is that of what they leave free
+      const cover = Math.min(Number(row.dataset.depth), STUCK_MAX) * row.offsetHeight;
       const top = el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top;
-      el.scrollTop = top - el.clientHeight / 2 + row.offsetHeight / 2;
+      el.scrollTop = top - (el.clientHeight + cover) / 2 + row.offsetHeight / 2;
       calm = el.scrollHeight === lastH ? calm + 1 : 0;
       lastH = el.scrollHeight;
       if (calm < REVEAL_CALM_FRAMES && performance.now() < end) frame = requestAnimationFrame(step);

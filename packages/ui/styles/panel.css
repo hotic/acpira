@@ -14,7 +14,7 @@
   /* What the viewer keeps for code when the tree is dragged wider */
   --viewer-min: 280px;
   /* One tree level; the disclosure chevron's slot */
-  --tree-indent: 12px;
+  --tree-indent: 8px;
   --tree-chevron: 16px;
   /* The viewer: a changed line's bar, the line numbers' column, the overview ruler at the right edge */
   --code-bar: 3px;
