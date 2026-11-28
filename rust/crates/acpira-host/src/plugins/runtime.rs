@@ -560,7 +560,9 @@ impl Runtimes {
     let worker = self.worker_of(plugin).await;
     let Some(w) = worker.filter(|w| snapshot.is_none_or(|hash| w.want.hash == hash)) else {
       let why = self.errors.read().get(plugin).map(|e| format!(": {e}")).unwrap_or_default();
-      return Err(format!("plugin {plugin} has no matching running process{why}"));
+      // Callers and tests match "no running process"; only a snapshot-bound call says the process is the wrong one
+      let matching = if snapshot.is_some() { "matching " } else { "" };
+      return Err(format!("plugin {plugin} has no {matching}running process{why}"));
     };
     if !w.want.def.methods.iter().any(|m| m == method) {
       return Err(format!("plugin {plugin} offers no method `{method}`"));
