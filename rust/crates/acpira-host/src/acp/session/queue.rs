@@ -335,6 +335,9 @@ impl AcpSession {
       // A plugin's command is expanded on its way to the agent (`plugin_command`), so it waits for the turn to end
       // rather than being steered in as the literal `/name`
       let steerable = steerable && entry.is_none_or(|e| !self.runs_plugin_command(&c.state.commands, &e.text));
+      // So is a host skill's `/name` in a stand-in session (`local_run::skills`)
+      let steerable = steerable
+        && entry.is_none_or(|e| !crate::acp::local_run::skills::leads_with(&e.text, &c.host_skills, |n| c.state.commands.iter().any(|x| x.name == n)));
       match entry {
         None => return Ok(()),
         Some(_) if !steerable && !send_now => return Ok(()),

@@ -515,7 +515,17 @@ impl AcpSession {
     }
     // The plugins' processes, after the workspace's own hooks
     let first = first_of(&self.core.lock());
-    let plugins = self.plugin_prompt(origin, text, attachments, first, &mut tail).await?;
+    let mut plugins = self.plugin_prompt(origin, text, attachments, first, &mut tail).await?;
+    // A stand-in CLI's skills on its host, which it cannot load itself: their instructions ride behind the prompt, and
+    // a leading `/name` goes out as a request (the bubble keeps what the user wrote). A plugin's rewrite comes first
+    if matches!(origin, Origin::User | Origin::Goal)
+      && plugins.text.is_none()
+      && let Some(x) = self.expand_host_skills(text)
+    {
+      self.log("remote: host skills expanded into the prompt");
+      tail.push(x.block);
+      plugins.text = x.text;
+    }
     let (first, fresh) = {
       let mut c = self.core.lock();
       // A goal set or resumed from the dock is a request of the user's own, like a typed prompt; each of the goal's next

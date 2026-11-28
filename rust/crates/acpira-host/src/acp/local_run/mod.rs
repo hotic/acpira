@@ -8,6 +8,7 @@
 
 pub mod brief;
 pub mod mcp_http;
+pub mod skills;
 pub mod stand;
 pub mod tools;
 

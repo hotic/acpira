@@ -13,7 +13,7 @@ use crate::acp::session::AcpSession;
 use crate::acp::session::remote::Notify;
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::local_run::stand::{self as stand_in, Stand};
-use crate::acp::local_run::{LocalRun, brief, tools};
+use crate::acp::local_run::{LocalRun, brief, skills as local_skills, tools};
 use crate::store::data_dir::{acpira_home, home_dir};
 
 /// How much of one instructions file goes into the system prompt
@@ -147,7 +147,17 @@ impl AcpSession {
       stand.alias,
       if files.is_empty() { "none".into() } else { files.join(", ") }
     ));
-    let note = brief::note(&stand, places.as_ref(), &instructions);
+    // The host's skills: listed in the note, and kept for the menu and the prompts that call one up
+    let skills = local_skills::of_host(&stand.host, places.as_ref(), Some(&home_dir()));
+    if !skills.is_empty() {
+      self.log(&format!("remote: {} skills on {}", skills.len(), stand.alias));
+    }
+    let mut note = brief::note(&stand, places.as_ref(), &instructions);
+    if let Some(section) = local_skills::note(&stand, &skills) {
+      note.push_str("\n\n");
+      note.push_str(&section);
+    }
+    self.core.lock().host_skills = skills;
     if let Some((path, text)) = brief::stand_file(&stand, &note)
       && std::fs::read(&path).ok().as_deref() != Some(text.as_bytes())
       && let Err(e) = crate::store::file_lock::write_atomic(&path, text.as_bytes(), None).await
@@ -155,6 +165,20 @@ impl AcpSession {
       self.log(&format!("remote: the note {} could not be written: {e}", path.display()));
     }
     brief::with_stand(req, &stand, &note)
+  }
+
+  /// A user prompt that calls up the host's skills (`local_skills::expand`): names the agent advertises or a plugin
+  /// contributes answer themselves. None outside a stand-in session with host skills
+  pub(crate) fn expand_host_skills(&self, text: &str) -> Option<local_skills::Expanded> {
+    let (skills, own) = {
+      let c = self.core.lock();
+      if c.host_skills.is_empty() {
+        return None;
+      }
+      (c.host_skills.clone(), c.state.commands.clone())
+    };
+    let alias = self.remote_folder()?.alias;
+    local_skills::expand(text, &skills, |n| own.iter().any(|c| c.name == n) || self.runs_plugin_command(&own, &format!("/{n}")), &alias)
   }
 
   /// The project's instructions on the host as the CLI would read them there (`CLAUDE.md` / `GEMINI.md` of the project

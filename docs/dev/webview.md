@@ -26,7 +26,7 @@ The React UI in `packages/ui` and the render budget every stream chunk depends o
 
 ## Slash commands
 
-- Slash commands are the agents' own (`SessionView.commands`, `chat/slashCommands.ts`). The list is discovery, never a whitelist: nothing is rewritten or intercepted host-side, an unmatched `/tmp/x` sends as typed. Acpira has no slash commands of its own.
+- Slash commands are the agents' own (`SessionView.commands`, `chat/slashCommands.ts`). The list is discovery, never a whitelist: an unmatched `/tmp/x` sends as typed. The engine adds and expands only what an agent cannot offer: plugins' commands, a stand-in CLI's host skills (`local-run.md`).
 - A `/` or `@` sigil also opens after CJK text and full-width punctuation (`SIGIL_LEAD`): Chinese puts no space before `然后/review`.
 - `AcpSession.openSession` clears the commands before `session/new`, never after: Devin advertises during the request.
 - Skill naming: Grok `/release`, Kimi `/skill:release`, Codex `/$release`, Devin `/agents:release` + `/claude:release` (one row via `matchCommands`).

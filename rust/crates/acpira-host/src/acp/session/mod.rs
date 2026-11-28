@@ -256,6 +256,9 @@ pub(crate) struct Core {
   /// MCP server names the last session request carried, and those the agent could not start (left out from then on)
   pub mcp_sent: Vec<String>,
   pub mcp_skip: Vec<String>,
+  /// A stand-in CLI's skills on its SSH host, read with the last session request (`local_run::skills`): menu entries
+  /// and prompt expansions the CLI itself cannot offer
+  pub host_skills: Vec<acpira_agent::skills::Skill>,
   /// The settled turn asks for a fresh connection before anything else is sent (a server just joined `mcp_skip`)
   pub reconnect_after_turn: bool,
   /// A Retry is sending its prompt: the agent turn that prompt opens becomes `retried_turn`
@@ -509,6 +512,7 @@ impl AcpSession {
           mcp_sent: vec![],
           unprompted: false,
           mcp_skip: vec![],
+          host_skills: vec![],
           reconnect_after_turn: false,
           retry_pending: false,
           retried_turn: None,

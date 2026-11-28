@@ -213,8 +213,9 @@ impl AcpSession {
     let native_sidekick = if controls.options.iter().any(ours) { None } else { native_option_shapes(&controls.options, shapes.as_ref()) };
     let sidekick_shapes = if controls.options.iter().any(ours) { Some(&c.sidekick.shapes) } else { native_sidekick.as_ref() };
     let queued = queue_snapshot(&c);
-    // The plugins' slash commands join the agent's own in the menu
+    // The plugins' slash commands join the agent's own in the menu, then a stand-in CLI's skills on its host
     let merged = self.plugin_commands(&c.state.commands, &c.plugin_state.menus);
+    let merged = crate::acp::local_run::skills::with_commands(merged, &c.state.commands, &c.host_skills);
     let head = ViewRef {
       id: &self.id,
       agent: &self.agent,
