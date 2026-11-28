@@ -455,8 +455,15 @@ impl PluginHost {
       // A well-known read-only method: older hosts accept the manifest and just omit its account rows.
       if a.manifest.contributes.runtime.as_ref().is_some_and(|r| r.methods.iter().any(|m| m == "account.rows")) {
         out.push(acpira_shared::plugins::PluginSlot {
-          plugin: a.id.clone(), id: "account.rows".into(), slot: "account.rows".into(), title: a.manifest.display_name().to_owned(),
-          html: String::new(), width: None, height: None, method: Some("account.rows".into()),
+          plugin: a.id.clone(),
+          id: "account.rows".into(),
+          slot: "account.rows".into(),
+          title: a.manifest.display_name().to_owned(),
+          snapshot: None,
+          html: String::new(),
+          width: None,
+          height: None,
+          method: Some("account.rows".into()),
         });
       }
       for u in &a.manifest.contributes.ui {
@@ -466,6 +473,7 @@ impl PluginHost {
           id: u.id.clone(),
           slot: u.slot.clone(),
           title: title.clone(),
+          snapshot: (u.slot == "page").then(|| a.hash.clone()),
           html,
           width: u.width,
           height: u.height,
@@ -556,6 +564,13 @@ impl PluginHost {
 
   /// The user confirmed the frozen version `hash` of `id`: the dynamic check on that copy, then the commit
   pub async fn confirm(&self, id: &str, hash: &str, provenance: Provenance) -> Result<Option<Change>> {
+    let manifest = self.check_activation(id, hash).await?;
+    let change = self.store.enable_as(id, hash, provenance, manifest.contributes.theme.is_some()).await?;
+    self.committed(&change);
+    Ok(change)
+  }
+
+  async fn check_activation(&self, id: &str, hash: &str) -> Result<Manifest> {
     let (dir, manifest) = self.store.open(id, hash)?;
     if let Some(check) = manifest.check.as_ref().filter(|c| !c.is_empty()) {
       let tool = ToolDef { name: "check".into(), description: String::new(), input: json!({}), command: check.clone(), read_only: true, timeout: Some(CHECK_TIMEOUT.as_secs_f64()) };
@@ -570,9 +585,43 @@ impl PluginHost {
       let data_root = self.store.root().join(crate::plugins::store::DATA);
       crate::plugins::runtime::probe(id, hash, &dir, &manifest, &data_root, self.log.clone()).await.map_err(|e| anyhow!("the check failed: the runtime {e}"))?;
     }
-    let change = self.store.enable_as(id, hash, provenance, manifest.contributes.theme.is_some()).await?;
+    Ok(manifest)
+  }
+
+  /// Reload the settings page's enabled snapshot from its local source after a user gesture.
+  pub(crate) async fn reload_plugin(&self, id: &str, snapshot: &str) -> Result<bool> {
+    let state = self.store.load()?;
+    let Some(expected) = state.plugins.get(id).filter(|e| e.enabled && e.snapshot == snapshot) else {
+      bail!("the enabled plugin version changed; reopen its settings and try again");
+    };
+    self.reload();
+    if self.forced_safe
+      || state.safe_mode
+      || !self
+        .loaded()
+        .active
+        .iter()
+        .any(|a| a.id == id && a.hash == snapshot && a.manifest.contributes.ui.iter().any(|u| u.slot == "page"))
+    {
+      bail!("this plugin has no active settings page");
+    }
+
+    let store = PluginStore::new(self.store.root().to_path_buf());
+    let id_owned = id.to_owned();
+    let frozen = tokio::task::spawn_blocking(move || store.freeze(&id_owned, &on_path)).await??;
+    if !frozen.findings.ok() {
+      bail!("{}", frozen.findings.text());
+    }
+    if frozen.hash == snapshot {
+      return Ok(false);
+    }
+    self.check_activation(id, &frozen.hash).await?;
+    let change = self.store.replace_enabled(id, &frozen.hash, expected).await?;
     self.committed(&change);
-    Ok(change)
+    if frozen.manifest.contributes.runtime.is_some() {
+      self.runtimes.wait_for_snapshot(id, &frozen.hash).await.map_err(anyhow::Error::msg)?;
+    }
+    Ok(true)
   }
 
   /// Every plugin `manifest` requires is in effect at a version its range accepts. A ring of plugins requiring each

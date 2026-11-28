@@ -187,6 +187,7 @@ declare module '@acpira/plugin-ui' {
   export function useSessionState(): SessionState;
   // Counts per exchange, never text; null without a session on screen
   export function useSession(): SessionOutline | null;
+  export function reloadPlugin(prepare?: () => boolean | Promise<boolean>): Promise<boolean>;
   export function useOptions<T extends Record<string, unknown> = Record<string, unknown>>(): T;
   export function scrollTo(turn: number): void;
 

@@ -1325,9 +1325,17 @@ pub enum WebviewMsg {
   PluginCall {
     id: String,
     plugin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot: Option<String>,
     method: String,
     #[serde(default)]
     params: Value,
+  },
+  /// Reload this settings frame's plugin from its source; answered by `PluginCalled`.
+  PluginReload {
+    id: String,
+    plugin: String,
+    snapshot: String,
   },
   /// A plugin command's composer button with `draft`: run it with the draft as its arguments for the text that replaces
   /// it; answered by `PluginCalled` with `{ text }` (absent when the command gave none)

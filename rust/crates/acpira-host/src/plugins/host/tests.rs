@@ -24,6 +24,51 @@ fn write_plugin(root: &std::path::Path, id: &str, script: &str, check: Option<&s
 }
 
 #[tokio::test]
+async fn reload_switches_only_the_current_settings_snapshot() {
+  if !on_path("node") {
+    return;
+  }
+  let tmp = tempfile::tempdir().unwrap();
+  let h = host(tmp.path());
+  let dir = tmp.path().join("demo");
+  std::fs::create_dir(&dir).unwrap();
+  let manifest = json!({"schema": 1, "id": "demo", "version": "1", "description": "Demo", "requires": ["node"],
+    "contributes": {"runtime": {"main": "main.ts", "methods": ["revision"]},
+      "ui": [{"id": "settings", "slot": "page", "html": "page.html"}]}});
+  std::fs::write(dir.join("plugin.json"), manifest.to_string()).unwrap();
+  std::fs::write(dir.join("page.html"), "<p>Settings</p>").unwrap();
+  let write = |code: &str| std::fs::write(dir.join("main.ts"), code).unwrap();
+  write("import { definePlugin } from '@acpira/plugin'; export default definePlugin({ methods: { revision: () => 'one' } });");
+  h.start().await;
+  h.enable_runtimes(None);
+  h.action(PluginAction::Enable { id: "demo".into() }).await.unwrap();
+  let snapshot = || h.ui_slots()[0].snapshot.clone().unwrap();
+  let first = snapshot();
+  let revision = |hash: String| {
+    let h = h.clone();
+    async move { h.runtimes().rpc_at("demo", Some(&hash), "revision", Value::Null, "page").await }
+  };
+  assert_eq!(revision(first.clone()).await.unwrap(), "one");
+  assert!(!h.reload_plugin("demo", &first).await.unwrap());
+
+  write("import { definePlugin } from '@acpira/plugin'; export default definePlugin({ methods: { revision: () => 'two' } });");
+  assert!(h.reload_plugin("demo", &first).await.unwrap());
+  let second = snapshot();
+  assert_ne!(first, second);
+  assert_eq!(revision(second.clone()).await.unwrap(), "two");
+  assert!(revision(first.clone()).await.is_err());
+  assert!(h.reload_plugin("demo", &first).await.is_err());
+  assert!(h.view().plugins[0].enabled && h.view().plugins[0].can_rollback);
+
+  write("throw new Error('broken update');");
+  assert!(h.reload_plugin("demo", &second).await.unwrap_err().to_string().contains("the check failed"));
+  assert_eq!(snapshot(), second);
+  assert_eq!(revision(second.clone()).await.unwrap(), "two");
+  h.action(PluginAction::Disable { id: "demo".into() }).await.unwrap();
+  assert!(h.reload_plugin("demo", &second).await.is_err());
+}
+
+#[tokio::test]
 async fn account_rows_are_discovered_only_from_a_confirmed_runtime() {
   let tmp = tempfile::tempdir().unwrap();
   let h = host(tmp.path());

@@ -124,7 +124,7 @@ A plugin is a folder `~/.acpira/plugins/<id>/` with one `plugin.json`. Nothing i
 ## Activation
 
 - `source → freeze → static check → user confirms → dynamic check → commit`, every step bound to one hash; an edit after the freeze is a new activation. The freeze refuses symlinks and is re-verified against its hash on load.
-- Confirmation happens only in the host's own UI (plugin page, or the card `plugin_activate` adds). `acpira plugin propose` only files a proposal: nothing on the command line enables a plugin, so a model with a shell cannot skip the card.
+- Confirmation happens only in the host's own UI (plugin page, or the card `plugin_activate` adds). `acpira plugin propose` only files a proposal: nothing on the command line enables a plugin, so a model with a shell cannot skip the card. A click in an active plugin settings frame can authorize its own `reloadPlugin` call. The frame's authorization is bound to the active snapshot and used once. The plugin handles any source preparation.
 - The card is `AgentTurn.pluginCards`, not a block kind: old engines and the iOS decoder ignore an unknown field, a new block kind breaks their records. Its state is read from the plugins view so every window agrees; undo restores only what applying replaced (`PluginHost::undo_card`).
 - Cards show after the reply once the turn ends (`Turns.tsx`): a card mid-turn read as a stop while the agent kept working. `PluginCard.after` names the offering row (`offering_call`).
 - Slotless contributions land (`plugins/landings.ts`) once the card reads applied.

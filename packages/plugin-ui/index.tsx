@@ -55,6 +55,22 @@ export const rpc: Record<string, <T = unknown>(params?: unknown) => Promise<T>> 
   get: (_, method) => (typeof method === 'string' ? (params?: unknown) => call(method, params) : undefined),
 });
 
+/**
+ * Reload this plugin from its local source. Call from a click in its settings page.
+ * Return false from prepare to cancel. The result says whether the active snapshot changed.
+ */
+export async function reloadPlugin(prepare?: () => boolean | Promise<boolean>): Promise<boolean> {
+  const method = '@acpira/reload';
+  await call(method, 'begin');
+  let ready = false;
+  try {
+    ready = prepare ? await prepare() : true;
+  } finally {
+    if (!ready) await call(method, 'cancel');
+  }
+  return ready && await call<boolean>(method, 'apply');
+}
+
 /** Hear what the process posts to its frames (`ctx.ui.post`); returns the unsubscribe */
 export function onMessage<T = unknown>(fn: (message: T) => void): () => void {
   return bridge()?.on(fn as (m: unknown) => void) ?? (() => {});

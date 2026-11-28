@@ -33,7 +33,8 @@ export function SandboxFrame({ plugin, piece, html, options, run, state, onDrawn
   drawn.current = onDrawn;
   // A piece in effect is read from the slots, so a new version of it makes a new frame too
   const found = usePluginPiece(plugin, piece);
-  const version = digest(html ?? found?.html ?? '');
+  const snapshot = html === undefined && found?.slot === 'page' ? found.snapshot : undefined;
+  const version = snapshot ?? digest(html ?? found?.html ?? '');
   const live = useRef({ run, state });
   live.current = { run, state };
   useEffect(() => {
@@ -44,6 +45,7 @@ export function SandboxFrame({ plugin, piece, html, options, run, state, onDrawn
     const off = registerPluginFrame(win, plugin, piece, css, {
       ...(html !== undefined ? { html: () => html } : {}),
       options,
+      snapshot,
       // What the session does now, in the document's first load (a piece that never posts `drawn` would miss it)
       state: () => live.current.state,
       drawn: () => {

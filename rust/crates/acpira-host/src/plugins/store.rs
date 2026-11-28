@@ -322,10 +322,31 @@ impl PluginStore {
 
   /// `enable`, and with `skin` make the plugin's theme the skin in effect (in the same commit)
   pub async fn enable_as(&self, id: &str, hash: &str, provenance: Provenance, skin: bool) -> Result<Option<Change>> {
+    self.commit_enabled(id, hash, provenance, skin, None).await
+  }
+
+  /// Atomically replace the version seen by the user, preserving the selected skin.
+  pub(super) async fn replace_enabled(&self, id: &str, hash: &str, expected: &Entry) -> Result<Option<Change>> {
+    self.commit_enabled(id, hash, Provenance::user(), false, Some(expected)).await
+  }
+
+  async fn commit_enabled(
+    &self,
+    id: &str,
+    hash: &str,
+    provenance: Provenance,
+    skin: bool,
+    expected: Option<&Entry>,
+  ) -> Result<Option<Change>> {
     let data = self.data_dir(id);
     std::fs::create_dir_all(&data).with_context(|| format!("create {}", data.display()))?;
     self
       .commit(|s| {
+        if let Some(expected) = expected
+          && (s.safe_mode || s.plugins.get(id) != Some(expected))
+        {
+          bail!("the plugin state changed during reload");
+        }
         let reskin = skin && s.skin.as_deref() != Some(id);
         if reskin {
           s.skin = Some(id.to_owned());

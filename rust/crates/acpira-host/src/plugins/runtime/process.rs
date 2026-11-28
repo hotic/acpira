@@ -49,6 +49,28 @@ impl Runtimes {
     }
   }
 
+  /// Wait for the settings page's exact snapshot to answer initialize.
+  pub(in crate::plugins) async fn wait_for_snapshot(&self, plugin: &str, hash: &str) -> Result<(), String> {
+    if !self.enabled() {
+      return Ok(());
+    }
+    let deadline = tokio::time::Instant::now() + INIT_TIMEOUT + INIT_TIMEOUT;
+    loop {
+      let notified = self.plugin_settled.notified();
+      tokio::pin!(notified);
+      notified.as_mut().enable();
+      if !self.wanted.lock().iter().any(|w| w.id == plugin && w.hash == hash) {
+        return Err(format!("plugin {plugin} changed before the runtime started"));
+      }
+      if self.workers.read().get(plugin).is_some_and(|w| w.want.hash == hash && !w.conn.is_closed()) {
+        return Ok(());
+      }
+      if tokio::time::timeout_at(deadline, notified).await.is_err() {
+        return Err(self.error(plugin).unwrap_or_else(|| format!("the runtime for {plugin} is taking too long to start")));
+      }
+    }
+  }
+
   /// Bring the processes in line with the plugins in effect: start what is new or changed (the old one is stopped
   /// once the new one answered `initialize`), stop what is gone. Safe mode passes nothing, so everything stops
   pub async fn sync(self: &Arc<Self>, active: &[Arc<Active>]) {

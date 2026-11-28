@@ -267,6 +267,9 @@ pub struct PluginSlot {
   /// One of `UI_SLOTS`
   pub slot: String,
   pub title: String,
+  /// The active snapshot that supplied this piece.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub snapshot: Option<String>,
   /// The document, read from the frozen copy
   pub html: String,
   /// The piece's box in CSS pixels, along the sides its slot does not size

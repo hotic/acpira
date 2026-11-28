@@ -542,9 +542,25 @@ impl Runtimes {
   /// Call a method `plugin`'s process offers (`runtime.methods`): `rpc/<method>` with `{ params, from }`, `from` being
   /// the calling plugin's id or `page`. Under the process's own time limit and failure count
   pub async fn rpc(&self, plugin: &str, method: &str, params: Value, from: &str) -> Result<Value, String> {
-    let Some(w) = self.worker_of(plugin).await else {
+    self.rpc_at(plugin, None, method, params, from).await
+  }
+
+  /// A settings frame talks to the runtime of the snapshot that supplied its document.
+  pub(crate) async fn rpc_at(
+    &self,
+    plugin: &str,
+    snapshot: Option<&str>,
+    method: &str,
+    params: Value,
+    from: &str,
+  ) -> Result<Value, String> {
+    if let Some(hash) = snapshot {
+      self.wait_for_snapshot(plugin, hash).await?;
+    }
+    let worker = self.worker_of(plugin).await;
+    let Some(w) = worker.filter(|w| snapshot.is_none_or(|hash| w.want.hash == hash)) else {
       let why = self.errors.read().get(plugin).map(|e| format!(": {e}")).unwrap_or_default();
-      return Err(format!("plugin {plugin} has no running process{why}"));
+      return Err(format!("plugin {plugin} has no matching running process{why}"));
     };
     if !w.want.def.methods.iter().any(|m| m == method) {
       return Err(format!("plugin {plugin} offers no method `{method}`"));

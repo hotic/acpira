@@ -643,7 +643,8 @@ export type WebviewMsg =
   // The backdrop of a frozen theme version, for a card's thumbnail; answered by pluginBackdrop
   | { type: 'pluginBackdrop'; plugin: string; snapshot: string }
   // Call a method a plugin's process offers (runtime.methods); answered by pluginCalled
-  | { type: 'pluginCall'; id: string; plugin: string; method: string; params?: unknown }
+  | { type: 'pluginCall'; id: string; plugin: string; snapshot?: string; method: string; params?: unknown }
+  | { type: 'pluginReload'; id: string; plugin: string; snapshot: string }
   // A plugin command's button with `draft`: its text for the draft, answered by pluginCalled with { text }; the draft's
   // attachments (pasted images among them) go to the command hook as they are
   | { type: 'pluginCommand'; id: string; sessionId: string; name: string; arguments: string; attachments?: Draft[] }

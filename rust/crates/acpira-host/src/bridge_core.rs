@@ -562,12 +562,22 @@ impl BridgeCore {
         });
       }
       // A plugin method may take its process's full time limit: off the message loop, answered by id
-      W::PluginCall { id, plugin, method, params } => {
+      W::PluginCall { id, plugin, snapshot, method, params } => {
         let me = self.clone();
         spawn_on(self.wire, async move {
-          let (result, error) = match me.plugins.runtimes().rpc(&plugin, &method, params, "page").await {
+          let (result, error) = match me.plugins.runtimes().rpc_at(&plugin, snapshot.as_deref(), &method, params, "page").await {
             Ok(v) => (Some(v), None),
             Err(e) => (None, Some(e)),
+          };
+          me.post_now(HostMsg::PluginCalled { id, result, error });
+        });
+      }
+      W::PluginReload { id, plugin, snapshot } => {
+        let me = self.clone();
+        spawn_on(self.wire, async move {
+          let (result, error) = match me.plugins.reload_plugin(&plugin, &snapshot).await {
+            Ok(reloaded) => (Some(Value::Bool(reloaded)), None),
+            Err(e) => (None, Some(format!("{e:#}"))),
           };
           me.post_now(HostMsg::PluginCalled { id, result, error });
         });

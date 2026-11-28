@@ -153,6 +153,7 @@ pub fn device_allowed(m: &WebviewMsg) -> bool {
     | W::PluginCard { .. }
     | W::PluginBackdrop { .. }
     | W::PluginCall { .. }
+    | W::PluginReload { .. }
     | W::ConnectionOp { .. }
     | W::SshHosts
     | W::RemoteDir { .. }

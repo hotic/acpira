@@ -49,7 +49,7 @@ export function usePluginPiece(plugin: string, id: string): PluginSlot | undefin
 // itself (a skin's backdrop, a card's thumbnail) brings `html` and the `options` it starts with, and hears its first
 // frame. Such a document may be a version nobody confirmed (a card's thumbnail), so it neither calls the plugin's
 // methods nor hears its runtime: those belong to the version in effect
-interface Frame { plugin: string; piece: string; css: () => string; html?: () => string; options?: unknown; state?: () => unknown; drawn?: () => void }
+interface Frame { plugin: string; piece: string; snapshot?: string; reloadUntil?: number; css: () => string; html?: () => string; options?: unknown; state?: () => unknown; drawn?: () => void }
 const frames = new Map<Window, Frame>();
 // Calls in flight: the engine's answer goes back to the frame that asked, under the frame's own id
 const calls = new Map<string, { win: Window; id: unknown }>();
@@ -84,9 +84,43 @@ function onMessage(e: MessageEvent) {
   } else if (m.acpira === 'drawn') {
     f.drawn?.();
   } else if (m.acpira === 'call' && typeof m.method === 'string' && !f.html) {
+    const snapshot = f.snapshot;
+    if (m.method === '@acpira/reload') {
+      const reply = (error?: string) => win.postMessage({ acpira: 'result', id: m.id, error }, '*');
+      const piece = pluginPiece(f.plugin, f.piece);
+      if (!snapshot || piece?.snapshot !== snapshot || piece.slot !== 'page') {
+        reply('Only an active plugin settings page can reload its plugin');
+        return;
+      }
+      if (m.params === 'begin') {
+        const focused = document.activeElement;
+        if (!navigator.userActivation?.isActive || !(focused instanceof HTMLIFrameElement) || focused.contentWindow !== win) {
+          reply('Reload requires a user gesture in this plugin settings page');
+          return;
+        }
+        // The click authorizes this frame once, including time for the plugin's asynchronous preparation.
+        f.reloadUntil = performance.now() + 150_000;
+        reply();
+        return;
+      }
+      const until = f.reloadUntil;
+      f.reloadUntil = undefined;
+      if (m.params === 'cancel') {
+        reply();
+        return;
+      }
+      if (m.params !== 'apply' || until === undefined || performance.now() > until) {
+        reply('The reload request has expired');
+        return;
+      }
+      const id = `pf-${++seq}`;
+      calls.set(id, { win, id: m.id });
+      vscodeApi().postMessage({ type: 'pluginReload', id, plugin: f.plugin, snapshot });
+      return;
+    }
     const id = `pf-${++seq}`;
     calls.set(id, { win, id: m.id });
-    vscodeApi().postMessage({ type: 'pluginCall', id, plugin: f.plugin, method: m.method, ...(m.params !== undefined ? { params: m.params } : {}) });
+    vscodeApi().postMessage({ type: 'pluginCall', id, plugin: f.plugin, method: m.method, ...(snapshot ? { snapshot } : {}), ...(m.params !== undefined ? { params: m.params } : {}) });
   }
 }
 
@@ -111,7 +145,7 @@ function pluginRuntime(): Promise<string> {
 
 // A frame of `plugin`'s piece; `css` gives the page's theme tokens as declarations for the frame's root; `own` for a
 // document the page holds rather than a piece in effect
-export function registerPluginFrame(win: Window, plugin: string, piece: string, css: () => string, own?: Pick<Frame, 'html' | 'options' | 'state' | 'drawn'>): () => void {
+export function registerPluginFrame(win: Window, plugin: string, piece: string, css: () => string, own?: Pick<Frame, 'html' | 'options' | 'state' | 'drawn' | 'snapshot'>): () => void {
   if (!listening) { listening = true; window.addEventListener('message', onMessage); }
   frames.set(win, { plugin, piece, css, ...own });
   return () => {
