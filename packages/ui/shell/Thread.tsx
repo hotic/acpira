@@ -9,7 +9,7 @@ import { useMergedRefs } from '../ui/mergeRefs';
 import { QuietEntranceContext } from '../ui/Row';
 import { FollowContext, useBottomFollow } from '../chat/useBottomFollow';
 import { captureSliceScroll, landSlice, readerScrolling, type SliceScroll } from '../chat/sliceScroll';
-import { useExchangeSkip } from '../chat/exchangeSkip';
+import { SkipContext, useExchangeSkip } from '../chat/exchangeSkip';
 import { AgentMessage } from '../chat/Turns';
 import { HistoryMessage, shownReports } from '../chat/HistoryMessage';
 import { planExecutionId } from '@acpira/shared/planExecution';
@@ -137,7 +137,7 @@ export const Thread = memo(function Thread({ session, fontSizes, turns, running,
   }, [turns]);
   const follow = useBottomFollow(ref, body, replayKey, [turns, running], lastPrompt);
   // Exchanges out of sight skip style, layout and paint once laid out at their real size (chat/exchangeSkip.ts)
-  const exchangeRef = useExchangeSkip(appearance, locale, fontSizes, follow.rewrap);
+  const exchangeRef = useExchangeSkip(appearance, locale, fontSizes, follow.rewrap, follow.setStale);
   // Fade the lower edge while the reader is scrolled away from the bottom (thread-fade): text leaving the view above a
   // borderless dock row (the connecting notice) dissolves instead of being cut off flat. Driven by the follow state rather
   // than useScrollFade, whose content observer would flash the fade for a frame on every streamed chunk before the re-pin
@@ -258,7 +258,7 @@ export const Thread = memo(function Thread({ session, fontSizes, turns, running,
     <div ref={ref} data-thread tabIndex={-1} className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter outline-none [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it,
           plus the floating connecting row's room when the tail holds no action row (`--thread-tail-room`, chat.css) */}
-      <div key={replayKey} ref={bodyRef} data-thread-body data-tail-actions={tailEndsWithActions || undefined} className={cn('pt-(--pad-y) flex flex-col gap-msg pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide ? 'thread-column' : 'mx-auto')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
+      <div key={replayKey} ref={bodyRef} data-thread-body data-tail-actions={tailEndsWithActions || undefined} className={cn('pt-(--pad-y) flex flex-col gap-msg pb-[calc(var(--msg-gap)+var(--thread-tail-room))]', wide ? 'thread-column' : 'mx-auto')}><FollowContext.Provider value={follow}><SkipContext.Provider value={exchangeRef}><QuietEntranceContext.Provider value={window.quiet}>
         {renderedExchanges.map(({ key, k, messages, endsWithActions }) => (
           <Fragment key={key}>{
             // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
@@ -273,7 +273,7 @@ export const Thread = memo(function Thread({ session, fontSizes, turns, running,
             </section>
           }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>
         ))}
-      </QuietEntranceContext.Provider></FollowContext.Provider></div>
+      </QuietEntranceContext.Provider></SkipContext.Provider></FollowContext.Provider></div>
     </div>
   );
 });

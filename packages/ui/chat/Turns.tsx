@@ -748,7 +748,7 @@ const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, ha
               const body = (
                 <div data-under-head={(!retired && i === 0) || undefined} className={cn(!retired && i > 0 && 'pt-(--process-prose-gap)', !retired && i === parts.length - 1 && 'pb-1.5')}>
                   <ProcessHistory>
-                    <ProcessChunks items={part.items} open={open} tail={running || bornOpen}>{rows => <ProcessBlocks blocks={blocks} items={rows} continuing={continuing} externalResult />}</ProcessChunks>
+                    <ProcessChunks items={part.items} open={open} tail={running || bornOpen} growing={running && i === parts.length - 1}>{rows => <ProcessBlocks blocks={blocks} items={rows} continuing={continuing} externalResult />}</ProcessChunks>
                   </ProcessHistory>
                 </div>
               );

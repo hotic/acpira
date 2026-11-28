@@ -1,7 +1,8 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { QuietEntranceContext } from '../ui/Row';
+import { SkipContext } from './exchangeSkip';
 import { AutoFoldContext } from './autoFold';
-import { chunkItems, itemCalls, itemExact, itemRows, type ItemChunk, type ProcessItem } from './processGroups';
+import { chunkItems, itemCalls, itemExact, itemRows, itemSettled, type ItemChunk, type ProcessItem } from './processGroups';
 import { readerScrolling } from './sliceScroll';
 import { scrollerOf } from './tailWindow';
 import { FollowContext } from './useBottomFollow';
@@ -58,8 +59,10 @@ function nextAhead(chunks: ItemChunk[], near: ReadonlySet<string>): string | und
 }
 
 // `children` renders a run of items (their rows as direct children, as `.process-content` expects). `open`: the fold
-// around them shows them; a closed one that stays mounted (a working turn's) gains no rows ahead
-export function ProcessChunks({ items, open, tail, children }: { items: ProcessItem[]; open: boolean; tail: boolean; children: (items: ProcessItem[]) => ReactNode }) {
+// around them shows them; a closed one that stays mounted (a working turn's) gains no rows ahead. `growing`: the turn is
+// still adding rows to the end of these items (the working turn's last part; a steered prompt closes the part before it).
+// A chunk with a call still running keeps changing too, in any part
+export function ProcessChunks({ items, open, tail, growing, children }: { items: ProcessItem[]; open: boolean; tail: boolean; growing: boolean; children: (items: ProcessItem[]) => ReactNode }) {
   const chunks = useMemo(() => chunkItems(items, CHUNK_ROWS), [items]);
   const folds = useContext(AutoFoldContext);
   const follow = useContext(FollowContext);
@@ -110,8 +113,8 @@ export function ProcessChunks({ items, open, tail, children }: { items: ProcessI
     wait();
     return () => { if (idle) cancelIdleCallback(pending); else clearTimeout(pending); };
   }, [ahead, follow]);
-  return chunks.map(chunk => {
-    if (state.near.has(chunk.id)) return <ChunkRows key={chunk.id} chunk={chunk} late={empty.current.has(chunk.id)}>{children(chunk.items)}</ChunkRows>;
+  return chunks.map((chunk, at) => {
+    if (state.near.has(chunk.id)) return <ChunkRows key={chunk.id} chunk={chunk} late={empty.current.has(chunk.id)} live={(growing && at === chunks.length - 1) || !chunk.items.every(itemSettled)}>{children(chunk.items)}</ChunkRows>;
     empty.current.add(chunk.id);
     const rows = chunk.items.reduce((n, item) => n + itemRows(item, folds?.get(item.id) ?? false), 0);
     // Its calls ride on the box, so the context report finds a row that is not mounted (chat/reportLink.ts)
@@ -121,14 +124,20 @@ export function ProcessChunks({ items, open, tail, children }: { items: ProcessI
 }
 
 // The rows of a chunk, spaced like the list around them. `late`: mounted after their box was drawn empty, so they are
-// restored history and skip their entrance (QuietEntranceContext)
-function ChunkRows({ chunk, late, children }: { chunk: ItemChunk; late: boolean; children: ReactNode }) {
+// restored history and skip their entrance (QuietEntranceContext).
+// Out of sight, a chunk of the main thread skips style, layout and paint like an exchange (exchangeSkip.ts), unless it is
+// `live` (still changing: skipped, it would keep the height it had). Only those: every part's last chunk once kept out
+// too was laid out again in each frame of a drag beside a long steered turn. The containment skipping brings clips its
+// paint, so the box reaches out by --hit on the sides (a row's hover fill) and below (a card's shadow), its padding
+// taking the same back
+function ChunkRows({ chunk, late, live, children }: { chunk: ItemChunk; late: boolean; live: boolean; children: ReactNode }) {
   const outer = useContext(QuietEntranceContext);
+  const skip = useContext(SkipContext);
   const mounting = useRef(late);
   const [quiet] = useState(() => ({ get current() { return mounting.current || outer.current; } }));
   useLayoutEffect(() => { mounting.current = false; }, []);
   return (
-    <div data-chunk={chunk.id} data-after-text={chunk.afterText || undefined} className="process-content flex min-w-0 flex-col gap-(--process-row-gap)">
+    <div ref={live ? undefined : skip} data-chunk={chunk.id} data-after-text={chunk.afterText || undefined} className="process-content -mx-hit -mb-hit flex min-w-0 flex-col gap-(--process-row-gap) px-hit pb-hit">
       <QuietEntranceContext.Provider value={quiet}>{children}</QuietEntranceContext.Provider>
     </div>
   );

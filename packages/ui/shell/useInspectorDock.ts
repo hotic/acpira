@@ -6,7 +6,6 @@ import { capToChat, fitPaneBounds, usePreferredPaneWidth, type PaneBounds } from
 export function useInspectorDock(mainColumn: RefObject<HTMLDivElement | null>, inspectorPane: RefObject<HTMLElement | null>) {
   const [canDockInspector, setCanDockInspector] = useState(false);
   const [preferredPane, setPreferredPane] = usePreferredPaneWidth();
-  const [draggedPane, setDraggedPane] = useState<number>();
   useLayoutEffect(() => {
     const element = mainColumn.current;
     if (!element) return;
@@ -30,6 +29,15 @@ export function useInspectorDock(mainColumn: RefObject<HTMLDivElement | null>, i
     // Its left edge borders the chat: widening takes from the chat, never from the tool panel right of it
     return capToChat(bounds, inspectorPane.current, mainColumn.current);
   }, []);
-  const paneWidth = draggedPane ?? preferredPane;
-  return { canDockInspector, paneWidth, paneBounds, setDraggedPane, setPreferredPane };
+  // The live width of a drag goes to the pane itself, not through state: a state change renders the whole shell, long
+  // transcripts included, in every frame of the drag. The release commits it, and the render writes the same value
+  const dragPane = useCallback((w: number) => { inspectorPane.current?.style.setProperty('width', paneWidthStyle(w)); }, []);
+  // Double click: back to the token default, also after a drag that ended where it started and committed nothing
+  const resetPane = useCallback(() => { inspectorPane.current?.style.removeProperty('width'); setPreferredPane(undefined); }, [setPreferredPane]);
+  return { canDockInspector, paneWidth: preferredPane, paneBounds, dragPane, resetPane, setPreferredPane };
+}
+
+// The docked pane's width as chosen, clamped by CSS so the conversation keeps --subagent-main-min
+export function paneWidthStyle(w: number) {
+  return `clamp(var(--subagent-pane-min), ${w}px, calc(100% - var(--subagent-main-min)))`;
 }

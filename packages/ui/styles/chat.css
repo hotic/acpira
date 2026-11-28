@@ -165,6 +165,9 @@
      layout and paint out of sight and keeps that size, so the thread's height does not move when it comes back */
   [data-exchange] { contain-intrinsic-block-size: auto var(--row); }
   [data-exchange][data-seen] { content-visibility: auto; }
+  /* So do the chunks of a long process (chat/ProcessChunks.tsx) */
+  .process-content[data-chunk] { contain-intrinsic-block-size: auto var(--row); }
+  .process-content[data-chunk][data-seen] { content-visibility: auto; }
   /* A stuck prompt card (HistoryMessage) is rounded, so the rows scrolling under it showed through its top corners: its
      frame paints the page's colour behind the card. Keyed on `sticky`, which a share capture strips from its clone; not
      over a skin's backdrop, where a square of opaque page colour would show on the translucent sheet */

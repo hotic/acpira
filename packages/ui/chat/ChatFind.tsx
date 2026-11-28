@@ -57,9 +57,10 @@ function revealRange(root: HTMLElement, range: Range, releaseFollow?: () => void
   const thread = root.closest<HTMLElement>('[data-thread]');
   if (!thread) return;
   const startEl = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
-  // Ensure a content-visibility-skipped exchange lays out at its real height before measuring the range
-  const exchange = startEl?.closest<HTMLElement>('[data-exchange][data-seen]');
-  if (exchange) exchange.removeAttribute('data-seen');
+  // Ensure a content-visibility-skipped exchange (and a process chunk inside it) lays out at its real height before
+  // measuring the range
+  for (let skipped = startEl?.closest<HTMLElement>('[data-seen]'); skipped && thread.contains(skipped); skipped = skipped.parentElement?.closest<HTMLElement>('[data-seen]'))
+    skipped.removeAttribute('data-seen');
   const rect = range.getBoundingClientRect();
   const view = thread.getBoundingClientRect();
   if (rect.height === 0 && rect.width === 0) return;

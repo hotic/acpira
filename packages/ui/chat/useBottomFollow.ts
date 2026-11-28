@@ -2,6 +2,11 @@ import { createContext, useContext, useLayoutEffect, useRef, useState, useSyncEx
 import { pinTranscriptBottom } from './sliceScroll';
 import { anchorOffset, followsBottom, pressAnchorNode, readingAnchor, readingOffset, SCROLL_INTENT_MS, scrollerUsable, type ReadingAnchor } from './promptStuck';
 
+// How long after a width change, or after `FollowState.rewrap`, a height change still belongs to the re-wrap
+const REWRAP_SETTLE_MS = 100;
+// The first height change after `FollowState.rewrap` belongs to it however long its layout took, up to this
+const REWRAP_DUE_MS = 1000;
+
 // Whether the transcript is following its bottom, for rows that must not move under a reader who scrolled up
 // (the live turn's automatic fold closes wait for them). Subscribed per reader, so a scroll re-renders nothing else
 export class FollowState {
@@ -10,8 +15,21 @@ export class FollowState {
   release: () => void = () => this.set(false);
   // The height change about to land is a re-wrap, not growth: what the reader has stays put through it as through a
   // width change (exchangeSkip.ts lays the exchanges out of sight out again once the width has settled)
-  rewrap = () => { this.rewrapAt = performance.now(); };
+  rewrap = () => { this.rewrapAt = performance.now(); this.rewrapDue = true; };
   rewrapAt = -Infinity;
+  // Told, and not yet reported by the content's observer
+  rewrapDue = false;
+  // Parts of the transcript still hold the height of an earlier width (exchangeSkip.ts measures them again once the width
+  // has settled). One coming into sight meanwhile is laid out at the new width, with no word from anyone
+  stale = false;
+  setStale = (stale: boolean) => { this.stale = stale; };
+  // Whether a height change reported now belongs to a re-wrap. Laying a batch of long exchanges out again can take well
+  // over REWRAP_SETTLE_MS on a busy machine; timed alone, its report counted as plain growth and moved the text under a
+  // parked reader by screens
+  inRewrap(now = performance.now()) {
+    const since = now - this.rewrapAt;
+    return this.stale || since < REWRAP_SETTLE_MS || (this.rewrapDue && since < REWRAP_DUE_MS);
+  }
   private listeners = new Set<() => void>();
   set(value: boolean) {
     if (value === this.value) return;
@@ -45,8 +63,6 @@ export function useFollowing(): boolean {
 // so a stream chunk arriving mid-toggle cannot re-arm content-growth pinning while the fold is still opening
 const FOLD_SETTLE_MS = 400;
 const DRAG_SLOP_PX = 8;
-// How long after a width change, or after `FollowState.rewrap`, a height change still belongs to the re-wrap
-const REWRAP_SETTLE_MS = 100;
 
 export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, content: RefObject<HTMLDivElement | null>, resetKey: unknown, changes: DependencyList, prompt?: unknown): FollowState {
   const pinned = useRef(true);
@@ -121,10 +137,36 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     // still reports the old bottom. Let the wheel move away before another scroll or resize can re-arm the follow.
     let pendingWheelUp = false;
     const awaitingWheel = () => pendingWheelUp && !pinned.current && intent();
+    // The content's width as the observer last reported it: a scroll that finds another one comes from a re-wrap the
+    // observer has not reported yet
+    let seenWidth = -1;
+    // The width changed: everything re-wraps. A press anchor keeps a toggled row under the pointer while its fold moves
+    // the rows below; a width change is never that toggle (the press opened a pane beside the thread, at most), and kept,
+    // it held the pressed row against the tail a reader was following, which then stopped following the working turn
+    const resized = () => {
+      follow.rewrap();
+      anchor = undefined;
+    };
+    const rewrapping = () => {
+      const width = content.current?.offsetWidth;
+      if (width !== undefined && seenWidth >= 0 && width !== seenWidth) {
+        resized();
+        seenWidth = width;
+      }
+      return follow.inRewrap();
+    };
     const onScroll = () => {
       if (!scrollerUsable(el)) return;
       const was = pinned.current;
       const user = intent();
+      // A re-wrap that shortens the transcript (a pane closing or narrowing beside it) clamps the offset of a reader
+      // parked near the tail, and WebKit delivers that clamp's scroll before the observer reports the new width: taken
+      // as the reader reaching the bottom, it pinned the tail and the hold below never ran. It belongs to the re-wrap
+      if (!was && !user && rewrapping()) {
+        hold();
+        lastTop = el.scrollTop;
+        return;
+      }
       const next = followsBottom(el, was, lastTop, user, untouched.current);
       if (next && awaitingWheel()) return;
       pendingWheelUp = false;
@@ -203,9 +245,13 @@ export function useBottomFollow(scroller: RefObject<HTMLDivElement | null>, cont
     let lastWidth = -1;
     const grew = (entries: ResizeObserverEntry[]) => {
       const width = entries[entries.length - 1]?.contentRect.width ?? lastWidth;
-      if (lastWidth >= 0 && width !== lastWidth) follow.rewrap();
+      const box = content.current?.offsetWidth ?? seenWidth;
+      if (lastWidth >= 0 && width !== lastWidth && box !== seenWidth) resized();
+      else if (lastWidth >= 0 && width !== lastWidth) follow.rewrap();
       lastWidth = width;
-      const rewrap = performance.now() - follow.rewrapAt < REWRAP_SETTLE_MS;
+      seenWidth = box;
+      const rewrap = follow.inRewrap();
+      follow.rewrapDue = false;
       if (anchor && !pointerDown && performance.now() - holding.current >= FOLD_SETTLE_MS) {
         anchor = undefined;
       }

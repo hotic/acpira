@@ -84,7 +84,7 @@ import { useShellKeys } from './useShellKeys';
 import { useFolderDrop } from './useFolderDrop';
 import { useFileStager } from './fileStager';
 import { useDrawer } from './useDrawer';
-import { useInspectorDock } from './useInspectorDock';
+import { paneWidthStyle, useInspectorDock } from './useInspectorDock';
 
 export interface ShellProps {
   appearance: Appearance;
@@ -319,7 +319,7 @@ export function Shell(p: ShellProps) {
   // The docked pane's width is the user's (drag its left edge), clamped by CSS so the conversation keeps --subagent-main-min.
   const mainColumn = useRef<HTMLDivElement>(null);
   const inspectorPane = useRef<HTMLElement>(null);
-  const { canDockInspector, paneWidth, paneBounds, setDraggedPane, setPreferredPane } = useInspectorDock(mainColumn, inspectorPane);
+  const { canDockInspector, paneWidth, paneBounds, dragPane, resetPane, setPreferredPane } = useInspectorDock(mainColumn, inspectorPane);
   // The session column's drag, on the left of the conversation layout: its right edge borders the chat, so widening takes
   // from the chat as well (unfolding keeps sideBounds, the column may squeeze the tool panel to open at its width)
   const sideDragBounds = useCallback(
@@ -1228,11 +1228,9 @@ export function Shell(p: ShellProps) {
           {dockedInspect && inspect !== undefined && (
             // Desktop: its card (beside the sheet) or its place on the canvas (files layout) comes from desktop.css
             <aside ref={inspectorPane} data-subagent-panel="docked" className={cn('relative flex w-subagent-pane shrink-0 flex-col', !desktop && 'border-l border-line bg-bg-0', files ? 'order-4' : 'order-last')}
-              style={paneWidth !== undefined ? { width: `clamp(var(--subagent-pane-min), ${paneWidth}px, calc(100% - var(--subagent-main-min)))` } : undefined}>
+              style={paneWidth !== undefined ? { width: paneWidthStyle(paneWidth) } : undefined}>
               <InspectorSplitter width={paneWidth ?? paneBounds().initial} bounds={paneBounds} onStart={holdTools}
-                onDrag={setDraggedPane}
-                onCommit={w => { setDraggedPane(undefined); setPreferredPane(w); }}
-                onReset={() => { setDraggedPane(undefined); setPreferredPane(undefined); }} />
+                onDrag={dragPane} onCommit={setPreferredPane} onReset={resetPane} />
               <OpenToolFileContext.Provider value={openToolFile}>
               <SubagentInspector
                 mode="docked"
