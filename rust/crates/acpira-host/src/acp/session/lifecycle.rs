@@ -193,6 +193,7 @@ impl AcpSession {
     self.exec_tunnel.lock().take();
     self.mcp_bridge.lock().take();
     c.adapter_stale = false;
+    c.credential_stale = false;
     let proc = c.proc.take()?;
     c.proc_gen += 1;
     c.perms.epoch += 1;
@@ -732,6 +733,16 @@ impl AcpSession {
 
   /// `releasable` less the queue: prompts waiting there are sent by whichever process the session has next
   pub(crate) fn restartable(c: &Core) -> bool {
+    Self::quiet(c)
+      && !c.tree.any_running()
+      && !has_live_async_task(&c.state)
+      // Releasing would kill the process and the wakeup with it
+      && c.wake.pending(crate::util::now_ms()).is_none()
+  }
+
+  /// `restartable` less the work going on in the background (subagents, background tasks, a scheduled wakeup): ending
+  /// the process now cuts short nothing the user is waiting on or answering
+  fn quiet(c: &Core) -> bool {
     Self::restorable(c)
       && c.status == SessionStatus::Ready
       && c.acp_session_id.is_some()
@@ -742,10 +753,6 @@ impl AcpSession {
       && c.perms.pending.is_empty()
       && c.questions.pending.is_empty()
       && c.relays.rounds.is_empty()
-      && !c.tree.any_running()
-      && !has_live_async_task(&c.state)
-      // Releasing would kill the process and the wakeup with it
-      && c.wake.pending(crate::util::now_ms()).is_none()
   }
 
   /// A live process whose native session another one can pick up through session/resume or session/load
@@ -835,6 +842,18 @@ impl AcpSession {
   /// sees. A background task or scheduled wakeup holds it back like any release. False when it has to wait; a session
   /// that cannot be restored stays on its process and waits for nothing
   pub fn adapter_updated(self: &Arc<Self>) -> bool {
+    self.went_stale(false)
+  }
+
+  /// The plugin account this session runs on now starts with other variables (a renewed credential) or is gone. Reopens
+  /// like an updated adapter, but background work does not keep the process on the old sign-in for good: agy reads its
+  /// token once, so a process that never pauses would otherwise fail its first request after the old ticket lapses.
+  /// The next prompt from the user reopens first instead (`reserve_prompt_reopen`)
+  pub fn credential_rotated(self: &Arc<Self>) -> bool {
+    self.went_stale(true)
+  }
+
+  fn went_stale(self: &Arc<Self>, credential: bool) -> bool {
     {
       let mut c = self.core.lock();
       if !Self::restorable(&c) {
@@ -842,10 +861,12 @@ impl AcpSession {
         // starts afresh at its retry
         if matches!(c.status, SessionStatus::Starting | SessionStatus::AuthRequired) {
           c.adapter_stale = true;
+          c.credential_stale |= credential;
         }
         return true;
       }
       c.adapter_stale = true;
+      c.credential_stale |= credential;
       if !Self::reserve_reopen(&mut c) {
         return false;
       }
@@ -860,9 +881,28 @@ impl AcpSession {
     if !c.adapter_stale || !Self::restartable(c) {
       return false;
     }
-    c.adapter_stale = false;
-    c.status = SessionStatus::Starting;
+    Self::claim_reopen(c);
     true
+  }
+
+  /// The reopen a prompt from the user claims before it goes out: what `reserve_reopen` allows, and for a process on a
+  /// stale sign-in (`credential_stale`) also while background work runs. That work ends with the process either way:
+  /// the process cannot outlive its sign-in, and the reconnect after a turn failed on it (`reserve_reauth`) drops it too
+  pub(crate) fn reserve_prompt_reopen(c: &mut Core) -> bool {
+    if Self::reserve_reopen(c) {
+      return true;
+    }
+    if !c.adapter_stale || !c.credential_stale || !Self::quiet(c) {
+      return false;
+    }
+    Self::claim_reopen(c);
+    true
+  }
+
+  fn claim_reopen(c: &mut Core) {
+    c.adapter_stale = false;
+    c.credential_stale = false;
+    c.status = SessionStatus::Starting;
   }
 
   pub(crate) fn spawn_reopen(self: &Arc<Self>) {

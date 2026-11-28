@@ -75,6 +75,7 @@ impl AcpSession {
 
   fn drop_stale_process(&self, c: &mut Core) {
     c.adapter_stale = true;
+    c.credential_stale = true;
     self.drop_warm();
   }
 

@@ -161,6 +161,66 @@ async fn an_updated_adapter_reopens_an_idle_session_at_once_and_a_busy_one_after
   assert_eq!(spawns(), 3, "one reopen per update");
 }
 
+fn bg_task(s: &AcpSession) -> Value {
+  agent_blocks(&view(s)).into_iter().find(|b| b["type"] == "tool_call" && b["id"] == "bg-1").map(|b| b["asyncTask"].clone()).unwrap_or(Value::Null)
+}
+
+// agy reads its token once: a renewed sign-in must reach a process that background work keeps from ever pausing, or its
+// first request after the old ticket lapses fails. An updated adapter keeps waiting; a rotated credential reopens before
+// the user's next prompt, which then goes to the new process on the same native session
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rotated_credential_reopens_before_the_next_prompt_even_while_background_work_runs() {
+  let fake = fake_or_skip!();
+  let cwd = tempfile::Builder::new().prefix("acpira-flaky-resume-").tempdir().unwrap();
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, cwd.path().to_str().unwrap()).await;
+  prompt(&s, "async-stop").await;
+  assert_eq!(bg_task(&s)["state"], "running");
+  let native = s.to_record().acp_session_id;
+  let spawns = || h.logs().iter().filter(|l| l.contains("spawn ")).count();
+  assert!(!s.adapter_updated());
+  prompt(&s, "hi").await;
+  assert_eq!(spawns(), 1, "an updated adapter does not end background work");
+  assert!(!s.credential_rotated());
+  assert_eq!(spawns(), 1, "nor does a rotated credential while nothing is sent");
+  prompt(&s, "after renewal").await;
+  until(|| turn_count(&s) == 6 && view(&s)["running"] == false && view(&s)["status"] == "ready", 8000).await;
+  let logs = h.logs();
+  assert_eq!(spawns(), 2, "{logs:#?}");
+  let respawn = logs.iter().rposition(|l| l.contains("spawn ")).unwrap();
+  let answered = logs.iter().rposition(|l| l.contains("prompt done")).unwrap();
+  assert!(respawn < answered, "{logs:#?}");
+  assert_eq!(s.to_record().acp_session_id, native);
+  expect_match(&turn_at(&view(&s), -2), json!({ "role": "user", "text": "after renewal" }));
+  expect_match(&last_turn(&view(&s)), json!({ "stop": "end_turn" }));
+  assert_eq!(bg_task(&s)["canStop"], false, "the task went with the old process");
+}
+
+// A prompt queued behind a running turn is a prompt of the user's too: once the turn ends, the session reopens on the
+// rotated credential before sending it, background work or not
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_queued_over_a_rotated_credential_goes_to_a_new_process() {
+  let fake = fake_or_skip!();
+  let cwd = tempfile::Builder::new().prefix("acpira-flaky-resume-").tempdir().unwrap();
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, cwd.path().to_str().unwrap()).await;
+  prompt(&s, "async-stop").await;
+  let spawns = || h.logs().iter().filter(|l| l.contains("spawn ")).count();
+  let p = spawn_prompt(&s, "slow");
+  until(|| view(&s)["running"] == true, 5000).await;
+  prompt(&s, "queued").await;
+  assert!(!s.credential_rotated());
+  s.cancel().await;
+  p.await.unwrap();
+  until(|| spawns() == 2 && turn_count(&s) == 6 && view(&s)["running"] == false && view(&s)["status"] == "ready", 8000).await;
+  let logs = h.logs();
+  let respawn = logs.iter().rposition(|l| l.contains("spawn ")).unwrap();
+  let answered = logs.iter().rposition(|l| l.contains("prompt done")).unwrap();
+  assert!(respawn < answered, "{logs:#?}");
+  expect_match(&turn_at(&view(&s), -2), json!({ "role": "user", "text": "queued" }));
+  expect_match(&last_turn(&view(&s)), json!({ "stop": "end_turn" }));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn reconnect_is_refused_while_a_turn_runs_and_the_process_is_kept() {
   let fake = fake_or_skip!();

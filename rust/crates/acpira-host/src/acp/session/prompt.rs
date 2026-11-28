@@ -401,8 +401,12 @@ impl AcpSession {
         || (!auto && c.pending_prompt.is_some()))
     {
       Gate::Queue
-    } else if !origin.reserved() && AcpSession::reserve_reopen(&mut c) {
-      // The process started with what its adapter or account no longer is: the turn waits for the new one
+    } else if !origin.reserved()
+      && (AcpSession::reserve_reopen(&mut c) || (origin == Origin::User && AcpSession::reserve_prompt_reopen(&mut c)))
+    {
+      // The process started with what its adapter or account no longer is: the turn waits for the new one. Only the
+      // user's own prompt also ends background work to leave a stale sign-in (`reserve_prompt_reopen`); the host's
+      // prompts (a Retry's hidden continue, a goal's, owed results) would show up as queued rows of the user's
       self.arc().spawn_reopen();
       Gate::Queue
     } else if let Err(reason) = self.lease_turn(&mut c) {

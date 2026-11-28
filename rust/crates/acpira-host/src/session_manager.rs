@@ -511,8 +511,8 @@ impl SessionManager {
         }
       }));
       // A plugin account now starts differently (a renewed credential) or is gone: a session on it reopens when nothing
-      // is in flight, the way it does on an updated adapter, so the agent reads the new sign-in. Warm processes made
-      // with the old variables go too
+      // is in flight, the way it does on an updated adapter, so the agent reads the new sign-in; one held up by
+      // background work reopens before the user's next prompt instead. Warm processes made with the old variables go too
       let me = mgr.me.clone();
       a.on_rotated(Arc::new(move |changed| {
         let Some(m) = me.upgrade() else { return };
@@ -524,7 +524,7 @@ impl SessionManager {
               let _ = s.reconnect().await;
             });
           } else {
-            s.adapter_updated();
+            s.credential_rotated();
           }
         }
         // Warm processes are dropped whether or not a session runs on the account now

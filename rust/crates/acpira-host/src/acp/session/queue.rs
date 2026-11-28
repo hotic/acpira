@@ -216,8 +216,10 @@ impl AcpSession {
       {
         return false;
       }
-      // An updated adapter waited for this pause (`adapter_updated`); `start` flushes again on the new process
-      if AcpSession::reserve_reopen(&mut c) {
+      // An updated adapter waited for this pause (`adapter_updated`); `start` flushes again on the new process. A queued
+      // prompt of the user's does not go to a process on a stale sign-in, background work or not
+      let reopen = if c.queue.entries.is_empty() { AcpSession::reserve_reopen(&mut c) } else { AcpSession::reserve_prompt_reopen(&mut c) };
+      if reopen {
         drop(c);
         self.spawn_reopen();
         return true;

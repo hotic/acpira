@@ -301,6 +301,10 @@ pub(crate) struct Core {
   /// The process has to go: its adapter was updated on disk (`adapter_updated`), reopened as soon as nothing is in
   /// flight, or it holds a sign-in that expired (`reserve_reauth` on a `/compact`), reopened before the next prompt
   pub adapter_stale: bool,
+  /// `adapter_stale` for the process's sign-in: superseded (a plugin account's renewed credential, `credential_rotated`)
+  /// or expired. The process cannot outlive it, so a prompt from the user reopens first even while background work runs
+  /// (`reserve_prompt_reopen`)
+  pub credential_stale: bool,
   /// Summoned children's processes, rounds in flight and root calls waiting for their node (`relay.rs`)
   pub relays: crate::acp::session::relay::Relays,
   /// Droid's own move onto a Droid Core model once Standard usage ran out, refused (`vendors/droid_core.rs`)
@@ -540,6 +544,7 @@ impl AcpSession {
           reauth_due: false,
           reauth_at: None,
           adapter_stale: false,
+          credential_stale: false,
           relays: Default::default(),
           droid_core: Default::default(),
           ultracode,
